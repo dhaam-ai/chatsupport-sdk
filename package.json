@@ -46,10 +46,10 @@
     "nextjs",
     "customer-support"
   ],
-  "author": "Chat Service Team",
+  "author": "Chat-sdk",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/chat-service"
+    "url": "https://github.com/dhaamai/chat-sdk"
   }
 }
