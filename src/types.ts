@@ -13,6 +13,8 @@ export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE';
 export interface ChatSDKConfig {
   /** Backend service URL (e.g., https://api.chat.example.com) */
   serviceUrl: string;
+
+    wsUrl?: string;  
   
   /** Your tenant ID */
   tenantId: string;

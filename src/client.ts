@@ -21,7 +21,7 @@ export class ChatWebSocketClient {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
-  
+
   public session: ChatSession | null = null;
   public connected = false;
 
@@ -35,19 +35,21 @@ export class ChatWebSocketClient {
   async connect(): Promise<ChatSession> {
     return new Promise((resolve, reject) => {
       try {
-        // Build WebSocket URL
-        let wsUrl = this.config.serviceUrl;
-        if (wsUrl.startsWith('http://')) {
-          wsUrl = wsUrl.replace('http://', 'ws://');
-        } else if (wsUrl.startsWith('https://')) {
-          wsUrl = wsUrl.replace('https://', 'wss://');
+        // Build WebSocket URL — use explicit wsUrl if provided, else derive from serviceUrl
+        let wsUrl: string;
+        if (this.config.wsUrl) {
+          wsUrl = this.config.wsUrl;
+        } else {
+          wsUrl = this.config.serviceUrl;
+          if (wsUrl.startsWith('http://')) {
+            wsUrl = wsUrl.replace('http://', 'ws://');
+          } else if (wsUrl.startsWith('https://')) {
+            wsUrl = wsUrl.replace('https://', 'wss://');
+          }
+          if (wsUrl.includes(':3000')) {
+            wsUrl = wsUrl.replace(':3000', ':3001');
+          }
         }
-        
-        // Remove port 3000 (REST) and use 3001 (WebSocket) if needed
-        if (wsUrl.includes(':3000')) {
-          wsUrl = wsUrl.replace(':3000', ':3001');
-        }
-
         console.log('🔌 Chat SDK: Connecting to WebSocket at', wsUrl);
 
         // Create socket connection
@@ -81,7 +83,7 @@ export class ChatWebSocketClient {
           this.reconnectAttempts = 0;
 
           const sessionId = data.chatSessionId || data.sessionIds?.[0];
-          
+
           if (sessionId) {
             this.session = {
               id: sessionId,
@@ -91,7 +93,7 @@ export class ChatWebSocketClient {
 
             // Join the session room
             this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
-            
+
             resolve(this.session);
           } else {
             reject(new Error('No session ID received'));
@@ -175,7 +177,7 @@ export class ChatWebSocketClient {
           this.reconnectAttempts++;
           console.error('❌ Chat SDK: Connection error (attempt', this.reconnectAttempts + '/' + this.maxReconnectAttempts + '):', error?.message);
           this.emit('error', error);
-          
+
           // Only reject if max reconnection attempts reached AND we haven't received CONNECTION_ACK
           if (this.reconnectAttempts >= this.maxReconnectAttempts && !connectionAckReceived) {
             console.error('❌ Chat SDK: Max reconnection attempts reached, giving up');
@@ -195,12 +197,12 @@ export class ChatWebSocketClient {
         this.socket.on('reconnect', () => {
           this.connected = true;
           this.reconnectAttempts = 0;
-          
+
           // Rejoin session on reconnect
           if (this.session) {
             this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: this.session.id });
           }
-          
+
           this.emit('reconnect', {});
         });
 
@@ -275,7 +277,7 @@ export class ChatWebSocketClient {
       this.eventHandlers.set(event, new Set());
     }
     this.eventHandlers.get(event)!.add(callback);
-    
+
     // Return unsubscribe function
     return () => {
       this.eventHandlers.get(event)?.delete(callback);
