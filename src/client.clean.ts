@@ -1,6 +1,5 @@
 // ==========================================
 // Chat SDK - WebSocket Client
-// Clean implementation for real-time chat
 // ==========================================
 
 import { io, Socket } from 'socket.io-client';
@@ -8,63 +7,12 @@ import type {
   ChatSDKConfig,
   ChatMessage,
   ChatSession,
-  MessageType,
   WS_EVENTS as WS_EVENTS_TYPE,
-} from './types.clean';
-import { WS_EVENTS } from './types.clean';
-
-// ==========================================
-// Types
-// ==========================================
+  MessageType,
+} from './types';
+import { WS_EVENTS } from './types';
 
 type EventCallback = (...args: unknown[]) => void;
-
-interface ConnectionAckData {
-  socketId: string;
-  sessionIds: string[];
-  chatSessionId?: string;
-  mode?: string;
-  status?: string;
-  timestamp: string;
-}
-
-interface MessageReceiveData {
-  chatSessionId: string;
-  messageId: string;
-  senderType: string;
-  senderId?: string;
-  senderName?: string;
-  content: string;
-  messageType: string;
-  metadata?: Record<string, unknown>;
-  timestamp?: string;
-}
-
-interface TypingData {
-  chatSessionId: string;
-  senderType: string;
-  senderId?: string;
-  isTyping: boolean;
-}
-
-interface AgentData {
-  agentId: string;
-  agentName: string;
-}
-
-interface StatusData {
-  mode: string;
-  status: string;
-}
-
-interface ErrorData {
-  code: string;
-  message: string;
-}
-
-// ==========================================
-// WebSocket Client Class
-// ==========================================
 
 export class ChatWebSocketClient {
   private socket: Socket | null = null;
@@ -73,51 +21,13 @@ export class ChatWebSocketClient {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
-
+  
   public session: ChatSession | null = null;
   public connected = false;
 
   constructor(config: ChatSDKConfig) {
     this.config = config;
   }
-
-  // ==========================================
-  // Event Emitter Methods
-  // ==========================================
-
-  /**
-   * Register event handler
-   */
-  on(event: string, callback: EventCallback): void {
-    if (!this.eventHandlers.has(event)) {
-      this.eventHandlers.set(event, new Set());
-    }
-    this.eventHandlers.get(event)!.add(callback);
-  }
-
-  /**
-   * Remove event handler
-   */
-  off(event: string, callback: EventCallback): void {
-    this.eventHandlers.get(event)?.delete(callback);
-  }
-
-  /**
-   * Emit event to handlers
-   */
-  private emit(event: string, ...args: unknown[]): void {
-    this.eventHandlers.get(event)?.forEach((callback) => {
-      try {
-        callback(...args);
-      } catch (error) {
-        console.error(`[ChatSDK] Event handler error for ${event}:`, error);
-      }
-    });
-  }
-
-  // ==========================================
-  // Connection Methods
-  // ==========================================
 
   /**
    * Connect to WebSocket server
@@ -127,26 +37,18 @@ export class ChatWebSocketClient {
       try {
         // Build WebSocket URL
         let wsUrl = this.config.serviceUrl;
-        
-        // Convert HTTP to WS
         if (wsUrl.startsWith('http://')) {
           wsUrl = wsUrl.replace('http://', 'ws://');
         } else if (wsUrl.startsWith('https://')) {
           wsUrl = wsUrl.replace('https://', 'wss://');
         }
-
-        // Replace REST port (3000) with WebSocket port (3001) if present
+        
+        // Remove port 3000 (REST) and use 3001 (WebSocket) if needed
         if (wsUrl.includes(':3000')) {
           wsUrl = wsUrl.replace(':3000', ':3001');
-        } else if (!wsUrl.includes(':300')) {
-          // Add WebSocket port if no port specified
-          const urlObj = new URL(wsUrl);
-          if (!urlObj.port) {
-            wsUrl = wsUrl.replace(urlObj.host, `${urlObj.host}:3001`);
-          }
         }
 
-        this.log('Connecting to WebSocket:', wsUrl);
+        console.log('🔌 Chat SDK: Connecting to WebSocket at', wsUrl);
 
         // Create socket connection
         this.socket = io(wsUrl, {
@@ -162,66 +64,144 @@ export class ChatWebSocketClient {
           reconnection: true,
           reconnectionAttempts: this.maxReconnectAttempts,
           reconnectionDelay: this.reconnectDelay,
-          timeout: 10000,
         });
 
-        // Connection timeout
-        const connectionTimeout = setTimeout(() => {
-          if (!this.connected) {
-            this.socket?.disconnect();
-            reject(new Error('Connection timeout'));
-          }
-        }, 15000);
+        let connectionAckReceived = false;
 
         // Handle connection acknowledgment
-        this.socket.on(WS_EVENTS.CONNECTION_ACK, (data: ConnectionAckData) => {
-          clearTimeout(connectionTimeout);
+        this.socket.on(WS_EVENTS.CONNECTION_ACK, (data: {
+          sessionIds: string[];
+          chatSessionId?: string;
+          mode: string;
+          status: string;
+        }) => {
+          connectionAckReceived = true;
+          console.log('✅ Chat SDK: Connection acknowledged, session ID:', data.chatSessionId || data.sessionIds?.[0]);
           this.connected = true;
           this.reconnectAttempts = 0;
 
-          this.log('Connection acknowledged:', data);
-
           const sessionId = data.chatSessionId || data.sessionIds?.[0];
-
+          
           if (sessionId) {
             this.session = {
               id: sessionId,
-              mode: (data.mode as ChatSession['mode']) || 'BOT',
-              status: (data.status as ChatSession['status']) || 'OPEN',
+              mode: data.mode as 'BOT' | 'HUMAN',
+              status: data.status as 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED',
             };
 
             // Join the session room
             this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
-
+            
             resolve(this.session);
           } else {
-            // If no session ID, we need to create a session first
-            this.createSession()
-              .then((session) => resolve(session))
-              .catch(reject);
+            reject(new Error('No session ID received'));
           }
         });
 
-        // Setup event listeners
-        this.setupEventListeners();
+        // Handle socket connection
+        this.socket.on('connect', () => {
+          console.log('📡 Chat SDK: Socket connected (transport established)');
+        });
 
-        // Handle connection errors
+        // Handle incoming messages
+        this.socket.on(WS_EVENTS.MESSAGE_RECEIVE, (data: ChatMessage) => {
+          this.emit('message', data);
+          this.config.callbacks?.onMessage?.(data);
+        });
+
+        // Handle typing indicator
+        this.socket.on(WS_EVENTS.TYPING_INDICATOR, (data: {
+          senderType: string;
+          senderId: string;
+          isTyping: boolean;
+        }) => {
+          this.emit('typing', data);
+        });
+
+        // Handle agent joined
+        this.socket.on(WS_EVENTS.AGENT_JOINED, (data: {
+          agentId: string;
+          agentName: string;
+        }) => {
+          if (this.session) {
+            this.session.assignedAgentId = data.agentId;
+            this.session.assignedAgentName = data.agentName;
+          }
+          this.emit('agentJoined', data);
+          this.config.callbacks?.onAgentJoined?.(data.agentId, data.agentName);
+        });
+
+        // Handle agent left
+        this.socket.on(WS_EVENTS.AGENT_LEFT, (data: { agentId: string }) => {
+          this.emit('agentLeft', data);
+          this.config.callbacks?.onAgentLeft?.(data.agentId);
+        });
+
+        // Handle status change
+        this.socket.on(WS_EVENTS.STATUS_CHANGED, (data: {
+          mode: string;
+          status: string;
+        }) => {
+          if (this.session) {
+            this.session.mode = data.mode as 'BOT' | 'HUMAN';
+            this.session.status = data.status as 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
+          }
+          this.emit('statusChange', data);
+          this.config.callbacks?.onStatusChange?.(
+            data.status as 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED',
+            data.mode as 'BOT' | 'HUMAN'
+          );
+        });
+
+        // Handle session closed
+        this.socket.on(WS_EVENTS.SESSION_CLOSED, () => {
+          if (this.session) {
+            this.session.status = 'CLOSED';
+          }
+          this.emit('sessionClosed', {});
+          this.config.callbacks?.onSessionClosed?.();
+        });
+
+        // Handle errors
+        this.socket.on(WS_EVENTS.ERROR, (error: { code: string; message: string }) => {
+          const err = new Error(error.message);
+          this.emit('error', err);
+          this.config.callbacks?.onError?.(err);
+        });
+
+        // Handle connection error
         this.socket.on('connect_error', (error) => {
-          clearTimeout(connectionTimeout);
           this.connected = false;
           this.reconnectAttempts++;
-          this.log('Connection error:', error.message);
+          console.error('❌ Chat SDK: Connection error (attempt', this.reconnectAttempts + '/' + this.maxReconnectAttempts + '):', error?.message);
           this.emit('error', error);
-
-          if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            reject(new Error(`Failed to connect after ${this.maxReconnectAttempts} attempts`));
+          
+          // Only reject if max reconnection attempts reached AND we haven't received CONNECTION_ACK
+          if (this.reconnectAttempts >= this.maxReconnectAttempts && !connectionAckReceived) {
+            console.error('❌ Chat SDK: Max reconnection attempts reached, giving up');
+            this.config.callbacks?.onError?.(error);
+            reject(error);
           }
         });
 
-        // Handle immediate socket error
-        this.socket.on('error', (error) => {
-          this.log('Socket error:', error);
-          this.emit('error', new Error(String(error)));
+        // Handle disconnect
+        this.socket.on('disconnect', (reason) => {
+          console.warn('⚠️ Chat SDK: Disconnected -', reason);
+          this.connected = false;
+          this.emit('disconnect', { reason });
+        });
+
+        // Handle reconnect
+        this.socket.on('reconnect', () => {
+          this.connected = true;
+          this.reconnectAttempts = 0;
+          
+          // Rejoin session on reconnect
+          if (this.session) {
+            this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: this.session.id });
+          }
+          
+          this.emit('reconnect', {});
         });
 
       } catch (error) {
@@ -231,166 +211,12 @@ export class ChatWebSocketClient {
   }
 
   /**
-   * Create a new chat session via REST API
-   */
-  private async createSession(): Promise<ChatSession> {
-    const response = await fetch(`${this.config.serviceUrl}/api/v1/chat/sessions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.config.token}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to create session');
-    }
-
-    const result = await response.json();
-
-    if (!result.success) {
-      throw new Error(result.error?.message || 'Failed to create session');
-    }
-
-    this.session = {
-      id: result.data.chatSessionId,
-      mode: result.data.mode,
-      status: result.data.status,
-    };
-
-    // Join the new session
-    this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: this.session.id });
-
-    return this.session;
-  }
-
-  /**
-   * Setup WebSocket event listeners
-   */
-  private setupEventListeners(): void {
-    if (!this.socket) return;
-
-    // Handle incoming messages
-    this.socket.on(WS_EVENTS.MESSAGE_RECEIVE, (data: MessageReceiveData) => {
-      this.log('Message received:', data);
-
-      const message: ChatMessage = {
-        id: data.messageId,
-        chatSessionId: data.chatSessionId,
-        senderType: data.senderType as ChatMessage['senderType'],
-        senderId: data.senderId,
-        senderName: data.senderName,
-        content: data.content,
-        messageType: data.messageType as ChatMessage['messageType'],
-        timestamp: new Date(data.timestamp || Date.now()),
-        metadata: data.metadata,
-      };
-
-      this.emit('message', message);
-    });
-
-    // Handle typing indicator
-    this.socket.on(WS_EVENTS.TYPING_INDICATOR, (data: TypingData) => {
-      this.log('Typing indicator:', data);
-      this.emit('typing', data);
-    });
-
-    // Handle agent joined
-    this.socket.on(WS_EVENTS.AGENT_JOINED, (data: AgentData) => {
-      this.log('Agent joined:', data);
-
-      if (this.session) {
-        this.session.assignedAgentId = data.agentId;
-        this.session.assignedAgentName = data.agentName;
-        this.session.mode = 'HUMAN';
-        this.session.status = 'ASSIGNED';
-      }
-
-      this.emit('agentJoined', data);
-    });
-
-    // Handle agent left
-    this.socket.on(WS_EVENTS.AGENT_LEFT, (data: { agentId: string }) => {
-      this.log('Agent left:', data);
-      this.emit('agentLeft', data);
-    });
-
-    // Handle status change
-    this.socket.on(WS_EVENTS.STATUS_CHANGED, (data: StatusData) => {
-      this.log('Status changed:', data);
-
-      if (this.session) {
-        this.session.mode = data.mode as ChatSession['mode'];
-        this.session.status = data.status as ChatSession['status'];
-      }
-
-      this.emit('statusChange', data);
-    });
-
-    // Handle session closed
-    this.socket.on(WS_EVENTS.SESSION_CLOSED, () => {
-      this.log('Session closed');
-
-      if (this.session) {
-        this.session.status = 'CLOSED';
-      }
-
-      this.emit('sessionClosed', {});
-    });
-
-    // Handle errors
-    this.socket.on(WS_EVENTS.ERROR, (error: ErrorData) => {
-      this.log('Server error:', error);
-      this.emit('error', new Error(error.message));
-    });
-
-    // Handle disconnect
-    this.socket.on('disconnect', (reason: string) => {
-      this.log('Disconnected:', reason);
-      this.connected = false;
-      this.emit('disconnect', { reason });
-    });
-
-    // Handle reconnect
-    this.socket.on('reconnect', () => {
-      this.log('Reconnected');
-      this.connected = true;
-      this.reconnectAttempts = 0;
-
-      // Rejoin session on reconnect
-      if (this.session) {
-        this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: this.session.id });
-      }
-
-      this.emit('reconnect', {});
-    });
-  }
-
-  /**
-   * Disconnect from WebSocket server
-   */
-  disconnect(): void {
-    if (this.socket) {
-      this.log('Disconnecting...');
-      this.socket.disconnect();
-      this.socket = null;
-      this.connected = false;
-    }
-  }
-
-  // ==========================================
-  // Chat Methods
-  // ==========================================
-
-  /**
    * Send a message
    */
-  async sendMessage(content: string, messageType: MessageType = 'TEXT'): Promise<void> {
-    if (!this.socket || !this.session) {
+  sendMessage(content: string, messageType: MessageType = 'TEXT'): void {
+    if (!this.socket || !this.connected || !this.session) {
       throw new Error('Not connected to chat');
     }
-
-    this.log('Sending message:', { content, messageType });
 
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
@@ -400,125 +226,72 @@ export class ChatWebSocketClient {
   }
 
   /**
-   * Start typing indicator
+   * Send typing start indicator
    */
   startTyping(): void {
-    if (!this.socket || !this.session) return;
-
-    this.socket.emit(WS_EVENTS.TYPING_START, {
-      chatSessionId: this.session.id,
-    });
+    if (this.socket && this.connected && this.session) {
+      this.socket.emit(WS_EVENTS.TYPING_START, { chatSessionId: this.session.id });
+    }
   }
 
   /**
-   * Stop typing indicator
+   * Send typing stop indicator
    */
   stopTyping(): void {
-    if (!this.socket || !this.session) return;
-
-    this.socket.emit(WS_EVENTS.TYPING_STOP, {
-      chatSessionId: this.session.id,
-    });
+    if (this.socket && this.connected && this.session) {
+      this.socket.emit(WS_EVENTS.TYPING_STOP, { chatSessionId: this.session.id });
+    }
   }
 
   /**
-   * Request human agent (escalation)
+   * Request human agent
    */
-  async requestAgent(reason?: string): Promise<void> {
-    if (!this.socket || !this.session) {
-      throw new Error('Not connected to chat');
+  requestAgent(reason?: string): void {
+    if (this.socket && this.connected && this.session) {
+      this.socket.emit(WS_EVENTS.REQUEST_AGENT, {
+        chatSessionId: this.session.id,
+        reason,
+      });
     }
-
-    this.log('Requesting agent:', { reason });
-
-    this.socket.emit(WS_EVENTS.REQUEST_AGENT, {
-      chatSessionId: this.session.id,
-      reason,
-    });
   }
 
   /**
-   * Close the chat session
+   * Disconnect from WebSocket
    */
-  async closeSession(): Promise<void> {
-    if (!this.session) {
-      throw new Error('No active session');
+  disconnect(): void {
+    if (this.socket) {
+      this.socket.disconnect();
+      this.socket = null;
     }
+    this.connected = false;
+    this.session = null;
+  }
 
-    this.log('Closing session');
+  /**
+   * Subscribe to events
+   */
+  on(event: string, callback: EventCallback): () => void {
+    if (!this.eventHandlers.has(event)) {
+      this.eventHandlers.set(event, new Set());
+    }
+    this.eventHandlers.get(event)!.add(callback);
+    
+    // Return unsubscribe function
+    return () => {
+      this.eventHandlers.get(event)?.delete(callback);
+    };
+  }
 
-    // Call REST API to close session
-    const response = await fetch(
-      `${this.config.serviceUrl}/api/v1/chat/sessions/${this.session.id}/close`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.config.token}`,
-        },
+  /**
+   * Emit event to subscribers
+   */
+  private emit(event: string, data: unknown): void {
+    this.eventHandlers.get(event)?.forEach((callback) => {
+      try {
+        callback(data);
+      } catch (error) {
+        console.error(`Error in event handler for ${event}:`, error);
       }
-    );
-
-    if (!response.ok) {
-      throw new Error('Failed to close session');
-    }
-
-    if (this.session) {
-      this.session.status = 'CLOSED';
-    }
-  }
-
-  /**
-   * Get session history
-   */
-  async getHistory(limit = 50): Promise<ChatMessage[]> {
-    if (!this.session) {
-      throw new Error('No active session');
-    }
-
-    const response = await fetch(
-      `${this.config.serviceUrl}/api/v1/chat/sessions/${this.session.id}/messages?limit=${limit}`,
-      {
-        headers: {
-          Authorization: `Bearer ${this.config.token}`,
-        },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error('Failed to fetch history');
-    }
-
-    const result = await response.json();
-
-    return result.data || [];
-  }
-
-  // ==========================================
-  // Utility Methods
-  // ==========================================
-
-  /**
-   * Debug logging
-   */
-  private log(message: string, data?: unknown): void {
-    if (this.config.debug) {
-      console.log(`[ChatSDK Client] ${message}`, data || '');
-    }
-  }
-
-  /**
-   * Check if connected
-   */
-  isConnected(): boolean {
-    return this.connected && this.socket?.connected === true;
-  }
-
-  /**
-   * Get current session
-   */
-  getSession(): ChatSession | null {
-    return this.session;
+    });
   }
 }
-
-export default ChatWebSocketClient;

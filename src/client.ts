@@ -48,6 +48,8 @@ export class ChatWebSocketClient {
           wsUrl = wsUrl.replace(':3000', ':3001');
         }
 
+        console.log('🔌 Chat SDK: Connecting to WebSocket at', wsUrl);
+
         // Create socket connection
         this.socket = io(wsUrl, {
           auth: {
@@ -64,6 +66,8 @@ export class ChatWebSocketClient {
           reconnectionDelay: this.reconnectDelay,
         });
 
+        let connectionAckReceived = false;
+
         // Handle connection acknowledgment
         this.socket.on(WS_EVENTS.CONNECTION_ACK, (data: {
           sessionIds: string[];
@@ -71,6 +75,8 @@ export class ChatWebSocketClient {
           mode: string;
           status: string;
         }) => {
+          connectionAckReceived = true;
+          console.log('✅ Chat SDK: Connection acknowledged, session ID:', data.chatSessionId || data.sessionIds?.[0]);
           this.connected = true;
           this.reconnectAttempts = 0;
 
@@ -90,6 +96,11 @@ export class ChatWebSocketClient {
           } else {
             reject(new Error('No session ID received'));
           }
+        });
+
+        // Handle socket connection
+        this.socket.on('connect', () => {
+          console.log('📡 Chat SDK: Socket connected (transport established)');
         });
 
         // Handle incoming messages
@@ -162,9 +173,12 @@ export class ChatWebSocketClient {
         this.socket.on('connect_error', (error) => {
           this.connected = false;
           this.reconnectAttempts++;
+          console.error('❌ Chat SDK: Connection error (attempt', this.reconnectAttempts + '/' + this.maxReconnectAttempts + '):', error?.message);
           this.emit('error', error);
           
-          if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          // Only reject if max reconnection attempts reached AND we haven't received CONNECTION_ACK
+          if (this.reconnectAttempts >= this.maxReconnectAttempts && !connectionAckReceived) {
+            console.error('❌ Chat SDK: Max reconnection attempts reached, giving up');
             this.config.callbacks?.onError?.(error);
             reject(error);
           }
@@ -172,6 +186,7 @@ export class ChatWebSocketClient {
 
         // Handle disconnect
         this.socket.on('disconnect', (reason) => {
+          console.warn('⚠️ Chat SDK: Disconnected -', reason);
           this.connected = false;
           this.emit('disconnect', { reason });
         });

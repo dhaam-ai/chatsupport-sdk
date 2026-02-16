@@ -44,7 +44,7 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
   switch (action.type) {
     case 'INIT_START':
       return { ...state, loading: true, error: null };
-    
+
     case 'INIT_SUCCESS':
       return {
         ...state,
@@ -53,45 +53,45 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
         loading: false,
         session: action.session,
       };
-    
+
     case 'INIT_ERROR':
       return {
         ...state,
         loading: false,
         error: action.error,
       };
-    
+
     case 'SET_CONNECTED':
       return { ...state, connected: action.connected };
-    
-    case 'ADD_MESSAGE':
-      // Dedupe messages by ID
+
+    case 'ADD_MESSAGE': {
       const exists = state.messages.some((m) => m.id === action.message.id);
       if (exists) return state;
       return {
         ...state,
         messages: [...state.messages, action.message],
       };
-    
+    }
+
     case 'SET_MESSAGES':
       return { ...state, messages: action.messages };
-    
+
     case 'SET_TYPING':
       return {
         ...state,
         isTyping: action.isTyping,
         typingUser: action.typingUser,
       };
-    
+
     case 'UPDATE_SESSION':
       return {
         ...state,
         session: state.session ? { ...state.session, ...action.session } : null,
       };
-    
+
     case 'SET_ERROR':
       return { ...state, error: action.error };
-    
+
     default:
       return state;
   }
@@ -123,20 +123,32 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
   const clientRef = useRef<ChatWebSocketClient | null>(null);
   const initializingRef = useRef(false);
 
-  // Initialize client and connect
+  // ─── Store config in a ref so the effect never re-fires due to
+  // config object identity changes (new object ref on every parent render).
+  // The effect only runs once on mount and cleans up on real unmount.
+  const configRef = useRef<ChatSDKConfig>(config);
   useEffect(() => {
-    if (initializingRef.current || state.initialized) return;
+    // Keep the ref current so callbacks always use latest config values
+    // without triggering a reconnect.
+    configRef.current = config;
+  });
+
+  // ─── Initialize once — stable deps: serviceUrl, appId, token, userId
+  // These are primitives so React compares them by value, not reference.
+  useEffect(() => {
+    // Guard against React dev-mode double-invoke
+    if (initializingRef.current) return;
     initializingRef.current = true;
 
     const initChat = async () => {
       dispatch({ type: 'INIT_START' });
 
       try {
-        // Create client
-        const client = new ChatWebSocketClient(config);
+        const cfg = configRef.current;
+        const client = new ChatWebSocketClient(cfg);
         clientRef.current = client;
 
-        // Subscribe to events
+        // ── Event subscriptions
         client.on('message', (message) => {
           dispatch({ type: 'ADD_MESSAGE', message: message as ChatMessage });
         });
@@ -153,7 +165,7 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
           dispatch({
             type: 'UPDATE_SESSION',
             session: {
-              status: data.status as ChatSDKState['session'] extends null ? never : NonNullable<ChatSDKState['session']>['status'],
+              status: data.status as NonNullable<ChatSDKState['session']>['status'],
               mode: data.mode as 'BOT' | 'HUMAN',
             },
           });
@@ -171,45 +183,62 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
           dispatch({ type: 'SET_ERROR', error: error as Error });
         });
 
-        // Connect
+        // ── Connect
         const session = await client.connect();
 
-        // Fetch existing messages
-        await fetchMessages(config, session.id, dispatch);
+        // ── Fetch existing messages
+        await fetchMessages(configRef.current, session.id, dispatch);
 
         dispatch({ type: 'INIT_SUCCESS', session });
-        config.callbacks?.onConnected?.(session.id);
+        configRef.current.callbacks?.onConnected?.(session.id);
 
       } catch (error) {
+        initializingRef.current = false; // allow retry on real error
         dispatch({ type: 'INIT_ERROR', error: error as Error });
-        config.callbacks?.onError?.(error as Error);
+        configRef.current.callbacks?.onError?.(error as Error);
       }
     };
 
     initChat();
 
-    // Cleanup on unmount
+    // ── Cleanup: only runs on REAL unmount, not on re-renders
     return () => {
+      initializingRef.current = false;
       if (clientRef.current) {
         clientRef.current.disconnect();
         clientRef.current = null;
       }
     };
-  }, [config]);
 
+  // ─── CRITICAL: use primitive values as deps, NOT the config object.
+  // This means the effect only re-runs if the user actually changes their
+  // account or a different widget is mounted — not on every parent render.
+  }, [
+    config.serviceUrl,
+    config.appId,
+    config.token,
+    config.user?.id,
+  ]);
+
+  // ==========================================
   // Actions
-  const sendMessage = useCallback(async (content: string, type: MessageType = 'TEXT') => {
+  // ==========================================
+
+  const sendMessage = useCallback(async (
+    content: string,
+    type: MessageType = 'TEXT',
+  ) => {
     if (!clientRef.current || !state.session) {
       throw new Error('Chat not initialized');
     }
 
-    // Optimistic update - add message immediately
+    // Optimistic update
     const optimisticMessage: ChatMessage = {
       id: `temp-${Date.now()}`,
       chatSessionId: state.session.id,
       senderType: 'CUSTOMER',
-      senderId: config.user.id,
-      senderName: config.user.name,
+      senderId: configRef.current.user.id,
+      senderName: configRef.current.user.name,
       content,
       messageType: type,
       timestamp: new Date(),
@@ -217,7 +246,7 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
 
     dispatch({ type: 'ADD_MESSAGE', message: optimisticMessage });
     clientRef.current.sendMessage(content, type);
-  }, [config, state.session]);
+  }, [state.session]); // no longer depends on `config` object
 
   const startTyping = useCallback(() => {
     clientRef.current?.startTyping();
@@ -229,46 +258,52 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
 
   const closeSession = useCallback(async () => {
     if (!state.session) return;
+    const cfg = configRef.current;
 
     try {
-      await fetch(`${config.serviceUrl}/api/v1/chat/sessions/${state.session.id}/close`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.token}`,
-          'X-Tenant-ID': config.tenantId,
-          'X-App-ID': config.appId,
-          'Content-Type': 'application/json',
+      await fetch(
+        `${cfg.serviceUrl}/api/v1/chat/sessions/${state.session.id}/close`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${cfg.token}`,
+            'X-Tenant-ID': cfg.tenantId,
+            'X-App-ID': cfg.appId,
+            'Content-Type': 'application/json',
+          },
         },
-      });
-
-      dispatch({
-        type: 'UPDATE_SESSION',
-        session: { status: 'CLOSED' },
-      });
+      );
+      dispatch({ type: 'UPDATE_SESSION', session: { status: 'CLOSED' } });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', error: error as Error });
     }
-  }, [config, state.session]);
+  }, [state.session]); // no longer depends on `config` object
 
   const requestAgent = useCallback(async (reason?: string) => {
     clientRef.current?.requestAgent(reason);
   }, []);
 
   const reconnect = useCallback(async () => {
+    // Disconnect existing socket
     if (clientRef.current) {
       clientRef.current.disconnect();
+      clientRef.current = null;
     }
-    
+
+    // Reset guard so init can run again
     initializingRef.current = false;
     dispatch({ type: 'INIT_START' });
-    
-    // Re-initialize will be triggered by useEffect
-    const client = new ChatWebSocketClient(config);
-    clientRef.current = client;
-    
-    const session = await client.connect();
-    dispatch({ type: 'INIT_SUCCESS', session });
-  }, [config]);
+
+    try {
+      const cfg = configRef.current;
+      const client = new ChatWebSocketClient(cfg);
+      clientRef.current = client;
+      const session = await client.connect();
+      dispatch({ type: 'INIT_SUCCESS', session });
+    } catch (error) {
+      dispatch({ type: 'INIT_ERROR', error: error as Error });
+    }
+  }, []);
 
   const actions: ChatSDKActions = {
     sendMessage,
@@ -331,7 +366,7 @@ export function useChatState(): ChatSDKState {
 async function fetchMessages(
   config: ChatSDKConfig,
   sessionId: string,
-  dispatch: React.Dispatch<ChatAction>
+  dispatch: React.Dispatch<ChatAction>,
 ): Promise<void> {
   try {
     const response = await fetch(
@@ -342,22 +377,24 @@ async function fetchMessages(
           'X-Tenant-ID': config.tenantId,
           'X-App-ID': config.appId,
         },
-      }
+      },
     );
 
     if (response.ok) {
       const data = await response.json();
       if (data.success && data.data?.messages) {
-        const messages: ChatMessage[] = data.data.messages.map((m: Record<string, unknown>) => ({
-          id: m.id,
-          chatSessionId: m.chatSessionId,
-          senderType: m.senderType,
-          senderId: m.senderId,
-          content: m.content,
-          messageType: m.messageType,
-          timestamp: new Date(m.createdAt as string),
-          metadata: m.metadata,
-        }));
+        const messages: ChatMessage[] = data.data.messages.map(
+          (m: Record<string, unknown>) => ({
+            id: m.id,
+            chatSessionId: m.chatSessionId,
+            senderType: m.senderType,
+            senderId: m.senderId,
+            content: m.content,
+            messageType: m.messageType,
+            timestamp: new Date(m.createdAt as string),
+            metadata: m.metadata,
+          }),
+        );
         dispatch({ type: 'SET_MESSAGES', messages });
       }
     }

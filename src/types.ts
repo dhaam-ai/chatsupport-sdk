@@ -163,8 +163,8 @@ export interface ChatSDKActions {
  */
 export const WS_EVENTS = {
   // Client -> Server
-  JOIN_SESSION: 'chat.session.join',
-  LEAVE_SESSION: 'chat.session.leave',
+  JOIN_SESSION: 'chat.join.session',
+  LEAVE_SESSION: 'chat.leave.session',
   MESSAGE_SEND: 'chat.message.send',
   TYPING_START: 'chat.typing.start',
   TYPING_STOP: 'chat.typing.stop',
@@ -173,10 +173,11 @@ export const WS_EVENTS = {
   // Server -> Client
   CONNECTION_ACK: 'chat.connection.ack',
   MESSAGE_RECEIVE: 'chat.message.receive',
-  TYPING_INDICATOR: 'chat.typing.indicator',
+  TYPING_INDICATOR: 'chat.typing',
   AGENT_JOINED: 'chat.agent.joined',
   AGENT_LEFT: 'chat.agent.left',
-  SESSION_CLOSED: 'chat.session.closed',
+  SESSION_CLOSED: 'chat.closed',
   STATUS_CHANGED: 'chat.status.changed',
+  ESCALATED: 'chat.escalated',
   ERROR: 'chat.error',
 } as const;
