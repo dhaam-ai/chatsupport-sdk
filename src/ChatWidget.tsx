@@ -765,16 +765,8 @@ export function ChatWidget({ config, defaultOpen = false }: ChatWidgetProps): JS
 
   return (
     <div style={styles.container}>
-      {isOpen ? (
-        <ChatProvider config={config}>
-          <ChatContent
-            onClose={() => setIsOpen(false)}
-            styles={styles}
-            config={config}
-            theme={theme}
-          />
-        </ChatProvider>
-      ) : (
+      {/* Launcher button — only visible when chat is closed */}
+      {!isOpen && (
         <button
           style={{
             ...styles.launcher,
@@ -791,6 +783,18 @@ export function ChatWidget({ config, defaultOpen = false }: ChatWidgetProps): JS
           <ChatIcon />
         </button>
       )}
+
+      {/* ChatProvider ALWAYS mounted — WebSocket connects on load, never disconnects on close */}
+      <ChatProvider config={config}>
+        <div style={{ display: isOpen ? 'block' : 'none' }}>
+          <ChatContent
+            onClose={() => setIsOpen(false)}
+            styles={styles}
+            config={config}
+            theme={theme}
+          />
+        </div>
+      </ChatProvider>
     </div>
   );
 }
