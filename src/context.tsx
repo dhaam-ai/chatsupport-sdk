@@ -118,27 +118,29 @@ interface ChatProviderProps {
   children: React.ReactNode;
 }
 
+// ─── Module-level guard — survives React 19 StrictMode ref resets.
+// Keyed by appId+userId so multiple widget instances work independently.
+const _activeConnections = new Map<string, boolean>();
+
 export function ChatProvider({ config, children }: ChatProviderProps): JSX.Element {
   const [state, dispatch] = useReducer(chatReducer, initialState);
   const clientRef = useRef<ChatWebSocketClient | null>(null);
-  const initializingRef = useRef(false);
+  // connectionKey uniquely identifies this widget instance
+  const connectionKey = `${config.appId}:${config.user?.id}`;
 
   // ─── Store config in a ref so the effect never re-fires due to
   // config object identity changes (new object ref on every parent render).
-  // The effect only runs once on mount and cleans up on real unmount.
   const configRef = useRef<ChatSDKConfig>(config);
   useEffect(() => {
-    // Keep the ref current so callbacks always use latest config values
-    // without triggering a reconnect.
     configRef.current = config;
   });
 
-  // ─── Initialize once — stable deps: serviceUrl, appId, token, userId
-  // These are primitives so React compares them by value, not reference.
+  // ─── Initialize once — stable primitive deps only
   useEffect(() => {
-    // Guard against React dev-mode double-invoke
-    if (initializingRef.current) return;
-    initializingRef.current = true;
+    // Guard against React 19 StrictMode double-invoke.
+    // Module-level map survives ref resets between mount/unmount cycles.
+    if (_activeConnections.get(connectionKey)) return;
+    _activeConnections.set(connectionKey, true);
 
     const initChat = async () => {
       dispatch({ type: 'INIT_START' });
@@ -193,7 +195,7 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
         configRef.current.callbacks?.onConnected?.(session.id);
 
       } catch (error) {
-        initializingRef.current = false; // allow retry on real error
+        _activeConnections.delete(connectionKey); // allow retry on real error
         dispatch({ type: 'INIT_ERROR', error: error as Error });
         configRef.current.callbacks?.onError?.(error as Error);
       }
@@ -201,9 +203,9 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
 
     initChat();
 
-    // ── Cleanup: only runs on REAL unmount, not on re-renders
+    // ── Cleanup: only runs on REAL unmount
     return () => {
-      initializingRef.current = false;
+      _activeConnections.delete(connectionKey);
       if (clientRef.current) {
         clientRef.current.disconnect();
         clientRef.current = null;
@@ -214,10 +216,9 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
   // This means the effect only re-runs if the user actually changes their
   // account or a different widget is mounted — not on every parent render.
   }, [
+    connectionKey,
     config.serviceUrl,
-    config.appId,
     config.token,
-    config.user?.id,
   ]);
 
   // ==========================================
@@ -291,7 +292,7 @@ export function ChatProvider({ config, children }: ChatProviderProps): JSX.Eleme
     }
 
     // Reset guard so init can run again
-    initializingRef.current = false;
+    _activeConnections.delete(connectionKey);
     dispatch({ type: 'INIT_START' });
 
     try {

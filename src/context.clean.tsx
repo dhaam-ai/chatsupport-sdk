@@ -1,136 +1,96 @@
 // ==========================================
-// Chat SDK - React Context & Provider
-// Clean implementation with proper state management
+// Chat SDK - React Context
 // ==========================================
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback, useRef } from 'react';
-import { ChatWebSocketClient } from './client';
 import type {
   ChatSDKConfig,
   ChatSDKState,
   ChatSDKActions,
-  ChatSDKContextValue,
   ChatMessage,
-  ChatSession,
   MessageType,
-  SenderType,
-} from './types.clean';
+} from './types';
+import { ChatWebSocketClient } from './client';
+
+type EventCallback = (...args: unknown[]) => void;
 
 // ==========================================
-// Initial State
+// State Management
 // ==========================================
+
+type ChatAction =
+  | { type: 'INIT_START' }
+  | { type: 'INIT_SUCCESS'; session: ChatSDKState['session'] }
+  | { type: 'INIT_ERROR'; error: Error }
+  | { type: 'SET_CONNECTED'; connected: boolean }
+  | { type: 'ADD_MESSAGE'; message: ChatMessage }
+  | { type: 'SET_MESSAGES'; messages: ChatMessage[] }
+  | { type: 'SET_TYPING'; isTyping: boolean; typingUser?: string }
+  | { type: 'UPDATE_SESSION'; session: Partial<ChatSDKState['session']> }
+  | { type: 'SET_ERROR'; error: Error | null };
 
 const initialState: ChatSDKState = {
   initialized: false,
   connected: false,
-  loading: false,
+  loading: true,
   session: null,
   messages: [],
   isTyping: false,
   typingUser: undefined,
   error: null,
-  unreadCount: 0,
 };
-
-// ==========================================
-// Action Types
-// ==========================================
-
-type ChatAction =
-  | { type: 'SET_LOADING'; payload: boolean }
-  | { type: 'SET_CONNECTED'; payload: boolean }
-  | { type: 'SET_INITIALIZED'; payload: boolean }
-  | { type: 'SET_SESSION'; payload: ChatSession | null }
-  | { type: 'SET_MESSAGES'; payload: ChatMessage[] }
-  | { type: 'ADD_MESSAGE'; payload: ChatMessage }
-  | { type: 'SET_TYPING'; payload: { isTyping: boolean; user?: string } }
-  | { type: 'SET_ERROR'; payload: Error | null }
-  | { type: 'UPDATE_STATUS'; payload: { mode?: ChatSession['mode']; status?: ChatSession['status'] } }
-  | { type: 'SET_AGENT'; payload: { agentId: string; agentName: string } }
-  | { type: 'CLEAR_AGENT' }
-  | { type: 'INCREMENT_UNREAD' }
-  | { type: 'CLEAR_UNREAD' }
-  | { type: 'RESET' };
-
-// ==========================================
-// Reducer
-// ==========================================
 
 function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
   switch (action.type) {
-    case 'SET_LOADING':
-      return { ...state, loading: action.payload };
+    case 'INIT_START':
+      return { ...state, loading: true, error: null };
+
+    case 'INIT_SUCCESS':
+      return {
+        ...state,
+        initialized: true,
+        connected: true,
+        loading: false,
+        session: action.session,
+      };
+
+    case 'INIT_ERROR':
+      return {
+        ...state,
+        loading: false,
+        error: action.error,
+      };
 
     case 'SET_CONNECTED':
-      return { ...state, connected: action.payload };
+      return { ...state, connected: action.connected };
 
-    case 'SET_INITIALIZED':
-      return { ...state, initialized: action.payload };
-
-    case 'SET_SESSION':
-      return { ...state, session: action.payload };
+    case 'ADD_MESSAGE': {
+      const exists = state.messages.some((m) => m.id === action.message.id);
+      if (exists) return state;
+      return {
+        ...state,
+        messages: [...state.messages, action.message],
+      };
+    }
 
     case 'SET_MESSAGES':
-      return { ...state, messages: action.payload };
-
-    case 'ADD_MESSAGE':
-      // Avoid duplicates
-      if (state.messages.some((m) => m.id === action.payload.id)) {
-        return state;
-      }
-      return { ...state, messages: [...state.messages, action.payload] };
+      return { ...state, messages: action.messages };
 
     case 'SET_TYPING':
       return {
         ...state,
-        isTyping: action.payload.isTyping,
-        typingUser: action.payload.user,
+        isTyping: action.isTyping,
+        typingUser: action.typingUser,
+      };
+
+    case 'UPDATE_SESSION':
+      return {
+        ...state,
+        session: state.session ? { ...state.session, ...action.session } : null,
       };
 
     case 'SET_ERROR':
-      return { ...state, error: action.payload, loading: false };
-
-    case 'UPDATE_STATUS':
-      if (!state.session) return state;
-      return {
-        ...state,
-        session: {
-          ...state.session,
-          ...(action.payload.mode && { mode: action.payload.mode }),
-          ...(action.payload.status && { status: action.payload.status }),
-        },
-      };
-
-    case 'SET_AGENT':
-      if (!state.session) return state;
-      return {
-        ...state,
-        session: {
-          ...state.session,
-          assignedAgentId: action.payload.agentId,
-          assignedAgentName: action.payload.agentName,
-        },
-      };
-
-    case 'CLEAR_AGENT':
-      if (!state.session) return state;
-      return {
-        ...state,
-        session: {
-          ...state.session,
-          assignedAgentId: undefined,
-          assignedAgentName: undefined,
-        },
-      };
-
-    case 'INCREMENT_UNREAD':
-      return { ...state, unreadCount: state.unreadCount + 1 };
-
-    case 'CLEAR_UNREAD':
-      return { ...state, unreadCount: 0 };
-
-    case 'RESET':
-      return { ...initialState };
+      return { ...state, error: action.error };
 
     default:
       return state;
@@ -141,10 +101,16 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
 // Context
 // ==========================================
 
-const ChatSDKContext = createContext<ChatSDKContextValue | null>(null);
+interface ChatContextValue {
+  state: ChatSDKState;
+  actions: ChatSDKActions;
+  config: ChatSDKConfig | null;
+}
+
+const ChatContext = createContext<ChatContextValue | null>(null);
 
 // ==========================================
-// Provider Props
+// Provider
 // ==========================================
 
 interface ChatProviderProps {
@@ -152,280 +118,193 @@ interface ChatProviderProps {
   children: React.ReactNode;
 }
 
-// ==========================================
-// Provider Component
-// ==========================================
+// ─── Module-level guard — survives React 19 StrictMode ref resets.
+// Keyed by appId+userId so multiple widget instances work independently.
+const _activeConnections = new Map<string, boolean>();
 
-export const ChatProvider: React.FC<ChatProviderProps> = ({ config, children }) => {
+export function ChatProvider({ config, children }: ChatProviderProps): JSX.Element {
   const [state, dispatch] = useReducer(chatReducer, initialState);
   const clientRef = useRef<ChatWebSocketClient | null>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const configRef = useRef(config);
+  // connectionKey uniquely identifies this widget instance
+  const connectionKey = `${config.appId}:${config.user?.id}`;
 
-  // Keep config ref updated
+  // ─── Store config in a ref so the effect never re-fires due to
+  // config object identity changes (new object ref on every parent render).
+  const configRef = useRef<ChatSDKConfig>(config);
   useEffect(() => {
     configRef.current = config;
-  }, [config]);
+  });
 
-  // Debug logging
-  const log = useCallback(
-    (message: string, data?: unknown) => {
-      if (configRef.current.debug) {
-        console.log(`[ChatSDK] ${message}`, data || '');
-      }
-    },
-    []
-  );
-
-  // Initialize WebSocket client
+  // ─── Initialize once — stable primitive deps only
   useEffect(() => {
-    const initializeClient = async () => {
-      try {
-        dispatch({ type: 'SET_LOADING', payload: true });
-        log('Initializing WebSocket client...');
+    // Guard against React 19 StrictMode double-invoke.
+    // Module-level map survives ref resets between mount/unmount cycles.
+    if (_activeConnections.get(connectionKey)) return;
+    _activeConnections.set(connectionKey, true);
 
-        // Create client
-        const client = new ChatWebSocketClient(config);
+    const initChat = async () => {
+      dispatch({ type: 'INIT_START' });
+
+      try {
+        const cfg = configRef.current;
+        const client = new ChatWebSocketClient(cfg);
         clientRef.current = client;
 
-        // Set up event handlers
-        client.on('message', (message: ChatMessage) => {
-          log('Message received', message);
-          dispatch({ type: 'ADD_MESSAGE', payload: message });
-          dispatch({ type: 'SET_TYPING', payload: { isTyping: false } });
-
-          // Increment unread if not from customer
-          if (message.senderType !== 'CUSTOMER') {
-            dispatch({ type: 'INCREMENT_UNREAD' });
-          }
-
-          config.callbacks?.onMessage?.(message);
+        // ── Event subscriptions
+        client.on('message', (message) => {
+          dispatch({ type: 'ADD_MESSAGE', message: message as ChatMessage });
         });
 
-        client.on('typing', (data: { senderType: SenderType; senderId?: string; isTyping: boolean }) => {
-          log('Typing indicator', data);
-          if (data.senderType !== 'CUSTOMER') {
-            dispatch({
-              type: 'SET_TYPING',
-              payload: {
-                isTyping: data.isTyping,
-                user: data.senderType === 'BOT' ? 'AI Assistant' : 'Agent',
-              },
-            });
-          }
-        });
-
-        client.on('agentJoined', (data: { agentId: string; agentName: string }) => {
-          log('Agent joined', data);
-          dispatch({ type: 'SET_AGENT', payload: data });
-          dispatch({ type: 'UPDATE_STATUS', payload: { mode: 'HUMAN', status: 'ASSIGNED' } });
-          config.callbacks?.onAgentJoined?.(data.agentId, data.agentName);
-        });
-
-        client.on('agentLeft', (data: { agentId: string }) => {
-          log('Agent left', data);
-          config.callbacks?.onAgentLeft?.(data.agentId);
-        });
-
-        client.on('statusChange', (data: { mode: string; status: string }) => {
-          log('Status changed', data);
+        client.on('typing', ((data: any) => {
           dispatch({
-            type: 'UPDATE_STATUS',
-            payload: {
-              mode: data.mode as ChatSession['mode'],
-              status: data.status as ChatSession['status'],
+            type: 'SET_TYPING',
+            isTyping: data.isTyping,
+            typingUser: data.senderId,
+          });
+        }) as EventCallback);
+
+        client.on('statusChange', ((data: any) => {
+          dispatch({
+            type: 'UPDATE_SESSION',
+            session: {
+              status: data.status as NonNullable<ChatSDKState['session']>['status'],
+              mode: data.mode as 'BOT' | 'HUMAN',
             },
           });
-          config.callbacks?.onStatusChange?.(
-            data.status as ChatSession['status'],
-            data.mode as ChatSession['mode']
-          );
-        });
-
-        client.on('sessionClosed', () => {
-          log('Session closed');
-          dispatch({ type: 'UPDATE_STATUS', payload: { status: 'CLOSED' } });
-          config.callbacks?.onSessionClosed?.();
-        });
-
-        client.on('error', (error: Error) => {
-          log('Error', error);
-          dispatch({ type: 'SET_ERROR', payload: error });
-          config.callbacks?.onError?.(error);
-        });
+        }) as EventCallback);
 
         client.on('disconnect', () => {
-          log('Disconnected');
-          dispatch({ type: 'SET_CONNECTED', payload: false });
-          config.callbacks?.onDisconnected?.('disconnected');
+          dispatch({ type: 'SET_CONNECTED', connected: false });
         });
 
         client.on('reconnect', () => {
-          log('Reconnected');
-          dispatch({ type: 'SET_CONNECTED', payload: true });
-          config.callbacks?.onReconnected?.();
+          dispatch({ type: 'SET_CONNECTED', connected: true });
         });
 
-        // Connect
-        const session = await client.connect();
-        
-        log('Connected', session);
-        dispatch({ type: 'SET_SESSION', payload: session });
-        dispatch({ type: 'SET_CONNECTED', payload: true });
-        dispatch({ type: 'SET_INITIALIZED', payload: true });
-        dispatch({ type: 'SET_LOADING', payload: false });
+        client.on('error', (error) => {
+          dispatch({ type: 'SET_ERROR', error: error as Error });
+        });
 
-        config.callbacks?.onConnected?.(session.id);
+        // ── Connect
+        const session = await client.connect();
+
+        // ── Fetch existing messages
+        await fetchMessages(configRef.current, session.id, dispatch);
+
+        dispatch({ type: 'INIT_SUCCESS', session });
+        configRef.current.callbacks?.onConnected?.(session.id);
+
       } catch (error) {
-        log('Failed to initialize', error);
-        dispatch({ type: 'SET_ERROR', payload: error as Error });
-        dispatch({ type: 'SET_LOADING', payload: false });
-        config.callbacks?.onError?.(error as Error);
+        _activeConnections.delete(connectionKey); // allow retry on real error
+        dispatch({ type: 'INIT_ERROR', error: error as Error });
+        configRef.current.callbacks?.onError?.(error as Error);
       }
     };
 
-    initializeClient();
+    initChat();
 
-    // Cleanup on unmount
+    // ── Cleanup: only runs on REAL unmount
     return () => {
+      _activeConnections.delete(connectionKey);
       if (clientRef.current) {
         clientRef.current.disconnect();
         clientRef.current = null;
       }
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
     };
-  }, [config.serviceUrl, config.appId, config.token, config.user.id]);
+
+  // ─── CRITICAL: use primitive values as deps, NOT the config object.
+  // This means the effect only re-runs if the user actually changes their
+  // account or a different widget is mounted — not on every parent render.
+  }, [
+    connectionKey,
+    config.serviceUrl,
+    config.token,
+  ]);
 
   // ==========================================
   // Actions
   // ==========================================
 
-  const sendMessage = useCallback(
-    async (content: string, type: MessageType = 'TEXT') => {
-      const client = clientRef.current;
-      if (!client || !state.session) {
-        dispatch({ type: 'SET_ERROR', payload: new Error('Not connected') });
-        return;
-      }
-
-      try {
-        dispatch({ type: 'SET_LOADING', payload: true });
-
-        // Create optimistic message
-        const optimisticMessage: ChatMessage = {
-          id: `temp-${Date.now()}`,
-          chatSessionId: state.session.id,
-          senderType: 'CUSTOMER',
-          senderId: configRef.current.user.id,
-          senderName: configRef.current.user.name,
-          content,
-          messageType: type,
-          timestamp: new Date(),
-        };
-
-        dispatch({ type: 'ADD_MESSAGE', payload: optimisticMessage });
-
-        // Send via WebSocket
-        await client.sendMessage(content, type);
-
-        dispatch({ type: 'SET_LOADING', payload: false });
-      } catch (error) {
-        dispatch({ type: 'SET_ERROR', payload: error as Error });
-      }
-    },
-    [state.session]
-  );
-
-  const startTyping = useCallback(() => {
-    const client = clientRef.current;
-    if (!client) return;
-
-    client.startTyping();
-
-    // Clear previous timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
+  const sendMessage = useCallback(async (
+    content: string,
+    type: MessageType = 'TEXT',
+  ) => {
+    if (!clientRef.current || !state.session) {
+      throw new Error('Chat not initialized');
     }
 
-    // Auto-stop after 3 seconds
-    typingTimeoutRef.current = setTimeout(() => {
-      client.stopTyping();
-    }, 3000);
+    // Optimistic update
+    const optimisticMessage: ChatMessage = {
+      id: `temp-${Date.now()}`,
+      chatSessionId: state.session.id,
+      senderType: 'CUSTOMER',
+      senderId: configRef.current.user.id,
+      senderName: configRef.current.user.name,
+      content,
+      messageType: type,
+      timestamp: new Date(),
+    };
+
+    dispatch({ type: 'ADD_MESSAGE', message: optimisticMessage });
+    clientRef.current.sendMessage(content, type);
+  }, [state.session]); // no longer depends on `config` object
+
+  const startTyping = useCallback(() => {
+    clientRef.current?.startTyping();
   }, []);
 
   const stopTyping = useCallback(() => {
-    const client = clientRef.current;
-    if (!client) return;
-
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-
-    client.stopTyping();
+    clientRef.current?.stopTyping();
   }, []);
 
   const closeSession = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
+    if (!state.session) return;
+    const cfg = configRef.current;
 
     try {
-      dispatch({ type: 'SET_LOADING', payload: true });
-      await client.closeSession();
-      dispatch({ type: 'UPDATE_STATUS', payload: { status: 'CLOSED' } });
-      dispatch({ type: 'SET_LOADING', payload: false });
+      await fetch(
+        `${cfg.serviceUrl}/api/v1/chat/sessions/${state.session.id}/close`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${cfg.token}`,
+            'X-Tenant-ID': cfg.tenantId,
+            'X-App-ID': cfg.appId,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      dispatch({ type: 'UPDATE_SESSION', session: { status: 'CLOSED' } });
     } catch (error) {
-      dispatch({ type: 'SET_ERROR', payload: error as Error });
+      dispatch({ type: 'SET_ERROR', error: error as Error });
     }
+  }, [state.session]); // no longer depends on `config` object
+
+  const requestAgent = useCallback(async (reason?: string) => {
+    clientRef.current?.requestAgent(reason);
   }, []);
-
-  const requestAgent = useCallback(
-    async (reason?: string) => {
-      const client = clientRef.current;
-      if (!client) return;
-
-      try {
-        dispatch({ type: 'SET_LOADING', payload: true });
-        await client.requestAgent(reason);
-        dispatch({ type: 'UPDATE_STATUS', payload: { status: 'WAITING_FOR_AGENT' } });
-        dispatch({ type: 'SET_LOADING', payload: false });
-      } catch (error) {
-        dispatch({ type: 'SET_ERROR', payload: error as Error });
-      }
-    },
-    []
-  );
 
   const reconnect = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
+    // Disconnect existing socket
+    if (clientRef.current) {
+      clientRef.current.disconnect();
+      clientRef.current = null;
+    }
+
+    // Reset guard so init can run again
+    _activeConnections.delete(connectionKey);
+    dispatch({ type: 'INIT_START' });
 
     try {
-      dispatch({ type: 'SET_LOADING', payload: true });
-      dispatch({ type: 'SET_ERROR', payload: null });
-      
+      const cfg = configRef.current;
+      const client = new ChatWebSocketClient(cfg);
+      clientRef.current = client;
       const session = await client.connect();
-      
-      dispatch({ type: 'SET_SESSION', payload: session });
-      dispatch({ type: 'SET_CONNECTED', payload: true });
-      dispatch({ type: 'SET_LOADING', payload: false });
+      dispatch({ type: 'INIT_SUCCESS', session });
     } catch (error) {
-      dispatch({ type: 'SET_ERROR', payload: error as Error });
+      dispatch({ type: 'INIT_ERROR', error: error as Error });
     }
   }, []);
-
-  const markAsRead = useCallback(() => {
-    dispatch({ type: 'CLEAR_UNREAD' });
-  }, []);
-
-  const clearError = useCallback(() => {
-    dispatch({ type: 'SET_ERROR', payload: null });
-  }, []);
-
-  // ==========================================
-  // Context Value
-  // ==========================================
 
   const actions: ChatSDKActions = {
     sendMessage,
@@ -434,53 +313,93 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ config, children }) 
     closeSession,
     requestAgent,
     reconnect,
-    markAsRead,
-    clearError,
   };
 
-  const contextValue: ChatSDKContextValue = {
+  const value: ChatContextValue = {
     state,
     actions,
     config,
   };
 
   return (
-    <ChatSDKContext.Provider value={contextValue}>
+    <ChatContext.Provider value={value}>
       {children}
-    </ChatSDKContext.Provider>
+    </ChatContext.Provider>
   );
-};
+}
 
 // ==========================================
-// Hook
+// Hooks
 // ==========================================
 
-/**
- * Hook to access chat SDK state and actions
- * Must be used within ChatProvider
- */
-export function useChat(): ChatSDKContextValue {
-  const context = useContext(ChatSDKContext);
-
+export function useChat(): ChatContextValue {
+  const context = useContext(ChatContext);
   if (!context) {
     throw new Error('useChat must be used within a ChatProvider');
   }
-
   return context;
 }
 
-/**
- * Hook to access just the chat state
- */
-export function useChatState(): ChatSDKState {
-  return useChat().state;
+export function useChatMessages(): ChatMessage[] {
+  const { state } = useChat();
+  return state.messages;
 }
 
-/**
- * Hook to access just the chat actions
- */
+export function useChatSession(): ChatSDKState['session'] {
+  const { state } = useChat();
+  return state.session;
+}
+
 export function useChatActions(): ChatSDKActions {
-  return useChat().actions;
+  const { actions } = useChat();
+  return actions;
 }
 
-export default ChatProvider;
+export function useChatState(): ChatSDKState {
+  const { state } = useChat();
+  return state;
+}
+
+// ==========================================
+// Helpers
+// ==========================================
+
+async function fetchMessages(
+  config: ChatSDKConfig,
+  sessionId: string,
+  dispatch: React.Dispatch<ChatAction>,
+): Promise<void> {
+  try {
+    const response = await fetch(
+      `${config.serviceUrl}/api/v1/chat/sessions/${sessionId}/full`,
+      {
+        headers: {
+          'Authorization': `Bearer ${config.token}`,
+          'X-Tenant-ID': config.tenantId,
+          'X-App-ID': config.appId,
+        },
+      },
+    );
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.data?.messages) {
+        const messages: ChatMessage[] = data.data.messages.map(
+          (m: Record<string, unknown>) => ({
+            id: m.id,
+            chatSessionId: m.chatSessionId,
+            senderType: m.senderType,
+            senderId: m.senderId,
+            content: m.content,
+            messageType: m.messageType,
+            timestamp: new Date(m.createdAt as string),
+            metadata: m.metadata,
+          }),
+        );
+        dispatch({ type: 'SET_MESSAGES', messages });
+      }
+    }
+  } catch (error) {
+    console.error('Failed to fetch messages:', error);
+  }
+}
