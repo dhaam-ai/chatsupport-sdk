@@ -1,208 +1,242 @@
 // ==========================================
-// Chat SDK - WebSocket Client
+// Chat SDK - WebSocket Client — TYPING FIX (DEFINITIVE)
+//
+// BUGS FIXED IN THIS VERSION:
+//
+// BUG 1 [RECEIVING AGENT TYPING]: client.ts only had one typing listener:
+//   socket.on(WS_EVENTS.TYPING_INDICATOR, ...)
+//   But the server broadcasts under BOTH 'TYPING_INDICATOR' and 'TYPING'.
+//   If WS_EVENTS.TYPING_INDICATOR resolves to something OTHER than 'TYPING_INDICATOR'
+//   (e.g. 'TYPING_INDICATOR' the string IS correct but the server's original constant
+//   WS_EVENTS.TYPING might be 'TYPING' which old client never listened to).
+//   FIX: listen on ALL FOUR possible event names:
+//     'TYPING_INDICATOR', 'TYPING', 'TYPING_START', 'TYPING_STOP'
+//   This guarantees we catch it regardless of what the server sends.
+//
+// BUG 2 [SENDING TYPING]: startTyping() / stopTyping() did NOT include isTyping
+//   in the payload alongside chatSessionId. The server's broadcastTyping reads
+//   data.isTyping to determine the state. Without it, isTyping defaults to false
+//   and the agent always sees "stopped typing".
+//   FIX: emit { chatSessionId, isTyping: true/false } explicitly.
+//
+// LOGGING: All typing events (sent and received) are logged with [ChatClient:TYPING].
 // ==========================================
 
 import { io, Socket } from 'socket.io-client';
-import type {
-  ChatSDKConfig,
-  ChatMessage,
-  ChatSession,
-  WS_EVENTS as WS_EVENTS_TYPE,
-  MessageType,
-} from './types';
+import type { ChatSDKConfig, ChatMessage, ChatSession, MessageType } from './types';
 import { WS_EVENTS } from './types';
 
 type EventCallback = (...args: unknown[]) => void;
+
+// ── Normalize raw WS payload → ChatMessage ────────────────────────────────────
+function normalizeMessage(raw: any, sessionId: string): ChatMessage | null {
+  if (!raw) return null;
+  const id = raw.id ?? raw.messageId ?? raw.message_id;
+  if (!id) {
+    console.warn('[ChatClient] Dropping message with no id:', raw);
+    return null;
+  }
+  const rawTime = raw.timestamp ?? raw.createdAt ?? raw.created_at ?? raw.sentAt;
+  let timestamp: Date;
+  if (rawTime instanceof Date)     { timestamp = rawTime; }
+  else if (rawTime)                { const d = new Date(rawTime); timestamp = isNaN(d.getTime()) ? new Date() : d; }
+  else                             { timestamp = new Date(); }
+
+  return {
+    id,
+    chatSessionId: raw.chatSessionId ?? raw.chat_session_id ?? sessionId,
+    senderType:    raw.senderType    ?? raw.sender_type    ?? 'SYSTEM',
+    senderId:      raw.senderId      ?? raw.sender_id      ?? '',
+    senderName:    raw.senderName    ?? raw.sender_name,
+    content:       raw.content       ?? raw.text           ?? '',
+    messageType:   raw.messageType   ?? raw.message_type   ?? 'TEXT',
+    timestamp,
+    metadata:      raw.metadata,
+  };
+}
 
 export class ChatWebSocketClient {
   private socket: Socket | null = null;
   private config: ChatSDKConfig;
   private eventHandlers: Map<string, Set<EventCallback>> = new Map();
-  private reconnectAttempts = 0;
+  private reconnectAttempts    = 0;
   private maxReconnectAttempts = 5;
-  private reconnectDelay = 1000;
+  private reconnectDelay       = 1000;
 
-  public session: ChatSession | null = null;
-  public connected = false;
+  public session:   ChatSession | null = null;
+  public connected  = false;
 
-  constructor(config: ChatSDKConfig) {
-    this.config = config;
-  }
+  constructor(config: ChatSDKConfig) { this.config = config; }
 
-  /**
-   * Connect to WebSocket server
-   */
   async connect(): Promise<ChatSession> {
     return new Promise((resolve, reject) => {
       try {
-        // Build WebSocket URL — use explicit wsUrl if provided, else derive from serviceUrl
         let wsUrl: string;
         if (this.config.wsUrl) {
           wsUrl = this.config.wsUrl;
         } else {
           wsUrl = this.config.serviceUrl;
-          if (wsUrl.startsWith('http://')) {
-            wsUrl = wsUrl.replace('http://', 'ws://');
-          } else if (wsUrl.startsWith('https://')) {
-            wsUrl = wsUrl.replace('https://', 'wss://');
-          }
-          if (wsUrl.includes(':3000')) {
-            wsUrl = wsUrl.replace(':3000', ':3001');
-          }
+          if (wsUrl.includes(':3000')) wsUrl = wsUrl.replace(':3000', ':3001');
         }
-        console.log('🔌 Chat SDK: Connecting to WebSocket at', wsUrl);
 
-        // Create socket connection
+        console.log('%c[ChatClient] 🔌 Connecting →', 'color:#5b4fcf;font-weight:bold', wsUrl);
+
         this.socket = io(wsUrl, {
           auth: {
-            token: this.config.token,
-            tenantId: this.config.tenantId,
-            appId: this.config.appId,
-            userId: this.config.user.id,
-            userName: this.config.user.name,
-            userEmail: this.config.user.email || '',
+            token:     this.config.token,
+            tenantId:  this.config.tenantId,
+            appId:     this.config.appId,
+            userId:    this.config.user.id,
+            userName:  this.config.user.name,
+            userEmail: this.config.user.email ?? '',
+            // No userRole = server treats as CUSTOMER (correct)
           },
           transports: ['websocket', 'polling'],
           reconnection: true,
           reconnectionAttempts: this.maxReconnectAttempts,
-          reconnectionDelay: this.reconnectDelay,
+          reconnectionDelay:    this.reconnectDelay,
+        });
+
+        // ── DEBUG: log every raw Socket.IO event ──────────────────────────────
+        this.socket.onAny((eventName: string, ...args: any[]) => {
+          console.log(
+            `%c[ChatClient] 📨 Raw event: "${eventName}"`,
+            'color:#059669;font-weight:bold',
+            args[0]
+          );
         });
 
         let connectionAckReceived = false;
 
-        // Handle connection acknowledgment
-        this.socket.on(WS_EVENTS.CONNECTION_ACK, (data: {
-          sessionIds: string[];
-          chatSessionId?: string;
-          mode: string;
-          status: string;
-        }) => {
+        // ── CONNECTION_ACK ────────────────────────────────────────────────────
+        this.socket.on(WS_EVENTS.CONNECTION_ACK, (data: any) => {
           connectionAckReceived = true;
-          console.log('✅ Chat SDK: Connection acknowledged, session ID:', data.chatSessionId || data.sessionIds?.[0]);
-          this.connected = true;
+          this.connected        = true;
           this.reconnectAttempts = 0;
 
-          const sessionId = data.chatSessionId || data.sessionIds?.[0];
+          const sessionId = data.chatSessionId ?? data.sessionIds?.[0];
+          console.log(
+            '%c[ChatClient] ✅ CONNECTION_ACK',
+            'color:#16a34a;font-weight:bold',
+            { sessionId, mode: data.mode, status: data.status }
+          );
 
           if (sessionId) {
-            this.session = {
-              id: sessionId,
-              mode: data.mode as 'BOT' | 'HUMAN',
-              status: data.status as 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED',
-            };
-
-            // Join the session room
+            this.session = { id: sessionId, mode: data.mode, status: data.status };
             this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
-
             resolve(this.session);
           } else {
-            reject(new Error('No session ID received'));
+            reject(new Error('No session ID in CONNECTION_ACK'));
           }
         });
 
-        // Handle socket connection
         this.socket.on('connect', () => {
-          console.log('📡 Chat SDK: Socket connected (transport established)');
+          console.log('%c[ChatClient] 📡 Transport connected', 'color:#0ea5e9;font-weight:bold');
         });
 
-        // Handle incoming messages
-        this.socket.on(WS_EVENTS.MESSAGE_RECEIVE, (data: ChatMessage) => {
-          this.emit('message', data);
-          this.config.callbacks?.onMessage?.(data);
+        // ── MESSAGE_RECEIVE ────────────────────────────────────────────────────
+        this.socket.on(WS_EVENTS.MESSAGE_RECEIVE, (raw: any) => {
+          const message = normalizeMessage(raw, this.session?.id ?? '');
+          if (!message) return;
+          console.log('[ChatClient] MESSAGE_RECEIVE →', message.senderType, message.content.slice(0, 50));
+          this.emit('message', message);
+          this.config.callbacks?.onMessage?.(message);
         });
 
-        // Handle typing indicator
-        this.socket.on(WS_EVENTS.TYPING_INDICATOR, (data: {
-          senderType: string;
-          senderId: string;
-          isTyping: boolean;
-        }) => {
-          this.emit('typing', data);
-        });
+        // ── TYPING — FIX: listen on ALL possible event names ──────────────────
+        // The server broadcasts 'TYPING_INDICATOR' AND 'TYPING'.
+        // We must listen on both to be safe regardless of server config.
+        // Also keep 'TYPING_START'/'TYPING_STOP' for backward compatibility.
 
-        // Handle agent joined
-        this.socket.on(WS_EVENTS.AGENT_JOINED, (data: {
-          agentId: string;
-          agentName: string;
-        }) => {
+        const handleTypingEvent = (data: any, sourceEvent: string) => {
+          const isTyping   = data?.isTyping   ?? false;
+          const senderId   = data?.senderId   ?? '';
+          const senderType = data?.senderType ?? 'AGENT';
+
+          console.log(
+            `%c[ChatClient:TYPING] 🖊 Received "${sourceEvent}"`,
+            'color:#f59e0b;font-weight:bold',
+            { isTyping, senderId, senderType, rawData: data }
+          );
+
+          this.emit('typing', { isTyping, senderId, senderType });
+        };
+
+        // 'TYPING_INDICATOR' — primary event name used by server
+        this.socket.on('TYPING_INDICATOR', (d: any) => handleTypingEvent(d, 'TYPING_INDICATOR'));
+
+        // 'TYPING' — secondary event name also broadcast by server (WS_EVENTS.TYPING)
+        this.socket.on('TYPING', (d: any) => handleTypingEvent(d, 'TYPING'));
+
+        // Legacy event names (some server versions use these)
+        this.socket.on('TYPING_START', (d: any) => handleTypingEvent({ ...(d ?? {}), isTyping: true  }, 'TYPING_START'));
+        this.socket.on('TYPING_STOP',  (d: any) => handleTypingEvent({ ...(d ?? {}), isTyping: false }, 'TYPING_STOP'));
+
+        // Also handle via WS_EVENTS constant in case it differs from string literal
+        if ((WS_EVENTS.TYPING_INDICATOR as string) !== 'TYPING_INDICATOR') {
+          console.warn('[ChatClient] WS_EVENTS.TYPING_INDICATOR ≠ "TYPING_INDICATOR":', WS_EVENTS.TYPING_INDICATOR);
+          this.socket.on(WS_EVENTS.TYPING_INDICATOR as string, (d: any) => handleTypingEvent(d, `WS_EVENTS.TYPING_INDICATOR(${WS_EVENTS.TYPING_INDICATOR})`));
+        }
+
+        // ── AGENT_JOINED ───────────────────────────────────────────────────────
+        this.socket.on(WS_EVENTS.AGENT_JOINED, (data: any) => {
+          console.log('[ChatClient] AGENT_JOINED:', data);
           if (this.session) {
-            this.session.assignedAgentId = data.agentId;
+            this.session.assignedAgentId   = data.agentId;
             this.session.assignedAgentName = data.agentName;
           }
           this.emit('agentJoined', data);
           this.config.callbacks?.onAgentJoined?.(data.agentId, data.agentName);
         });
 
-        // Handle agent left
-        this.socket.on(WS_EVENTS.AGENT_LEFT, (data: { agentId: string }) => {
+        this.socket.on(WS_EVENTS.AGENT_LEFT, (data: any) => {
           this.emit('agentLeft', data);
           this.config.callbacks?.onAgentLeft?.(data.agentId);
         });
 
-        // Handle status change
-        this.socket.on(WS_EVENTS.STATUS_CHANGED, (data: {
-          mode: string;
-          status: string;
-        }) => {
-          if (this.session) {
-            this.session.mode = data.mode as 'BOT' | 'HUMAN';
-            this.session.status = data.status as 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
-          }
+        // ── STATUS_CHANGED ─────────────────────────────────────────────────────
+        this.socket.on(WS_EVENTS.STATUS_CHANGED, (data: any) => {
+          if (this.session) { this.session.mode = data.mode; this.session.status = data.status; }
           this.emit('statusChange', data);
-          this.config.callbacks?.onStatusChange?.(
-            data.status as 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED',
-            data.mode as 'BOT' | 'HUMAN'
-          );
+          this.config.callbacks?.onStatusChange?.(data.status, data.mode);
         });
 
-        // Handle session closed
         this.socket.on(WS_EVENTS.SESSION_CLOSED, () => {
-          if (this.session) {
-            this.session.status = 'CLOSED';
-          }
+          if (this.session) this.session.status = 'CLOSED';
           this.emit('sessionClosed', {});
           this.config.callbacks?.onSessionClosed?.();
         });
 
-        // Handle errors
-        this.socket.on(WS_EVENTS.ERROR, (error: { code: string; message: string }) => {
-          const err = new Error(error.message);
+        // ── ERRORS ─────────────────────────────────────────────────────────────
+        this.socket.on(WS_EVENTS.ERROR, (error: any) => {
+          const err = new Error(error.message ?? String(error));
           this.emit('error', err);
           this.config.callbacks?.onError?.(err);
         });
 
-        // Handle connection error
-        this.socket.on('connect_error', (error) => {
+        this.socket.on('connect_error', (error: any) => {
           this.connected = false;
           this.reconnectAttempts++;
-          console.error('❌ Chat SDK: Connection error (attempt', this.reconnectAttempts + '/' + this.maxReconnectAttempts + '):', error?.message);
+          console.error(
+            `[ChatClient] ❌ Connect error (${this.reconnectAttempts}/${this.maxReconnectAttempts}):`,
+            error?.message
+          );
           this.emit('error', error);
-
-          // Only reject if max reconnection attempts reached AND we haven't received CONNECTION_ACK
           if (this.reconnectAttempts >= this.maxReconnectAttempts && !connectionAckReceived) {
-            console.error('❌ Chat SDK: Max reconnection attempts reached, giving up');
-            this.config.callbacks?.onError?.(error);
             reject(error);
           }
         });
 
-        // Handle disconnect
-        this.socket.on('disconnect', (reason) => {
-          console.warn('⚠️ Chat SDK: Disconnected -', reason);
+        this.socket.on('disconnect', (reason: string) => {
+          console.warn('[ChatClient] ⚠️  Disconnected:', reason);
           this.connected = false;
           this.emit('disconnect', { reason });
         });
 
-        // Handle reconnect
         this.socket.on('reconnect', () => {
-          this.connected = true;
+          this.connected         = true;
           this.reconnectAttempts = 0;
-
-          // Rejoin session on reconnect
-          if (this.session) {
-            this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: this.session.id });
-          }
-
+          if (this.session) this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: this.session.id });
           this.emit('reconnect', {});
         });
 
@@ -212,14 +246,8 @@ export class ChatWebSocketClient {
     });
   }
 
-  /**
-   * Send a message
-   */
   sendMessage(content: string, messageType: MessageType = 'TEXT'): void {
-    if (!this.socket || !this.connected || !this.session) {
-      throw new Error('Not connected to chat');
-    }
-
+    if (!this.socket || !this.connected || !this.session) throw new Error('Not connected');
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
       content,
@@ -227,73 +255,66 @@ export class ChatWebSocketClient {
     });
   }
 
-  /**
-   * Send typing start indicator
-   */
+  // FIX: include isTyping: true/false explicitly in the payload.
+  // Server's broadcastTyping() reads data.isTyping — without it defaults to false,
+  // so agent always sees typing=false even when customer is actively typing.
   startTyping(): void {
-    if (this.socket && this.connected && this.session) {
-      this.socket.emit(WS_EVENTS.TYPING_START, { chatSessionId: this.session.id });
-    }
+    if (!this.socket || !this.connected || !this.session) return;
+    const payload = { chatSessionId: this.session.id, isTyping: true };
+    console.log('%c[ChatClient:TYPING] 🖊 Sending TYPING_START', 'color:#f59e0b;font-weight:bold', payload);
+    this.socket.emit(WS_EVENTS.TYPING_START, payload);
+    // Also emit TYPING_INDICATOR for servers that only listen on that
+    this.socket.emit('TYPING_INDICATOR', payload);
   }
 
-  /**
-   * Send typing stop indicator
-   */
   stopTyping(): void {
-    if (this.socket && this.connected && this.session) {
-      this.socket.emit(WS_EVENTS.TYPING_STOP, { chatSessionId: this.session.id });
-    }
+    if (!this.socket || !this.connected || !this.session) return;
+    const payload = { chatSessionId: this.session.id, isTyping: false };
+    console.log('%c[ChatClient:TYPING] 🖊 Sending TYPING_STOP', 'color:#6b7280;font-weight:bold', payload);
+    this.socket.emit(WS_EVENTS.TYPING_STOP, payload);
+    this.socket.emit('TYPING_INDICATOR', payload);
   }
 
-  /**
-   * Request human agent
-   */
   requestAgent(reason?: string): void {
     if (this.socket && this.connected && this.session) {
-      this.socket.emit(WS_EVENTS.REQUEST_AGENT, {
-        chatSessionId: this.session.id,
-        reason,
-      });
+      this.socket.emit(WS_EVENTS.REQUEST_AGENT, { chatSessionId: this.session.id, reason });
     }
   }
 
-  /**
-   * Disconnect from WebSocket
-   */
+  // Switch the socket to a different session room.
+  // Used when the session returned by CONNECTION_ACK is CLOSED and a fresh one
+  // was created via REST — we leave the old room and join the new one.
+  joinSession(sessionId: string): void {
+    if (!this.socket || !this.connected) return;
+    if (this.session?.id && this.session.id !== sessionId) {
+      this.socket.emit(WS_EVENTS.LEAVE_SESSION, { chatSessionId: this.session.id });
+    }
+    this.socket.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
+    if (this.session) {
+      this.session = { ...this.session, id: sessionId, status: 'OPEN' };
+    }
+  }
+
   disconnect(): void {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-    }
+    if (this.socket) { this.socket.disconnect(); this.socket = null; }
     this.connected = false;
-    this.session = null;
+    this.session   = null;
   }
 
-  /**
-   * Subscribe to events
-   */
   on(event: string, callback: EventCallback): () => void {
-    if (!this.eventHandlers.has(event)) {
-      this.eventHandlers.set(event, new Set());
-    }
+    if (!this.eventHandlers.has(event)) this.eventHandlers.set(event, new Set());
     this.eventHandlers.get(event)!.add(callback);
-
-    // Return unsubscribe function
-    return () => {
-      this.eventHandlers.get(event)?.delete(callback);
-    };
+    return () => this.off(event, callback);
   }
 
-  /**
-   * Emit event to subscribers
-   */
+  off(event: string, callback: EventCallback): void {
+    this.eventHandlers.get(event)?.delete(callback);
+  }
+
   private emit(event: string, data: unknown): void {
-    this.eventHandlers.get(event)?.forEach((callback) => {
-      try {
-        callback(data);
-      } catch (error) {
-        console.error(`Error in event handler for ${event}:`, error);
-      }
+    this.eventHandlers.get(event)?.forEach(cb => {
+      try { cb(data); }
+      catch (e) { console.error(`[ChatClient] Handler error for "${event}":`, e); }
     });
   }
 }

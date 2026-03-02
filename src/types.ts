@@ -14,8 +14,9 @@ export interface ChatSDKConfig {
   /** Backend service URL (e.g., https://api.chat.example.com) */
   serviceUrl: string;
 
-    wsUrl?: string;  
-  
+  /** Optional: Explicit WebSocket URL (defaults to serviceUrl on port 3001) */
+  wsUrl?: string;
+
   /** Your tenant ID */
   tenantId: string;
   
@@ -165,8 +166,8 @@ export interface ChatSDKActions {
  */
 export const WS_EVENTS = {
   // Client -> Server
-  JOIN_SESSION: 'chat.join.session',
-  LEAVE_SESSION: 'chat.leave.session',
+  JOIN_SESSION: 'chat.session.join',
+  LEAVE_SESSION: 'chat.session.leave',
   MESSAGE_SEND: 'chat.message.send',
   TYPING_START: 'chat.typing.start',
   TYPING_STOP: 'chat.typing.stop',
@@ -175,11 +176,10 @@ export const WS_EVENTS = {
   // Server -> Client
   CONNECTION_ACK: 'chat.connection.ack',
   MESSAGE_RECEIVE: 'chat.message.receive',
-  TYPING_INDICATOR: 'chat.typing',
+  TYPING_INDICATOR: 'chat.typing.indicator',
   AGENT_JOINED: 'chat.agent.joined',
   AGENT_LEFT: 'chat.agent.left',
-  SESSION_CLOSED: 'chat.closed',
+  SESSION_CLOSED: 'chat.session.closed',
   STATUS_CHANGED: 'chat.status.changed',
-  ESCALATED: 'chat.escalated',
   ERROR: 'chat.error',
 } as const;
