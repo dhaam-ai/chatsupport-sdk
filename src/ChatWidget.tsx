@@ -1726,7 +1726,7 @@ function looksLikeRawId(s: string | undefined): boolean {
   return /^[0-9a-fA-F-]{20,}$/.test(s);
 }
 
-const MessageBubble = React.memo(function MessageBubble({ message, styles, onImageClick, onReply, replyToResolved, onQuotedClick }: { message: ChatMessage; styles: Record<string, React.CSSProperties>; userName?: string; onImageClick?: (url: string, fileName: string) => void; onReply?: (msg: ChatMessage) => void; replyToResolved?: ChatMessage | null; onQuotedClick?: (messageId: string) => void }) {
+const MessageBubble = React.memo(function MessageBubble({ message, styles, onImageClick, onReply, replyToResolved }: { message: ChatMessage; styles: Record<string, React.CSSProperties>; userName?: string; onImageClick?: (url: string, fileName: string) => void; onReply?: (msg: ChatMessage) => void; replyToResolved?: ChatMessage | null }) {
   const isCustomer = message.senderType === 'CUSTOMER';
   const isSystem   = message.senderType === 'SYSTEM';
   const isBot      = message.senderType === 'BOT';
@@ -1776,8 +1776,7 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
       ? `📎 ${replyTo.messageType.charAt(0) + replyTo.messageType.slice(1).toLowerCase()}`
       : (replyTo.content?.length > 60 ? replyTo.content.slice(0, 60) + '…' : replyTo.content);
     return (
-      <div 
-        onClick={() => onQuotedClick?.(replyTo.id)}
+      <div
         style={{
           padding: '6px 10px', marginBottom: '6px',
           borderLeft: `3px solid ${isCustomer ? 'rgba(255,255,255,0.5)' : '#7c3aed'}`,
@@ -1785,13 +1784,22 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
           backgroundColor: isCustomer ? 'rgba(255,255,255,0.12)' : '#f5f3ff',
           fontSize: '11px', lineHeight: '1.4',
           cursor: 'pointer',
-          transition: 'background 0.15s',
         }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.backgroundColor = isCustomer ? 'rgba(255,255,255,0.2)' : '#ede9fe';
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.backgroundColor = isCustomer ? 'rgba(255,255,255,0.12)' : '#f5f3ff';
+        onClick={(e) => {
+          e.stopPropagation();
+          const el = document.getElementById(`chat-msg-${replyTo!.id}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.animate(
+              [
+                { backgroundColor: 'transparent', offset: 0 },
+                { backgroundColor: isCustomer ? 'rgba(124,58,237,0.15)' : '#ede9fe', offset: 0.15 },
+                { backgroundColor: isCustomer ? 'rgba(124,58,237,0.15)' : '#ede9fe', offset: 0.7 },
+                { backgroundColor: 'transparent', offset: 1 },
+              ],
+              { duration: 2000, easing: 'ease-in-out' },
+            );
+          }
         }}
       >
         <div style={{ fontWeight: 700, color: isCustomer ? 'rgba(255,255,255,0.85)' : '#7c3aed', marginBottom: '2px' }}>
@@ -2256,32 +2264,6 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     inputRef.current?.focus();
   }, []);
 
-  // ── Message refs for scroll-to-quoted functionality ──────────────────────
-  const messageRefsMap = useRef<Map<string, HTMLDivElement>>(new Map());
-  const setMessageRef = useCallback((id: string, el: HTMLDivElement | null) => {
-    if (el) messageRefsMap.current.set(id, el);
-    else messageRefsMap.current.delete(id);
-  }, []);
-
-  const handleQuotedClick = useCallback((messageId: string) => {
-    const targetEl = messageRefsMap.current.get(messageId);
-    if (!targetEl) return;
-    
-    // Smooth scroll to the message
-    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    
-    // Highlight animation
-    const originalBg = targetEl.style.backgroundColor;
-    targetEl.style.transition = 'background-color 0.3s ease';
-    targetEl.style.backgroundColor = '#fef3c7';
-    setTimeout(() => {
-      targetEl.style.backgroundColor = originalBg;
-      setTimeout(() => {
-        targetEl.style.transition = '';
-      }, 300);
-    }, 800);
-  }, []);
-
   // ── Auto-scroll to bottom when new messages arrive (if user is at bottom) ─
   useEffect(() => {
     if (shouldScrollBottom.current) {
@@ -2553,18 +2535,13 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
             {allMessages.map(msg => {
               const isNewMsg = hasRenderedOnce.current && !renderedMsgIds.current.has(msg.id);
               return (
-                <div 
-                  key={msg.id} 
-                  ref={(el) => setMessageRef(msg.id, el)}
-                  style={isNewMsg ? { animation: 'chatFadeIn 0.2s ease' } : undefined}
-                >
+                <div key={msg.id} id={`chat-msg-${msg.id}`} style={isNewMsg ? { animation: 'chatFadeIn 0.2s ease', borderRadius: '12px' } : { borderRadius: '12px' }}>
                   <MessageBubble
                     message={msg}
                     styles={styles}
                     userName={config.user.name}
                     onImageClick={handleImageClick}
                     onReply={handleReply}
-                    onQuotedClick={handleQuotedClick}
                     replyToResolved={msg.replyToMessageId ? msgByIdMap.get(msg.replyToMessageId) ?? null : null}
                   />
                 </div>
