@@ -711,6 +711,8 @@ function normalizeMessage(raw: any, sessionId: string): ChatMessage | null {
     timestamp,
     metadata:      raw.metadata,
     attachment:    raw.attachment ?? raw.metadata?.attachment ?? undefined,
+    replyToMessageId: raw.replyToMessageId ?? raw.reply_to_message_id ?? undefined,
+    replyToMessage:   raw.replyToMessage ?? raw.reply_to_message ?? undefined,
   };
 }
 

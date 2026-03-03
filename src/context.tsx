@@ -1846,6 +1846,8 @@ export function ChatProvider({ config, children }: {
           timestamp:     isNaN(d.getTime()) ? new Date() : d,
           metadata:      m.metadata,
           attachment:     m.attachment ?? m.metadata?.attachment ?? undefined,
+          replyToMessageId: m.replyToMessageId ?? undefined,
+          replyToMessage:   m.replyToMessage ?? undefined,
         };
       });
       dispatch({ type: 'PREPEND_MESSAGES', messages, hasMore: data.hasMore ?? false });
@@ -1918,6 +1920,8 @@ async function fetchMessages(
         timestamp:     isNaN(d.getTime()) ? new Date() : d,
         metadata:      m.metadata,
         attachment:     m.attachment ?? m.metadata?.attachment ?? undefined,
+        replyToMessageId: m.replyToMessageId ?? undefined,
+        replyToMessage:   m.replyToMessage ?? undefined,
       };
     });
 
