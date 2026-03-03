@@ -739,7 +739,7 @@ export class ChatWebSocketClient {
           if (wsUrl.includes(':3000')) wsUrl = wsUrl.replace(':3000', ':3001');
         }
 
-        console.log('%c[ChatClient] 2.0🔌 Connecting →', 'color:#5b4fcf;font-weight:bold', wsUrl);
+        console.log('%c[ChatClient] 🔌 Connecting →', 'color:#5b4fcf;font-weight:bold', wsUrl);
 
         this.socket = io(wsUrl, {
           auth: {
@@ -919,13 +919,14 @@ export class ChatWebSocketClient {
     });
   }
 
-  sendMessage(content: string, messageType: MessageType = 'TEXT'): void {
+  sendMessage(content: string, messageType: MessageType = 'TEXT', replyToMessageId?: string): void {
     if (this.tokenExpired) throw new Error('TOKEN_EXPIRED');
     if (!this.socket || !this.connected || !this.session) throw new Error('Not connected');
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
       content,
       messageType,
+      ...(replyToMessageId ? { replyToMessageId } : {}),
     });
   }
 
@@ -943,12 +944,15 @@ export class ChatWebSocketClient {
       formData.append('tenantId', this.config.tenantId);
     }
 
-    // Determine the REST base URL
-    let baseUrl = this.config.serviceUrl;
-    // If pointing at WS port, switch to REST port
+    // Determine the REST base URL:
+    // 1. Explicit apiUrl (highest priority)
+    // 2. serviceUrl with :3001→:3000 port swap
+    let baseUrl = this.config.apiUrl ?? this.config.serviceUrl;
     if (baseUrl.includes(':3001')) baseUrl = baseUrl.replace(':3001', ':3000');
+    // Strip trailing slash
+    baseUrl = baseUrl.replace(/\/+$/, '');
 
-    console.log('[ChatClient] 📎 Uploading attachment:', file.name, file.type, file.size);
+    console.log('[ChatClient] 📎 Uploading attachment:', file.name, file.type, file.size, '→', `${baseUrl}/api/v1/upload`);
 
     const response = await fetch(`${baseUrl}/api/v1/upload`, {
       method: 'POST',

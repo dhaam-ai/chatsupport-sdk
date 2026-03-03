@@ -403,6 +403,12 @@ export interface ChatSDKConfig {
   /** Optional: Explicit WebSocket URL (defaults to serviceUrl on port 3001) */
   wsUrl?: string;
 
+  /** Optional: Explicit REST API base URL for file uploads.
+   *  Defaults to serviceUrl (with :3001→:3000 port swap if needed).
+   *  Set this if your host app proxies WebSocket but NOT REST calls.
+   *  Example: 'http://localhost:3000' */
+  apiUrl?: string;
+
   /** Your tenant ID */
   tenantId: string;
   
@@ -503,6 +509,15 @@ export interface ChatMessage {
   timestamp: Date;
   metadata?: Record<string, unknown>;
   attachment?: FileAttachment;
+  replyToMessageId?: string | null;
+  replyToMessage?: {
+    id: string;
+    content: string;
+    senderType: SenderType;
+    senderId?: string | null;
+    senderName?: string;
+    messageType: MessageType;
+  } | null;
 }
 
 /**
@@ -553,7 +568,7 @@ export interface ChatSDKState {
  */
 export interface ChatSDKActions {
   /** Send a message */
-  sendMessage: (content: string, type?: MessageType) => Promise<void>;
+  sendMessage: (content: string, type?: MessageType, replyToMessageId?: string) => Promise<void>;
   /** Send a file attachment */
   sendAttachment: (file: File) => Promise<void>;
   /** Start typing indicator */

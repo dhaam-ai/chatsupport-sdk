@@ -1719,7 +1719,7 @@ export function ChatProvider({ config, children }: {
   }, [connectionKey, config.serviceUrl, config.token]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
-  const sendMessage = useCallback(async (content: string, type: MessageType = 'TEXT') => {
+  const sendMessage = useCallback(async (content: string, type: MessageType = 'TEXT', replyToMessageId?: string) => {
     if (!clientRef.current || !state.session) throw new Error('Chat not initialized');
     if (clientRef.current.tokenExpired || state.tokenExpired) {
       throw new Error('TOKEN_EXPIRED');
@@ -1735,11 +1735,12 @@ export function ChatProvider({ config, children }: {
       content,
       messageType:   type,
       timestamp:     new Date(),
+      ...(replyToMessageId ? { replyToMessageId } : {}),
     };
 
     pendingReplaces.current.set(content, tempId);
     dispatch({ type: 'ADD_MESSAGE', message: optimistic });
-    clientRef.current.sendMessage(content, type);
+    clientRef.current.sendMessage(content, type, replyToMessageId);
 
     const replaceOptimistic: EventCallback = (raw: unknown) => {
       const msg = raw as ChatMessage;

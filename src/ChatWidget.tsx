@@ -1599,6 +1599,14 @@ interface QuickReply {
   icon: string;
 }
 
+// Reply-to state type
+interface ReplyTarget {
+  id: string;
+  content: string;
+  senderType: string;
+  senderName?: string;
+}
+
 const MAIN_MENU: QuickReply[] = [
   { id: 'order_details', icon: '📦', label: 'Check Order Details' },
   { id: 'track_order',   icon: '🚚', label: 'Track My Order' },
@@ -1720,11 +1728,12 @@ function looksLikeRawId(s: string | undefined): boolean {
   return /^[0-9a-fA-F-]{20,}$/.test(s);
 }
 
-function MessageBubble({ message, styles, onImageClick }: { message: ChatMessage; styles: Record<string, React.CSSProperties>; userName?: string; onImageClick?: (url: string, fileName: string) => void }) {
+function MessageBubble({ message, styles, onImageClick, onReply, allMessages }: { message: ChatMessage; styles: Record<string, React.CSSProperties>; userName?: string; onImageClick?: (url: string, fileName: string) => void; onReply?: (msg: ChatMessage) => void; allMessages?: ChatMessage[] }) {
   const isCustomer = message.senderType === 'CUSTOMER';
   const isSystem   = message.senderType === 'SYSTEM';
   const isBot      = message.senderType === 'BOT';
   const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const [hovered, setHovered] = useState(false);
 
   // Filter out system messages that are just raw hex IDs (no real text content)
   if (isSystem && looksLikeRawId(message.content?.trim())) return null;
@@ -1745,7 +1754,7 @@ function MessageBubble({ message, styles, onImageClick }: { message: ChatMessage
   const contentUrl = message.content ?? '';
   const isImageUrl = /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(contentUrl);
   const isVideoUrl = /\.(mp4|webm|mov|avi)(\?.*)?$/i.test(contentUrl);
-  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac)(\?.*)?$/i.test(contentUrl);
+  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|webm)(\?.*)?$/i.test(contentUrl);
 
   // Resolve effective type
   let effectiveType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | null = null;
@@ -1755,6 +1764,38 @@ function MessageBubble({ message, styles, onImageClick }: { message: ChatMessage
   else if (message.messageType === 'FILE' || attachment) effectiveType = 'FILE';
 
   const isAttachment = effectiveType !== null;
+  const isAudio = effectiveType === 'AUDIO';
+
+  // Resolve reply-to message
+  const replyTo = message.replyToMessage ?? (message.replyToMessageId && allMessages
+    ? allMessages.find(m => m.id === message.replyToMessageId) ?? null
+    : null);
+
+  const renderReplyQuote = () => {
+    if (!replyTo) return null;
+    const replyName = replyTo.senderType === 'CUSTOMER' ? 'You'
+      : (replyTo as any).senderName ?? (replyTo.senderType === 'BOT' ? 'AI Assistant' : 'Agent');
+    const isMediaReply = ['IMAGE', 'VIDEO', 'AUDIO', 'FILE'].includes(replyTo.messageType);
+    const replyPreview = isMediaReply
+      ? `📎 ${replyTo.messageType.charAt(0) + replyTo.messageType.slice(1).toLowerCase()}`
+      : (replyTo.content?.length > 60 ? replyTo.content.slice(0, 60) + '…' : replyTo.content);
+    return (
+      <div style={{
+        padding: '6px 10px', marginBottom: '6px',
+        borderLeft: `3px solid ${isCustomer ? 'rgba(255,255,255,0.5)' : '#7c3aed'}`,
+        borderRadius: '4px',
+        backgroundColor: isCustomer ? 'rgba(255,255,255,0.12)' : '#f5f3ff',
+        fontSize: '11px', lineHeight: '1.4',
+      }}>
+        <div style={{ fontWeight: 700, color: isCustomer ? 'rgba(255,255,255,0.85)' : '#7c3aed', marginBottom: '2px' }}>
+          {replyName}
+        </div>
+        <div style={{ color: isCustomer ? 'rgba(255,255,255,0.7)' : '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {replyPreview}
+        </div>
+      </div>
+    );
+  };
 
   const renderAttachmentContent = () => {
     const url = attachment?.url ?? contentUrl;
@@ -1772,7 +1813,12 @@ function MessageBubble({ message, styles, onImageClick }: { message: ChatMessage
       return <video src={url} controls style={{ maxWidth: '240px', maxHeight: '180px', borderRadius: '12px' }} preload="metadata" />;
     }
     if (effectiveType === 'AUDIO') {
-      return <audio src={url} controls style={{ maxWidth: '220px' }} preload="metadata" />;
+      return (
+        <audio src={url} controls preload="metadata" style={{
+          width: '220px', height: '36px', borderRadius: '18px',
+          filter: isCustomer ? 'invert(1) hue-rotate(180deg) brightness(1.2)' : 'none',
+        }} />
+      );
     }
     // Generic file
     return (
@@ -1785,13 +1831,47 @@ function MessageBubble({ message, styles, onImageClick }: { message: ChatMessage
     );
   };
 
+  // Audio messages get a compact, clean bubble without padding bloat
+  const bubbleStyle: React.CSSProperties = isAudio
+    ? {
+        ...(isCustomer
+          ? { background: `linear-gradient(135deg, ${styles.bubbleCustomer.background || '#5b4fcf'}, ${styles.bubbleCustomer.background || '#5b4fcf'}cc)`, borderRadius: '18px 18px 4px 18px' }
+          : { background: '#ffffff', border: '1px solid #f0f0f5', borderRadius: '18px 18px 18px 4px' }),
+        padding: '8px 10px', maxWidth: '78%', boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
+      }
+    : (isCustomer ? styles.bubbleCustomer : styles.bubbleAgent);
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: isCustomer ? 'flex-end' : 'flex-start' }}>
+    <div
+      style={{ display: 'flex', flexDirection: 'column', alignItems: isCustomer ? 'flex-end' : 'flex-start', position: 'relative' }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {label && <div style={styles.senderLabel}>{label}</div>}
-      <div style={isCustomer ? styles.bubbleCustomer : styles.bubbleAgent}>
-        {isAttachment ? renderAttachmentContent() : message.content}
-        <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left' }}>{time}</div>
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '4px', flexDirection: isCustomer ? 'row-reverse' : 'row' }}>
+        <div style={bubbleStyle}>
+          {renderReplyQuote()}
+          {isAttachment ? renderAttachmentContent() : message.content}
+          {!isAudio && <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left' }}>{time}</div>}
+        </div>
+        {/* Reply button on hover */}
+        {hovered && onReply && (
+          <button
+            onClick={() => onReply(message)}
+            title="Reply"
+            style={{
+              background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '50%',
+              width: 26, height: 26, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#6b7280', flexShrink: 0, transition: 'all 0.15s', padding: 0,
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#ede9fe'; (e.currentTarget as HTMLElement).style.color = '#5b4fcf'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#f3f4f6'; (e.currentTarget as HTMLElement).style.color = '#6b7280'; }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>
+          </button>
+        )}
       </div>
+      {isAudio && <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left', marginTop: '2px' }}>{time}</div>}
     </div>
   );
 }
@@ -1872,6 +1952,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   const [escalationError, setEscalationError]   = useState<string | null>(null);
   const [viewerImage, setViewerImage]           = useState<{ url: string; fileName: string } | null>(null);
   const [isRecording, setIsRecording]           = useState(false);
+  const [replyTarget, setReplyTarget]           = useState<ReplyTarget | null>(null);
 
   const messagesEndRef   = useRef<HTMLDivElement>(null);
   const messagesAreaRef  = useRef<HTMLDivElement>(null);
@@ -2241,8 +2322,9 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     const content = inputValue.trim();
     if (!content || !stateRef.current.connected || stateRef.current.tokenExpired) return;
     try {
-      actionsRef.current.sendMessage(content);
+      actionsRef.current.sendMessage(content, 'TEXT', replyTarget?.id);
       setInputValue('');
+      setReplyTarget(null);
       actionsRef.current.stopTyping?.();
       if (flowStep !== 'free') { setShowQuickReplies(false); setFlowStep('free'); }
     } catch (err: any) {
@@ -2252,7 +2334,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       }
       throw err;
     }
-  }, [inputValue, flowStep]);
+  }, [inputValue, flowStep, replyTarget]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -2408,7 +2490,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
             )}
             {allMessages.map(msg => (
               <div key={msg.id} style={{ animation: 'chatFadeIn 0.2s ease' }}>
-                <MessageBubble message={msg} styles={styles} userName={config.user.name} onImageClick={(url, fileName) => setViewerImage({ url, fileName })} />
+                <MessageBubble message={msg} styles={styles} userName={config.user.name} onImageClick={(url, fileName) => setViewerImage({ url, fileName })} onReply={(m) => { setReplyTarget({ id: m.id, content: m.content, senderType: m.senderType, senderName: m.senderName }); inputRef.current?.focus(); }} allMessages={allMessages} />
               </div>
             ))}
             {(showTyping || state.isTyping) && <TypingIndicator styles={styles} />}
@@ -2468,6 +2550,30 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
               )}
             </div>
           ) : (
+            <div style={{ flexShrink: 0 }}>
+              {/* Reply banner */}
+              {replyTarget && (
+                <div style={{
+                  padding: '8px 12px', borderTop: '1px solid #f0f0f5', backgroundColor: '#f9fafb',
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                }}>
+                  <div style={{
+                    flex: 1, borderLeft: `3px solid ${theme.primaryColor}`, paddingLeft: '10px',
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: theme.primaryColor, marginBottom: '1px' }}>
+                      {replyTarget.senderType === 'CUSTOMER' ? 'You' : (replyTarget.senderName || 'Agent')}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {replyTarget.content?.length > 80 ? replyTarget.content.slice(0, 80) + '…' : replyTarget.content}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setReplyTarget(null)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '18px', lineHeight: 1, padding: '2px', flexShrink: 0 }}
+                  >×</button>
+                </div>
+              )}
             <div style={styles.inputArea}>
               <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar" onChange={handleAttachment} />
               <button onClick={() => fileInputRef.current?.click()} disabled={!canType} title="Attach file" style={{ background: 'none', border: 'none', cursor: canType ? 'pointer' : 'not-allowed', padding: '4px', display: 'flex', alignItems: 'center', opacity: canType ? 0.6 : 0.3 }}>
@@ -2510,6 +2616,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
               <button onClick={handleSend} disabled={!isActive} style={{ ...styles.sendBtn, background: isActive ? `linear-gradient(135deg, ${theme.primaryColor}, ${theme.primaryColor}cc)` : '#f3f4f6', boxShadow: isActive ? `0 3px 12px ${theme.primaryColor}44` : 'none', cursor: isActive ? 'pointer' : 'not-allowed' }}>
                 <SendIcon active={!!isActive} />
               </button>
+            </div>
             </div>
           )}
         </>
