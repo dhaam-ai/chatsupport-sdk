@@ -2285,7 +2285,8 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
     shouldScrollBottom.current = isAtBottom;
-    setShowJumpToBottom(!isAtBottom);
+    // Use functional updater — only re-render when the value actually changes
+    setShowJumpToBottom(prev => (prev === !isAtBottom ? prev : !isAtBottom));
 
     // Scroll-up pagination trigger: when user scrolls near top
     if (
@@ -2296,9 +2297,9 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     ) {
       savedScrollHeightRef.current = el.scrollHeight;
       shouldScrollBottom.current = false;
-      actions.loadOlderMessages();
+      actionsRef.current.loadOlderMessages();  // use ref — stable, avoids dep on actions object
     }
-  }, [state.loadingMore, state.hasMore, actions]);
+  }, [state.loadingMore, state.hasMore]);  // removed `actions` from deps
 
   // ── Jump to bottom ────────────────────────────────────────────────────────
   const scrollToBottom = useCallback(() => {
@@ -2757,11 +2758,17 @@ function UnreadTracker({ isOpen, onUnreadChange }: {
 }) {
   const { state, actions } = useChat();
 
+  // Use a local ref so the effect below doesn't re-run when `actions` object
+  // identity changes on every render (plain object recreated in provider).
+  // Without this, setWidgetOpen → re-render → actions changes → effect re-runs
+  // → setWidgetOpen again → infinite loop.
+  const setWidgetOpenRef = useRef(actions.setWidgetOpen);
+  useEffect(() => { setWidgetOpenRef.current = actions.setWidgetOpen; });
+
   // Mirror agent dashboard SELECT_SESSION: tell reducer when widget opens/closes.
-  // The reducer zeroes unreadCount atomically when open becomes true.
   useEffect(() => {
-    actions.setWidgetOpen(isOpen);
-  }, [isOpen, actions]);
+    setWidgetOpenRef.current(isOpen);
+  }, [isOpen]);  // only re-run when isOpen changes, not on every render
 
   // Propagate reducer's unreadCount to the parent badge whenever it changes.
   useEffect(() => {

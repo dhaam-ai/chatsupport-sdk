@@ -1745,7 +1745,12 @@ export function ChatProvider({ config, children }: {
     const replaceOptimistic: EventCallback = (raw: unknown) => {
       const msg = raw as ChatMessage;
       if (msg.senderType === 'CUSTOMER' && msg.content === content && !msg.id.startsWith('temp-')) {
-        dispatch({ type: 'REPLACE_TEMP', tempId, message: msg });
+        // Preserve replyToMessageId from optimistic if server WS event didn't include it
+        const mergedMsg: ChatMessage = {
+          ...msg,
+          ...(replyToMessageId && !msg.replyToMessageId ? { replyToMessageId } : {}),
+        };
+        dispatch({ type: 'REPLACE_TEMP', tempId, message: mergedMsg });
         pendingReplaces.current.delete(content);
         clientRef.current?.off?.('message', replaceOptimistic);
       }
