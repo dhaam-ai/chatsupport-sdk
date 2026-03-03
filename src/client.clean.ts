@@ -48,7 +48,7 @@ export class ChatWebSocketClient {
           wsUrl = wsUrl.replace(':3000', ':3001');
         }
 
-        console.log('🔌 Chat SDK: Connecting to WebSocket at', wsUrl);
+        console.log('🔌 Chat SDK 2.0: Connecting to WebSocket at', wsUrl);
 
         // Create socket connection
         this.socket = io(wsUrl, {

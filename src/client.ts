@@ -739,7 +739,7 @@ export class ChatWebSocketClient {
           if (wsUrl.includes(':3000')) wsUrl = wsUrl.replace(':3000', ':3001');
         }
 
-        console.log('%c[ChatClient] 🔌 Connecting →', 'color:#5b4fcf;font-weight:bold', wsUrl);
+        console.log('%c[ChatClient] 2.0🔌 Connecting →', 'color:#5b4fcf;font-weight:bold', wsUrl);
 
         this.socket = io(wsUrl, {
           auth: {
