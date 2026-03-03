@@ -1839,26 +1839,31 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
 
   return (
     <div
-      style={{ display: 'flex', flexDirection: 'column', alignItems: isCustomer ? 'flex-end' : 'flex-start', position: 'relative' }}
+      style={{ display: 'flex', flexDirection: 'column', alignItems: isCustomer ? 'flex-end' : 'flex-start' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
       {label && <div style={styles.senderLabel}>{label}</div>}
-      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '4px', flexDirection: isCustomer ? 'row-reverse' : 'row' }}>
-        <div style={bubbleStyle}>
+      {/* position: relative wrapper so the reply button can be positioned absolutely without affecting bubble layout */}
+      <div style={{ position: 'relative', maxWidth: '82%' }}>
+        <div style={{ ...bubbleStyle, maxWidth: '100%' }}>
           {renderReplyQuote()}
           {isAttachment ? renderAttachmentContent() : message.content}
           {!isAudio && <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left' }}>{time}</div>}
         </div>
-        {/* Reply button on hover */}
-        {hovered && onReply && (
+        {/* Reply button — always rendered, visibility toggled via opacity (no DOM insert/remove = no layout shift = no flicker) */}
+        {onReply && (
           <button
             onClick={() => onReply(message)}
             title="Reply"
             style={{
+              position: 'absolute', top: '50%',
+              ...(isCustomer ? { left: '-32px' } : { right: '-32px' }),
+              transform: 'translateY(-50%)',
               background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '50%',
               width: 26, height: 26, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#6b7280', flexShrink: 0, transition: 'all 0.15s', padding: 0,
+              color: '#6b7280', flexShrink: 0, transition: 'opacity 0.15s, background 0.15s, color 0.15s', padding: 0,
+              opacity: hovered ? 1 : 0, pointerEvents: hovered ? 'auto' as const : 'none' as const,
             }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#ede9fe'; (e.currentTarget as HTMLElement).style.color = '#5b4fcf'; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#f3f4f6'; (e.currentTarget as HTMLElement).style.color = '#6b7280'; }}
