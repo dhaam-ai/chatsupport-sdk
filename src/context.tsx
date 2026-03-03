@@ -1660,7 +1660,7 @@ export function ChatProvider({ config, children }: {
           console.log('[Chat] Got CLOSED session — creating fresh session via REST');
           try {
             const cfg = configRef.current;
-            const res = await fetch(`${cfg.serviceUrl}/api/v1/chat/sessions`, {
+            const res = await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions`, {
               method:  'POST',
               headers: {
                 'Authorization': `Bearer ${cfg.token}`,
@@ -1776,7 +1776,7 @@ export function ChatProvider({ config, children }: {
     if (!state.session) return;
     const cfg = configRef.current;
     try {
-      await fetch(`${cfg.serviceUrl}/api/v1/chat/sessions/${state.session.id}/close`, {
+      await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${state.session.id}/close`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${cfg.token}`,
@@ -1820,7 +1820,7 @@ export function ChatProvider({ config, children }: {
     dispatch({ type: 'SET_LOADING_MORE', loading: true });
     try {
       const cfg = configRef.current;
-      const url = `${cfg.serviceUrl}/api/v1/chat/sessions/${s.session.id}/messages?limit=20&before=${oldest.id}`;
+      const url = `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${s.session.id}/messages?limit=20&before=${oldest.id}`;
       const res = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${cfg.token}`,
@@ -1893,7 +1893,7 @@ async function fetchMessages(
 ): Promise<void> {
   try {
     const res = await fetch(
-      `${config.serviceUrl}/api/v1/chat/sessions/${sessionId}/full`,
+      `${config.serviceUrl}/chat-services/api/v1/chat/sessions/${sessionId}/full`,
       {
         headers: {
           'Authorization': `Bearer ${config.token}`,

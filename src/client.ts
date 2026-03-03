@@ -952,9 +952,9 @@ export class ChatWebSocketClient {
     // Strip trailing slash
     baseUrl = baseUrl.replace(/\/+$/, '');
 
-    console.log('[ChatClient] 📎 Uploading attachment:', file.name, file.type, file.size, '→', `${baseUrl}/api/v1/upload`);
+    console.log('[ChatClient] 📎 Uploading attachment:', file.name, file.type, file.size, '→', `${baseUrl}/chat-services/api/v1/upload`);
 
-    const response = await fetch(`${baseUrl}/api/v1/upload`, {
+    const response = await fetch(`${baseUrl}/chat-services/api/v1/upload`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.config.token}`,
