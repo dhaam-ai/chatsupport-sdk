@@ -1844,6 +1844,7 @@ export function ChatProvider({ config, children }: {
           messageType:   m.messageType ?? 'TEXT',
           timestamp:     isNaN(d.getTime()) ? new Date() : d,
           metadata:      m.metadata,
+          attachment:     m.attachment ?? m.metadata?.attachment ?? undefined,
         };
       });
       dispatch({ type: 'PREPEND_MESSAGES', messages, hasMore: data.hasMore ?? false });
@@ -1915,6 +1916,7 @@ async function fetchMessages(
         messageType:   m.messageType ?? 'TEXT',
         timestamp:     isNaN(d.getTime()) ? new Date() : d,
         metadata:      m.metadata,
+        attachment:     m.attachment ?? m.metadata?.attachment ?? undefined,
       };
     });
 

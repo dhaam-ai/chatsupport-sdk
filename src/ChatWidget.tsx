@@ -1720,7 +1720,7 @@ function looksLikeRawId(s: string | undefined): boolean {
   return /^[0-9a-fA-F-]{20,}$/.test(s);
 }
 
-function MessageBubble({ message, styles }: { message: ChatMessage; styles: Record<string, React.CSSProperties>; userName?: string }) {
+function MessageBubble({ message, styles, onImageClick }: { message: ChatMessage; styles: Record<string, React.CSSProperties>; userName?: string; onImageClick?: (url: string, fileName: string) => void }) {
   const isCustomer = message.senderType === 'CUSTOMER';
   const isSystem   = message.senderType === 'SYSTEM';
   const isBot      = message.senderType === 'BOT';
@@ -1738,30 +1738,49 @@ function MessageBubble({ message, styles }: { message: ChatMessage; styles: Reco
 
   // Check if this is an attachment message
   const attachment = message.attachment ?? (message.metadata?.attachment as any) ?? null;
-  const isAttachment = attachment || message.messageType === 'IMAGE' || message.messageType === 'FILE' || message.messageType === 'VIDEO' || message.messageType === 'AUDIO';
+
+  // Auto-detect: if messageType is IMAGE/VIDEO/AUDIO/FILE, or if attachment exists,
+  // or if the content is a CDN URL that looks like a media file
+  const isCdnUrl = /^https?:\/\/cdn\.\w+\.\w+\//.test(message.content ?? '');
+  const contentUrl = message.content ?? '';
+  const isImageUrl = /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(contentUrl);
+  const isVideoUrl = /\.(mp4|webm|mov|avi)(\?.*)?$/i.test(contentUrl);
+  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac)(\?.*)?$/i.test(contentUrl);
+
+  // Resolve effective type
+  let effectiveType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | null = null;
+  if (message.messageType === 'IMAGE' || (attachment?.mimeType?.startsWith('image/')) || (isCdnUrl && isImageUrl)) effectiveType = 'IMAGE';
+  else if (message.messageType === 'VIDEO' || (attachment?.mimeType?.startsWith('video/')) || (isCdnUrl && isVideoUrl)) effectiveType = 'VIDEO';
+  else if (message.messageType === 'AUDIO' || (attachment?.mimeType?.startsWith('audio/')) || (isCdnUrl && isAudioUrl)) effectiveType = 'AUDIO';
+  else if (message.messageType === 'FILE' || attachment) effectiveType = 'FILE';
+
+  const isAttachment = effectiveType !== null;
 
   const renderAttachmentContent = () => {
-    const url = attachment?.url ?? message.content;
-    const fileName = attachment?.fileName ?? 'file';
-    const mimeType = attachment?.mimeType ?? '';
+    const url = attachment?.url ?? contentUrl;
+    const fileName = attachment?.fileName ?? url.split('/').pop()?.split('?')[0] ?? 'file';
+    const fileSize = attachment?.size;
 
-    if (message.messageType === 'IMAGE' || mimeType.startsWith('image/')) {
+    if (effectiveType === 'IMAGE') {
       return (
-        <a href={url} target="_blank" rel="noopener noreferrer" style={{ display: 'block' }}>
-          <img src={url} alt={fileName} style={{ maxWidth: '220px', maxHeight: '180px', borderRadius: '12px', objectFit: 'cover' }} loading="lazy" />
-        </a>
+        <div style={{ cursor: 'pointer' }} onClick={() => onImageClick?.(url, fileName)}>
+          <img src={url} alt={fileName} style={{ maxWidth: '220px', maxHeight: '180px', borderRadius: '12px', objectFit: 'cover', display: 'block' }} loading="lazy" />
+        </div>
       );
     }
-    if (message.messageType === 'VIDEO' || mimeType.startsWith('video/')) {
+    if (effectiveType === 'VIDEO') {
       return <video src={url} controls style={{ maxWidth: '240px', maxHeight: '180px', borderRadius: '12px' }} preload="metadata" />;
     }
-    if (message.messageType === 'AUDIO' || mimeType.startsWith('audio/')) {
+    if (effectiveType === 'AUDIO') {
       return <audio src={url} controls style={{ maxWidth: '220px' }} preload="metadata" />;
     }
+    // Generic file
     return (
       <a href={url} target="_blank" rel="noopener noreferrer"
-        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', borderRadius: '10px', backgroundColor: '#f3f4f6', color: '#5b4fcf', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
-        📎 <span style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</span>
+        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderRadius: '10px', backgroundColor: isCustomer ? 'rgba(255,255,255,0.15)' : '#f3f4f6', color: isCustomer ? '#fff' : '#5b4fcf', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+        <span style={{ maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</span>
+        {fileSize && <span style={{ fontSize: '10px', opacity: 0.6, flexShrink: 0 }}>{(fileSize / 1024).toFixed(0)}KB</span>}
       </a>
     );
   };
@@ -1851,11 +1870,15 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   const [showTyping, setShowTyping]             = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [escalationError, setEscalationError]   = useState<string | null>(null);
+  const [viewerImage, setViewerImage]           = useState<{ url: string; fileName: string } | null>(null);
+  const [isRecording, setIsRecording]           = useState(false);
 
   const messagesEndRef   = useRef<HTMLDivElement>(null);
   const messagesAreaRef  = useRef<HTMLDivElement>(null);
   const inputRef         = useRef<HTMLInputElement>(null);
   const fileInputRef     = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef   = useRef<Blob[]>([]);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const hasWelcomed      = useRef(false);
   const prevMsgCount     = useRef(0);
@@ -1892,6 +1915,11 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       @keyframes chatFadeIn {
         from{opacity:0;transform:translateY(5px)}
         to{opacity:1;transform:translateY(0)}
+      }
+      @keyframes pulse-recording {
+        0%{box-shadow:0 0 0 0 rgba(239,68,68,0.5)}
+        70%{box-shadow:0 0 0 8px rgba(239,68,68,0)}
+        100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}
       }
     `;
     document.head.appendChild(s);
@@ -2241,6 +2269,39 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     e.target.value = '';
   }, []);
 
+  // ── Audio recording ──────────────────────────────────────────────────────────
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4' });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType });
+        const ext = recorder.mimeType.includes('webm') ? 'webm' : 'm4a';
+        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: recorder.mimeType });
+        try {
+          await actionsRef.current.sendAttachment(file);
+        } catch (err: any) {
+          console.error('[Chat] Audio upload failed:', err);
+        }
+        setIsRecording(false);
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+    } catch (err) {
+      console.error('[Chat] Microphone access denied:', err);
+    }
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+  }, []);
+
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setInputValue(e.target.value);
     actionsRef.current.startTyping?.();
@@ -2347,7 +2408,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
             )}
             {allMessages.map(msg => (
               <div key={msg.id} style={{ animation: 'chatFadeIn 0.2s ease' }}>
-                <MessageBubble message={msg} styles={styles} userName={config.user.name} />
+                <MessageBubble message={msg} styles={styles} userName={config.user.name} onImageClick={(url, fileName) => setViewerImage({ url, fileName })} />
               </div>
             ))}
             {(showTyping || state.isTyping) && <TypingIndicator styles={styles} />}
@@ -2412,10 +2473,34 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
               <button onClick={() => fileInputRef.current?.click()} disabled={!canType} title="Attach file" style={{ background: 'none', border: 'none', cursor: canType ? 'pointer' : 'not-allowed', padding: '4px', display: 'flex', alignItems: 'center', opacity: canType ? 0.6 : 0.3 }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
               </button>
+              {/* Audio record button */}
+              <button
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={!canType}
+                title={isRecording ? 'Stop recording' : 'Record audio'}
+                style={{
+                  background: isRecording ? '#ef4444' : 'none',
+                  border: isRecording ? '2px solid #ef4444' : 'none',
+                  borderRadius: '50%',
+                  cursor: canType ? 'pointer' : 'not-allowed',
+                  padding: '4px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  opacity: canType ? (isRecording ? 1 : 0.6) : 0.3,
+                  width: 28, height: 28,
+                  animation: isRecording ? 'pulse-recording 1.5s ease-in-out infinite' : 'none',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {isRecording ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="#fff"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="1" width="6" height="11" rx="3"/><path d="M19 10v1a7 7 0 01-14 0v-1"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                )}
+              </button>
               <input
                 ref={inputRef}
                 type="text"
-                placeholder={canType ? 'Type a message...' : 'Connecting...'}
+                placeholder={canType ? (isRecording ? '🔴 Recording audio...' : 'Type a message...') : 'Connecting...'}
                 value={inputValue}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
@@ -2428,6 +2513,72 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
             </div>
           )}
         </>
+      )}
+
+      {/* ── Image Viewer Modal ── */}
+      {viewerImage && (
+        <div
+          onClick={() => setViewerImage(null)}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'zoom-out',
+          }}
+        >
+          {/* Close button */}
+          <button
+            onClick={() => setViewerImage(null)}
+            style={{
+              position: 'absolute', top: 16, right: 16,
+              background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%',
+              width: 40, height: 40, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', fontSize: 22, fontWeight: 700, backdropFilter: 'blur(4px)',
+            }}
+            aria-label="Close image viewer"
+          >×</button>
+
+          {/* Download button */}
+          <a
+            href={viewerImage.url}
+            download={viewerImage.fileName}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute', top: 16, right: 68,
+              background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%',
+              width: 40, height: 40, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', backdropFilter: 'blur(4px)', textDecoration: 'none',
+            }}
+            aria-label="Download image"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </a>
+
+          {/* Filename label */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute', top: 20, left: 16, right: 120,
+              color: '#fff', fontSize: 13, fontWeight: 500, opacity: 0.8,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >{viewerImage.fileName}</div>
+
+          {/* Image */}
+          <img
+            src={viewerImage.url}
+            alt={viewerImage.fileName}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: '90vw', maxHeight: '85vh',
+              objectFit: 'contain', borderRadius: 8,
+              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+              cursor: 'default',
+            }}
+          />
+        </div>
       )}
     </div>
   );
