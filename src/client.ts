@@ -741,9 +741,18 @@ export class ChatWebSocketClient {
           if (wsUrl.includes(':3000')) wsUrl = wsUrl.replace(':3000', ':3001');
         }
 
-        console.log('%c[ChatClient] 🔌 Connecting 2 →', 'color:#5b4fcf;font-weight:bold', wsUrl);
+        // Parse wsUrl so socket.io-client receives the host and the path
+        // separately. If the path is passed as part of the URL string,
+        // socket.io-client interprets it as a namespace and silently falls
+        // back to the default '/socket.io' path — causing a CSP/connection error.
+        const parsedWsUrl  = new URL(wsUrl);
+        const socketPath   = parsedWsUrl.pathname !== '/' ? parsedWsUrl.pathname : '/socket.io';
+        const socketOrigin = `${parsedWsUrl.protocol}//${parsedWsUrl.host}`;
 
-        this.socket = io(wsUrl, {
+        console.log('%c[ChatClient] 🔌 Connecting 2 →', 'color:#5b4fcf;font-weight:bold', socketOrigin, '| path:', socketPath);
+
+        this.socket = io(socketOrigin, {
+          path: socketPath,
           auth: {
             token:     this.config.token,
             tenantId:  this.config.tenantId,
@@ -792,7 +801,7 @@ export class ChatWebSocketClient {
         });
 
         this.socket.on('connect', () => {
-          console.log('%c[ChatClient] 📡 Transport connected 2', 'color:#0ea5e9;font-weight:bold');
+          console.log('%c[ChatClient] 📡 Transport connected 3', 'color:#0ea5e9;font-weight:bold');
         });
 
         // ── MESSAGE_RECEIVE ────────────────────────────────────────────────────
