@@ -1576,6 +1576,7 @@
 // export default ChatWidget;
 
 
+
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { ChatProvider, useChat } from './context';
 import type { ChatSDKConfig, ChatMessage, ChatTheme } from './types';
@@ -2760,11 +2761,17 @@ function UnreadTracker({ isOpen, onUnreadChange }: {
 }) {
   const { state, actions } = useChat();
 
+  // Stable ref so the effect below never re-runs due to actions object identity.
+  // actions is a plain object literal recreated every render; using a ref
+  // prevents the infinite: setWidgetOpen → render → new actions → effect → loop
+  const setWidgetOpenRef = useRef(actions.setWidgetOpen);
+  setWidgetOpenRef.current = actions.setWidgetOpen;
+
   // Mirror agent dashboard SELECT_SESSION: tell reducer when widget opens/closes.
   // The reducer zeroes unreadCount atomically when open becomes true.
   useEffect(() => {
-    actions.setWidgetOpen(isOpen);
-  }, [isOpen, actions]);
+    setWidgetOpenRef.current(isOpen);
+  }, [isOpen]); // ← actions intentionally excluded; use stable ref instead
 
   // Propagate reducer's unreadCount to the parent badge whenever it changes.
   useEffect(() => {

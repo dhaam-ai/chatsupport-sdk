@@ -747,7 +747,13 @@ export class ChatWebSocketClient {
         // back to the default '/socket.io' path — causing a CSP/connection error.
         const parsedWsUrl  = new URL(wsUrl);
         const socketPath   = parsedWsUrl.pathname !== '/' ? parsedWsUrl.pathname : '/socket.io';
-        const socketOrigin = `${parsedWsUrl.protocol}//${parsedWsUrl.host}`;
+        // Normalize to https:// — socket.io-client needs an HTTP(S) origin for
+        // the initial polling handshake. Using wss:// as the origin breaks the
+        // polling transport. socket.io-client automatically upgrades to wss://
+        // for the WebSocket transport after the session is negotiated.
+        const socketOrigin = `${parsedWsUrl.host}`
+          ? `https://${parsedWsUrl.host}`
+          : parsedWsUrl.origin;
 
         console.log('%c[ChatClient] 🔌 Connecting 2 →', 'color:#5b4fcf;font-weight:bold', socketOrigin, '| path:', socketPath);
 
@@ -761,7 +767,20 @@ export class ChatWebSocketClient {
             userEmail: this.config.user.email ?? '',
             // No userRole = server treats as CUSTOMER (correct)
           },
-          transports: ['websocket', 'polling'],
+          // Use WebSocket-only transport to avoid "Session ID unknown" (code 1) errors.
+          //
+          // When running behind a load balancer (e.g. Kubernetes Ingress), the
+          // polling transport sends multiple independent HTTP requests that can
+          // land on *different* backend pods. Only the pod that handled the
+          // initial handshake knows the session SID → every other pod returns
+          // 400 "Session ID unknown".
+          //
+          // WebSocket opens a single persistent TCP connection, so all frames
+          // travel through one pod and sticky-session requirements disappear.
+          transports: ['websocket'],
+          upgrade: false,          // don't attempt upgrade; we're already on WS
+          withCredentials: false,  // don't send cookies; avoids CORS preflight credential issues
+          forceNew: true,          // don't reuse a cached manager from a previous failed connection
           reconnection: true,
           reconnectionAttempts: this.maxReconnectAttempts,
           reconnectionDelay:    this.reconnectDelay,
