@@ -792,7 +792,7 @@ export class ChatWebSocketClient {
         });
 
         this.socket.on('connect', () => {
-          console.log('%c[ChatClient] 📡 Transport connected', 'color:#0ea5e9;font-weight:bold');
+          console.log('%c[ChatClient] 📡 Transport connected 2', 'color:#0ea5e9;font-weight:bold');
         });
 
         // ── MESSAGE_RECEIVE ────────────────────────────────────────────────────
