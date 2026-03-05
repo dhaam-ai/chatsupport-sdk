@@ -529,6 +529,20 @@ export interface ChatSession {
   status: ChatStatus;
   assignedAgentId?: string;
   assignedAgentName?: string;
+  /** Enriched agent profile from ChatUser table */
+  assignedAgent?: {
+    displayName: string;
+    email: string | null;
+    avatarUrl: string | null;
+    isOnline: boolean;
+  } | null;
+  /** Enriched customer profile from ChatUser table */
+  customer?: {
+    displayName: string;
+    email: string | null;
+    avatarUrl: string | null;
+    isOnline: boolean;
+  } | null;
 }
 
 /**

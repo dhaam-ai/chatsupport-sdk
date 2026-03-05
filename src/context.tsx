@@ -1636,6 +1636,12 @@ export function ChatProvider({ config, children }: {
             session: {
               assignedAgentId:   data.agentId,
               assignedAgentName: data.agentName,
+              assignedAgent: data.agentName ? {
+                displayName: data.agentName,
+                email: data.agentEmail || null,
+                avatarUrl: data.avatarUrl || null,
+                isOnline: true,
+              } : undefined,
               mode:   'HUMAN',
               status: 'ASSIGNED',
             },
@@ -1745,12 +1751,7 @@ export function ChatProvider({ config, children }: {
     const replaceOptimistic: EventCallback = (raw: unknown) => {
       const msg = raw as ChatMessage;
       if (msg.senderType === 'CUSTOMER' && msg.content === content && !msg.id.startsWith('temp-')) {
-        // Preserve replyToMessageId from optimistic if server WS event didn't include it
-        const mergedMsg: ChatMessage = {
-          ...msg,
-          ...(replyToMessageId && !msg.replyToMessageId ? { replyToMessageId } : {}),
-        };
-        dispatch({ type: 'REPLACE_TEMP', tempId, message: mergedMsg });
+        dispatch({ type: 'REPLACE_TEMP', tempId, message: msg });
         pendingReplaces.current.delete(content);
         clientRef.current?.off?.('message', replaceOptimistic);
       }
@@ -1932,6 +1933,20 @@ async function fetchMessages(
 
     const hasMore = data.data.hasMore ?? false;
     dispatch({ type: 'SET_MESSAGES', messages, hasMore });
+
+    // Update session with enriched user data (assignedAgent, customer) from server
+    const sess = data.data.session;
+    if (sess) {
+      dispatch({
+        type: 'UPDATE_SESSION',
+        session: {
+          ...(sess.assignedAgentId && { assignedAgentId: sess.assignedAgentId }),
+          ...(sess.assignedAgent && { assignedAgent: sess.assignedAgent }),
+          ...(sess.assignedAgent?.displayName && { assignedAgentName: sess.assignedAgent.displayName }),
+          ...(sess.customer && { customer: sess.customer }),
+        },
+      });
+    }
   } catch (e) {
     console.error('[Chat] fetchMessages failed:', e);
   }

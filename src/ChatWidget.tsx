@@ -2285,8 +2285,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
     shouldScrollBottom.current = isAtBottom;
-    // Use functional updater — only re-render when the value actually changes
-    setShowJumpToBottom(prev => (prev === !isAtBottom ? prev : !isAtBottom));
+    setShowJumpToBottom(!isAtBottom);
 
     // Scroll-up pagination trigger: when user scrolls near top
     if (
@@ -2297,9 +2296,9 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     ) {
       savedScrollHeightRef.current = el.scrollHeight;
       shouldScrollBottom.current = false;
-      actionsRef.current.loadOlderMessages();  // use ref — stable, avoids dep on actions object
+      actions.loadOlderMessages();
     }
-  }, [state.loadingMore, state.hasMore]);  // removed `actions` from deps
+  }, [state.loadingMore, state.hasMore, actions]);
 
   // ── Jump to bottom ────────────────────────────────────────────────────────
   const scrollToBottom = useCallback(() => {
@@ -2440,8 +2439,11 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     if (state.tokenExpired) return 'Session Expired';
     if (state.loading) return 'Connecting...';
     if (flowStep === 'escalating') return 'Connecting to agent...';
-    if (state.session?.assignedAgentName && !looksLikeRawId(state.session.assignedAgentName)) {
-      return `Chatting with ${state.session.assignedAgentName}`;
+    // Prefer enriched agent profile name, fall back to assignedAgentName
+    const agentDisplayName = state.session?.assignedAgent?.displayName
+      ?? state.session?.assignedAgentName;
+    if (agentDisplayName && !looksLikeRawId(agentDisplayName)) {
+      return `Chatting with ${agentDisplayName}`;
     }
     if (state.session?.mode === 'HUMAN') return 'Connected to agent';
     return 'AI Support · Online';
@@ -2758,17 +2760,11 @@ function UnreadTracker({ isOpen, onUnreadChange }: {
 }) {
   const { state, actions } = useChat();
 
-  // Use a local ref so the effect below doesn't re-run when `actions` object
-  // identity changes on every render (plain object recreated in provider).
-  // Without this, setWidgetOpen → re-render → actions changes → effect re-runs
-  // → setWidgetOpen again → infinite loop.
-  const setWidgetOpenRef = useRef(actions.setWidgetOpen);
-  useEffect(() => { setWidgetOpenRef.current = actions.setWidgetOpen; });
-
   // Mirror agent dashboard SELECT_SESSION: tell reducer when widget opens/closes.
+  // The reducer zeroes unreadCount atomically when open becomes true.
   useEffect(() => {
-    setWidgetOpenRef.current(isOpen);
-  }, [isOpen]);  // only re-run when isOpen changes, not on every render
+    actions.setWidgetOpen(isOpen);
+  }, [isOpen, actions]);
 
   // Propagate reducer's unreadCount to the parent badge whenever it changes.
   useEffect(() => {
