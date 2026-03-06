@@ -1544,6 +1544,10 @@ export function ChatProvider({ config, children }: {
 
   const pendingReplaces = useRef<Map<string, string>>(new Map());
 
+  // Keep a ref to state so interval callbacks can read the latest values
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+
   // FIX BUG 2: dedup ref — suppresses the TYPING_INDICATOR + TYPING double-fire
   const lastTypingRef = useRef<{ isTyping: boolean; time: number } | null>(null);
 
@@ -1714,9 +1718,22 @@ export function ChatProvider({ config, children }: {
 
     initChat();
 
+    // ── Lightweight fallback poll (safety net for WS delivery gaps) ────────
+    // Runs every 10 s — fetches latest messages via REST and merges any
+    // that the WebSocket missed (e.g. multi-pod broadcast failure).
+    const FALLBACK_POLL_MS = 10_000;
+    const fallbackPollTimer = setInterval(async () => {
+      const sid = stateRef.current.session?.id;
+      if (!sid || stateRef.current.tokenExpired) return;
+      try {
+        await fetchMessages(configRef.current, sid, dispatch);
+      } catch (_) { /* swallow — non-critical safety net */ }
+    }, FALLBACK_POLL_MS);
+
     return () => {
       _activeConnections.delete(connectionKey);
       pendingReplaces.current.clear();
+      clearInterval(fallbackPollTimer);
       if (typingTimerRef.current) {
         clearTimeout(typingTimerRef.current);
         typingTimerRef.current = null;
