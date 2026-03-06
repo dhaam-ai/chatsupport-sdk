@@ -1576,7 +1576,6 @@
 // export default ChatWidget;
 
 
-
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { ChatProvider, useChat } from './context';
 import type { ChatSDKConfig, ChatMessage, ChatTheme } from './types';
@@ -1659,7 +1658,7 @@ function getStyles(theme: ChatTheme = {}): Record<string, React.CSSProperties> {
     quickRepliesWrap: { padding: '10px 14px 12px', display: 'flex', flexDirection: 'column' as const, gap: '8px', backgroundColor: '#fafafa', borderTop: '1px solid #f0f0f0', flexShrink: 0 },
     quickRepliesLabel: { fontSize: '11px', color: '#9ca3af', fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: '0.06em' },
     quickReplyBtn: { width: '100%', padding: '10px 16px', borderRadius: '12px', border: '1.5px solid #e0d9ff', backgroundColor: '#ffffff', color: '#5b4fcf', cursor: 'pointer', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '8px', textAlign: 'left' as const, transition: 'all 0.15s' },
-    inputArea: { padding: '10px 12px', borderTop: '1px solid #f0f0f5', display: 'flex', gap: '8px', alignItems: 'center', backgroundColor: '#ffffff', flexShrink: 0 },
+    inputArea: { padding: '10px 12px', borderTop: '1px solid #f0f0f5', display: 'flex', gap: '8px', alignItems: 'center', backgroundColor: '#ffffff', flexShrink: 0, position: 'relative' as const },
     input: { flex: 1, padding: '10px 14px', borderRadius: '22px', border: '1.5px solid #e5e7eb', fontSize: '14px', outline: 'none', fontFamily: 'inherit', backgroundColor: '#f9fafb', color: '#111827', transition: 'border-color 0.2s' },
     sendBtn: { width: '40px', height: '40px', borderRadius: '50%', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s' },
     centeredBox: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', justifyContent: 'center', gap: '16px', padding: '32px', backgroundColor: '#fafafa', textAlign: 'center' as const },
@@ -2633,6 +2632,26 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
                 </div>
               )}
             <div style={styles.inputArea}>
+              {/* Uploading overlay */}
+              {state.uploading && (
+                <div style={{
+                  position: 'absolute' as const, top: 0, left: 0, right: 0,
+                  transform: 'translateY(-100%)',
+                  padding: '8px 14px',
+                  backgroundColor: theme.primaryColor + '12',
+                  borderTop: `1px solid ${theme.primaryColor}33`,
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  zIndex: 5,
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="#e5e7eb" strokeWidth="3" />
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke={theme.primaryColor} strokeWidth="3" strokeLinecap="round">
+                      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
+                    </path>
+                  </svg>
+                  <span style={{ fontSize: '12px', color: theme.primaryColor, fontWeight: 600 }}>Uploading file…</span>
+                </div>
+              )}
               <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar" onChange={handleAttachment} />
               <button onClick={() => fileInputRef.current?.click()} disabled={!canType} title="Attach file" style={{ background: 'none', border: 'none', cursor: canType ? 'pointer' : 'not-allowed', padding: '4px', display: 'flex', alignItems: 'center', opacity: canType ? 0.6 : 0.3 }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>

@@ -1412,7 +1412,8 @@ type ChatAction =
   | { type: 'UPDATE_SESSION'; session: Partial<ChatSDKState['session']> }
   | { type: 'SET_ERROR'; error: Error | null }
   | { type: 'TOKEN_EXPIRED' }
-  | { type: 'SET_WIDGET_OPEN'; open: boolean };
+  | { type: 'SET_WIDGET_OPEN'; open: boolean }
+  | { type: 'SET_UPLOADING'; uploading: boolean };
 
 const initialState: ChatSDKState = {
   initialized:  false,
@@ -1428,6 +1429,7 @@ const initialState: ChatSDKState = {
   unreadCount:  0,
   hasMore:      true,
   loadingMore:  false,
+  uploading:    false,
 };
 
 function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
@@ -1508,6 +1510,9 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
         isWidgetOpen: action.open,
         unreadCount:  action.open ? 0 : state.unreadCount,
       };
+
+    case 'SET_UPLOADING':
+      return { ...state, uploading: action.uploading };
 
     default:
       return state;
@@ -1867,7 +1872,52 @@ export function ChatProvider({ config, children }: {
     if (clientRef.current.tokenExpired || state.tokenExpired) {
       throw new Error('TOKEN_EXPIRED');
     }
-    await clientRef.current.sendAttachment(file);
+
+    // Determine messageType from MIME for the optimistic message
+    let optType: MessageType = 'FILE';
+    if (file.type.startsWith('image/')) optType = 'IMAGE';
+    else if (file.type.startsWith('video/')) optType = 'VIDEO';
+    else if (file.type.startsWith('audio/')) optType = 'AUDIO';
+
+    const tempId = `temp-attach-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const optimistic: ChatMessage = {
+      id:            tempId,
+      chatSessionId: state.session.id,
+      senderType:    'CUSTOMER',
+      senderId:      configRef.current.user.id,
+      senderName:    configRef.current.user.name,
+      content:       file.name,
+      messageType:   optType,
+      timestamp:     new Date(),
+    };
+
+    dispatch({ type: 'SET_UPLOADING', uploading: true });
+    dispatch({ type: 'ADD_MESSAGE', message: optimistic });
+
+    try {
+      await clientRef.current.sendAttachment(file);
+
+      // Listen for the server echo to replace the optimistic message
+      const replaceOptimistic: EventCallback = (raw: unknown) => {
+        const msg = raw as ChatMessage;
+        if (
+          msg.senderType === 'CUSTOMER' &&
+          !msg.id.startsWith('temp-') &&
+          (msg.messageType === optType || msg.messageType === 'FILE')
+        ) {
+          dispatch({ type: 'REPLACE_TEMP', tempId, message: msg });
+          clientRef.current?.off?.('message', replaceOptimistic);
+        }
+      };
+      clientRef.current.on('message', replaceOptimistic);
+      setTimeout(() => clientRef.current?.off?.('message', replaceOptimistic), 15_000);
+    } catch (err) {
+      // Remove the optimistic message on failure
+      console.error('[Chat] Attachment upload failed:', err);
+      dispatch({ type: 'SET_ERROR', error: err as Error });
+    } finally {
+      dispatch({ type: 'SET_UPLOADING', uploading: false });
+    }
   }, [state.session, state.tokenExpired]);
 
   const actions: ChatSDKActions = {
