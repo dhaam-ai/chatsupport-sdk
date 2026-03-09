@@ -2422,17 +2422,13 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   // If content looks like a bare URL but no type — treat as FILE
   else if (isFileUrl && contentUrl.includes('/') && !contentUrl.includes(' '))                         effectiveType = 'FILE';
 
-  // Log ALL messages so we can find the audio message regardless of type
-  console.log('[ChatWidget:Bubble] msg type detection:', {
-    id: message.id?.slice(0,8),
-    messageType: message.messageType,
-    mimeType: attachment?.mimeType,
-    contentFull: contentUrl,
-    isAudioUrl, isVideoUrl, isImageUrl,
-    effectiveType,
-    attachment: attachment ? { url: attachment.url, mimeType: attachment.mimeType, fileName: attachment.fileName } : null,
-    metadata: message.metadata,
-  });
+  // Only log media messages (not every text message)
+  if (effectiveType !== null) {
+    console.log('[ChatWidget:Bubble] media detected:', {
+      id: message.id?.slice(0,8), messageType: message.messageType,
+      mimeType: attachment?.mimeType, effectiveType, url: contentUrl.slice(0,80),
+    });
+  }
 
   const isAttachment = effectiveType !== null;
   const isAudio = effectiveType === 'AUDIO';
@@ -2891,10 +2887,10 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       const diff = el.scrollHeight - savedScrollHeightRef.current;
       if (diff > 0) {
         el.scrollTop = diff;
-        // After restoring scroll position for prepended messages, ensure
-        // shouldScrollBottom stays false so no auto-scroll fires.
         shouldScrollBottom.current = false;
-        console.log('[ChatWidget:Scroll] 📜 Prepend scroll restore: scrollTop set to', diff, '— shouldScrollBottom = false');
+        // Update max so the scroll handler doesn't re-trigger loadOlderMessages
+        maxScrollTopRef.current = diff;
+        console.log('[ChatWidget:Scroll] 📜 Prepend restore: scrollTop=', diff, 'maxScrollTop=', diff);
       }
       savedScrollHeightRef.current = 0;
     }
@@ -3009,7 +3005,8 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
 
     if (
       el.scrollTop < 60 &&
-      maxScrollTopRef.current > 60 &&
+      maxScrollTopRef.current > 200 &&   // must have scrolled a good amount up
+      el.scrollTop < maxScrollTopRef.current - 100 && // and be far from max
       !state.loadingMore &&
       state.hasMore
     ) {
@@ -3950,7 +3947,8 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
       if (diff > 0) {
         el.scrollTop = diff;
         shouldScrollBottom.current = false;
-        console.log('[ChatWidget:Scroll2] 📜 Prepend scroll restore: scrollTop set to', diff, '— shouldScrollBottom = false');
+        maxScrollTopRef.current = diff;
+        console.log('[ChatWidget:Scroll2] 📜 Prepend restore: scrollTop=', diff, 'maxScrollTop=', diff);
       }
       savedScrollHeightRef.current = 0;
     }
@@ -4057,7 +4055,8 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
 
     if (
       el.scrollTop < 60 &&
-      maxScrollTopRef.current > 60 &&
+      maxScrollTopRef.current > 200 &&
+      el.scrollTop < maxScrollTopRef.current - 100 &&
       !state.loadingMore &&
       state.hasMore
     ) {
