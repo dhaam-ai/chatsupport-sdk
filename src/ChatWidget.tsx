@@ -2403,20 +2403,31 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   // Check if this is an attachment message
   const attachment = message.attachment ?? (message.metadata?.attachment as any) ?? null;
 
-  // Auto-detect: if messageType is IMAGE/VIDEO/AUDIO/FILE, or if attachment exists,
-  // or if the content is a CDN URL that looks like a media file
-  const isCdnUrl = /^https?:\/\/cdn\.\w+\.\w+\//.test(message.content ?? '');
   const contentUrl = message.content ?? '';
+  // Detect media type from URL extension — works for any domain, not just CDN
   const isImageUrl = /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(contentUrl);
   const isVideoUrl = /\.(mp4|webm|mov|avi)(\?.*)?$/i.test(contentUrl);
-  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|webm)(\?.*)?$/i.test(contentUrl);
+  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|flac|opus)(\?.*)?$/i.test(contentUrl);
+  const isFileUrl  = /^https?:\/\//i.test(contentUrl); // any http/https URL = potential file
 
-  // Resolve effective type
+  // Resolve effective type — messageType wins, then mimeType, then URL extension
+  // ORDER MATTERS: audio/video must be checked before FILE to avoid misclassification
   let effectiveType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | null = null;
-  if (message.messageType === 'IMAGE' || (attachment?.mimeType?.startsWith('image/')) || (isCdnUrl && isImageUrl)) effectiveType = 'IMAGE';
-  else if (message.messageType === 'VIDEO' || (attachment?.mimeType?.startsWith('video/')) || (isCdnUrl && isVideoUrl)) effectiveType = 'VIDEO';
-  else if (message.messageType === 'AUDIO' || (attachment?.mimeType?.startsWith('audio/')) || (isCdnUrl && isAudioUrl)) effectiveType = 'AUDIO';
-  else if (message.messageType === 'FILE' || attachment) effectiveType = 'FILE';
+  if      (message.messageType === 'IMAGE' || attachment?.mimeType?.startsWith('image/') || isImageUrl) effectiveType = 'IMAGE';
+  else if (message.messageType === 'VIDEO' || attachment?.mimeType?.startsWith('video/') || isVideoUrl) effectiveType = 'VIDEO';
+  else if (message.messageType === 'AUDIO' || attachment?.mimeType?.startsWith('audio/') || isAudioUrl) effectiveType = 'AUDIO';
+  else if (message.messageType === 'FILE'  || attachment)                                               effectiveType = 'FILE';
+  // If content looks like a bare URL but no type — treat as FILE
+  else if (isFileUrl && contentUrl.includes('/') && !contentUrl.includes(' '))                         effectiveType = 'FILE';
+
+  console.log('[ChatWidget:Bubble] msg type detection:', {
+    id: message.id?.slice(0,8),
+    messageType: message.messageType,
+    mimeType: attachment?.mimeType,
+    contentPreview: contentUrl.slice(0,60),
+    isAudioUrl, isVideoUrl, isImageUrl,
+    effectiveType,
+  });
 
   const isAttachment = effectiveType !== null;
   const isAudio = effectiveType === 'AUDIO';
@@ -2915,14 +2926,12 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     setUnreadWhileScrolled(0);
   }, []);
 
-  // Track last seen message ID to detect truly new messages vs poll merges
-  const lastMessageIdRef = useRef<string | null>(null);
-
-  // Derive the last message id outside the effect so the dep is a stable string.
-  // This means the effect fires ONLY when a new message arrives — not on every
-  // rerender caused by poll merges, metadata updates, or unrelated state changes.
+  // Derive stable deps FIRST, then init ref to current value.
+  // Initializing to lastMsgId (not null) means the effect won't fire on
+  // mount or Fast Refresh — only when a genuinely NEW message arrives.
   const lastMsgId   = allMessages.length > 0 ? allMessages[allMessages.length - 1].id : null;
   const lastMsgType = allMessages.length > 0 ? allMessages[allMessages.length - 1].senderType : null;
+  const lastMessageIdRef = useRef<string | null>(lastMsgId); // init to current, not null
 
   useEffect(() => {
     if (!lastMsgId) return;
@@ -3957,10 +3966,9 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   // ── Track the last message ID we saw so we can detect truly NEW messages ──
   // This prevents the fallback poll (which merges existing messages via
   // SET_MESSAGES) from triggering auto-scroll when the user has scrolled up.
-  const lastMessageIdRef = useRef<string | null>(null);
-
   const lastMsgId   = allMessages.length > 0 ? allMessages[allMessages.length - 1].id : null;
   const lastMsgType = allMessages.length > 0 ? allMessages[allMessages.length - 1].senderType : null;
+  const lastMessageIdRef = useRef<string | null>(lastMsgId); // init to current, not null
 
   useEffect(() => {
     if (!lastMsgId) return;
