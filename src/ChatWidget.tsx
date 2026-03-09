@@ -2889,7 +2889,13 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       savedScrollHeightRef.current > 0
     ) {
       const diff = el.scrollHeight - savedScrollHeightRef.current;
-      if (diff > 0) el.scrollTop = diff;
+      if (diff > 0) {
+        el.scrollTop = diff;
+        // After restoring scroll position for prepended messages, ensure
+        // shouldScrollBottom stays false so no auto-scroll fires.
+        shouldScrollBottom.current = false;
+        console.log('[ChatWidget:Scroll] 📜 Prepend scroll restore: scrollTop set to', diff, '— shouldScrollBottom = false');
+      }
       savedScrollHeightRef.current = 0;
     }
     prevMsgCountLayoutRef.current = msgCount;
@@ -2966,12 +2972,12 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastMsgId, scrollToBottomNow]);
 
-  // Typing indicator scroll — separate so it doesn't interact with ID dedup
+  // Typing indicator scroll — only scroll if user is at bottom AND not loading older msgs
   useEffect(() => {
-    if ((showTyping || state.isTyping) && shouldScrollBottom.current) {
+    if ((showTyping || state.isTyping) && shouldScrollBottom.current && !state.loadingMore) {
       scrollToBottomNow('smooth');
     }
-  }, [showTyping, state.isTyping, scrollToBottomNow]);
+  }, [showTyping, state.isTyping, scrollToBottomNow, state.loadingMore]);
 
   // ── Scroll handler: detect scroll-up for pagination + show jump button ────
   const handleMessagesScroll = useCallback(() => {
@@ -2984,18 +2990,21 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
-    const prev = shouldScrollBottom.current;
-    shouldScrollBottom.current = isAtBottom;
-    setShowJumpToBottom(!isAtBottom);
 
-    // Log only when the at-bottom state changes to avoid spam
-    if (prev !== isAtBottom) {
-      console.log(
-        isAtBottom
-          ? '%c[ChatWidget:Scroll] 🔽 User scrolled to bottom — auto-scroll ENABLED'
-          : '%c[ChatWidget:Scroll] 🔼 User scrolled UP — auto-scroll DISABLED (badge will show on new msgs)',
-        isAtBottom ? 'color:#10b981;font-weight:bold' : 'color:#f59e0b;font-weight:bold'
-      );
+    // Don't update shouldScrollBottom while a prepend restore is pending —
+    // the synthetic scroll from el.scrollTop = diff could briefly look like "at bottom"
+    if (savedScrollHeightRef.current === 0) {
+      const prev = shouldScrollBottom.current;
+      shouldScrollBottom.current = isAtBottom;
+      setShowJumpToBottom(!isAtBottom);
+      if (prev !== isAtBottom) {
+        console.log(
+          isAtBottom
+            ? '%c[ChatWidget:Scroll] 🔽 User at bottom — auto-scroll ENABLED'
+            : '%c[ChatWidget:Scroll] 🔼 User scrolled UP — auto-scroll DISABLED',
+          isAtBottom ? 'color:#10b981;font-weight:bold' : 'color:#f59e0b;font-weight:bold'
+        );
+      }
     }
 
     if (
@@ -3938,7 +3947,11 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
       savedScrollHeightRef.current > 0
     ) {
       const diff = el.scrollHeight - savedScrollHeightRef.current;
-      if (diff > 0) el.scrollTop = diff;
+      if (diff > 0) {
+        el.scrollTop = diff;
+        shouldScrollBottom.current = false;
+        console.log('[ChatWidget:Scroll2] 📜 Prepend scroll restore: scrollTop set to', diff, '— shouldScrollBottom = false');
+      }
       savedScrollHeightRef.current = 0;
     }
     prevMsgCountLayoutRef.current = msgCount;
@@ -4027,18 +4040,19 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
-    const prev = shouldScrollBottom.current;
-    shouldScrollBottom.current = isAtBottom;
-    setShowJumpToBottom(!isAtBottom);
 
-    // Log only when the at-bottom state changes to avoid spam
-    if (prev !== isAtBottom) {
-      console.log(
-        isAtBottom
-          ? '%c[ChatWidget:Scroll] 🔽 User scrolled to bottom — auto-scroll ENABLED'
-          : '%c[ChatWidget:Scroll] 🔼 User scrolled UP — auto-scroll DISABLED (badge will show on new msgs)',
-        isAtBottom ? 'color:#10b981;font-weight:bold' : 'color:#f59e0b;font-weight:bold'
-      );
+    if (savedScrollHeightRef.current === 0) {
+      const prev = shouldScrollBottom.current;
+      shouldScrollBottom.current = isAtBottom;
+      setShowJumpToBottom(!isAtBottom);
+      if (prev !== isAtBottom) {
+        console.log(
+          isAtBottom
+            ? '%c[ChatWidget:Scroll2] 🔽 User at bottom — auto-scroll ENABLED'
+            : '%c[ChatWidget:Scroll2] 🔼 User scrolled UP — auto-scroll DISABLED',
+          isAtBottom ? 'color:#10b981;font-weight:bold' : 'color:#f59e0b;font-weight:bold'
+        );
+      }
     }
 
     if (

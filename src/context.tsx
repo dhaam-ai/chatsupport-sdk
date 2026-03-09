@@ -1361,9 +1361,14 @@ async function fetchMessages(
 
     const messages: ChatMessage[] = data.data.messages.map((m: any) => {
       const d = new Date(m.createdAt ?? m.timestamp);
-      // Log any message that isn't plain TEXT so we can see the full raw structure
-      if (m.messageType && m.messageType !== 'TEXT') {
-        console.log('[Chat] fetchMessages NON-TEXT message RAW:', JSON.stringify(m, null, 2));
+      // Log ALL non-text messages including those with media content URLs
+      const hasMediaContent = m.content && (
+        m.content.includes('/audio/') ||
+        m.content.includes('/video/') ||
+        /\.(mp3|wav|ogg|m4a|aac|mp4|webm|mov)(\?|$)/i.test(m.content)
+      );
+      if ((m.messageType && m.messageType !== 'TEXT') || hasMediaContent || m.metadata?.attachment) {
+        console.log('[Chat] fetchMessages MEDIA message RAW:', JSON.stringify(m, null, 2));
       }
       return {
         id:               m.id,
