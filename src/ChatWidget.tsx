@@ -2904,6 +2904,13 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
         // Clear the restore flag after scroll events have settled (~2 frames)
         requestAnimationFrame(() => requestAnimationFrame(() => {
           isRestoringScroll.current = false;
+          // Re-derive shouldScrollBottom from actual DOM after restore settles.
+          // This prevents any stale 'true' value from firing a rogue scroll.
+          const el2 = messagesAreaRef.current;
+          if (el2) {
+            const atBottom = el2.scrollHeight - el2.scrollTop - el2.clientHeight < 60;
+            shouldScrollBottom.current = atBottom;
+          }
         }));
       }
       savedScrollHeightRef.current = 0;
@@ -3966,6 +3973,13 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
         console.log('[ChatWidget:Scroll2] 📜 Prepend restore: scrollTop=', diff);
         requestAnimationFrame(() => requestAnimationFrame(() => {
           isRestoringScroll.current = false;
+          // Re-derive shouldScrollBottom from actual DOM after restore settles.
+          // This prevents any stale 'true' value from firing a rogue scroll.
+          const el2 = messagesAreaRef.current;
+          if (el2) {
+            const atBottom = el2.scrollHeight - el2.scrollTop - el2.clientHeight < 60;
+            shouldScrollBottom.current = atBottom;
+          }
         }));
       }
       savedScrollHeightRef.current = 0;
