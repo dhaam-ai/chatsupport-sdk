@@ -2491,6 +2491,8 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   };
 
   // Audio: compact bubble — just enough padding for the 40px player + timestamp
+  // Audio bubble: fixed-width pill that wraps snugly around the custom player.
+  // Must NOT use maxWidth% here — the outer wrapper is already fit-content.
   const bubbleStyle: React.CSSProperties = isAudio
     ? {
         ...(isCustomer
@@ -2498,7 +2500,7 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
           : { background: '#ffffff', border: '1px solid #ede9fe', borderRadius: '18px 18px 18px 4px' }),
         padding: '8px 10px',
         boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-        display: 'inline-flex', flexDirection: 'column' as const, gap: '4px',
+        display: 'flex', flexDirection: 'column' as const, gap: '2px',
       }
     : (isCustomer ? styles.bubbleCustomer : styles.bubbleAgent);
 
@@ -2509,14 +2511,22 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
       onMouseLeave={() => setHovered(false)}
     >
       {label && <div style={styles.senderLabel}>{label}</div>}
-      {/* position: relative wrapper so the reply button can be positioned absolutely without affecting bubble layout */}
-      <div style={{ position: 'relative', maxWidth: '82%' }}>
-        <div style={{ ...bubbleStyle, maxWidth: '100%' }}>
+      {/*
+        For audio bubbles: width must be fit-content so the purple/white pill
+        shrinks to wrap the player (≈250px) instead of stretching to 82% of
+        the widget width. For all other types: keep maxWidth: 82%.
+      */}
+      <div style={{ position: 'relative', ...(isAudio ? { width: 'fit-content' } : { maxWidth: '82%' }) }}>
+        <div style={{ ...bubbleStyle, ...(isAudio ? {} : { maxWidth: '100%' }) }}>
           {renderReplyQuote()}
           {isAttachment ? renderAttachmentContent() : message.content}
           {!isAudio && <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left' }}>{time}</div>}
+          {/* Timestamp sits inside the audio bubble, right-aligned under the player */}
+          {isAudio && (
+            <div style={{ ...styles.timestamp, textAlign: 'right', marginTop: '2px', opacity: 0.7 }}>{time}</div>
+          )}
         </div>
-        {/* Reply button — always rendered, visibility toggled via opacity */}
+        {/* Reply button */}
         {onReply && (
           <button
             onClick={() => onReply(message)}
@@ -2537,7 +2547,6 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
           </button>
         )}
       </div>
-      {isAudio && <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left', marginTop: '2px' }}>{time}</div>}
     </div>
   );
 });
@@ -2887,23 +2896,29 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   // Track last seen message ID to detect truly new messages vs poll merges
   const lastMessageIdRef = useRef<string | null>(null);
 
-  // Only auto-scroll when a genuinely NEW message arrives and user is near bottom.
-  // When user is scrolled up and a new message arrives, increment unread badge.
+  // Derive the last message id outside the effect so the dep is a stable string.
+  // This means the effect fires ONLY when a new message arrives — not on every
+  // rerender caused by poll merges, metadata updates, or unrelated state changes.
+  const lastMsgId   = allMessages.length > 0 ? allMessages[allMessages.length - 1].id : null;
+  const lastMsgType = allMessages.length > 0 ? allMessages[allMessages.length - 1].senderType : null;
+
   useEffect(() => {
-    if (allMessages.length === 0) return;
-    const latestMsg = allMessages[allMessages.length - 1];
-    if (latestMsg.id === lastMessageIdRef.current) return;
-    lastMessageIdRef.current = latestMsg.id;
+    if (!lastMsgId) return;
+    if (lastMsgId === lastMessageIdRef.current) return; // same message, nothing to do
+    lastMessageIdRef.current = lastMsgId;
+
     if (shouldScrollBottom.current) {
+      // User is at (or near) the bottom — scroll to show the new message
       scrollToBottomNow('smooth');
     } else {
-      // User is scrolled up — count this as unread and show jump button
-      if (latestMsg.senderType !== 'CUSTOMER') {
+      // User has scrolled up — show badge instead of force-scrolling
+      if (lastMsgType !== 'CUSTOMER') {
         setUnreadWhileScrolled(c => c + 1);
         setShowJumpToBottom(true);
       }
     }
-  }, [allMessages, scrollToBottomNow]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMsgId, scrollToBottomNow]);
 
   // Typing indicator scroll — separate so it doesn't interact with ID dedup
   useEffect(() => {
@@ -3908,21 +3923,24 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   // SET_MESSAGES) from triggering auto-scroll when the user has scrolled up.
   const lastMessageIdRef = useRef<string | null>(null);
 
-  // Only auto-scroll when genuinely NEW message — show unread badge if scrolled up.
+  const lastMsgId   = allMessages.length > 0 ? allMessages[allMessages.length - 1].id : null;
+  const lastMsgType = allMessages.length > 0 ? allMessages[allMessages.length - 1].senderType : null;
+
   useEffect(() => {
-    if (allMessages.length === 0) return;
-    const latestMsg = allMessages[allMessages.length - 1];
-    if (latestMsg.id === lastMessageIdRef.current) return;
-    lastMessageIdRef.current = latestMsg.id;
+    if (!lastMsgId) return;
+    if (lastMsgId === lastMessageIdRef.current) return;
+    lastMessageIdRef.current = lastMsgId;
+
     if (shouldScrollBottom.current) {
       scrollToBottomNow('smooth');
     } else {
-      if (latestMsg.senderType !== 'CUSTOMER') {
+      if (lastMsgType !== 'CUSTOMER') {
         setUnreadWhileScrolled(c => c + 1);
         setShowJumpToBottom(true);
       }
     }
-  }, [allMessages, scrollToBottomNow]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMsgId, scrollToBottomNow]);
 
   // Typing indicator: scroll if user is at bottom (separate from message effect
   // so it doesn't interact with the lastMessageId dedup logic above)
