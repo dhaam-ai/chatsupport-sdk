@@ -697,7 +697,6 @@
 
 
 
-
 import React, {
   createContext, useContext, useReducer, useEffect, useCallback, useRef,
 } from 'react';
@@ -853,16 +852,6 @@ export function ChatProvider({ config, children }: {
   useEffect(() => { stateRef.current = state; }, [state]);
 
   // ── Typing dedup ref ──────────────────────────────────────────────────────
-  // Tracks the last dispatched typing state + timestamp.
-  // Used ONLY to suppress exact same-value duplicates that arrive close together
-  // (server emits both TYPING_INDICATOR and TYPING per keystroke, and client.ts
-  // registers listeners on both — so each agent keystroke fires this handler twice).
-  //
-  // RULE: only suppress when BOTH conditions are true simultaneously:
-  //   1. incoming isTyping === last dispatched isTyping  (same value, not a transition)
-  //   2. arrived within 300ms of the last dispatch
-  //
-  // A true→false or false→true transition is ALWAYS allowed through.
   const lastTypingDispatch = useRef<{ isTyping: boolean; time: number } | null>(null);
 
   // ── Initialize once ───────────────────────────────────────────────────────
@@ -890,7 +879,6 @@ export function ChatProvider({ config, children }: {
             return;
           }
 
-          // Log FULL message object so we can see exact structure of media messages
           console.log('[Chat] ADD_MESSAGE FULL:', JSON.stringify({
             id: message.id,
             messageType: message.messageType,
@@ -903,40 +891,10 @@ export function ChatProvider({ config, children }: {
         });
 
         // ── Typing handler ───────────────────────────────────────────────
-        //
-        // Three bugs fixed here vs the original implementation:
-        //
-        // BUG 1 — Strict uppercase senderType check dropped all events
-        //   Original:  if (senderType !== 'AGENT') return;
-        //   Problem:   server may send 'agent' (lowercase), 'Agent', or omit
-        //              the field entirely. All three cases hit the guard and
-        //              silently dropped the event before SET_TYPING was ever
-        //              dispatched, so the indicator never appeared.
-        //   Fix:       Normalise to uppercase with String().toUpperCase().
-        //              Only block events that are EXPLICITLY 'CUSTOMER'.
-        //              Empty/unknown sender → treat as agent (safe because the
-        //              server does not echo customer typing back to themselves).
-        //
-        // BUG 2 — 150ms dedup window suppressed true→false transitions
-        //   Original:  if (lastTypingRef.isTyping === isTyping && within 150ms) return;
-        //   Problem:   if agent starts typing (true) and stops quickly (false),
-        //              and both events arrive within 150ms, the false was suppressed
-        //              and the bubble stayed on screen until the 4s auto-clear.
-        //   Fix:       Only dedup same-value duplicates (true→true or false→false).
-        //              A value transition is ALWAYS dispatched regardless of timing.
-        //              Widened window to 300ms to reliably catch the double-fire.
-        //
-        // BUG 3 — Shared ref between dedup and auto-clear timer caused stale state
-        //   Original:  lastTypingRef was nulled by the auto-clear timeout callback,
-        //              which could unblock a stale duplicate on the very next event.
-        //   Fix:       Dedicated lastTypingDispatch ref used only by this handler.
-        //              Explicitly nulled after dispatching false (or after auto-clear)
-        //              so the next true is never accidentally blocked.
         client.on('typing', ((rawData: any) => {
           const isTyping  = rawData?.isTyping ?? false;
           const senderId  = rawData?.senderId ?? '';
 
-          // Normalise senderType — handles lowercase, missing, or null from server
           const rawSender  = rawData?.senderType ?? rawData?.sender_type ?? '';
           const senderType = String(rawSender).toUpperCase().trim();
 
@@ -946,19 +904,17 @@ export function ChatProvider({ config, children }: {
             { isTyping, senderId, senderType, raw: rawData?.senderType }
           );
 
-          // ── BUG 1 FIX: only skip explicit CUSTOMER events ────────────────
           if (senderType === 'CUSTOMER') {
             console.log('[Chat:TYPING] Skipping — explicit CUSTOMER echo');
             return;
           }
 
-          // ── BUG 2 FIX: dedup same-value only, never transitions ──────────
           const now  = Date.now();
           const last = lastTypingDispatch.current;
           if (
             last !== null &&
-            last.isTyping === isTyping &&    // same value = not a transition
-            (now - last.time) < 300          // within dedup window
+            last.isTyping === isTyping &&
+            (now - last.time) < 300
           ) {
             console.log(
               `%c[Chat:TYPING] Suppressed same-value duplicate (${isTyping}) within 300ms`,
@@ -967,10 +923,8 @@ export function ChatProvider({ config, children }: {
             return;
           }
 
-          // ── BUG 3 FIX: update dedup ref BEFORE dispatching ───────────────
           lastTypingDispatch.current = { isTyping, time: now };
 
-          // Clear any pending auto-clear timer
           if (typingTimerRef.current) {
             clearTimeout(typingTimerRef.current);
             typingTimerRef.current = null;
@@ -984,16 +938,13 @@ export function ChatProvider({ config, children }: {
           );
 
           if (isTyping) {
-            // Safety net: if server never sends false (agent closes tab etc.)
-            // hide the indicator after 5 seconds.
             typingTimerRef.current = setTimeout(() => {
               console.log('[Chat:TYPING] Auto-clear after 5s');
               dispatch({ type: 'SET_TYPING', isTyping: false });
               typingTimerRef.current     = null;
-              lastTypingDispatch.current = null; // reset so next true is never blocked
+              lastTypingDispatch.current = null;
             }, 5000);
           } else {
-            // Explicit false received — reset dedup ref so next true isn't blocked
             lastTypingDispatch.current = null;
           }
         }) as EventCallback);
@@ -1026,32 +977,14 @@ export function ChatProvider({ config, children }: {
           dispatch({ type: 'SET_CONNECTED', connected: false });
         });
 
-        // ── FIX: Re-enable input after reconnect ─────────────────────────
-        // socket.io's 'reconnect' event fires when the transport re-connects
-        // but BEFORE the server emits CONNECTION_ACK again. We must NOT set
-        // connected=true here because the session may not be re-joined yet.
-        //
-        // Instead we listen for CONNECTION_ACK (already registered above in
-        // client.ts which calls this.emit('connectionAck', session)) and
-        // dispatch SET_CONNECTED:true from there via a dedicated handler.
-        //
-        // Additionally we register a direct handler here so the context layer
-        // also reacts to the re-ACK without depending on client internals.
         client.on('reconnect', () => {
-          // socket.io reconnected at transport level — session rejoin is
-          // handled inside client.ts. We optimistically re-enable the input
-          // so the user isn't stuck. If the rejoin fails, an error will fire.
           console.log('[Chat] Transport reconnected — re-enabling input');
           dispatch({ type: 'SET_CONNECTED', connected: true });
         });
 
-        // Re-enable input when CONNECTION_ACK fires after a reconnect.
-        // client.ts emits 'connectionAck' on its internal emitter whenever
-        // CONNECTION_ACK is received (both on first connect and on reconnect).
         client.on('connectionAck', ((data: any) => {
           console.log('[Chat] connectionAck received — ensuring connected=true', data);
           dispatch({ type: 'SET_CONNECTED', connected: true });
-          // Also update session status in case it changed during reconnect
           if (data?.status || data?.mode) {
             dispatch({ type: 'UPDATE_SESSION', session: { status: data.status, mode: data.mode } });
           }
@@ -1100,7 +1033,9 @@ export function ChatProvider({ config, children }: {
           }
         }
 
-        await fetchMessages(configRef.current, session.id, dispatch);
+        // ── Initial load: SET_MESSAGES (replaces empty state) ─────────────
+        await fetchMessages(configRef.current, session.id, dispatch, false /* initial load — replace empty state */);
+
         dispatch({ type: 'INIT_SUCCESS', session });
         configRef.current.callbacks?.onConnected?.(session.id);
 
@@ -1113,12 +1048,24 @@ export function ChatProvider({ config, children }: {
 
     initChat();
 
-    // ── Lightweight fallback poll (safety net for missed WS messages) ─────
+    // ── Fallback poll (safety net for missed WS messages) ────────────────
+    //
+    // FIX: Use mergeOnly=true so the poll NEVER replaces state.messages.
+    //
+    // The original code used SET_MESSAGES which wiped out any paginated
+    // older messages the user had loaded. This caused:
+    //   1. state.messages shrinks (e.g. 30 → 10)
+    //   2. allMessages recomputes with a different lastMsgId
+    //   3. lastMsgId useEffect fires → scrollToBottomNow() → rogue jump
+    //
+    // With mergeOnly=true the poll only dispatches ADD_MESSAGE for messages
+    // not already in state, so paginated history is preserved.
+    //
     const FALLBACK_POLL_MS = 10_000;
     const fallbackPollTimer = setInterval(async () => {
       const sid = stateRef.current.session?.id;
       if (!sid || stateRef.current.tokenExpired) return;
-      try { await fetchMessages(configRef.current, sid, dispatch); }
+      try { await fetchMessages(configRef.current, sid, dispatch, true /* mergeOnly */); }
       catch (_) { /* swallow — non-critical */ }
     }, FALLBACK_POLL_MS);
 
@@ -1340,10 +1287,20 @@ export const useChatActions  = () => useChat().actions;
 export const useChatState    = () => useChat().state;
 
 // ─── fetchMessages ────────────────────────────────────────────────────────────
+//
+// mergeOnly=false (default, initial load): dispatches SET_MESSAGES which
+//   replaces state.messages. Correct on first load when state is empty.
+//
+// mergeOnly=true (fallback poll): dispatches ADD_MESSAGE only for messages
+//   not already in state. This preserves any paginated history the user loaded.
+//   Without this, the poll would wipe older messages, shrink state.messages,
+//   change lastMsgId, and trigger a rogue scroll-to-bottom in ChatWidget.
+//
 async function fetchMessages(
-  config:    ChatSDKConfig,
-  sessionId: string,
-  dispatch:  React.Dispatch<ChatAction>,
+  config:     ChatSDKConfig,
+  sessionId:  string,
+  dispatch:   React.Dispatch<ChatAction>,
+  mergeOnly:  boolean = false,
 ): Promise<void> {
   try {
     const res = await fetch(
@@ -1361,7 +1318,6 @@ async function fetchMessages(
 
     const messages: ChatMessage[] = data.data.messages.map((m: any) => {
       const d = new Date(m.createdAt ?? m.timestamp);
-      // Log ALL non-text messages including those with media content URLs
       const hasMediaContent = m.content && (
         m.content.includes('/audio/') ||
         m.content.includes('/video/') ||
@@ -1387,7 +1343,16 @@ async function fetchMessages(
     });
 
     const hasMore = data.data.hasMore ?? false;
-    dispatch({ type: 'SET_MESSAGES', messages, hasMore });
+
+    if (mergeOnly) {
+      // Poll mode: add only new messages, never wipe paginated history
+      for (const msg of messages) {
+        dispatch({ type: 'ADD_MESSAGE', message: msg });
+      }
+    } else {
+      // Initial load: replace the empty message list
+      dispatch({ type: 'SET_MESSAGES', messages, hasMore });
+    }
 
     const sess = data.data.session;
     if (sess) {

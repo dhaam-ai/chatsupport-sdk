@@ -2787,6 +2787,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   const prevMsgCountLayoutRef  = useRef(0);
   const maxScrollTopRef        = useRef(0);
   const isRestoringScroll      = useRef(false);
+  const restoreBlockUntilRef   = useRef(0); // timestamp: block shouldScrollBottom=true until this time
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [unreadWhileScrolled, setUnreadWhileScrolled] = React.useState(0);
 
@@ -2805,7 +2806,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   // ── PATCH VERIFICATION ────────────────────────────────────────────────────
   useEffect(() => {
     console.log(
-      '%c[ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-09-scroll-fix',
+      '%c[ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-09-scroll-fix-v3',
       'background:#5b4fcf;color:#fff;padding:4px 10px;border-radius:4px;font-weight:bold'
     );
   }, []);
@@ -3003,14 +3004,14 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
         shouldScrollBottom.current = false;
         maxScrollTopRef.current = diff;
         console.log('[ChatWidget:Scroll] 📜 Prepend restore: scrollTop=', diff);
+        // Block handleMessagesScroll from re-enabling auto-scroll for 600ms.
+        // This covers the window where images load and cause extra scroll events
+        // AFTER isRestoringScroll is cleared. Without this, those image-load
+        // scroll events see isRestoringScroll=false, compute a stale (small)
+        // scrollHeight, and wrongly conclude the user is at the bottom.
+        restoreBlockUntilRef.current = Date.now() + 600;
         requestAnimationFrame(() => requestAnimationFrame(() => {
           isRestoringScroll.current = false;
-          // FIX: After a prepend-restore the user is intentionally scrolled UP
-          // to read older messages. NEVER re-enable auto-scroll here.
-          // Only handleMessagesScroll (user scrolling to bottom) should do that.
-          // The old atBottom re-check was unreliable: images haven't loaded yet
-          // so scrollHeight is underestimated and atBottom spuriously returns
-          // true, triggering a rogue jump to the bottom.
           shouldScrollBottom.current = false;
         }));
       }
@@ -3103,7 +3104,8 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
 
-    if (!isRestoringScroll.current) {
+    const isBlockedByRestore = isRestoringScroll.current || Date.now() < restoreBlockUntilRef.current;
+    if (!isBlockedByRestore) {
       const prev = shouldScrollBottom.current;
       shouldScrollBottom.current = isAtBottom;
       setShowJumpToBottom(!isAtBottom);
@@ -3115,6 +3117,11 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
           isAtBottom ? 'color:#10b981;font-weight:bold' : 'color:#f59e0b;font-weight:bold'
         );
       }
+    } else if (isBlockedByRestore && isAtBottom) {
+      // During restore block window, if something thinks we're at bottom,
+      // force-keep shouldScrollBottom false and show jump button.
+      shouldScrollBottom.current = false;
+      setShowJumpToBottom(true);
     }
 
     if (
