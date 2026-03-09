@@ -2120,11 +2120,6 @@
 
 
 
-// ═══════════════════════════════════════════════════════════════════
-// ChatWidget.tsx  ·  PATCHED BUILD  ·  v2026-03-09-fixes
-// To verify this file is loaded, check the console for:
-//   [ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-09-fixes
-// ═══════════════════════════════════════════════════════════════════
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { ChatProvider, useChat } from './context';
 import type { ChatSDKConfig, ChatMessage, ChatTheme } from './types';
@@ -2269,25 +2264,19 @@ function TypingIndicator({ styles }: { styles: Record<string, React.CSSPropertie
   );
 }
 
-// Returns true if the string looks like a raw hex ID (e.g. Cognito sub or UUID without hyphens)
 function looksLikeRawId(s: string | undefined): boolean {
   if (!s) return false;
   return /^[0-9a-fA-F-]{20,}$/.test(s);
 }
 
-// FIX #4: Format time in 12-hour format (e.g. "2:30 PM") instead of 24-hour
 function formatTime(date: Date | string): string {
   return new Date(date).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
-    hour12: true,   // ← explicitly force 12-hour clock with AM/PM
+    hour12: true,
   });
 }
 
-
-// ── CompactAudioPlayer ────────────────────────────────────────────────────────
-// Replaces the native <audio> element which renders at 54px+ in all browsers
-// regardless of CSS height. This custom player is always exactly 40px tall.
 const CompactAudioPlayer = React.memo(function CompactAudioPlayer({
   src, isCustomer,
 }: { src: string; isCustomer: boolean }) {
@@ -2314,7 +2303,6 @@ const CompactAudioPlayer = React.memo(function CompactAudioPlayer({
   const trackBg = isCustomer ? 'rgba(255,255,255,0.25)' : '#e5e7eb';
   const fillBg  = isCustomer ? 'rgba(255,255,255,0.9)' : '#5b4fcf';
 
-  // Debug: log when this renders so we know CompactAudioPlayer is active
   React.useEffect(() => {
     console.log('%c[ChatWidget:Audio] ✅ CompactAudioPlayer rendered, src=' + src.slice(0, 60), 'color:#10b981;font-weight:bold');
   }, []);
@@ -2386,52 +2374,37 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   const isCustomer = message.senderType === 'CUSTOMER';
   const isSystem   = message.senderType === 'SYSTEM';
   const isBot      = message.senderType === 'BOT';
-  // FIX #4: use helper that always outputs 12-hour format
   const time = formatTime(message.timestamp);
   const [hovered, setHovered] = useState(false);
 
-  // Filter out system messages that are just raw hex IDs (no real text content)
   if (isSystem && looksLikeRawId(message.content?.trim())) return null;
-
   if (isSystem) return <div style={styles.bubbleSystem}>{message.content}</div>;
 
-  // Use senderName, but fall back to 'Agent' if it's missing or looks like a raw ID
   const rawName = message.senderName;
   const agentLabel = (rawName && !looksLikeRawId(rawName)) ? rawName : 'Agent';
   const label = isCustomer ? null : isBot ? 'AI Assistant' : agentLabel;
 
-  // Check if this is an attachment message
   const attachment = message.attachment ?? (message.metadata?.attachment as any) ?? null;
-
   const contentUrl = message.content ?? '';
-  // Detect media type from URL extension.
-  // NOTE: .webm is intentionally excluded from isVideoUrl — it's ambiguous
-  // (can be audio or video). Let messageType/mimeType decide for .webm files.
   const isImageUrl = /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(contentUrl);
-  const isVideoUrl = /\.(mp4|mov|avi|mkv|flv|wmv)(\?.*)?$/i.test(contentUrl); // no .webm
+  const isVideoUrl = /\.(mp4|mov|avi|mkv|flv|wmv)(\?.*)?$/i.test(contentUrl);
   const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|flac|opus|webm)(\?.*)?$/i.test(contentUrl)
-                  || /\/audio\//i.test(contentUrl); // path contains /audio/
+                  || /\/audio\//i.test(contentUrl);
   const isFileUrl  = /^https?:\/\//i.test(contentUrl);
 
-  // Resolve effective type.
-  // STRICT PRIORITY: messageType > mimeType > URL extension.
-  // messageType is checked ALONE first to prevent URL extension from overriding it.
   let effectiveType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | null = null;
   if      (message.messageType === 'IMAGE')  effectiveType = 'IMAGE';
   else if (message.messageType === 'VIDEO')  effectiveType = 'VIDEO';
   else if (message.messageType === 'AUDIO')  effectiveType = 'AUDIO';
   else if (message.messageType === 'FILE')   effectiveType = 'FILE';
-  // messageType not set or TEXT — fall back to mimeType
   else if (attachment?.mimeType?.startsWith('image/'))  effectiveType = 'IMAGE';
   else if (attachment?.mimeType?.startsWith('video/'))  effectiveType = 'VIDEO';
   else if (attachment?.mimeType?.startsWith('audio/'))  effectiveType = 'AUDIO';
-  // Last resort: URL extension
   else if (isImageUrl) effectiveType = 'IMAGE';
   else if (isVideoUrl) effectiveType = 'VIDEO';
   else if (isAudioUrl) effectiveType = 'AUDIO';
   else if (attachment || (isFileUrl && contentUrl.includes('/') && !contentUrl.includes(' '))) effectiveType = 'FILE';
 
-  // Only log media messages (not every text message)
   if (effectiveType !== null) {
     console.log('[ChatWidget:Bubble] media detected:', {
       id: message.id?.slice(0,8), messageType: message.messageType,
@@ -2442,7 +2415,6 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   const isAttachment = effectiveType !== null;
   const isAudio = effectiveType === 'AUDIO';
 
-  // Resolve reply-to message
   const replyTo = message.replyToMessage ?? replyToResolved ?? null;
 
   const renderReplyQuote = () => {
@@ -2506,11 +2478,8 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
       return <video src={url} controls style={{ maxWidth: '240px', maxHeight: '180px', borderRadius: '12px' }} preload="metadata" />;
     }
     if (effectiveType === 'AUDIO') {
-      // Native <audio> ignores height CSS and renders 54px+ of browser chrome.
-      // CompactAudioPlayer is always exactly 40px tall regardless of browser.
       return <CompactAudioPlayer src={url} isCustomer={isCustomer} />;
     }
-    // Generic file
     return (
       <a href={url} target="_blank" rel="noopener noreferrer"
         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderRadius: '10px', backgroundColor: isCustomer ? 'rgba(255,255,255,0.15)' : '#f3f4f6', color: isCustomer ? '#fff' : '#5b4fcf', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
@@ -2521,9 +2490,6 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
     );
   };
 
-  // Audio: compact bubble — just enough padding for the 40px player + timestamp
-  // Audio bubble: fixed-width pill that wraps snugly around the custom player.
-  // Must NOT use maxWidth% here — the outer wrapper is already fit-content.
   const bubbleStyle: React.CSSProperties = isAudio
     ? {
         ...(isCustomer
@@ -2542,22 +2508,15 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
       onMouseLeave={() => setHovered(false)}
     >
       {label && <div style={styles.senderLabel}>{label}</div>}
-      {/*
-        For audio bubbles: width must be fit-content so the purple/white pill
-        shrinks to wrap the player (≈250px) instead of stretching to 82% of
-        the widget width. For all other types: keep maxWidth: 82%.
-      */}
       <div style={{ position: 'relative', ...(isAudio ? { width: 'fit-content' } : { maxWidth: '82%' }) }}>
         <div style={{ ...bubbleStyle, ...(isAudio ? {} : { maxWidth: '100%' }) }}>
           {renderReplyQuote()}
           {isAttachment ? renderAttachmentContent() : message.content}
           {!isAudio && <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left' }}>{time}</div>}
-          {/* Timestamp sits inside the audio bubble, right-aligned under the player */}
           {isAudio && (
             <div style={{ ...styles.timestamp, textAlign: 'right', marginTop: '2px', opacity: 0.7 }}>{time}</div>
           )}
         </div>
-        {/* Reply button */}
         {onReply && (
           <button
             onClick={() => onReply(message)}
@@ -2638,15 +2597,166 @@ function WidgetHeader({ onClose, styles, subtitle, theme }: {
 }
 
 // ==========================================
-// ChatContent — main logic
+// ChatWidget — public entry point
 // ==========================================
 
-export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: {
+export interface ChatWidgetProps {
+  config: ChatSDKConfig;
+  defaultOpen?: boolean;
+}
+
+export function ChatWidget({ config, defaultOpen = false }: ChatWidgetProps): JSX.Element {
+  const [isOpen, setIsOpen]           = useState(defaultOpen);
+  const [launchHover, setLaunchHover] = useState(false);
+  const [chatKey, setChatKey]         = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const theme: FullTheme = { ...defaultTheme, ...config.theme };
+  const styles = getStyles(config.theme);
+
+  const scrollToBottomRef = useRef<(() => void) | null>(null);
+
+  const handleStartNewChat = () => {
+    setChatKey(k => k + 1);
+  };
+
+  const handleUnreadChange = useCallback((count: number) => {
+    setUnreadCount(count);
+  }, []);
+
+  const prevIsOpen = useRef(isOpen);
+  useEffect(() => {
+    if (isOpen && !prevIsOpen.current) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (scrollToBottomRef.current) {
+            scrollToBottomRef.current();
+          }
+        });
+      });
+    }
+    prevIsOpen.current = isOpen;
+  }, [isOpen]);
+
+  return (
+    <div style={styles.container}>
+      {!isOpen && (
+        <button
+          style={{
+            ...styles.launcher,
+            transform: launchHover ? 'scale(1.1)' : 'scale(1)',
+            boxShadow: launchHover ? `0 6px 28px ${theme.primaryColor}77` : `0 4px 20px ${theme.primaryColor}44`,
+            position: 'relative' as const,
+          }}
+          onClick={() => setIsOpen(true)}
+          onMouseEnter={() => setLaunchHover(true)}
+          onMouseLeave={() => setLaunchHover(false)}
+          aria-label="Open chat support"
+        >
+          <ChatIcon />
+          {unreadCount > 0 && (
+            <span style={{
+              position: 'absolute', top: '-4px', right: '-4px',
+              minWidth: '20px', height: '20px', borderRadius: '10px',
+              backgroundColor: '#ef4444', color: '#ffffff',
+              fontSize: '11px', fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: '0 5px',
+              boxShadow: '0 2px 6px rgba(239,68,68,0.5)',
+              border: '2px solid #ffffff',
+              fontFamily: 'system-ui, sans-serif', lineHeight: 1,
+            }}>
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
+        </button>
+      )}
+
+      <ChatProvider config={config} key={chatKey}>
+        <UnreadTracker isOpen={isOpen} onUnreadChange={handleUnreadChange} />
+        <div style={{ display: isOpen ? 'block' : 'none' }}>
+          <ChatContentWithScrollRef
+            onClose={() => setIsOpen(false)}
+            styles={styles}
+            config={config}
+            theme={theme}
+            onStartNewChat={handleStartNewChat}
+            scrollToBottomRef={scrollToBottomRef}
+          />
+        </div>
+      </ChatProvider>
+    </div>
+  );
+}
+
+// ==========================================
+// UnreadTracker
+// ==========================================
+
+function UnreadTracker({ isOpen, onUnreadChange }: {
+  isOpen: boolean;
+  onUnreadChange: (count: number) => void;
+}) {
+  const { state, actions } = useChat();
+
+  const setWidgetOpenRef = useRef(actions.setWidgetOpen);
+  setWidgetOpenRef.current = actions.setWidgetOpen;
+
+  useEffect(() => {
+    setWidgetOpenRef.current(isOpen);
+  }, [isOpen]);
+
+  useEffect(() => {
+    onUnreadChange(state.unreadCount);
+  }, [state.unreadCount, onUnreadChange]);
+
+  return null;
+}
+
+// ── Thin wrapper that registers the scroll helper with the parent ─────────────
+function ChatContentWithScrollRef({
+  scrollToBottomRef,
+  ...props
+}: {
   onClose: () => void;
   styles: Record<string, React.CSSProperties>;
   config: ChatSDKConfig;
   theme: FullTheme;
   onStartNewChat?: () => void;
+  scrollToBottomRef: React.MutableRefObject<(() => void) | null>;
+}) {
+  const localMessagesAreaRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    scrollToBottomRef.current = () => {
+      const el = localMessagesAreaRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    };
+    return () => {
+      scrollToBottomRef.current = null;
+    };
+  }, [scrollToBottomRef]);
+
+  return (
+    <ChatContentInner
+      {...props}
+      externalMessagesAreaRef={localMessagesAreaRef}
+    />
+  );
+}
+
+// ==========================================
+// ChatContentInner — main logic
+// ==========================================
+
+function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, externalMessagesAreaRef }: {
+  onClose: () => void;
+  styles: Record<string, React.CSSProperties>;
+  config: ChatSDKConfig;
+  theme: FullTheme;
+  onStartNewChat?: () => void;
+  externalMessagesAreaRef: React.MutableRefObject<HTMLDivElement | null>;
 }): JSX.Element {
   const { state, actions } = useChat();
 
@@ -2661,7 +2771,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   const [replyTarget, setReplyTarget]           = useState<ReplyTarget | null>(null);
 
   const messagesEndRef   = useRef<HTMLDivElement>(null);
-  const messagesAreaRef  = useRef<HTMLDivElement>(null);
+  const messagesAreaRef  = externalMessagesAreaRef;
   const inputRef         = useRef<HTMLInputElement>(null);
   const fileInputRef     = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -2671,20 +2781,18 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   const prevMsgCount     = useRef(0);
   const prevSoundCount   = useRef(0);
 
-  // ── Scroll-up pagination state ────────────────────────────────────────────
+  // ── Scroll state ──────────────────────────────────────────────────────────
   const shouldScrollBottom     = useRef(true);
   const savedScrollHeightRef   = useRef(0);
   const prevMsgCountLayoutRef  = useRef(0);
   const maxScrollTopRef        = useRef(0);
-  const isRestoringScroll      = useRef(false); // true while prepend scroll restore is settling
+  const isRestoringScroll      = useRef(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [unreadWhileScrolled, setUnreadWhileScrolled] = useState(0);
+  const [unreadWhileScrolled, setUnreadWhileScrolled] = React.useState(0);
 
-  // ── Track rendered message IDs to prevent animation replay ────────────────
-  const renderedMsgIds = useRef(new Set<string>());
+  const renderedMsgIds  = useRef(new Set<string>());
   const hasRenderedOnce = useRef(false);
 
-  // ── Stable refs so callbacks never change identity ────────────────────────
   const stateRef    = useRef(state);
   const actionsRef  = useRef(actions);
   const configRef   = useRef(config);
@@ -2694,16 +2802,12 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   useEffect(() => { actionsRef.current = actions; }, [actions]);
   useEffect(() => { configRef.current  = config;  }, [config]);
 
-  // ── PATCH VERIFICATION ──────────────────────────────────────────────────────
-  // This log confirms the PATCHED version is loaded. If you don't see this,
-  // your bundler is serving a cached/old version of this file.
+  // ── PATCH VERIFICATION ────────────────────────────────────────────────────
   useEffect(() => {
     console.log(
-      '%c[ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-09-fixes',
+      '%c[ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-09-scroll-fix',
       'background:#5b4fcf;color:#fff;padding:4px 10px;border-radius:4px;font-weight:bold'
     );
-    console.log('[ChatWidget] Audio: CompactAudioPlayer (no native <audio> controls)');
-    console.log('[ChatWidget] Scroll: lastMsgId dep (no allMessages dep)');
   }, []);
 
   // Inject keyframes once
@@ -2735,7 +2839,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     document.head.appendChild(s);
   }, []);
 
-  // ── addLocal: ZERO deps ───────────────────────────────────────────────────
+  // ── addLocal ──────────────────────────────────────────────────────────────
   const addLocal = useCallback((
     msg: Omit<ChatMessage, 'id' | 'timestamp' | 'chatSessionId' | 'messageType'> &
          { id?: string; chatSessionId?: string; messageType?: ChatMessage['messageType'] }
@@ -2797,7 +2901,6 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       setShowQuickReplies(true);
     };
     setTimeout(run, 300);
-
   }, [state.connected, state.loading]);
 
   // Auto-focus input in free mode
@@ -2818,7 +2921,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     prevMsgCount.current = newCount;
   }, [state.messages, flowStep]);
 
-  // ── Notification sound for new agent/bot messages ─────────────────────────
+  // ── Notification sound ────────────────────────────────────────────────────
   useEffect(() => {
     const newCount = state.messages.length;
     if (newCount > prevSoundCount.current) {
@@ -2868,7 +2971,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   }, []);
 
   // ── allMessages merge ─────────────────────────────────────────────────────
-  const allMessages = React.useMemo(() => {
+  const allMessages = useMemo(() => {
     const seen = new Set<string>();
     const result: ChatMessage[] = [];
     for (const m of state.messages) { seen.add(m.id); result.push(m); }
@@ -2883,11 +2986,10 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     return result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }, [state.messages, localMessages]);
 
-  // ── Scroll restoration (useLayoutEffect) ─────────────────────────────────
+  // ── Scroll restoration after prepend (useLayoutEffect) ───────────────────
   useLayoutEffect(() => {
     const el = messagesAreaRef.current;
     const msgCount = allMessages.length;
-
     if (
       el &&
       msgCount > prevMsgCountLayoutRef.current &&
@@ -2896,27 +2998,26 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     ) {
       const diff = el.scrollHeight - savedScrollHeightRef.current;
       if (diff > 0) {
-        isRestoringScroll.current = true;   // block scroll handler during restore
+        isRestoringScroll.current = true;
         el.scrollTop = diff;
         shouldScrollBottom.current = false;
         maxScrollTopRef.current = diff;
         console.log('[ChatWidget:Scroll] 📜 Prepend restore: scrollTop=', diff);
-        // Clear the restore flag after scroll events have settled (~2 frames)
         requestAnimationFrame(() => requestAnimationFrame(() => {
           isRestoringScroll.current = false;
-          // Re-derive shouldScrollBottom from actual DOM after restore settles.
-          // This prevents any stale 'true' value from firing a rogue scroll.
-          const el2 = messagesAreaRef.current;
-          if (el2) {
-            const atBottom = el2.scrollHeight - el2.scrollTop - el2.clientHeight < 60;
-            shouldScrollBottom.current = atBottom;
-          }
+          // FIX: After a prepend-restore the user is intentionally scrolled UP
+          // to read older messages. NEVER re-enable auto-scroll here.
+          // Only handleMessagesScroll (user scrolling to bottom) should do that.
+          // The old atBottom re-check was unreliable: images haven't loaded yet
+          // so scrollHeight is underestimated and atBottom spuriously returns
+          // true, triggering a rogue jump to the bottom.
+          shouldScrollBottom.current = false;
         }));
       }
       savedScrollHeightRef.current = 0;
     }
     prevMsgCountLayoutRef.current = msgCount;
-  }, [allMessages.length]);
+  }, [allMessages.length, messagesAreaRef]);
 
   // ── Track rendered message IDs for animation control ──────────────────────
   useEffect(() => {
@@ -2931,17 +3032,14 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     return map;
   }, [allMessages]);
 
-  // ── Stable callbacks for MessageBubble ────────────────────────────────────
+  // ── Stable callbacks ──────────────────────────────────────────────────────
   const handleImageClick = useCallback((url: string, fileName: string) => setViewerImage({ url, fileName }), []);
   const handleReply = useCallback((m: ChatMessage) => {
     setReplyTarget({ id: m.id, content: m.content, senderType: m.senderType, senderName: m.senderName });
     inputRef.current?.focus();
   }, []);
 
-  // ── FIX #2 & #3: Auto-scroll to bottom on new messages AND when widget opens ──
-  //
-  // We use a stable imperative helper so we can call it from multiple places
-  // without recreating effects.
+  // ── scrollToBottomNow ─────────────────────────────────────────────────────
   const scrollToBottomNow = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const el = messagesAreaRef.current;
     if (el) {
@@ -2952,20 +3050,17 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     shouldScrollBottom.current = true;
     setShowJumpToBottom(false);
     setUnreadWhileScrolled(0);
-  }, []);
+  }, [messagesAreaRef]);
 
+  // ── Auto-scroll on new messages ───────────────────────────────────────────
   const lastMsgId   = allMessages.length > 0 ? allMessages[allMessages.length - 1].id : null;
   const lastMsgType = allMessages.length > 0 ? allMessages[allMessages.length - 1].senderType : null;
-  // seededRef: becomes true after we've seen the initial batch of messages.
-  // Before it's seeded, we just record the current lastMsgId without scrolling.
   const lastMessageIdRef = useRef<string | null>(null);
   const scrollInitSeeded = useRef(false);
 
   useEffect(() => {
     if (!lastMsgId) return;
 
-    // First time messages arrive: seed the ref and skip scroll entirely.
-    // This covers both initial load AND Fast Refresh.
     if (!scrollInitSeeded.current) {
       lastMessageIdRef.current = lastMsgId;
       scrollInitSeeded.current = true;
@@ -2973,7 +3068,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       return;
     }
 
-    if (lastMsgId === lastMessageIdRef.current) return; // same msg, skip
+    if (lastMsgId === lastMessageIdRef.current) return;
     lastMessageIdRef.current = lastMsgId;
 
     if (shouldScrollBottom.current) {
@@ -2989,14 +3084,14 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastMsgId, scrollToBottomNow]);
 
-  // Typing indicator scroll — only scroll if user is at bottom AND not loading older msgs
+  // Typing indicator scroll
   useEffect(() => {
     if ((showTyping || state.isTyping) && shouldScrollBottom.current && !state.loadingMore) {
       scrollToBottomNow('smooth');
     }
   }, [showTyping, state.isTyping, scrollToBottomNow, state.loadingMore]);
 
-  // ── Scroll handler: detect scroll-up for pagination + show jump button ────
+  // ── Scroll handler ────────────────────────────────────────────────────────
   const handleMessagesScroll = useCallback(() => {
     const el = messagesAreaRef.current;
     if (!el) return;
@@ -3008,7 +3103,6 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
 
-    // Don't update shouldScrollBottom while prepend scroll restore is in progress
     if (!isRestoringScroll.current) {
       const prev = shouldScrollBottom.current;
       shouldScrollBottom.current = isAtBottom;
@@ -3025,8 +3119,8 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
 
     if (
       el.scrollTop < 60 &&
-      maxScrollTopRef.current > 200 &&   // must have scrolled a good amount up
-      el.scrollTop < maxScrollTopRef.current - 100 && // and be far from max
+      maxScrollTopRef.current > 200 &&
+      el.scrollTop < maxScrollTopRef.current - 100 &&
       !state.loadingMore &&
       state.hasMore
     ) {
@@ -3034,9 +3128,8 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       shouldScrollBottom.current = false;
       actions.loadOlderMessages();
     }
-  }, [state.loadingMore, state.hasMore, actions]);
+  }, [state.loadingMore, state.hasMore, actions, messagesAreaRef]);
 
-  // ── Jump to bottom ────────────────────────────────────────────────────────
   const scrollToBottom = useCallback(() => {
     scrollToBottomNow('smooth');
   }, [scrollToBottomNow]);
@@ -3106,1062 +3199,6 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       actionsRef.current.stopTyping?.();
       if (flowStep !== 'free') { setShowQuickReplies(false); setFlowStep('free'); }
     } catch (err: any) {
-      if (err?.message === 'TOKEN_EXPIRED') {
-        console.warn('[Chat] Cannot send — token expired');
-        return;
-      }
-      throw err;
-    }
-  }, [inputValue, flowStep, replyTarget]);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
-  }, [handleSend]);
-
-  const handleAttachment = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || stateRef.current.tokenExpired) return;
-    try {
-      await actionsRef.current.sendAttachment(file);
-    } catch (err: any) {
-      console.error('[Chat] Attachment upload failed:', err);
-    }
-    e.target.value = '';
-  }, []);
-
-  // ── Audio recording ───────────────────────────────────────────────────────
-  const startRecording = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4' });
-      audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType });
-        const ext = recorder.mimeType.includes('webm') ? 'webm' : 'm4a';
-        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: recorder.mimeType });
-        try {
-          await actionsRef.current.sendAttachment(file);
-        } catch (err: any) {
-          console.error('[Chat] Audio upload failed:', err);
-        }
-        setIsRecording(false);
-      };
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setIsRecording(true);
-    } catch (err) {
-      console.error('[Chat] Microphone access denied:', err);
-    }
-  }, []);
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-  }, []);
-
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputValue(e.target.value);
-    actionsRef.current.startTyping?.();
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => actionsRef.current.stopTyping?.(), 2000);
-  }, []);
-
-  const subtitle = (() => {
-    if (state.tokenExpired) return 'Session Expired';
-    if (state.loading) return 'Connecting...';
-    if (flowStep === 'escalating') return 'Connecting to agent...';
-    const agentDisplayName = state.session?.assignedAgent?.displayName
-      ?? state.session?.assignedAgentName;
-    if (agentDisplayName && !looksLikeRawId(agentDisplayName)) {
-      return `Chatting with ${agentDisplayName}`;
-    }
-    if (state.session?.mode === 'HUMAN') return 'Connected to agent';
-    return 'AI Support · Online';
-  })();
-
-  const isClosed = state.session?.status === 'CLOSED';
-
-  // ── FIX #1: canType — removed 'welcome' from the blocked steps ───────────
-  //
-  // Previously: flowStep !== 'escalating' was the only flowStep guard, but the
-  // combined condition `state.connected && !state.loading` could briefly be
-  // false during the connection handshake, leaving buttons disabled.
-  //
-  // Now: we explicitly allow typing in 'welcome', 'menu', and 'free' steps.
-  // Only 'escalating' (mid-handoff) disables the input. We also explicitly
-  // guard against loading/disconnected/expired/closed states.
-  const canType = (
-    !isClosed &&
-    !state.tokenExpired &&
-    state.connected &&       // must be connected
-    flowStep !== 'escalating' // only block during live agent handoff
-    // Note: we intentionally allow 'welcome' and 'menu' steps so the customer
-    // can type freely even before the bot flow completes.
-  );
-
-  const isActive = !!inputValue.trim() && canType;
-
-  // ── Loading ───────────────────────────────────────────────────────────────
-  if (state.loading) {
-    return (
-      <div style={styles.widget}>
-        <WidgetHeader onClose={onClose} styles={styles} subtitle="Connecting..." theme={theme} />
-        <div style={styles.centeredBox}>
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="10" stroke="#e5e7eb" strokeWidth="3" />
-            <path d="M12 2a10 10 0 0 1 10 10" stroke={theme.primaryColor} strokeWidth="3" strokeLinecap="round">
-              <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
-            </path>
-          </svg>
-          <span style={{ fontSize: 13, color: '#9ca3af' }}>Starting chat...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Error ─────────────────────────────────────────────────────────────────
-  if (state.tokenExpired) {
-    return (
-      <div style={styles.widget}>
-        <WidgetHeader onClose={onClose} styles={styles} subtitle="Session Expired" theme={theme} />
-        <div style={styles.centeredBox}>
-          <div style={{ fontSize: 40 }}>⏳</div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: '#1a1a2e', marginBottom: 6 }}>Session Expired</div>
-            <div style={{ fontSize: 13, color: '#6b7280', lineHeight: 1.5 }}>Your session has expired. Please refresh the page to continue chatting.</div>
-          </div>
-          <button
-            onClick={() => window.location.reload()}
-            style={{ padding: '10px 28px', borderRadius: 22, border: 'none', background: theme.primaryColor, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 14, fontFamily: 'inherit' }}
-          >
-            Refresh Page
-          </button>
-        </div>
-      </div>
-    );
-  }
-  if (state.error && !state.connected) {
-    return (
-      <div style={styles.widget}>
-        <WidgetHeader onClose={onClose} styles={styles} subtitle="Disconnected" theme={theme} />
-        <div style={styles.centeredBox}>
-          <div style={{ fontSize: 40 }}>⚠️</div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: '#1a1a2e', marginBottom: 6 }}>Connection Lost</div>
-            <div style={{ fontSize: 13, color: '#6b7280' }}>{state.error.message}</div>
-          </div>
-          <button onClick={() => actionsRef.current.reconnect?.()} style={{ padding: '10px 28px', borderRadius: 22, border: 'none', background: theme.primaryColor, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 14, fontFamily: 'inherit' }}>
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Main ──────────────────────────────────────────────────────────────────
-  return (
-    <div style={styles.widget}>
-      <WidgetHeader onClose={onClose} styles={styles} subtitle={subtitle} theme={theme} />
-
-      {flowStep === 'escalating' ? (
-        <EscalatingScreen styles={styles} primaryColor={theme.primaryColor} />
-      ) : (
-        <>
-          <div style={{ ...styles.messages, position: 'relative' as const }} ref={messagesAreaRef} onScroll={handleMessagesScroll}>
-            {/* Loading older messages spinner */}
-            {state.loadingMore && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px 0 6px', gap: '8px' }}>
-                <SpinnerIcon color={theme.primaryColor} size={16} />
-                <span style={{ fontSize: '11px', color: '#9ca3af' }}>Loading older messages…</span>
-              </div>
-            )}
-            {/* Beginning of conversation marker */}
-            {!state.hasMore && allMessages.length > 0 && !state.loadingMore && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 0 12px' }}>
-                <span style={{ fontSize: '10px', fontWeight: 600, color: '#c4b5fd', backgroundColor: '#f3eeff', padding: '3px 12px', borderRadius: '10px' }}>
-                  Beginning of conversation
-                </span>
-              </div>
-            )}
-            {allMessages.map(msg => {
-              const isNewMsg = hasRenderedOnce.current && !renderedMsgIds.current.has(msg.id);
-              return (
-                <div key={msg.id} id={`chat-msg-${msg.id}`} style={isNewMsg ? { animation: 'chatFadeIn 0.2s ease', borderRadius: '12px' } : { borderRadius: '12px' }}>
-                  <MessageBubble
-                    message={msg}
-                    styles={styles}
-                    userName={config.user.name}
-                    onImageClick={handleImageClick}
-                    onReply={handleReply}
-                    replyToResolved={msg.replyToMessageId ? msgByIdMap.get(msg.replyToMessageId) ?? null : null}
-                  />
-                </div>
-              );
-            })}
-            {(showTyping || state.isTyping) && <TypingIndicator styles={styles} />}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Jump-to-bottom button with unread badge */}
-          {showJumpToBottom && (
-            <div style={{ position: 'relative' as const, height: 0, zIndex: 10 }}>
-              <button
-                onClick={scrollToBottom}
-                style={{
-                  position: 'absolute', bottom: '8px', right: '16px',
-                  width: '36px', height: '36px', borderRadius: '50%',
-                  backgroundColor: '#ffffff', border: '1px solid #e5e7eb',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: theme.primaryColor, transition: 'all 0.15s',
-                }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = theme.primaryColor; (e.currentTarget as HTMLElement).style.color = '#ffffff'; (e.currentTarget as HTMLElement).style.boxShadow = `0 4px 14px ${theme.primaryColor}44`; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = '#ffffff'; (e.currentTarget as HTMLElement).style.color = theme.primaryColor; (e.currentTarget as HTMLElement).style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)'; }}
-                aria-label="Scroll to latest messages"
-              >
-                <ChevronDownIcon />
-              </button>
-              {unreadWhileScrolled > 0 && (
-                <div style={{
-                  position: 'absolute', bottom: '38px', right: '12px',
-                  background: theme.primaryColor, color: '#fff',
-                  fontSize: '10px', fontWeight: 700, lineHeight: 1,
-                  padding: '3px 6px', borderRadius: '10px',
-                  minWidth: '18px', textAlign: 'center',
-                  boxShadow: `0 2px 6px ${theme.primaryColor}55`,
-                  pointerEvents: 'none',
-                }}>
-                  {unreadWhileScrolled > 99 ? '99+' : unreadWhileScrolled}
-                </div>
-              )}
-            </div>
-          )}
-
-          {escalationError && (
-            <div style={{ margin: '8px 12px', padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 12, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>⚠️</span>
-              <span style={{ flex: 1 }}>{escalationError}</span>
-              <button onClick={() => setEscalationError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 18, lineHeight: 1 }}>×</button>
-            </div>
-          )}
-
-          {showQuickReplies && flowStep === 'menu' && (
-            <QuickReplies replies={MAIN_MENU} onSelect={handleQuickReply} styles={styles} primaryColor={theme.primaryColor} />
-          )}
-
-          {isClosed ? (
-            <div style={{ padding: '16px 14px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', borderTop: '1px solid #f0f0f5', backgroundColor: '#fafafa' }}>
-              <div style={{ fontSize: 28 }}>✅</div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Chat Ended</div>
-                <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.5 }}>This session has been closed.<br />Need more help?</div>
-              </div>
-              {onStartNewChat && (
-                <button
-                  onClick={onStartNewChat}
-                  style={{ padding: '10px 24px', borderRadius: 22, border: 'none', background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.primaryColor}cc)`, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', boxShadow: `0 3px 12px ${theme.primaryColor}44`, letterSpacing: '-0.01em' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.04)'; (e.currentTarget as HTMLElement).style.boxShadow = `0 5px 18px ${theme.primaryColor}66`; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; (e.currentTarget as HTMLElement).style.boxShadow = `0 3px 12px ${theme.primaryColor}44`; }}
-                >
-                  + Start New Chat
-                </button>
-              )}
-            </div>
-          ) : (
-            <div style={{ flexShrink: 0 }}>
-              {/* ── Upload progress banner — sits directly above the reply/input row ── */}
-              {state.uploading && (
-                <div style={{
-                  padding: '8px 14px',
-                  backgroundColor: theme.primaryColor + '10',
-                  borderTop: `1px solid ${theme.primaryColor}30`,
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                }}>
-                  {/* Animated spinner */}
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
-                    <circle cx="12" cy="12" r="10" stroke="#e5e7eb" strokeWidth="3" />
-                    <path d="M12 2a10 10 0 0 1 10 10" stroke={theme.primaryColor} strokeWidth="3" strokeLinecap="round">
-                      <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite" />
-                    </path>
-                  </svg>
-                  {/* Animated progress bar */}
-                  <div style={{ flex: 1, height: '3px', borderRadius: '2px', backgroundColor: theme.primaryColor + '25', overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%', borderRadius: '2px',
-                      backgroundColor: theme.primaryColor,
-                      animation: 'chatUploadPulse 1.4s ease-in-out infinite',
-                    }} />
-                  </div>
-                  <span style={{ fontSize: '11px', color: theme.primaryColor, fontWeight: 600, flexShrink: 0 }}>
-                    Uploading…
-                  </span>
-                </div>
-              )}
-              {/* Reply banner */}
-              {replyTarget && (
-                <div style={{
-                  padding: '8px 12px', borderTop: '1px solid #f0f0f5', backgroundColor: '#f9fafb',
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                }}>
-                  <div style={{
-                    flex: 1, borderLeft: `3px solid ${theme.primaryColor}`, paddingLeft: '10px',
-                    overflow: 'hidden',
-                  }}>
-                    <div style={{ fontSize: '11px', fontWeight: 700, color: theme.primaryColor, marginBottom: '1px' }}>
-                      {replyTarget.senderType === 'CUSTOMER' ? 'You' : (replyTarget.senderName || 'Agent')}
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {replyTarget.content?.length > 80 ? replyTarget.content.slice(0, 80) + '…' : replyTarget.content}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setReplyTarget(null)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '18px', lineHeight: 1, padding: '2px', flexShrink: 0 }}
-                  >×</button>
-                </div>
-              )}
-              <div style={styles.inputArea}>
-                <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar" onChange={handleAttachment} />
-
-                {/* Attach button — also disabled while uploading so user can't queue multiple files */}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={!canType || state.uploading}
-                  title="Attach file"
-                  style={{
-                    background: 'none', border: 'none',
-                    cursor: (canType && !state.uploading) ? 'pointer' : 'not-allowed',
-                    padding: '4px', display: 'flex', alignItems: 'center',
-                    opacity: (canType && !state.uploading) ? 0.6 : 0.3,
-                  }}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-                </button>
-
-                {/* Audio record button — also blocked while a file upload is in progress */}
-                <button
-                  onClick={isRecording ? stopRecording : startRecording}
-                  disabled={!canType || state.uploading}
-                  title={isRecording ? 'Stop recording' : (state.uploading ? 'Uploading…' : 'Record audio')}
-                  style={{
-                    background: isRecording ? '#ef4444' : 'none',
-                    border: isRecording ? '2px solid #ef4444' : 'none',
-                    borderRadius: '50%',
-                    cursor: (canType && !state.uploading) ? 'pointer' : 'not-allowed',
-                    padding: '4px',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    opacity: (canType && !state.uploading) ? (isRecording ? 1 : 0.6) : 0.3,
-                    width: 28, height: 28,
-                    animation: isRecording ? 'pulse-recording 1.5s ease-in-out infinite' : 'none',
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  {isRecording ? (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="#fff"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="1" width="6" height="11" rx="3"/><path d="M19 10v1a7 7 0 01-14 0v-1"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                  )}
-                </button>
-
-                <input
-                  ref={inputRef}
-                  type="text"
-                  placeholder={
-                    state.uploading ? '⏳ Uploading file, please wait...'
-                    : canType ? (isRecording ? '🔴 Recording audio...' : 'Type a message...')
-                    : 'Connecting...'
-                  }
-                  value={inputValue}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  disabled={!canType}
-                  style={{ ...styles.input, borderColor: inputValue ? theme.primaryColor + '88' : '#e5e7eb', opacity: canType ? 1 : 0.6 }}
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!isActive}
-                  style={{
-                    ...styles.sendBtn,
-                    background: isActive ? `linear-gradient(135deg, ${theme.primaryColor}, ${theme.primaryColor}cc)` : '#f3f4f6',
-                    boxShadow: isActive ? `0 3px 12px ${theme.primaryColor}44` : 'none',
-                    cursor: isActive ? 'pointer' : 'not-allowed',
-                  }}
-                >
-                  <SendIcon active={!!isActive} />
-                </button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* ── Image Viewer Modal ── */}
-      {viewerImage && (
-        <div
-          onClick={() => setViewerImage(null)}
-          style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100000,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'zoom-out',
-          }}
-        >
-          <button
-            onClick={() => setViewerImage(null)}
-            style={{
-              position: 'absolute', top: 16, right: 16,
-              background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%',
-              width: 40, height: 40, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#fff', fontSize: 22, fontWeight: 700, backdropFilter: 'blur(4px)',
-            }}
-            aria-label="Close image viewer"
-          >×</button>
-          <a
-            href={viewerImage.url}
-            download={viewerImage.fileName}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute', top: 16, right: 68,
-              background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%',
-              width: 40, height: 40, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#fff', backdropFilter: 'blur(4px)', textDecoration: 'none',
-            }}
-            aria-label="Download image"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          </a>
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'absolute', top: 20, left: 16, right: 120,
-              color: '#fff', fontSize: 13, fontWeight: 500, opacity: 0.8,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}
-          >{viewerImage.fileName}</div>
-          <img
-            src={viewerImage.url}
-            alt={viewerImage.fileName}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              maxWidth: '90vw', maxHeight: '85vh',
-              objectFit: 'contain', borderRadius: 8,
-              boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
-              cursor: 'default',
-            }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ==========================================
-// UnreadTracker
-// ==========================================
-
-function UnreadTracker({ isOpen, onUnreadChange }: {
-  isOpen: boolean;
-  onUnreadChange: (count: number) => void;
-}) {
-  const { state, actions } = useChat();
-
-  const setWidgetOpenRef = useRef(actions.setWidgetOpen);
-  setWidgetOpenRef.current = actions.setWidgetOpen;
-
-  useEffect(() => {
-    setWidgetOpenRef.current(isOpen);
-  }, [isOpen]);
-
-  useEffect(() => {
-    onUnreadChange(state.unreadCount);
-  }, [state.unreadCount, onUnreadChange]);
-
-  return null;
-}
-
-// ==========================================
-// ChatWidget — public entry point
-// ==========================================
-
-export interface ChatWidgetProps {
-  config: ChatSDKConfig;
-  defaultOpen?: boolean;
-}
-
-export function ChatWidget({ config, defaultOpen = false }: ChatWidgetProps): JSX.Element {
-  const [isOpen, setIsOpen]           = useState(defaultOpen);
-  const [launchHover, setLaunchHover] = useState(false);
-  const [chatKey, setChatKey]         = useState(0);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const theme: FullTheme = { ...defaultTheme, ...config.theme };
-  const styles = getStyles(config.theme);
-
-  // ── FIX #2: Ref to the messages-end sentinel inside ChatContent ───────────
-  // We need to scroll to bottom whenever the widget transitions from closed→open.
-  // Because ChatContent is always mounted (display:none/block), we can imperatively
-  // scroll the messages area. We pass a callback ref down via a shared ref.
-  const scrollToBottomRef = useRef<(() => void) | null>(null);
-
-  const handleStartNewChat = () => {
-    setChatKey(k => k + 1);
-  };
-
-  const handleUnreadChange = useCallback((count: number) => {
-    setUnreadCount(count);
-  }, []);
-
-  // ── FIX Issue 2: When widget opens, jump instantly to the last message ───
-  // We use 'auto' (instant) not 'smooth' because smooth scroll has a
-  // distance limit in some browsers and can stop short on long histories.
-  // requestAnimationFrame ensures the widget is visible before we measure.
-  const prevIsOpen = useRef(isOpen);
-  useEffect(() => {
-    if (isOpen && !prevIsOpen.current) {
-      requestAnimationFrame(() => {
-        // Double-rAF: first frame makes the div visible (display:block),
-        // second frame lets the browser calculate the full scrollHeight.
-        requestAnimationFrame(() => {
-          if (scrollToBottomRef.current) {
-            scrollToBottomRef.current();
-          }
-        });
-      });
-    }
-    prevIsOpen.current = isOpen;
-  }, [isOpen]);
-
-  return (
-    <div style={styles.container}>
-      {!isOpen && (
-        <button
-          style={{
-            ...styles.launcher,
-            transform: launchHover ? 'scale(1.1)' : 'scale(1)',
-            boxShadow: launchHover ? `0 6px 28px ${theme.primaryColor}77` : `0 4px 20px ${theme.primaryColor}44`,
-            position: 'relative' as const,
-          }}
-          onClick={() => setIsOpen(true)}
-          onMouseEnter={() => setLaunchHover(true)}
-          onMouseLeave={() => setLaunchHover(false)}
-          aria-label="Open chat support"
-        >
-          <ChatIcon />
-          {unreadCount > 0 && (
-            <span style={{
-              position: 'absolute', top: '-4px', right: '-4px',
-              minWidth: '20px', height: '20px', borderRadius: '10px',
-              backgroundColor: '#ef4444', color: '#ffffff',
-              fontSize: '11px', fontWeight: 700,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              padding: '0 5px',
-              boxShadow: '0 2px 6px rgba(239,68,68,0.5)',
-              border: '2px solid #ffffff',
-              fontFamily: 'system-ui, sans-serif', lineHeight: 1,
-            }}>
-              {unreadCount > 99 ? '99+' : unreadCount}
-            </span>
-          )}
-        </button>
-      )}
-
-      <ChatProvider config={config} key={chatKey}>
-        <UnreadTracker isOpen={isOpen} onUnreadChange={handleUnreadChange} />
-        <div style={{ display: isOpen ? 'block' : 'none' }}>
-          {/*
-            FIX #2: We pass a callback that ChatContent can use to expose its
-            scrollToBottom function upward via scrollToBottomRef. This avoids
-            prop-drilling a ref while keeping the pattern simple.
-            ChatContent calls this once on mount to register its scroll helper.
-          */}
-          <ChatContentWithScrollRef
-            onClose={() => setIsOpen(false)}
-            styles={styles}
-            config={config}
-            theme={theme}
-            onStartNewChat={handleStartNewChat}
-            scrollToBottomRef={scrollToBottomRef}
-          />
-        </div>
-      </ChatProvider>
-    </div>
-  );
-}
-
-// ── Thin wrapper that registers the scroll helper with the parent ─────────────
-//
-// This avoids forwardRef complexity while still letting ChatWidget imperatively
-// trigger a scroll-to-bottom when the panel opens.
-function ChatContentWithScrollRef({
-  scrollToBottomRef,
-  ...props
-}: {
-  onClose: () => void;
-  styles: Record<string, React.CSSProperties>;
-  config: ChatSDKConfig;
-  theme: FullTheme;
-  onStartNewChat?: () => void;
-  scrollToBottomRef: React.MutableRefObject<(() => void) | null>;
-}) {
-  // We create a local ref to the messages area and expose a scroll helper
-  // up to ChatWidget via scrollToBottomRef.
-  const localMessagesAreaRef = useRef<HTMLDivElement | null>(null);
-
-  // Register a stable scroll helper on mount / when ref changes.
-  // Uses 'auto' (instant) so the widget always opens at the very last message
-  // regardless of conversation length — smooth scroll can stop short.
-  useEffect(() => {
-    scrollToBottomRef.current = () => {
-      const el = localMessagesAreaRef.current;
-      if (el) {
-        el.scrollTop = el.scrollHeight;
-      }
-    };
-    return () => {
-      scrollToBottomRef.current = null;
-    };
-  }, [scrollToBottomRef]);
-
-  return (
-    <ChatContentInner
-      {...props}
-      externalMessagesAreaRef={localMessagesAreaRef}
-    />
-  );
-}
-
-// ── ChatContentInner — same as ChatContent but accepts an external ref ────────
-//
-// We split out the ref so ChatContentWithScrollRef can intercept the
-// messagesAreaRef and expose it to ChatWidget without any other changes.
-function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, externalMessagesAreaRef }: {
-  onClose: () => void;
-  styles: Record<string, React.CSSProperties>;
-  config: ChatSDKConfig;
-  theme: FullTheme;
-  onStartNewChat?: () => void;
-  externalMessagesAreaRef: React.MutableRefObject<HTMLDivElement | null>;
-}): JSX.Element {
-  const { state, actions } = useChat();
-
-  const [inputValue, setInputValue]             = useState('');
-  const [flowStep, setFlowStep]                 = useState<FlowStep>('welcome');
-  const [localMessages, setLocalMessages]       = useState<ChatMessage[]>([]);
-  const [showTyping, setShowTyping]             = useState(false);
-  const [showQuickReplies, setShowQuickReplies] = useState(false);
-  const [escalationError, setEscalationError]   = useState<string | null>(null);
-  const [viewerImage, setViewerImage]           = useState<{ url: string; fileName: string } | null>(null);
-  const [isRecording, setIsRecording]           = useState(false);
-  const [replyTarget, setReplyTarget]           = useState<ReplyTarget | null>(null);
-
-  const messagesEndRef   = useRef<HTMLDivElement>(null);
-  // Use the external ref so the parent wrapper can read scrollHeight
-  const messagesAreaRef  = externalMessagesAreaRef;
-  const inputRef         = useRef<HTMLInputElement>(null);
-  const fileInputRef     = useRef<HTMLInputElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef   = useRef<Blob[]>([]);
-  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
-  const hasWelcomed      = useRef(false);
-  const prevMsgCount     = useRef(0);
-  const prevSoundCount   = useRef(0);
-
-  const shouldScrollBottom     = useRef(true);
-  const savedScrollHeightRef   = useRef(0);
-  const prevMsgCountLayoutRef  = useRef(0);
-  const maxScrollTopRef        = useRef(0);
-  const isRestoringScroll      = useRef(false);
-  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-  const [unreadWhileScrolled, setUnreadWhileScrolled] = React.useState(0);
-
-  const renderedMsgIds  = useRef(new Set<string>());
-  const hasRenderedOnce = useRef(false);
-
-  const stateRef    = useRef(state);
-  const actionsRef  = useRef(actions);
-  const configRef   = useRef(config);
-  const botReplyRef = useRef<(content: string, delay?: number) => Promise<void>>();
-
-  useEffect(() => { stateRef.current   = state;   }, [state]);
-  useEffect(() => { actionsRef.current = actions; }, [actions]);
-  useEffect(() => { configRef.current  = config;  }, [config]);
-
-  useEffect(() => {
-    const id = 'chat-sdk-kf';
-    if (document.getElementById(id)) return;
-    const s = document.createElement('style');
-    s.id = id;
-    s.textContent = `
-      @keyframes chatTypingBounce {
-        0%,80%,100%{transform:translateY(0);opacity:.4}
-        40%{transform:translateY(-5px);opacity:1}
-      }
-      @keyframes chatFadeIn {
-        from{opacity:0;transform:translateY(5px)}
-        to{opacity:1;transform:translateY(0)}
-      }
-      @keyframes pulse-recording {
-        0%{box-shadow:0 0 0 0 rgba(239,68,68,0.5)}
-        70%{box-shadow:0 0 0 8px rgba(239,68,68,0)}
-        100%{box-shadow:0 0 0 0 rgba(239,68,68,0)}
-      }
-      @keyframes chatUploadPulse {
-        0%{width:0%;margin-left:0%}
-        50%{width:60%;margin-left:20%}
-        100%{width:0%;margin-left:100%}
-      }
-    `;
-    document.head.appendChild(s);
-  }, []);
-
-  const addLocal = useCallback((
-    msg: Omit<ChatMessage, 'id' | 'timestamp' | 'chatSessionId' | 'messageType'> &
-         { id?: string; chatSessionId?: string; messageType?: ChatMessage['messageType'] }
-  ) => {
-    const full: ChatMessage = {
-      id:            msg.id || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      timestamp:     new Date(),
-      chatSessionId: msg.chatSessionId || stateRef.current.session?.id || 'local',
-      messageType:   msg.messageType || 'TEXT',
-      ...msg,
-    };
-    setLocalMessages(prev => [...prev, full]);
-  }, []);
-
-  const botReply = useCallback((content: string, delay = 800): Promise<void> => {
-    setShowTyping(true);
-    return new Promise(resolve => {
-      setTimeout(() => {
-        setShowTyping(false);
-        addLocal({ senderType: 'BOT', senderId: 'bot', senderName: 'AI Assistant', content });
-        resolve();
-      }, delay);
-    });
-  }, [addLocal]);
-
-  useEffect(() => { botReplyRef.current = botReply; }, [botReply]);
-
-  useEffect(() => {
-    if (!state.connected || state.loading) return;
-    if (hasWelcomed.current) return;
-    hasWelcomed.current = true;
-
-    const sess = stateRef.current.session;
-    const msgs = stateRef.current.messages;
-
-    if (
-      sess?.status === 'ASSIGNED' ||
-      sess?.status === 'WAITING_FOR_AGENT' ||
-      sess?.mode === 'HUMAN'
-    ) {
-      setFlowStep('free');
-      return;
-    }
-
-    const customerMsgCount = msgs.filter(m => m.senderType === 'CUSTOMER').length;
-    const agentMsgCount    = msgs.filter(m => m.senderType === 'AGENT').length;
-    const hasRealHistory = customerMsgCount > 0 || agentMsgCount > 0;
-
-    if (hasRealHistory) {
-      setFlowStep('free');
-      return;
-    }
-
-    const run = async () => {
-      await botReplyRef.current!('👋 Hello! Welcome to Support. How can I help you today?', 700);
-      setFlowStep('menu');
-      setShowQuickReplies(true);
-    };
-    setTimeout(run, 300);
-  }, [state.connected, state.loading]);
-
-  useEffect(() => {
-    if (flowStep === 'free') inputRef.current?.focus();
-  }, [flowStep]);
-
-  useEffect(() => {
-    const newCount = state.messages.length;
-    if (newCount > prevMsgCount.current) {
-      const newMsgs = state.messages.slice(prevMsgCount.current);
-      if (newMsgs.some(m => m.senderType === 'AGENT') && flowStep !== 'free') {
-        setFlowStep('free');
-        setShowQuickReplies(false);
-      }
-    }
-    prevMsgCount.current = newCount;
-  }, [state.messages, flowStep]);
-
-  useEffect(() => {
-    const newCount = state.messages.length;
-    if (newCount > prevSoundCount.current) {
-      const newMsgs = state.messages.slice(prevSoundCount.current);
-      const hasAgentOrBotMsg = newMsgs.some(m => m.senderType === 'AGENT' || m.senderType === 'BOT');
-      if (hasAgentOrBotMsg && !state.isWidgetOpen) {
-        playNotificationSound();
-      }
-    }
-    prevSoundCount.current = newCount;
-  }, [state.messages.length, state.isWidgetOpen]);
-
-  useEffect(() => {
-    const unlock = () => { unlockAudio(); window.removeEventListener('click', unlock); };
-    window.addEventListener('click', unlock);
-    return () => window.removeEventListener('click', unlock);
-  }, []);
-
-  const waitForSession = useCallback((): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      if (stateRef.current.session?.id) { resolve(stateRef.current.session.id); return; }
-      const max = 8000; const step = 200; let elapsed = 0;
-      const t = setInterval(() => {
-        elapsed += step;
-        const id = stateRef.current.session?.id;
-        if (id) { clearInterval(t); resolve(id); }
-        else if (elapsed >= max) { clearInterval(t); reject(new Error('Session not ready — please try again')); }
-      }, step);
-    });
-  }, []);
-
-  const escalateToAgent = useCallback(async (sessionId: string, reason: string) => {
-    const cfg = configRef.current;
-    try {
-      await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${sessionId}/escalate`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${cfg.token}`, 'X-Tenant-ID': cfg.tenantId, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
-      });
-    } catch (e) {
-      console.warn('[Chat] REST escalation failed, using WS only:', e);
-    }
-    actionsRef.current.requestAgent?.(reason);
-  }, []);
-
-  const allMessages = useMemo(() => {
-    const seen = new Set<string>();
-    const result: ChatMessage[] = [];
-    for (const m of state.messages) { seen.add(m.id); result.push(m); }
-    for (const m of localMessages) {
-      if (seen.has(m.id)) continue;
-      if (m.id.startsWith('temp-')) {
-        if (!state.messages.some(s => s.senderType === 'CUSTOMER' && s.content === m.content)) {
-          seen.add(m.id); result.push(m);
-        }
-      } else { seen.add(m.id); result.push(m); }
-    }
-    return result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }, [state.messages, localMessages]);
-
-  useLayoutEffect(() => {
-    const el = messagesAreaRef.current;
-    const msgCount = allMessages.length;
-    if (
-      el &&
-      msgCount > prevMsgCountLayoutRef.current &&
-      !shouldScrollBottom.current &&
-      savedScrollHeightRef.current > 0
-    ) {
-      const diff = el.scrollHeight - savedScrollHeightRef.current;
-      if (diff > 0) {
-        isRestoringScroll.current = true;
-        el.scrollTop = diff;
-        shouldScrollBottom.current = false;
-        maxScrollTopRef.current = diff;
-        console.log('[ChatWidget:Scroll2] 📜 Prepend restore: scrollTop=', diff);
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          isRestoringScroll.current = false;
-          // Re-derive shouldScrollBottom from actual DOM after restore settles.
-          // This prevents any stale 'true' value from firing a rogue scroll.
-          const el2 = messagesAreaRef.current;
-          if (el2) {
-            const atBottom = el2.scrollHeight - el2.scrollTop - el2.clientHeight < 60;
-            shouldScrollBottom.current = atBottom;
-          }
-        }));
-      }
-      savedScrollHeightRef.current = 0;
-    }
-    prevMsgCountLayoutRef.current = msgCount;
-  }, [allMessages.length, messagesAreaRef]);
-
-  useEffect(() => {
-    allMessages.forEach(m => renderedMsgIds.current.add(m.id));
-    hasRenderedOnce.current = true;
-  }, [allMessages]);
-
-  const msgByIdMap = useMemo(() => {
-    const map = new Map<string, ChatMessage>();
-    for (const m of allMessages) map.set(m.id, m);
-    return map;
-  }, [allMessages]);
-
-  const handleImageClick = useCallback((url: string, fileName: string) => setViewerImage({ url, fileName }), []);
-  const handleReply = useCallback((m: ChatMessage) => {
-    setReplyTarget({ id: m.id, content: m.content, senderType: m.senderType, senderName: m.senderName });
-    inputRef.current?.focus();
-  }, []);
-
-  // FIX #3: Unified scroll-to-bottom helper — used by both the new-message
-  // effect and the scroll handler so we never have two different code paths.
-  const scrollToBottomNow = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    const el = messagesAreaRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    } else {
-      messagesEndRef.current?.scrollIntoView({ behavior });
-    }
-    shouldScrollBottom.current = true;
-    setShowJumpToBottom(false);
-    setUnreadWhileScrolled(0);
-  }, [messagesAreaRef]);
-
-  // ── Track the last message ID we saw so we can detect truly NEW messages ──
-  // This prevents the fallback poll (which merges existing messages via
-  // SET_MESSAGES) from triggering auto-scroll when the user has scrolled up.
-  const lastMsgId   = allMessages.length > 0 ? allMessages[allMessages.length - 1].id : null;
-  const lastMsgType = allMessages.length > 0 ? allMessages[allMessages.length - 1].senderType : null;
-  const lastMessageIdRef = useRef<string | null>(null);
-  const scrollInitSeeded = useRef(false);
-
-  useEffect(() => {
-    if (!lastMsgId) return;
-
-    if (!scrollInitSeeded.current) {
-      lastMessageIdRef.current = lastMsgId;
-      scrollInitSeeded.current = true;
-      console.log('[ChatWidget:Scroll2] 🌱 Seeded on init:', lastMsgId?.slice(0,12), '— no scroll');
-      return;
-    }
-
-    if (lastMsgId === lastMessageIdRef.current) return;
-    lastMessageIdRef.current = lastMsgId;
-
-    if (shouldScrollBottom.current) {
-      console.log('%c[ChatWidget:Scroll2] ✅ New msg + at bottom → scroll. id=' + lastMsgId?.slice(0,12), 'color:#10b981');
-      scrollToBottomNow('smooth');
-    } else {
-      console.log('%c[ChatWidget:Scroll2] 📌 New msg, user UP → badge. id=' + lastMsgId?.slice(0,12), 'color:#f59e0b');
-      if (lastMsgType !== 'CUSTOMER') {
-        setUnreadWhileScrolled(c => c + 1);
-        setShowJumpToBottom(true);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastMsgId, scrollToBottomNow]);
-
-  // Typing indicator: scroll if user is at bottom (separate from message effect
-  // so it doesn't interact with the lastMessageId dedup logic above)
-  useEffect(() => {
-    if ((showTyping || state.isTyping) && shouldScrollBottom.current) {
-      scrollToBottomNow('smooth');
-    }
-  }, [showTyping, state.isTyping, scrollToBottomNow]);
-
-  const handleMessagesScroll = useCallback(() => {
-    const el = messagesAreaRef.current;
-    if (!el) return;
-
-    if (el.scrollTop > maxScrollTopRef.current) {
-      maxScrollTopRef.current = el.scrollTop;
-    }
-
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const isAtBottom = distanceFromBottom < 80;
-
-    if (!isRestoringScroll.current) {
-      const prev = shouldScrollBottom.current;
-      shouldScrollBottom.current = isAtBottom;
-      setShowJumpToBottom(!isAtBottom);
-      if (prev !== isAtBottom) {
-        console.log(
-          isAtBottom
-            ? '%c[ChatWidget:Scroll2] 🔽 User at bottom — auto-scroll ENABLED'
-            : '%c[ChatWidget:Scroll2] 🔼 User scrolled UP — auto-scroll DISABLED',
-          isAtBottom ? 'color:#10b981;font-weight:bold' : 'color:#f59e0b;font-weight:bold'
-        );
-      }
-    }
-
-    if (
-      el.scrollTop < 60 &&
-      maxScrollTopRef.current > 200 &&
-      el.scrollTop < maxScrollTopRef.current - 100 &&
-      !state.loadingMore &&
-      state.hasMore
-    ) {
-      savedScrollHeightRef.current = el.scrollHeight;
-      shouldScrollBottom.current = false;
-      actions.loadOlderMessages();
-    }
-  }, [state.loadingMore, state.hasMore, actions, messagesAreaRef]);
-
-  const scrollToBottom = useCallback(() => {
-    scrollToBottomNow('smooth');
-  }, [scrollToBottomNow]);
-
-  const handleQuickReply = useCallback(async (reply: QuickReply) => {
-    setShowQuickReplies(false);
-    setEscalationError(null);
-
-    addLocal({
-      senderType: 'CUSTOMER',
-      senderId: configRef.current.user.id,
-      senderName: configRef.current.user.name,
-      content: reply.label,
-    });
-
-    switch (reply.id) {
-      case 'order_details':
-        await botReply("Sure! Let me pull up your recent orders.", 800);
-        await botReply("📦 Order #ORD-2024-1847\nStatus: Delivered ✅\nDate: Feb 10, 2026\nItems: 2x Wireless Headphones\n\n📦 Order #ORD-2024-1831\nStatus: In Transit 🚚\nEst. Delivery: Feb 18, 2026\nItems: 1x Smart Watch", 1400);
-        await botReply("Is there anything else I can help you with?", 900);
-        setFlowStep('menu'); setShowQuickReplies(true);
-        break;
-      case 'track_order':
-        await botReply("🔍 Fetching tracking info for your latest order...", 800);
-        await botReply("📍 Order #ORD-2024-1831 — Live Tracking:\n\n✅ Order Placed — Feb 8, 10:22 AM\n✅ Dispatched from Warehouse — Feb 12, 3:45 PM\n✅ In Transit (Mumbai Hub) — Feb 14, 8:10 AM\n🔄 Out for Delivery — Expected Feb 18", 1600);
-        await botReply("Need anything else?", 800);
-        setFlowStep('menu'); setShowQuickReplies(true);
-        break;
-      case 'faq':
-        await botReply("📚 Here are answers to common questions:", 800);
-        await botReply("🔄 How do I return an item?\nGo to Orders → Select item → Return Request\n\n💰 When will I get my refund?\n5-7 business days after we receive the item\n\n📍 How do I change delivery address?\nProfile → Addresses → Edit (before dispatch only)", 1500);
-        await botReply("Still need help?", 700);
-        setFlowStep('menu'); setShowQuickReplies(true);
-        break;
-      case 'human': {
-        setFlowStep('escalating');
-        await botReply("I'll connect you with a human agent right away. Please hold on!", 800);
-        try {
-          const sessionId = await waitForSession();
-          await escalateToAgent(sessionId, 'Customer requested human agent');
-          addLocal({ senderType: 'SYSTEM', senderId: 'system', content: '🟢 You are now in the agent queue. An agent will join shortly.' });
-          setFlowStep('free');
-        } catch (err: any) {
-          const msg = err?.message ?? 'Could not connect. Please try again.';
-          setEscalationError(msg);
-          addLocal({ senderType: 'SYSTEM', senderId: 'system', content: '⚠️ Could not connect to an agent. Please try again.' });
-          setFlowStep('menu');
-          setTimeout(() => setShowQuickReplies(true), 500);
-        }
-        break;
-      }
-    }
-  }, [addLocal, botReply, waitForSession, escalateToAgent]);
-
-  const handleSend = useCallback(() => {
-    const content = inputValue.trim();
-    if (!content || !stateRef.current.connected || stateRef.current.tokenExpired) return;
-    try {
-      actionsRef.current.sendMessage(content, 'TEXT', replyTarget?.id);
-      setInputValue('');
-      setReplyTarget(null);
-      actionsRef.current.stopTyping?.();
-      if (flowStep !== 'free') { setShowQuickReplies(false); setFlowStep('free'); }
-    } catch (err: any) {
       if (err?.message === 'TOKEN_EXPIRED') return;
       throw err;
     }
@@ -4179,6 +3216,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     e.target.value = '';
   }, []);
 
+  // ── Audio recording ───────────────────────────────────────────────────────
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -4227,8 +3265,6 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
 
   const isClosed = state.session?.status === 'CLOSED';
 
-  // FIX #1: canType — only blocked during escalation, expired, closed, or disconnected.
-  // The 'welcome' and 'menu' flow steps no longer block typing.
   const canType = (
     !isClosed &&
     !state.tokenExpired &&
@@ -4238,6 +3274,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
 
   const isActive = !!inputValue.trim() && canType;
 
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (state.loading) {
     return (
       <div style={styles.widget}>
@@ -4255,6 +3292,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     );
   }
 
+  // ── Token expired ─────────────────────────────────────────────────────────
   if (state.tokenExpired) {
     return (
       <div style={styles.widget}>
@@ -4273,6 +3311,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     );
   }
 
+  // ── Connection error ──────────────────────────────────────────────────────
   if (state.error && !state.connected) {
     return (
       <div style={styles.widget}>
@@ -4291,6 +3330,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     );
   }
 
+  // ── Main render ───────────────────────────────────────────────────────────
   return (
     <div style={styles.widget}>
       <WidgetHeader onClose={onClose} styles={styles} subtitle={subtitle} theme={theme} />
@@ -4336,6 +3376,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
             <div ref={messagesEndRef} />
           </div>
 
+          {/* Jump-to-bottom button */}
           {showJumpToBottom && (
             <div style={{ position: 'relative' as const, height: 0, zIndex: 10 }}>
               <button
@@ -4392,9 +3433,9 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
               {onStartNewChat && (
                 <button
                   onClick={onStartNewChat}
-                  style={{ padding: '10px 24px', borderRadius: 22, border: 'none', background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.primaryColor}cc)`, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', boxShadow: `0 3px 12px ${theme.primaryColor}44` }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.04)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; }}
+                  style={{ padding: '10px 24px', borderRadius: 22, border: 'none', background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.primaryColor}cc)`, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', boxShadow: `0 3px 12px ${theme.primaryColor}44`, letterSpacing: '-0.01em' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.04)'; (e.currentTarget as HTMLElement).style.boxShadow = `0 5px 18px ${theme.primaryColor}66`; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; (e.currentTarget as HTMLElement).style.boxShadow = `0 3px 12px ${theme.primaryColor}44`; }}
                 >
                   + Start New Chat
                 </button>
@@ -4402,7 +3443,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
             </div>
           ) : (
             <div style={{ flexShrink: 0 }}>
-              {/* ── Upload progress banner ── */}
+              {/* Upload progress banner */}
               {state.uploading && (
                 <div style={{
                   padding: '8px 14px',
@@ -4417,15 +3458,13 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
                     </path>
                   </svg>
                   <div style={{ flex: 1, height: '3px', borderRadius: '2px', backgroundColor: theme.primaryColor + '25', overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%', borderRadius: '2px',
-                      backgroundColor: theme.primaryColor,
-                      animation: 'chatUploadPulse 1.4s ease-in-out infinite',
-                    }} />
+                    <div style={{ height: '100%', borderRadius: '2px', backgroundColor: theme.primaryColor, animation: 'chatUploadPulse 1.4s ease-in-out infinite' }} />
                   </div>
                   <span style={{ fontSize: '11px', color: theme.primaryColor, fontWeight: 600, flexShrink: 0 }}>Uploading…</span>
                 </div>
               )}
+
+              {/* Reply banner */}
               {replyTarget && (
                 <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f5', backgroundColor: '#f9fafb', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ flex: 1, borderLeft: `3px solid ${theme.primaryColor}`, paddingLeft: '10px', overflow: 'hidden' }}>
@@ -4439,15 +3478,19 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
                   <button onClick={() => setReplyTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '18px', lineHeight: 1, padding: '2px', flexShrink: 0 }}>×</button>
                 </div>
               )}
+
               <div style={styles.inputArea}>
                 <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip,.rar" onChange={handleAttachment} />
+
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={!canType || state.uploading}
                   title="Attach file"
-                  style={{ background: 'none', border: 'none', cursor: (canType && !state.uploading) ? 'pointer' : 'not-allowed', padding: '4px', display: 'flex', alignItems: 'center', opacity: (canType && !state.uploading) ? 0.6 : 0.3 }}>
+                  style={{ background: 'none', border: 'none', cursor: (canType && !state.uploading) ? 'pointer' : 'not-allowed', padding: '4px', display: 'flex', alignItems: 'center', opacity: (canType && !state.uploading) ? 0.6 : 0.3 }}
+                >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                 </button>
+
                 <button
                   onClick={isRecording ? stopRecording : startRecording}
                   disabled={!canType || state.uploading}
@@ -4459,6 +3502,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
                     : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="1" width="6" height="11" rx="3"/><path d="M19 10v1a7 7 0 01-14 0v-1"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
                   }
                 </button>
+
                 <input
                   ref={inputRef}
                   type="text"
@@ -4486,8 +3530,12 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
         </>
       )}
 
+      {/* Image Viewer Modal */}
       {viewerImage && (
-        <div onClick={() => setViewerImage(null)} style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out' }}>
+        <div
+          onClick={() => setViewerImage(null)}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'zoom-out' }}
+        >
           <button onClick={() => setViewerImage(null)} style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%', width: 40, height: 40, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 22, fontWeight: 700, backdropFilter: 'blur(4px)' }} aria-label="Close image viewer">×</button>
           <a href={viewerImage.url} download={viewerImage.fileName} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 16, right: 68, background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '50%', width: 40, height: 40, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', backdropFilter: 'blur(4px)', textDecoration: 'none' }} aria-label="Download image">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
