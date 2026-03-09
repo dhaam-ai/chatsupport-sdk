@@ -2120,6 +2120,11 @@
 
 
 
+// ═══════════════════════════════════════════════════════════════════
+// ChatWidget.tsx  ·  PATCHED BUILD  ·  v2026-03-09-fixes
+// To verify this file is loaded, check the console for:
+//   [ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-09-fixes
+// ═══════════════════════════════════════════════════════════════════
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { ChatProvider, useChat } from './context';
 import type { ChatSDKConfig, ChatMessage, ChatTheme } from './types';
@@ -2308,6 +2313,11 @@ const CompactAudioPlayer = React.memo(function CompactAudioPlayer({
   const accent  = isCustomer ? 'rgba(255,255,255,0.9)' : '#5b4fcf';
   const trackBg = isCustomer ? 'rgba(255,255,255,0.25)' : '#e5e7eb';
   const fillBg  = isCustomer ? 'rgba(255,255,255,0.9)' : '#5b4fcf';
+
+  // Debug: log when this renders so we know CompactAudioPlayer is active
+  React.useEffect(() => {
+    console.log('%c[ChatWidget:Audio] ✅ CompactAudioPlayer rendered, src=' + src.slice(0, 60), 'color:#10b981;font-weight:bold');
+  }, []);
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '210px', height: '40px' }}>
@@ -2662,6 +2672,18 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   useEffect(() => { actionsRef.current = actions; }, [actions]);
   useEffect(() => { configRef.current  = config;  }, [config]);
 
+  // ── PATCH VERIFICATION ──────────────────────────────────────────────────────
+  // This log confirms the PATCHED version is loaded. If you don't see this,
+  // your bundler is serving a cached/old version of this file.
+  useEffect(() => {
+    console.log(
+      '%c[ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-09-fixes',
+      'background:#5b4fcf;color:#fff;padding:4px 10px;border-radius:4px;font-weight:bold'
+    );
+    console.log('[ChatWidget] Audio: CompactAudioPlayer (no native <audio> controls)');
+    console.log('[ChatWidget] Scroll: lastMsgId dep (no allMessages dep)');
+  }, []);
+
   // Inject keyframes once
   useEffect(() => {
     const id = 'chat-sdk-kf';
@@ -2904,14 +2926,17 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
 
   useEffect(() => {
     if (!lastMsgId) return;
-    if (lastMsgId === lastMessageIdRef.current) return; // same message, nothing to do
+    if (lastMsgId === lastMessageIdRef.current) {
+      console.log('[ChatWidget:Scroll] Same lastMsgId, skipping scroll:', lastMsgId?.slice(0,12));
+      return;
+    }
     lastMessageIdRef.current = lastMsgId;
 
     if (shouldScrollBottom.current) {
-      // User is at (or near) the bottom — scroll to show the new message
+      console.log('%c[ChatWidget:Scroll] ✅ New msg + at bottom → scrolling down. id=' + lastMsgId?.slice(0,12), 'color:#10b981');
       scrollToBottomNow('smooth');
     } else {
-      // User has scrolled up — show badge instead of force-scrolling
+      console.log('%c[ChatWidget:Scroll] 📌 New msg but user scrolled UP → showing badge. id=' + lastMsgId?.slice(0,12) + ' type=' + lastMsgType, 'color:#f59e0b');
       if (lastMsgType !== 'CUSTOMER') {
         setUnreadWhileScrolled(c => c + 1);
         setShowJumpToBottom(true);
@@ -2938,8 +2963,19 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
+    const prev = shouldScrollBottom.current;
     shouldScrollBottom.current = isAtBottom;
     setShowJumpToBottom(!isAtBottom);
+
+    // Log only when the at-bottom state changes to avoid spam
+    if (prev !== isAtBottom) {
+      console.log(
+        isAtBottom
+          ? '%c[ChatWidget:Scroll] 🔽 User scrolled to bottom — auto-scroll ENABLED'
+          : '%c[ChatWidget:Scroll] 🔼 User scrolled UP — auto-scroll DISABLED (badge will show on new msgs)',
+        isAtBottom ? 'color:#10b981;font-weight:bold' : 'color:#f59e0b;font-weight:bold'
+      );
+    }
 
     if (
       el.scrollTop < 60 &&
@@ -3928,12 +3964,17 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
 
   useEffect(() => {
     if (!lastMsgId) return;
-    if (lastMsgId === lastMessageIdRef.current) return;
+    if (lastMsgId === lastMessageIdRef.current) {
+      console.log('[ChatWidget:Scroll2] Same lastMsgId, skipping:', lastMsgId?.slice(0,12));
+      return;
+    }
     lastMessageIdRef.current = lastMsgId;
 
     if (shouldScrollBottom.current) {
+      console.log('%c[ChatWidget:Scroll2] ✅ New msg + at bottom → scrolling. id=' + lastMsgId?.slice(0,12), 'color:#10b981');
       scrollToBottomNow('smooth');
     } else {
+      console.log('%c[ChatWidget:Scroll2] 📌 New msg, user scrolled UP → badge. id=' + lastMsgId?.slice(0,12), 'color:#f59e0b');
       if (lastMsgType !== 'CUSTOMER') {
         setUnreadWhileScrolled(c => c + 1);
         setShowJumpToBottom(true);
@@ -3960,8 +4001,19 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
+    const prev = shouldScrollBottom.current;
     shouldScrollBottom.current = isAtBottom;
     setShowJumpToBottom(!isAtBottom);
+
+    // Log only when the at-bottom state changes to avoid spam
+    if (prev !== isAtBottom) {
+      console.log(
+        isAtBottom
+          ? '%c[ChatWidget:Scroll] 🔽 User scrolled to bottom — auto-scroll ENABLED'
+          : '%c[ChatWidget:Scroll] 🔼 User scrolled UP — auto-scroll DISABLED (badge will show on new msgs)',
+        isAtBottom ? 'color:#10b981;font-weight:bold' : 'color:#f59e0b;font-weight:bold'
+      );
+    }
 
     if (
       el.scrollTop < 60 &&
