@@ -2422,18 +2422,17 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   // If content looks like a bare URL but no type — treat as FILE
   else if (isFileUrl && contentUrl.includes('/') && !contentUrl.includes(' '))                         effectiveType = 'FILE';
 
-  // Log FULL content for media messages so we can debug URL patterns
-  if (effectiveType !== null || contentUrl.startsWith('http') || contentUrl.startsWith('/')) {
-    console.log('[ChatWidget:Bubble] msg type detection:', {
-      id: message.id?.slice(0,8),
-      messageType: message.messageType,
-      mimeType: attachment?.mimeType,
-      contentFull: contentUrl,   // FULL URL — not truncated
-      isAudioUrl, isVideoUrl, isImageUrl,
-      effectiveType,
-      attachment: attachment ? { url: attachment.url, mimeType: attachment.mimeType, fileName: attachment.fileName } : null,
-    });
-  }
+  // Log ALL messages so we can find the audio message regardless of type
+  console.log('[ChatWidget:Bubble] msg type detection:', {
+    id: message.id?.slice(0,8),
+    messageType: message.messageType,
+    mimeType: attachment?.mimeType,
+    contentFull: contentUrl,
+    isAudioUrl, isVideoUrl, isImageUrl,
+    effectiveType,
+    attachment: attachment ? { url: attachment.url, mimeType: attachment.mimeType, fileName: attachment.fileName } : null,
+    metadata: message.metadata,
+  });
 
   const isAttachment = effectiveType !== null;
   const isAudio = effectiveType === 'AUDIO';
@@ -2932,26 +2931,33 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     setUnreadWhileScrolled(0);
   }, []);
 
-  // Derive stable deps FIRST, then init ref to current value.
-  // Initializing to lastMsgId (not null) means the effect won't fire on
-  // mount or Fast Refresh — only when a genuinely NEW message arrives.
   const lastMsgId   = allMessages.length > 0 ? allMessages[allMessages.length - 1].id : null;
   const lastMsgType = allMessages.length > 0 ? allMessages[allMessages.length - 1].senderType : null;
-  const lastMessageIdRef = useRef<string | null>(lastMsgId); // init to current, not null
+  // seededRef: becomes true after we've seen the initial batch of messages.
+  // Before it's seeded, we just record the current lastMsgId without scrolling.
+  const lastMessageIdRef = useRef<string | null>(null);
+  const scrollInitSeeded = useRef(false);
 
   useEffect(() => {
     if (!lastMsgId) return;
-    if (lastMsgId === lastMessageIdRef.current) {
-      console.log('[ChatWidget:Scroll] Same lastMsgId, skipping scroll:', lastMsgId?.slice(0,12));
+
+    // First time messages arrive: seed the ref and skip scroll entirely.
+    // This covers both initial load AND Fast Refresh.
+    if (!scrollInitSeeded.current) {
+      lastMessageIdRef.current = lastMsgId;
+      scrollInitSeeded.current = true;
+      console.log('[ChatWidget:Scroll] 🌱 Seeded lastMsgId on init:', lastMsgId?.slice(0,12), '— no scroll');
       return;
     }
+
+    if (lastMsgId === lastMessageIdRef.current) return; // same msg, skip
     lastMessageIdRef.current = lastMsgId;
 
     if (shouldScrollBottom.current) {
-      console.log('%c[ChatWidget:Scroll] ✅ New msg + at bottom → scrolling down. id=' + lastMsgId?.slice(0,12), 'color:#10b981');
+      console.log('%c[ChatWidget:Scroll] ✅ New msg + at bottom → scroll. id=' + lastMsgId?.slice(0,12), 'color:#10b981');
       scrollToBottomNow('smooth');
     } else {
-      console.log('%c[ChatWidget:Scroll] 📌 New msg but user scrolled UP → showing badge. id=' + lastMsgId?.slice(0,12) + ' type=' + lastMsgType, 'color:#f59e0b');
+      console.log('%c[ChatWidget:Scroll] 📌 New msg, user scrolled UP → badge. id=' + lastMsgId?.slice(0,12), 'color:#f59e0b');
       if (lastMsgType !== 'CUSTOMER') {
         setUnreadWhileScrolled(c => c + 1);
         setShowJumpToBottom(true);
@@ -3974,21 +3980,27 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   // SET_MESSAGES) from triggering auto-scroll when the user has scrolled up.
   const lastMsgId   = allMessages.length > 0 ? allMessages[allMessages.length - 1].id : null;
   const lastMsgType = allMessages.length > 0 ? allMessages[allMessages.length - 1].senderType : null;
-  const lastMessageIdRef = useRef<string | null>(lastMsgId); // init to current, not null
+  const lastMessageIdRef = useRef<string | null>(null);
+  const scrollInitSeeded = useRef(false);
 
   useEffect(() => {
     if (!lastMsgId) return;
-    if (lastMsgId === lastMessageIdRef.current) {
-      console.log('[ChatWidget:Scroll2] Same lastMsgId, skipping:', lastMsgId?.slice(0,12));
+
+    if (!scrollInitSeeded.current) {
+      lastMessageIdRef.current = lastMsgId;
+      scrollInitSeeded.current = true;
+      console.log('[ChatWidget:Scroll2] 🌱 Seeded on init:', lastMsgId?.slice(0,12), '— no scroll');
       return;
     }
+
+    if (lastMsgId === lastMessageIdRef.current) return;
     lastMessageIdRef.current = lastMsgId;
 
     if (shouldScrollBottom.current) {
-      console.log('%c[ChatWidget:Scroll2] ✅ New msg + at bottom → scrolling. id=' + lastMsgId?.slice(0,12), 'color:#10b981');
+      console.log('%c[ChatWidget:Scroll2] ✅ New msg + at bottom → scroll. id=' + lastMsgId?.slice(0,12), 'color:#10b981');
       scrollToBottomNow('smooth');
     } else {
-      console.log('%c[ChatWidget:Scroll2] 📌 New msg, user scrolled UP → badge. id=' + lastMsgId?.slice(0,12), 'color:#f59e0b');
+      console.log('%c[ChatWidget:Scroll2] 📌 New msg, user UP → badge. id=' + lastMsgId?.slice(0,12), 'color:#f59e0b');
       if (lastMsgType !== 'CUSTOMER') {
         setUnreadWhileScrolled(c => c + 1);
         setShowJumpToBottom(true);
