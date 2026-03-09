@@ -2404,23 +2404,32 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   const attachment = message.attachment ?? (message.metadata?.attachment as any) ?? null;
 
   const contentUrl = message.content ?? '';
-  // Detect media type from URL extension — works for any domain, not just CDN
+  // Detect media type from URL extension.
+  // NOTE: .webm is intentionally excluded from isVideoUrl — it's ambiguous
+  // (can be audio or video). Let messageType/mimeType decide for .webm files.
   const isImageUrl = /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(contentUrl);
-  const isVideoUrl = /\.(mp4|webm|mov|avi)(\?.*)?$/i.test(contentUrl);
-  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|flac|opus)(\?.*)?$/i.test(contentUrl)
-                  || /\/audio\//i.test(contentUrl)      // path contains /audio/
-                  || /[?&].*\.(mp3|wav|ogg|m4a|aac)/i.test(contentUrl); // extension in query
-  const isFileUrl  = /^https?:\/\//i.test(contentUrl); // any http/https URL = potential file
+  const isVideoUrl = /\.(mp4|mov|avi|mkv|flv|wmv)(\?.*)?$/i.test(contentUrl); // no .webm
+  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|flac|opus|webm)(\?.*)?$/i.test(contentUrl)
+                  || /\/audio\//i.test(contentUrl); // path contains /audio/
+  const isFileUrl  = /^https?:\/\//i.test(contentUrl);
 
-  // Resolve effective type — messageType wins, then mimeType, then URL extension
-  // ORDER MATTERS: audio/video must be checked before FILE to avoid misclassification
+  // Resolve effective type.
+  // STRICT PRIORITY: messageType > mimeType > URL extension.
+  // messageType is checked ALONE first to prevent URL extension from overriding it.
   let effectiveType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | null = null;
-  if      (message.messageType === 'IMAGE' || attachment?.mimeType?.startsWith('image/') || isImageUrl) effectiveType = 'IMAGE';
-  else if (message.messageType === 'VIDEO' || attachment?.mimeType?.startsWith('video/') || isVideoUrl) effectiveType = 'VIDEO';
-  else if (message.messageType === 'AUDIO' || attachment?.mimeType?.startsWith('audio/') || isAudioUrl) effectiveType = 'AUDIO';
-  else if (message.messageType === 'FILE'  || attachment)                                               effectiveType = 'FILE';
-  // If content looks like a bare URL but no type — treat as FILE
-  else if (isFileUrl && contentUrl.includes('/') && !contentUrl.includes(' '))                         effectiveType = 'FILE';
+  if      (message.messageType === 'IMAGE')  effectiveType = 'IMAGE';
+  else if (message.messageType === 'VIDEO')  effectiveType = 'VIDEO';
+  else if (message.messageType === 'AUDIO')  effectiveType = 'AUDIO';
+  else if (message.messageType === 'FILE')   effectiveType = 'FILE';
+  // messageType not set or TEXT — fall back to mimeType
+  else if (attachment?.mimeType?.startsWith('image/'))  effectiveType = 'IMAGE';
+  else if (attachment?.mimeType?.startsWith('video/'))  effectiveType = 'VIDEO';
+  else if (attachment?.mimeType?.startsWith('audio/'))  effectiveType = 'AUDIO';
+  // Last resort: URL extension
+  else if (isImageUrl) effectiveType = 'IMAGE';
+  else if (isVideoUrl) effectiveType = 'VIDEO';
+  else if (isAudioUrl) effectiveType = 'AUDIO';
+  else if (attachment || (isFileUrl && contentUrl.includes('/') && !contentUrl.includes(' '))) effectiveType = 'FILE';
 
   // Only log media messages (not every text message)
   if (effectiveType !== null) {
@@ -2667,6 +2676,7 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   const savedScrollHeightRef   = useRef(0);
   const prevMsgCountLayoutRef  = useRef(0);
   const maxScrollTopRef        = useRef(0);
+  const isRestoringScroll      = useRef(false); // true while prepend scroll restore is settling
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [unreadWhileScrolled, setUnreadWhileScrolled] = useState(0);
 
@@ -2886,11 +2896,15 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     ) {
       const diff = el.scrollHeight - savedScrollHeightRef.current;
       if (diff > 0) {
+        isRestoringScroll.current = true;   // block scroll handler during restore
         el.scrollTop = diff;
         shouldScrollBottom.current = false;
-        // Update max so the scroll handler doesn't re-trigger loadOlderMessages
         maxScrollTopRef.current = diff;
-        console.log('[ChatWidget:Scroll] 📜 Prepend restore: scrollTop=', diff, 'maxScrollTop=', diff);
+        console.log('[ChatWidget:Scroll] 📜 Prepend restore: scrollTop=', diff);
+        // Clear the restore flag after scroll events have settled (~2 frames)
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          isRestoringScroll.current = false;
+        }));
       }
       savedScrollHeightRef.current = 0;
     }
@@ -2987,9 +3001,8 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
 
-    // Don't update shouldScrollBottom while a prepend restore is pending —
-    // the synthetic scroll from el.scrollTop = diff could briefly look like "at bottom"
-    if (savedScrollHeightRef.current === 0) {
+    // Don't update shouldScrollBottom while prepend scroll restore is in progress
+    if (!isRestoringScroll.current) {
       const prev = shouldScrollBottom.current;
       shouldScrollBottom.current = isAtBottom;
       setShowJumpToBottom(!isAtBottom);
@@ -3754,6 +3767,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   const savedScrollHeightRef   = useRef(0);
   const prevMsgCountLayoutRef  = useRef(0);
   const maxScrollTopRef        = useRef(0);
+  const isRestoringScroll      = useRef(false);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [unreadWhileScrolled, setUnreadWhileScrolled] = React.useState(0);
 
@@ -3945,10 +3959,14 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     ) {
       const diff = el.scrollHeight - savedScrollHeightRef.current;
       if (diff > 0) {
+        isRestoringScroll.current = true;
         el.scrollTop = diff;
         shouldScrollBottom.current = false;
         maxScrollTopRef.current = diff;
-        console.log('[ChatWidget:Scroll2] 📜 Prepend restore: scrollTop=', diff, 'maxScrollTop=', diff);
+        console.log('[ChatWidget:Scroll2] 📜 Prepend restore: scrollTop=', diff);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          isRestoringScroll.current = false;
+        }));
       }
       savedScrollHeightRef.current = 0;
     }
@@ -4039,7 +4057,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     const isAtBottom = distanceFromBottom < 80;
 
-    if (savedScrollHeightRef.current === 0) {
+    if (!isRestoringScroll.current) {
       const prev = shouldScrollBottom.current;
       shouldScrollBottom.current = isAtBottom;
       setShowJumpToBottom(!isAtBottom);
