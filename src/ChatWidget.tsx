@@ -2407,7 +2407,9 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   // Detect media type from URL extension — works for any domain, not just CDN
   const isImageUrl = /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(contentUrl);
   const isVideoUrl = /\.(mp4|webm|mov|avi)(\?.*)?$/i.test(contentUrl);
-  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|flac|opus)(\?.*)?$/i.test(contentUrl);
+  const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|flac|opus)(\?.*)?$/i.test(contentUrl)
+                  || /\/audio\//i.test(contentUrl)      // path contains /audio/
+                  || /[?&].*\.(mp3|wav|ogg|m4a|aac)/i.test(contentUrl); // extension in query
   const isFileUrl  = /^https?:\/\//i.test(contentUrl); // any http/https URL = potential file
 
   // Resolve effective type — messageType wins, then mimeType, then URL extension
@@ -2420,14 +2422,18 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   // If content looks like a bare URL but no type — treat as FILE
   else if (isFileUrl && contentUrl.includes('/') && !contentUrl.includes(' '))                         effectiveType = 'FILE';
 
-  console.log('[ChatWidget:Bubble] msg type detection:', {
-    id: message.id?.slice(0,8),
-    messageType: message.messageType,
-    mimeType: attachment?.mimeType,
-    contentPreview: contentUrl.slice(0,60),
-    isAudioUrl, isVideoUrl, isImageUrl,
-    effectiveType,
-  });
+  // Log FULL content for media messages so we can debug URL patterns
+  if (effectiveType !== null || contentUrl.startsWith('http') || contentUrl.startsWith('/')) {
+    console.log('[ChatWidget:Bubble] msg type detection:', {
+      id: message.id?.slice(0,8),
+      messageType: message.messageType,
+      mimeType: attachment?.mimeType,
+      contentFull: contentUrl,   // FULL URL — not truncated
+      isAudioUrl, isVideoUrl, isImageUrl,
+      effectiveType,
+      attachment: attachment ? { url: attachment.url, mimeType: attachment.mimeType, fileName: attachment.fileName } : null,
+    });
+  }
 
   const isAttachment = effectiveType !== null;
   const isAudio = effectiveType === 'AUDIO';
