@@ -1,7 +1,5 @@
 
 
-
-
 // import { io, Socket } from 'socket.io-client';
 // import type { ChatSDKConfig, ChatMessage, ChatSession, MessageType, FileAttachment } from './types';
 // import { WS_EVENTS } from './types';
@@ -165,14 +163,16 @@
 //         });
 
 //         this.socket.on('connect', () => {
-//           console.log('%c[ChatClient] 📡 Transport connected 4', 'color:#0ea5e9;font-weight:bold');
+//           console.log('%c[ChatClient] 📡 Transport connected 3', 'color:#0ea5e9;font-weight:bold');
 //         });
 
 //         // ── MESSAGE_RECEIVE ────────────────────────────────────────────────
 //         this.socket.on(WS_EVENTS.MESSAGE_RECEIVE, (raw: any) => {
+//           // Log FULL raw payload so we can diagnose media message structure
+//           console.log('[ChatClient] MESSAGE_RECEIVE RAW:', JSON.stringify(raw, null, 2));
 //           const message = normalizeMessage(raw, this.session?.id ?? '');
 //           if (!message) return;
-//           console.log('[ChatClient] MESSAGE_RECEIVE →', message.senderType, message.content.slice(0, 50));
+//           console.log('[ChatClient] MESSAGE_RECEIVE normalized →', message.senderType, message.messageType, message.content?.slice(0, 80));
 //           this.emit('message', message);
 //           this.config.callbacks?.onMessage?.(message);
 //         });
@@ -426,6 +426,8 @@
 //     });
 //   }
 // }
+
+
 
 
 
