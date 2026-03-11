@@ -984,7 +984,8 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
       }
     }
     prevMsgCount.current = newCount;
-  }, [state.messages, flowStep]);
+  // }, [state.messages, flowStep]);
+  }, [state.messages.length, flowStep]);
 
   // ── Notification sound for new agent/bot messages ─────────────────────────
   useEffect(() => {
@@ -1207,7 +1208,8 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
     ) {
       savedScrollHeightRef.current = el.scrollHeight;
       shouldScrollBottom.current = false;
-      void actions.loadOlderMessages();
+      // void actions.loadOlderMessages();
+      void actionsRef.current.loadOlderMessages();
     }
   }, [state.loadingMore, state.hasMore, actions]);
 
@@ -2446,8 +2448,10 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
       savedScrollHeightRef.current = el.scrollHeight;
       shouldScrollBottom.current = false;
       void actions.loadOlderMessages();
+      // void actionsRef.current.loadOlderMessages();
     }
-  }, [state.loadingMore, state.hasMore, actions, messagesAreaRef]);
+  // }, [state.loadingMore, state.hasMore, actions, messagesAreaRef]);
+  }, [state.loadingMore, state.hasMore, messagesAreaRef]);
 
   const scrollToBottom = useCallback(() => {
     scrollToBottomNow('smooth');
