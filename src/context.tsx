@@ -866,12 +866,12 @@ export function ChatProvider({ config, children }: {
           ) {
             // Text message echo — matched by content
             if (pendingReplaces.current.has(message.content)) {
-              console.log('[Chat] Skipping text echo — replaceOptimistic will handle:', message.id);
+            
               return;
             }
             // Attachment echo — matched by pending temp ID set
             if (pendingAttachTempIds.current.size > 0) {
-              console.log('[Chat] Skipping attachment echo — replaceOptimistic will handle:', message.id);
+              
               return;
             }
           }
@@ -887,14 +887,10 @@ export function ChatProvider({ config, children }: {
           const rawSender  = rawData?.senderType ?? rawData?.sender_type ?? '';
           const senderType = String(rawSender).toUpperCase().trim();
 
-          console.log(
-            `%c[Chat:TYPING] 📨 event received`,
-            'color:#f59e0b;font-weight:bold',
-            { isTyping, senderId, senderType, raw: rawData?.senderType }
-          );
+         
 
           if (senderType === 'CUSTOMER') {
-            console.log('[Chat:TYPING] Skipping — explicit CUSTOMER echo');
+           
             return;
           }
 
@@ -905,10 +901,7 @@ export function ChatProvider({ config, children }: {
             last.isTyping === isTyping &&
             (now - last.time) < 300
           ) {
-            console.log(
-              `%c[Chat:TYPING] Suppressed same-value duplicate (${isTyping}) within 300ms`,
-              'color:#9ca3af'
-            );
+          
             return;
           }
 
@@ -921,14 +914,10 @@ export function ChatProvider({ config, children }: {
 
           dispatch({ type: 'SET_TYPING', isTyping, typingUser: senderId });
 
-          console.log(
-            `%c[Chat:TYPING] ✅ SET_TYPING dispatched → isTyping=${isTyping}`,
-            isTyping ? 'color:#10b981;font-weight:bold' : 'color:#6b7280;font-weight:bold'
-          );
 
           if (isTyping) {
             typingTimerRef.current = setTimeout(() => {
-              console.log('[Chat:TYPING] Auto-clear after 5s');
+             
               dispatch({ type: 'SET_TYPING', isTyping: false });
               typingTimerRef.current     = null;
               lastTypingDispatch.current = null;
@@ -1318,7 +1307,7 @@ async function fetchMessages(
         /\.(mp3|wav|ogg|m4a|aac|mp4|webm|mov)(\?|$)/i.test(m.content)
       );
       if ((m.messageType && m.messageType !== 'TEXT') || hasMediaContent || m.metadata?.attachment) {
-        console.log('[Chat] fetchMessages MEDIA message RAW:', JSON.stringify(m, null, 2));
+
       }
       return {
         id:               m.id,
