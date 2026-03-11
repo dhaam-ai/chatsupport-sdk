@@ -29,6 +29,7 @@ type ChatAction =
   | { type: 'SET_WIDGET_OPEN'; open: boolean }
   | { type: 'SET_UPLOADING'; uploading: boolean }
   | { type: 'SET_PAST_SESSIONS'; sessions: ChatSessionSummary[] }
+  | { type: 'UPDATE_PAST_SESSION'; sessionId: string; updates: Partial<ChatSessionSummary> }
   | { type: 'SET_AGENT_READ_AT'; readAt: Date };
 
 const initialState: ChatSDKState = {
@@ -129,6 +130,16 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
 
     case 'SET_PAST_SESSIONS':
       return { ...state, pastSessions: action.sessions };
+
+    case 'UPDATE_PAST_SESSION':
+      return {
+        ...state,
+        pastSessions: state.pastSessions.map(s =>
+          s.id === action.sessionId
+            ? { ...s, ...action.updates }
+            : s
+        ),
+      };
 
     case 'SET_AGENT_READ_AT':
       return { ...state, agentReadAt: action.readAt };
@@ -270,6 +281,13 @@ export function ChatProvider({ config, children }: {
         // ── Other handlers ───────────────────────────────────────────────
         client.on('statusChange', ((data: any) => {
           dispatch({ type: 'UPDATE_SESSION', session: { status: data.status, mode: data.mode } });
+          
+          // Update past sessions list if this session is being reopened
+          dispatch({
+            type: 'UPDATE_PAST_SESSION',
+            sessionId: data.chatSessionId,
+            updates: { status: data.status, mode: data.mode, closedAt: null },
+          });
         }) as EventCallback);
 
         client.on('agentJoined', ((data: any) => {
@@ -626,7 +644,6 @@ export function ChatProvider({ config, children }: {
           'X-Tenant-ID':   cfg.tenantId,
           'Content-Type':  'application/json',
         },
-        body: JSON.stringify({  }),
       },
     );
     if (!res.ok) throw new Error('Failed to reopen session');
