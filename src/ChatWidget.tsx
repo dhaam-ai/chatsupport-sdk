@@ -7,7 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { ChatProvider, useChat } from './context';
-import type { ChatSDKConfig, ChatMessage, ChatTheme } from './types';
+import type { ChatSDKConfig, ChatMessage, ChatTheme, ChatSessionSummary } from './types';
 import { playNotificationSound, unlockAudio } from './notificationSound';
 
 // ==========================================
@@ -744,9 +744,13 @@ function EndChatConfirmModal({
   );
 }
 
-function WidgetHeader({ onClose, styles, subtitle, theme, onEndChat, showEndChat }: {
+function WidgetHeader({ onClose, styles, subtitle, theme, onEndChat, showEndChat, onHistory, showHistory }: {
   onClose: () => void; styles: Record<string, React.CSSProperties>; subtitle: string; theme: FullTheme;
   onEndChat?: () => void; showEndChat?: boolean;
+  /** Called when the history (clock) icon is clicked */
+  onHistory?: () => void;
+  /** True when history panel is currently shown — back arrow replaces clock icon */
+  showHistory?: boolean;
 }) {
   return (
     <div style={styles.header}>
@@ -755,6 +759,29 @@ function WidgetHeader({ onClose, styles, subtitle, theme, onEndChat, showEndChat
         <h3 style={styles.headerTitle}>Chat Support</h3>
         <div style={styles.headerSub}><span style={styles.onlineDot} />{subtitle}</div>
       </div>
+      {/* History / Back button */}
+      {onHistory && (
+        <button
+          onClick={onHistory}
+          title={showHistory ? 'Back to chat' : 'Chat history'}
+          style={{
+            background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.25)',
+            color: theme.headerText, cursor: 'pointer', padding: '6px 8px',
+            borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            marginRight: '4px', transition: 'all 0.15s',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.22)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.12)'; }}
+        >
+          {showHistory ? (
+            /* Back arrow */
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          ) : (
+            /* Clock / history icon */
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          )}
+        </button>
+      )}
       {showEndChat && onEndChat && (
         <button
           onClick={onEndChat}
@@ -1840,12 +1867,159 @@ export function ChatWidget({ config, defaultOpen = false }: ChatWidgetProps): JS
   );
 }
 
+// ==========================================
+// SessionHistoryPanel
+// ==========================================
+
+function SessionHistoryPanel({
+  primaryColor,
+  sessions,
+  currentSessionId,
+  onSelectActive,
+  onReopen,
+  onBack,
+}: {
+  primaryColor: string;
+  sessions: ChatSessionSummary[];
+  currentSessionId?: string | null;
+  onSelectActive: () => void;
+  onReopen: (sessionId: string) => Promise<void>;
+  onBack: () => void;
+}) {
+  const [reopening, setReopening] = useState<string | null>(null);
+
+  const activeSessions  = sessions.filter(s => s.status !== 'CLOSED');
+  const closedSessions  = sessions.filter(s => s.status === 'CLOSED').slice(0, 5);
+
+  const formatDate = (d: string | Date | null | undefined) => {
+    if (!d) return '';
+    const date = new Date(d);
+    if (isNaN(date.getTime())) return '';
+    const now  = new Date();
+    const diff = now.getTime() - date.getTime();
+    if (diff < 60_000)              return 'Just now';
+    if (diff < 3_600_000)           return `${Math.round(diff / 60_000)}m ago`;
+    if (diff < 86_400_000)          return `${Math.round(diff / 3_600_000)}h ago`;
+    if (diff < 7 * 86_400_000)      return `${Math.round(diff / 86_400_000)}d ago`;
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+
+  const handleReopen = async (id: string) => {
+    setReopening(id);
+    try { await onReopen(id); }
+    finally { setReopening(null); }
+  };
+
+  const statusBadge = (status: string) => {
+    const map: Record<string, { label: string; bg: string; color: string }> = {
+      OPEN:               { label: 'Open',     bg: '#dcfce7', color: '#166534' },
+      WAITING_FOR_AGENT:  { label: 'Waiting',  bg: '#fef9c3', color: '#854d0e' },
+      ASSIGNED:           { label: 'Active',   bg: '#dbeafe', color: '#1e40af' },
+      CLOSED:             { label: 'Closed',   bg: '#f3f4f6', color: '#6b7280' },
+    };
+    const s = map[status] ?? { label: status, bg: '#f3f4f6', color: '#6b7280' };
+    return (
+      <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 700, background: s.bg, color: s.color, letterSpacing: '0.03em' }}>
+        {s.label}
+      </span>
+    );
+  };
+
+  const renderRow = (s: ChatSessionSummary, isActive: boolean) => {
+    const preview = s.lastMessage?.content?.trim();
+    const previewText = preview
+      ? (preview.length > 55 ? preview.slice(0, 55) + '…' : preview)
+      : '(no messages yet)';
+    const dateStr = formatDate(s.closedAt ?? s.createdAt);
+    const isCurrent = s.id === currentSessionId;
+
+    return (
+      <div
+        key={s.id}
+        style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid #f0f0f5',
+          display: 'flex', flexDirection: 'column', gap: '6px',
+          backgroundColor: isCurrent ? '#f9f7ff' : '#ffffff',
+          transition: 'background 0.12s',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            {statusBadge(s.status)}
+            <span style={{ fontSize: '11px', color: '#9ca3af' }}>{dateStr}</span>
+          </div>
+          {isActive ? (
+            <button
+              onClick={onSelectActive}
+              style={{
+                padding: '5px 12px', borderRadius: '14px',
+                border: `1.5px solid ${primaryColor}`,
+                background: isCurrent ? primaryColor : 'transparent',
+                color: isCurrent ? '#ffffff' : primaryColor,
+                fontSize: '11px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                transition: 'all 0.15s', whiteSpace: 'nowrap',
+              }}
+            >
+              {isCurrent ? 'Current ✓' : 'Continue'}
+            </button>
+          ) : (
+            <button
+              onClick={() => handleReopen(s.id)}
+              disabled={reopening === s.id}
+              style={{
+                padding: '5px 12px', borderRadius: '14px',
+                border: `1.5px solid ${primaryColor}`,
+                background: 'transparent',
+                color: primaryColor,
+                fontSize: '11px', fontWeight: 700,
+                cursor: reopening === s.id ? 'not-allowed' : 'pointer',
+                fontFamily: 'inherit', transition: 'all 0.15s', whiteSpace: 'nowrap',
+                opacity: reopening === s.id ? 0.6 : 1,
+              }}
+              onMouseEnter={e => { if (reopening !== s.id) (e.currentTarget as HTMLButtonElement).style.background = primaryColor + '15'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+            >
+              {reopening === s.id ? '…' : 'Reopen'}
+            </button>
+          )}
+        </div>
+        <div style={{ fontSize: '12px', color: '#6b7280', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {previewText}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', backgroundColor: '#fafafa' }}>
+      {/* Section header */}
+      <div style={{ padding: '12px 16px 4px', fontSize: '11px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', backgroundColor: '#fafafa' }}>
+        Active
+      </div>
+      {activeSessions.length === 0 && (
+        <div style={{ padding: '12px 16px', fontSize: '13px', color: '#c4b5fd', textAlign: 'center' }}>No active sessions</div>
+      )}
+      {activeSessions.map(s => renderRow(s, true))}
+
+      <div style={{ padding: '12px 16px 4px', fontSize: '11px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', backgroundColor: '#fafafa', borderTop: '1px solid #f0f0f5', marginTop: '4px' }}>
+        Closed
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto' as const }}>
+        {closedSessions.length === 0 && (
+          <div style={{ padding: '16px', fontSize: '13px', color: '#c4b5fd', textAlign: 'center' }}>No closed sessions yet</div>
+        )}
+        {closedSessions.map(s => renderRow(s, false))}
+      </div>
+    </div>
+  );
+}
+
 // ── Thin wrapper that registers the scroll helper with the parent ─────────────
 //
 // This avoids forwardRef complexity while still letting ChatWidget imperatively
 // trigger a scroll-to-bottom when the panel opens.
-function ChatContentWithScrollRef({
-  scrollToBottomRef,
+function ChatContentWithScrollRef({  scrollToBottomRef,
   ...props
 }: {
   onClose: () => void;
@@ -1909,6 +2083,8 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   const [showEndConfirm, setShowEndConfirm]     = useState(false);
   const [showFeedback, setShowFeedback]         = useState(false);
   const [endingChat, setEndingChat]             = useState(false);
+  // Session history panel
+  const [showHistory, setShowHistory]           = useState(false);
   const inputRef         = useRef<HTMLInputElement>(null);
   const fileInputRef     = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -2064,6 +2240,22 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     window.addEventListener('click', unlock);
     return () => window.removeEventListener('click', unlock);
   }, []);
+
+  // ── Send read receipt when customer opens (or re-opens) the widget ────────
+  // This tells the agent "Seen ✓" so they know the customer has read their msgs.
+  useEffect(() => {
+    if (state.isWidgetOpen && state.session?.id) {
+      actionsRef.current.markMessagesRead?.().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.isWidgetOpen, state.session?.id]);
+
+  // ── Fetch past sessions when history panel is opened ──────────────────────
+  useEffect(() => {
+    if (showHistory) {
+      actionsRef.current.fetchPastSessions?.().catch(() => {});
+    }
+  }, [showHistory]);
 
   const waitForSession = useCallback((): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -2474,11 +2666,32 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
       <WidgetHeader
         onClose={onClose}
         styles={styles}
-        subtitle={endingChat ? 'Ending session…' : subtitle}
+        subtitle={showHistory ? 'Chat History' : (endingChat ? 'Ending session…' : subtitle)}
         theme={theme}
-        showEndChat={!isClosed && !showFeedback && state.connected && flowStep !== 'escalating'}
+        showEndChat={!showHistory && !isClosed && !showFeedback && state.connected && flowStep !== 'escalating'}
         onEndChat={() => setShowEndConfirm(true)}
+        onHistory={() => setShowHistory(prev => !prev)}
+        showHistory={showHistory}
       />
+
+      {/* ── Session History Panel ─────────────────────────────────────── */}
+      {showHistory && (
+        <SessionHistoryPanel
+          primaryColor={theme.primaryColor}
+          sessions={state.pastSessions}
+          currentSessionId={state.session?.id}
+          onSelectActive={() => setShowHistory(false)}
+          onReopen={async (sessionId) => {
+            await actionsRef.current.reopenSession?.(sessionId);
+            setShowHistory(false);
+          }}
+          onBack={() => setShowHistory(false)}
+        />
+      )}
+
+      {/* ── Normal Chat Content (hidden when history is open) ─────────── */}
+      {!showHistory && (
+        <>
 
       {/* End Chat confirmation bottom sheet */}
       {showEndConfirm && (
@@ -2527,21 +2740,47 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
                 </span>
               </div>
             )}
-            {allMessages.map(msg => {
-              const isNewMsg = hasRenderedOnce.current && !renderedMsgIds.current.has(msg.id);
-              return (
-                <div key={msg.id} id={`chat-msg-${msg.id}`} style={isNewMsg ? { animation: 'chatFadeIn 0.2s ease', borderRadius: '12px' } : { borderRadius: '12px' }}>
-                  <MessageBubble
-                    message={msg}
-                    styles={styles}
-                    userName={config.user.name}
-                    onImageClick={handleImageClick}
-                    onReply={handleReply}
-                    replyToResolved={msg.replyToMessageId ? msgByIdMap.get(msg.replyToMessageId) ?? null : null}
-                  />
-                </div>
-              );
-            })}
+            {(() => {
+              // ── "Seen ✓" indicator: find last customer message the agent has read ──
+              const agentReadAt = state.agentReadAt;
+              let lastSeenMsgId: string | null = null;
+              if (agentReadAt) {
+                for (let i = allMessages.length - 1; i >= 0; i--) {
+                  const m = allMessages[i];
+                  if (m.senderType === 'CUSTOMER' && new Date(m.timestamp) <= agentReadAt) {
+                    lastSeenMsgId = m.id;
+                    break;
+                  }
+                }
+              }
+              return allMessages.map(msg => {
+                const isNewMsg = hasRenderedOnce.current && !renderedMsgIds.current.has(msg.id);
+                return (
+                  <React.Fragment key={msg.id}>
+                    <div id={`chat-msg-${msg.id}`} style={isNewMsg ? { animation: 'chatFadeIn 0.2s ease', borderRadius: '12px' } : { borderRadius: '12px' }}>
+                      <MessageBubble
+                        message={msg}
+                        styles={styles}
+                        userName={config.user.name}
+                        onImageClick={handleImageClick}
+                        onReply={handleReply}
+                        replyToResolved={msg.replyToMessageId ? msgByIdMap.get(msg.replyToMessageId) ?? null : null}
+                      />
+                    </div>
+                    {/* Instagram-style "Seen ✓" under the last seen customer message */}
+                    {msg.id === lastSeenMsgId && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '3px', padding: '0 6px 4px', marginTop: '-4px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={theme.primaryColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12"/>
+                          <polyline points="20 6 9 17 4 12" transform="translate(4,0)"/>
+                        </svg>
+                        <span style={{ fontSize: '10px', color: theme.primaryColor, fontWeight: 600, opacity: 0.8 }}>Seen</span>
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              });
+            })()}
             {(showTyping || state.isTyping) && <TypingIndicator styles={styles} />}
             <div ref={messagesEndRef} />
           </div>
@@ -2694,6 +2933,9 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
             </div>
           )}
         </>
+      )}
+
+      </>
       )}
 
       {viewerImage && (

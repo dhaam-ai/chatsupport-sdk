@@ -1,373 +1,863 @@
-// ==========================================
-// Chat SDK - Clean Type Definitions
-// Multi-tenant chat widget SDK types
-// ==========================================
+// // // ==========================================
+// // // Chat SDK - Type Definitions
+// // // ==========================================
+
+// // export type ChatMode = 'BOT' | 'HUMAN';
+// // export type ChatStatus = 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
+// // export type SenderType = 'CUSTOMER' | 'AGENT' | 'BOT' | 'SYSTEM';
+// // export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE';
+
+// // /**
+// //  * SDK Configuration
+// //  */
+// // export interface ChatSDKConfig {
+// //   /** Backend service URL (e.g., https://api.chat.example.com) */
+// //   serviceUrl: string;
+
+// //   /** Optional: Explicit WebSocket URL (defaults to serviceUrl on port 3001) */
+// //   wsUrl?: string;
+
+// //   /** Your tenant ID */
+// //   tenantId: string;
+  
+// //   /** Your app ID */
+// //   appId: string;
+  
+// //   /** Cognito access token from your auth system */
+// //   token: string;
+  
+// //   /** Current user information */
+// //   user: {
+// //     id: string;
+// //     name: string;
+// //     email?: string;
+// //   };
+  
+// //   /** Optional: Custom theme */
+// //   theme?: ChatTheme;
+  
+// //   /** Optional: Feature flags */
+// //   features?: ChatFeatures;
+  
+// //   /** Optional: Callback handlers */
+// //   callbacks?: ChatCallbacks;
+// // }
+
+// // /**
+// //  * Theme customization
+// //  */
+// // export interface ChatTheme {
+// //   primaryColor?: string;
+// //   headerBackground?: string;
+// //   headerText?: string;
+// //   customerBubbleColor?: string;
+// //   agentBubbleColor?: string;
+// //   fontFamily?: string;
+// //   borderRadius?: string;
+// //   position?: 'bottom-right' | 'bottom-left';
+// // }
+
+// // /**
+// //  * Feature toggles
+// //  */
+// // export interface ChatFeatures {
+// //   /** Show file upload button */
+// //   fileUpload?: boolean;
+// //   /** Show emoji picker */
+// //   emoji?: boolean;
+// //   /** Show typing indicators */
+// //   typing?: boolean;
+// //   /** Enable sound notifications */
+// //   sound?: boolean;
+// //   /** Show header with agent info */
+// //   showHeader?: boolean;
+// //   /** Auto-expand widget on load */
+// //   autoExpand?: boolean;
+// // }
+
+// // /**
+// //  * Event callbacks
+// //  */
+// // export interface ChatCallbacks {
+// //   /** Called when a message is received */
+// //   onMessage?: (message: ChatMessage) => void;
+// //   /** Called when session status changes */
+// //   onStatusChange?: (status: ChatStatus, mode: ChatMode) => void;
+// //   /** Called when an agent joins */
+// //   onAgentJoined?: (agentId: string, agentName: string) => void;
+// //   /** Called when an agent leaves */
+// //   onAgentLeft?: (agentId: string) => void;
+// //   /** Called when session is closed */
+// //   onSessionClosed?: () => void;
+// //   /** Called on connection error */
+// //   onError?: (error: Error) => void;
+// //   /** Called when connection is established */
+// //   onConnected?: (sessionId: string) => void;
+// // }
+
+// // /**
+// //  * Chat message
+// //  */
+// // export interface ChatMessage {
+// //   id: string;
+// //   chatSessionId: string;
+// //   senderType: SenderType;
+// //   senderId?: string;
+// //   senderName?: string;
+// //   content: string;
+// //   messageType: MessageType;
+// //   timestamp: Date;
+// //   metadata?: Record<string, unknown>;
+// // }
+
+// // /**
+// //  * Chat session state
+// //  */
+// // export interface ChatSession {
+// //   id: string;
+// //   mode: ChatMode;
+// //   status: ChatStatus;
+// //   assignedAgentId?: string;
+// //   assignedAgentName?: string;
+// // }
+
+// // /**
+// //  * SDK state
+// //  */
+// // export interface ChatSDKState {
+// //   /** Whether SDK is initialized */
+// //   initialized: boolean;
+// //   /** Whether connected to WebSocket */
+// //   connected: boolean;
+// //   /** Whether chat is loading */
+// //   loading: boolean;
+// //   /** Current session */
+// //   session: ChatSession | null;
+// //   /** Chat messages */
+// //   messages: ChatMessage[];
+// //   /** Whether someone is typing */
+// //   isTyping: boolean;
+// //   /** Who is typing */
+// //   typingUser?: string;
+// //   /** Error state */
+// //   error: Error | null;
+// // }
+
+// // /**
+// //  * SDK actions
+// //  */
+// // export interface ChatSDKActions {
+// //   /** Send a message */
+// //   sendMessage: (content: string, type?: MessageType) => Promise<void>;
+// //   /** Start typing indicator */
+// //   startTyping: () => void;
+// //   /** Stop typing indicator */
+// //   stopTyping: () => void;
+// //   /** Close the chat session */
+// //   closeSession: () => Promise<void>;
+// //   /** Request human agent */
+// //   requestAgent: (reason?: string) => Promise<void>;
+// //   /** Reconnect to WebSocket */
+// //   reconnect: () => Promise<void>;
+// // }
+
+// // /**
+// //  * WebSocket event types
+// //  */
+// // export const WS_EVENTS = {
+// //   // Client -> Server
+// //   JOIN_SESSION: 'chat.session.join',
+// //   LEAVE_SESSION: 'chat.session.leave',
+// //   MESSAGE_SEND: 'chat.message.send',
+// //   TYPING_START: 'chat.typing.start',
+// //   TYPING_STOP: 'chat.typing.stop',
+// //   REQUEST_AGENT: 'chat.request.agent',
+  
+// //   // Server -> Client
+// //   CONNECTION_ACK: 'chat.connection.ack',
+// //   MESSAGE_RECEIVE: 'chat.message.receive',
+// //   TYPING_INDICATOR: 'chat.typing.indicator',
+// //   AGENT_JOINED: 'chat.agent.joined',
+// //   AGENT_LEFT: 'chat.agent.left',
+// //   SESSION_CLOSED: 'chat.session.closed',
+// //   STATUS_CHANGED: 'chat.status.changed',
+// //   ERROR: 'chat.error',
+// // } as const;
+
+
+// // ==========================================
+// // Chat SDK - Type Definitions
+// // ==========================================
+
+// export type ChatMode = 'BOT' | 'HUMAN';
+// export type ChatStatus = 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
+// export type SenderType = 'CUSTOMER' | 'AGENT' | 'BOT' | 'SYSTEM';
+// export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE';
+
+// /**
+//  * SDK Configuration
+//  */
+// export interface ChatSDKConfig {
+//   /** Backend service URL (e.g., https://api.chat.example.com) */
+//   serviceUrl: string;
+
+//   /** Optional: Explicit WebSocket URL (defaults to serviceUrl on port 3001) */
+//   wsUrl?: string;
+
+//   /** Your tenant ID */
+//   tenantId: string;
+  
+//   /** Cognito access token from your auth system */
+//   token: string;
+  
+//   /** Current user information */
+//   user: {
+//     id: string;
+//     name: string;
+//     email?: string;
+//   };
+  
+//   /** Optional: Custom theme */
+//   theme?: ChatTheme;
+  
+//   /** Optional: Feature flags */
+//   features?: ChatFeatures;
+  
+//   /** Optional: Callback handlers */
+//   callbacks?: ChatCallbacks;
+// }
+
+// /**
+//  * Theme customization
+//  */
+// export interface ChatTheme {
+//   primaryColor?: string;
+//   headerBackground?: string;
+//   headerText?: string;
+//   customerBubbleColor?: string;
+//   agentBubbleColor?: string;
+//   fontFamily?: string;
+//   borderRadius?: string;
+//   position?: 'bottom-right' | 'bottom-left';
+// }
+
+// /**
+//  * Feature toggles
+//  */
+// export interface ChatFeatures {
+//   /** Show file upload button */
+//   fileUpload?: boolean;
+//   /** Show emoji picker */
+//   emoji?: boolean;
+//   /** Show typing indicators */
+//   typing?: boolean;
+//   /** Enable sound notifications */
+//   sound?: boolean;
+//   /** Show header with agent info */
+//   showHeader?: boolean;
+//   /** Auto-expand widget on load */
+//   autoExpand?: boolean;
+// }
+
+// /**
+//  * Event callbacks
+//  */
+// export interface ChatCallbacks {
+//   /** Called when a message is received */
+//   onMessage?: (message: ChatMessage) => void;
+//   /** Called when session status changes */
+//   onStatusChange?: (status: ChatStatus, mode: ChatMode) => void;
+//   /** Called when an agent joins */
+//   onAgentJoined?: (agentId: string, agentName: string) => void;
+//   /** Called when an agent leaves */
+//   onAgentLeft?: (agentId: string) => void;
+//   /** Called when session is closed */
+//   onSessionClosed?: () => void;
+//   /** Called on connection error */
+//   onError?: (error: Error) => void;
+//   /** Called when connection is established */
+//   onConnected?: (sessionId: string) => void;
+// }
+
+// /**
+//  * Chat message
+//  */
+// export interface ChatMessage {
+//   id: string;
+//   chatSessionId: string;
+//   senderType: SenderType;
+//   senderId?: string;
+//   senderName?: string;
+//   content: string;
+//   messageType: MessageType;
+//   timestamp: Date;
+//   metadata?: Record<string, unknown>;
+// }
+
+// /**
+//  * Chat session state
+//  */
+// export interface ChatSession {
+//   id: string;
+//   mode: ChatMode;
+//   status: ChatStatus;
+//   assignedAgentId?: string;
+//   assignedAgentName?: string;
+// }
+
+// /**
+//  * SDK state
+//  */
+// export interface ChatSDKState {
+//   /** Whether SDK is initialized */
+//   initialized: boolean;
+//   /** Whether connected to WebSocket */
+//   connected: boolean;
+//   /** Whether chat is loading */
+//   loading: boolean;
+//   /** Current session */
+//   session: ChatSession | null;
+//   /** Chat messages */
+//   messages: ChatMessage[];
+//   /** Whether someone is typing */
+//   isTyping: boolean;
+//   /** Who is typing */
+//   typingUser?: string;
+//   /** Error state */
+//   error: Error | null;
+//   /** Whether the auth token has expired */
+//   tokenExpired: boolean;
+//   /** Whether the chat widget is currently visible to the user */
+//   isWidgetOpen: boolean;
+//   /** Number of unread agent/bot messages (accumulated while widget is closed) */
+//   unreadCount: number;
+//   /** Whether older messages exist on the server (scroll-up pagination) */
+//   hasMore: boolean;
+//   /** Whether we are currently fetching older messages */
+//   loadingMore: boolean;
+// }
+
+// /**
+//  * SDK actions
+//  */
+// export interface ChatSDKActions {
+//   /** Send a message */
+//   sendMessage: (content: string, type?: MessageType) => Promise<void>;
+//   /** Start typing indicator */
+//   startTyping: () => void;
+//   /** Stop typing indicator */
+//   stopTyping: () => void;
+//   /** Close the chat session */
+//   closeSession: () => Promise<void>;
+//   /** Request human agent */
+//   requestAgent: (reason?: string) => Promise<void>;
+//   /** Reconnect to WebSocket */
+//   reconnect: () => Promise<void>;
+//   /** Tell the reducer whether the widget is visible (controls unread counting) */
+//   setWidgetOpen: (open: boolean) => void;
+//   /** Load older messages (scroll-up pagination) */
+//   loadOlderMessages: () => Promise<void>;
+// }
+
+// /**
+//  * WebSocket event types
+//  */
+// export const WS_EVENTS = {
+//   // Client -> Server
+//   JOIN_SESSION: 'chat.session.join',
+//   LEAVE_SESSION: 'chat.session.leave',
+//   MESSAGE_SEND: 'chat.message.send',
+//   TYPING_START: 'chat.typing.start',
+//   TYPING_STOP: 'chat.typing.stop',
+//   REQUEST_AGENT: 'chat.request.agent',
+  
+//   // Server -> Client
+//   CONNECTION_ACK: 'chat.connection.ack',
+//   MESSAGE_RECEIVE: 'chat.message.receive',
+//   TYPING_INDICATOR: 'chat.typing.indicator',
+//   AGENT_JOINED: 'chat.agent.joined',
+//   AGENT_LEFT: 'chat.agent.left',
+//   SESSION_CLOSED: 'chat.session.closed',
+//   STATUS_CHANGED: 'chat.status.changed',
+//   ERROR: 'chat.error',
+// } as const;
+
+
 
 // ==========================================
-// Core Enums
+// Chat SDK - Type Definitions
+// ==========================================
+
+// export type ChatMode = 'BOT' | 'HUMAN';
+// export type ChatStatus = 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
+// export type SenderType = 'CUSTOMER' | 'AGENT' | 'BOT' | 'SYSTEM';
+// export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE' | 'VIDEO' | 'AUDIO';
+
+// /**
+//  * SDK Configuration
+//  */
+// export interface ChatSDKConfig {
+//   /** Backend service URL (e.g., https://api.chat.example.com) */
+//   serviceUrl: string;
+
+//   /** Optional: Explicit WebSocket URL (defaults to serviceUrl on port 3001) */
+//   wsUrl?: string;
+
+//   /** Optional: Explicit REST API base URL for file uploads.
+//    *  Defaults to serviceUrl (with :3001→:3000 port swap if needed).
+//    *  Set this if your host app proxies WebSocket but NOT REST calls.
+//    *  Example: 'http://localhost:3000' */
+//   apiUrl?: string;
+
+//   /** Your tenant ID */
+//   tenantId: string;
+  
+//   /** Cognito access token from your auth system */
+//   token: string;
+  
+//   /** Current user information */
+//   user: {
+//     id: string;
+//     name: string;
+//     email?: string;
+//   };
+  
+//   /** Optional: Custom theme */
+//   theme?: ChatTheme;
+  
+//   /** Optional: Feature flags */
+//   features?: ChatFeatures;
+  
+//   /** Optional: Callback handlers */
+//   callbacks?: ChatCallbacks;
+// }
+
+// /**
+//  * Theme customization
+//  */
+// export interface ChatTheme {
+//   primaryColor?: string;
+//   headerBackground?: string;
+//   headerText?: string;
+//   customerBubbleColor?: string;
+//   agentBubbleColor?: string;
+//   fontFamily?: string;
+//   borderRadius?: string;
+//   position?: 'bottom-right' | 'bottom-left';
+// }
+
+// /**
+//  * Feature toggles
+//  */
+// export interface ChatFeatures {
+//   /** Show file upload button */
+//   fileUpload?: boolean;
+//   /** Show emoji picker */
+//   emoji?: boolean;
+//   /** Show typing indicators */
+//   typing?: boolean;
+//   /** Enable sound notifications */
+//   sound?: boolean;
+//   /** Show header with agent info */
+//   showHeader?: boolean;
+//   /** Auto-expand widget on load */
+//   autoExpand?: boolean;
+// }
+
+// /**
+//  * Event callbacks
+//  */
+// export interface ChatCallbacks {
+//   /** Called when a message is received */
+//   onMessage?: (message: ChatMessage) => void;
+//   /** Called when session status changes */
+//   onStatusChange?: (status: ChatStatus, mode: ChatMode) => void;
+//   /** Called when an agent joins */
+//   onAgentJoined?: (agentId: string, agentName: string) => void;
+//   /** Called when an agent leaves */
+//   onAgentLeft?: (agentId: string) => void;
+//   /** Called when session is closed */
+//   onSessionClosed?: () => void;
+//   /** Called on connection error */
+//   onError?: (error: Error) => void;
+//   /** Called when connection is established */
+//   onConnected?: (sessionId: string) => void;
+// }
+
+// /**
+//  * File attachment metadata
+//  */
+// export interface FileAttachment {
+//   url: string;
+//   fileName: string;
+//   mimeType: string;
+//   size: number;
+//   mediaType: 'images' | 'videos' | 'audio' | 'documents';
+// }
+
+// /**
+//  * Chat message
+//  */
+// export interface ChatMessage {
+//   id: string;
+//   chatSessionId: string;
+//   senderType: SenderType;
+//   senderId?: string;
+//   senderName?: string;
+//   content: string;
+//   messageType: MessageType;
+//   timestamp: Date;
+//   metadata?: Record<string, unknown>;
+//   attachment?: FileAttachment;
+//   replyToMessageId?: string | null;
+//   replyToMessage?: {
+//     id: string;
+//     content: string;
+//     senderType: SenderType;
+//     senderId?: string | null;
+//     senderName?: string;
+//     messageType: MessageType;
+//   } | null;
+// }
+
+// /**
+//  * Chat session state
+//  */
+// export interface ChatSession {
+//   id: string;
+//   mode: ChatMode;
+//   status: ChatStatus;
+//   assignedAgentId?: string;
+//   assignedAgentName?: string;
+//   /** Enriched agent profile from ChatUser table */
+//   assignedAgent?: {
+//     displayName: string;
+//     email: string | null;
+//     avatarUrl: string | null;
+//     isOnline: boolean;
+//   } | null;
+//   /** Enriched customer profile from ChatUser table */
+//   customer?: {
+//     displayName: string;
+//     email: string | null;
+//     avatarUrl: string | null;
+//     isOnline: boolean;
+//   } | null;
+// }
+
+// /**
+//  * SDK state
+//  */
+// export interface ChatSDKState {
+//   /** Whether SDK is initialized */
+//   initialized: boolean;
+//   /** Whether connected to WebSocket */
+//   connected: boolean;
+//   /** Whether chat is loading */
+//   loading: boolean;
+//   /** Current session */
+//   session: ChatSession | null;
+//   /** Chat messages */
+//   messages: ChatMessage[];
+//   /** Whether someone is typing */
+//   isTyping: boolean;
+//   /** Who is typing */
+//   typingUser?: string;
+//   /** Error state */
+//   error: Error | null;
+//   /** Whether the auth token has expired */
+//   tokenExpired: boolean;
+//   /** Whether the chat widget is currently visible to the user */
+//   isWidgetOpen: boolean;
+//   /** Number of unread agent/bot messages (accumulated while widget is closed) */
+//   unreadCount: number;
+//   /** Whether older messages exist on the server (scroll-up pagination) */
+//   hasMore: boolean;
+//   /** Whether we are currently fetching older messages */
+//   loadingMore: boolean;
+// }
+
+// /**
+//  * SDK actions
+//  */
+// export interface ChatSDKActions {
+//   /** Send a message */
+//   sendMessage: (content: string, type?: MessageType, replyToMessageId?: string) => Promise<void>;
+//   /** Send a file attachment */
+//   sendAttachment: (file: File) => Promise<void>;
+//   /** Start typing indicator */
+//   startTyping: () => void;
+//   /** Stop typing indicator */
+//   stopTyping: () => void;
+//   /** Close the chat session */
+//   closeSession: () => Promise<void>;
+//   /** Request human agent */
+//   requestAgent: (reason?: string) => Promise<void>;
+//   /** Reconnect to WebSocket */
+//   reconnect: () => Promise<void>;
+//   /** Tell the reducer whether the widget is visible (controls unread counting) */
+//   setWidgetOpen: (open: boolean) => void;
+//   /** Load older messages (scroll-up pagination) */
+//   loadOlderMessages: () => Promise<void>;
+// }
+
+// /**
+//  * WebSocket event types
+//  */
+// export const WS_EVENTS = {
+//   // Client -> Server
+//   JOIN_SESSION: 'chat.session.join',
+//   LEAVE_SESSION: 'chat.session.leave',
+//   MESSAGE_SEND: 'chat.message.send',
+//   TYPING_START: 'chat.typing.start',
+//   TYPING_STOP: 'chat.typing.stop',
+//   REQUEST_AGENT: 'chat.request.agent',
+  
+//   // Server -> Client
+//   CONNECTION_ACK: 'chat.connection.ack',
+//   MESSAGE_RECEIVE: 'chat.message.receive',
+//   TYPING_INDICATOR: 'chat.typing.indicator',
+//   AGENT_JOINED: 'chat.agent.joined',
+//   AGENT_LEFT: 'chat.agent.left',
+//   SESSION_CLOSED: 'chat.session.closed',
+//   STATUS_CHANGED: 'chat.status.changed',
+//   ERROR: 'chat.error',
+// } as const;
+
+
+
+// ==========================================
+// Chat SDK - Type Definitions
 // ==========================================
 
 export type ChatMode = 'BOT' | 'HUMAN';
 export type ChatStatus = 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
 export type SenderType = 'CUSTOMER' | 'AGENT' | 'BOT' | 'SYSTEM';
-export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE';
-
-// ==========================================
-// SDK Configuration
-// ==========================================
+export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE' | 'VIDEO' | 'AUDIO';
 
 /**
- * Main SDK configuration object
- * Pass this to ChatWidget or ChatProvider
+ * SDK Configuration
  */
 export interface ChatSDKConfig {
-  /**
-   * Backend service URL
-   * @example "https://chat-api.example.com" or "http://localhost:3000"
-   */
+  /** Backend service URL (e.g., https://api.chat.example.com) */
   serviceUrl: string;
 
-  /**
-   * Tenant ID from your organization setup
-   * @example "acme-corp"
-   */
+  /** Optional: Explicit WebSocket URL (defaults to serviceUrl on port 3001) */
+  wsUrl?: string;
+
+  /** Optional: Explicit REST API base URL for file uploads.
+   *  Defaults to serviceUrl (with :3001→:3000 port swap if needed).
+   *  Set this if your host app proxies WebSocket but NOT REST calls.
+   *  Example: 'http://localhost:3000' */
+  apiUrl?: string;
+
+  /** Your tenant ID */
   tenantId: string;
-
-  /**
-   * App ID (widget app registered under tenant)
-   * @example "web-chat", "mobile-app"
-   */
-  appId: string;
-
-  /**
-   * Authentication token (JWT from widget/token endpoint or Cognito)
-   */
+  
+  /** Cognito access token from your auth system */
   token: string;
-
-  /**
-   * Current user information
-   */
+  
+  /** Current user information */
   user: {
-    /** Unique user identifier */
     id: string;
-    /** Display name */
     name: string;
-    /** Email (optional) */
     email?: string;
-    /** Avatar URL (optional) */
-    avatar?: string;
-    /** Custom user metadata */
-    metadata?: Record<string, unknown>;
   };
-
-  /**
-   * UI theme customization
-   */
+  
+  /** Optional: Custom theme */
   theme?: ChatTheme;
-
-  /**
-   * Feature toggles
-   */
+  
+  /** Optional: Feature flags */
   features?: ChatFeatures;
-
-  /**
-   * Event callbacks
-   */
+  
+  /** Optional: Callback handlers */
   callbacks?: ChatCallbacks;
-
-  /**
-   * Debug mode - logs events to console
-   * @default false
-   */
-  debug?: boolean;
 }
 
-// ==========================================
-// Theme Configuration
-// ==========================================
-
 /**
- * UI theming options
+ * Theme customization
  */
 export interface ChatTheme {
-  /** Primary brand color */
   primaryColor?: string;
-  
-  /** Header background color */
   headerBackground?: string;
-  
-  /** Header text color */
   headerText?: string;
-  
-  /** Customer message bubble color */
   customerBubbleColor?: string;
-  
-  /** Agent/Bot message bubble color */
   agentBubbleColor?: string;
-  
-  /** Font family */
   fontFamily?: string;
-  
-  /** Border radius for widget */
   borderRadius?: string;
-  
-  /** Widget position on screen */
   position?: 'bottom-right' | 'bottom-left';
-  
-  /** Welcome message shown in empty chat */
-  welcomeMessage?: string;
-  
-  /** Dark mode preference */
-  darkMode?: boolean;
 }
 
-// ==========================================
-// Feature Toggles
-// ==========================================
-
 /**
- * Enable/disable SDK features
+ * Feature toggles
  */
 export interface ChatFeatures {
   /** Show file upload button */
   fileUpload?: boolean;
-  
   /** Show emoji picker */
   emoji?: boolean;
-  
-  /** Enable typing indicators */
+  /** Show typing indicators */
   typing?: boolean;
-  
   /** Enable sound notifications */
   sound?: boolean;
-  
-  /** Show header bar */
+  /** Show header with agent info */
   showHeader?: boolean;
-  
   /** Auto-expand widget on load */
   autoExpand?: boolean;
-  
-  /** Show message timestamps */
-  showTimestamps?: boolean;
-  
-  /** Enable message reactions */
-  reactions?: boolean;
-  
-  /** Show read receipts */
-  readReceipts?: boolean;
 }
 
-// ==========================================
-// Event Callbacks
-// ==========================================
-
 /**
- * SDK event callbacks
+ * Event callbacks
  */
 export interface ChatCallbacks {
-  /** New message received */
+  /** Called when a message is received */
   onMessage?: (message: ChatMessage) => void;
-  
-  /** Session status or mode changed */
+  /** Called when session status changes */
   onStatusChange?: (status: ChatStatus, mode: ChatMode) => void;
-  
-  /** Human agent joined the chat */
+  /** Called when an agent joins */
   onAgentJoined?: (agentId: string, agentName: string) => void;
-  
-  /** Human agent left the chat */
+  /** Called when an agent leaves */
   onAgentLeft?: (agentId: string) => void;
-  
-  /** Chat session was closed */
+  /** Called when session is closed */
   onSessionClosed?: () => void;
-  
-  /** Connection error occurred */
+  /** Called on connection error */
   onError?: (error: Error) => void;
-  
-  /** Successfully connected to chat */
+  /** Called when connection is established */
   onConnected?: (sessionId: string) => void;
-  
-  /** Disconnected from chat */
-  onDisconnected?: (reason: string) => void;
-  
-  /** Reconnected after disconnect */
-  onReconnected?: () => void;
-  
-  /** Someone started typing */
-  onTypingStart?: (senderType: SenderType, senderId?: string) => void;
-  
-  /** Someone stopped typing */
-  onTypingStop?: (senderType: SenderType, senderId?: string) => void;
 }
 
-// ==========================================
-// Chat Data Types
-// ==========================================
+/**
+ * File attachment metadata
+ */
+export interface FileAttachment {
+  url: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  mediaType: 'images' | 'videos' | 'audio' | 'documents';
+}
 
 /**
- * Chat message object
+ * Chat message
  */
 export interface ChatMessage {
-  /** Unique message ID */
   id: string;
-  
-  /** Session ID this message belongs to */
   chatSessionId: string;
-  
-  /** Who sent the message */
   senderType: SenderType;
-  
-  /** Sender's user ID (if applicable) */
   senderId?: string;
-  
-  /** Sender's display name */
   senderName?: string;
-  
-  /** Message text content */
   content: string;
-  
-  /** Type of message */
   messageType: MessageType;
-  
-  /** When the message was sent */
   timestamp: Date;
-  
-  /** Additional metadata */
-  metadata?: {
-    /** File URL for FILE/IMAGE types */
-    fileUrl?: string;
-    /** File name */
-    fileName?: string;
-    /** File size in bytes */
-    fileSize?: number;
-    /** MIME type */
-    mimeType?: string;
-    /** Quick reply options */
-    quickReplies?: string[];
-    /** Custom data */
-    [key: string]: unknown;
-  };
+  metadata?: Record<string, unknown>;
+  attachment?: FileAttachment;
+  replyToMessageId?: string | null;
+  replyToMessage?: {
+    id: string;
+    content: string;
+    senderType: SenderType;
+    senderId?: string | null;
+    senderName?: string;
+    messageType: MessageType;
+  } | null;
 }
 
 /**
  * Chat session state
  */
 export interface ChatSession {
-  /** Session ID */
   id: string;
-  
-  /** Current chat mode (BOT or HUMAN) */
   mode: ChatMode;
-  
-  /** Current session status */
   status: ChatStatus;
-  
-  /** Assigned agent ID (if any) */
   assignedAgentId?: string;
-  
-  /** Assigned agent name */
   assignedAgentName?: string;
-  
-  /** Session priority (0-100) */
-  priority?: number;
-  
-  /** When session was created */
-  createdAt?: Date;
-  
-  /** When escalated to human */
-  escalatedAt?: Date;
+  /** Enriched agent profile from ChatUser table */
+  assignedAgent?: {
+    displayName: string;
+    email: string | null;
+    avatarUrl: string | null;
+    isOnline: boolean;
+  } | null;
+  /** Enriched customer profile from ChatUser table */
+  customer?: {
+    displayName: string;
+    email: string | null;
+    avatarUrl: string | null;
+    isOnline: boolean;
+  } | null;
 }
 
-// ==========================================
-// SDK State & Actions
-// ==========================================
-
 /**
- * Internal SDK state
+ * SDK state
  */
 export interface ChatSDKState {
-  /** SDK initialized and ready */
+  /** Whether SDK is initialized */
   initialized: boolean;
-  
-  /** Connected to WebSocket */
+  /** Whether connected to WebSocket */
   connected: boolean;
-  
-  /** Operation in progress */
+  /** Whether chat is loading */
   loading: boolean;
-  
-  /** Current chat session */
+  /** Current session */
   session: ChatSession | null;
-  
-  /** Message history */
+  /** Chat messages */
   messages: ChatMessage[];
-  
-  /** Someone is typing */
+  /** Whether someone is typing */
   isTyping: boolean;
-  
   /** Who is typing */
   typingUser?: string;
-  
-  /** Current error (if any) */
+  /** Error state */
   error: Error | null;
-  
-  /** Unread message count */
+  /** Whether the auth token has expired */
+  tokenExpired: boolean;
+  /** Whether the chat widget is currently visible to the user */
+  isWidgetOpen: boolean;
+  /** Number of unread agent/bot messages (accumulated while widget is closed) */
   unreadCount: number;
+  /** Whether older messages exist on the server (scroll-up pagination) */
+  hasMore: boolean;
+  /** Whether we are currently fetching older messages */
+  loadingMore: boolean;
+  /** Whether a file attachment is currently being uploaded */
+  uploading: boolean;
 }
 
 /**
- * SDK action methods
+ * SDK actions
  */
 export interface ChatSDKActions {
-  /** Send a text message */
-  sendMessage: (content: string, type?: MessageType) => Promise<void>;
-  
-  /** Send typing indicator */
+  /** Send a message */
+  sendMessage: (content: string, type?: MessageType, replyToMessageId?: string) => Promise<void>;
+  /** Send a file attachment */
+  sendAttachment: (file: File) => Promise<void>;
+  /** Start typing indicator */
   startTyping: () => void;
-  
   /** Stop typing indicator */
   stopTyping: () => void;
-  
-  /** Close the current session */
+  /** Close the chat session */
   closeSession: () => Promise<void>;
-  
-  /** Request human agent (escalation) */
+  /** Request human agent */
   requestAgent: (reason?: string) => Promise<void>;
-  
   /** Reconnect to WebSocket */
   reconnect: () => Promise<void>;
-  
-  /** Mark messages as read */
-  markAsRead: () => void;
-  
-  /** Clear error state */
-  clearError: () => void;
+  /** Tell the reducer whether the widget is visible (controls unread counting) */
+  setWidgetOpen: (open: boolean) => void;
+  /** Load older messages (scroll-up pagination) */
+  loadOlderMessages: () => Promise<void>;
 }
 
 /**
- * Combined SDK context value
- */
-export interface ChatSDKContextValue {
-  state: ChatSDKState;
-  actions: ChatSDKActions;
-  config: ChatSDKConfig;
-}
-
-// ==========================================
-// WebSocket Events
-// ==========================================
-
-/**
- * WebSocket event names
+ * WebSocket event types
  */
 export const WS_EVENTS = {
-  // Client emits
+  // Client -> Server
   JOIN_SESSION: 'chat.session.join',
   LEAVE_SESSION: 'chat.session.leave',
   MESSAGE_SEND: 'chat.message.send',
   TYPING_START: 'chat.typing.start',
   TYPING_STOP: 'chat.typing.stop',
   REQUEST_AGENT: 'chat.request.agent',
-
-  // Server emits
+  
+  // Server -> Client
   CONNECTION_ACK: 'chat.connection.ack',
   MESSAGE_RECEIVE: 'chat.message.receive',
   TYPING_INDICATOR: 'chat.typing.indicator',
@@ -377,63 +867,3 @@ export const WS_EVENTS = {
   STATUS_CHANGED: 'chat.status.changed',
   ERROR: 'chat.error',
 } as const;
-
-export type WSEventName = typeof WS_EVENTS[keyof typeof WS_EVENTS];
-
-// ==========================================
-// API Response Types
-// ==========================================
-
-/**
- * Standard API response wrapper
- */
-export interface APIResponse<T = unknown> {
-  success: boolean;
-  data?: T;
-  error?: {
-    code: string;
-    message: string;
-  };
-}
-
-/**
- * Widget token response
- */
-export interface WidgetTokenResponse {
-  token: string;
-  expiresIn: number;
-}
-
-/**
- * Create session response
- */
-export interface CreateSessionResponse {
-  chatSessionId: string;
-  mode: ChatMode;
-  status: ChatStatus;
-}
-
-/**
- * Widget config response (from /sdk/config/:appId)
- */
-export interface WidgetConfigResponse {
-  appId: string;
-  appName: string;
-  tenantId: string;
-  aiEnabled: boolean;
-  config: {
-    theme?: ChatTheme;
-    features?: ChatFeatures;
-  };
-}
-
-// ==========================================
-// Export all types
-// ==========================================
-
-export type {
-  ChatMode as Mode,
-  ChatStatus as Status,
-  SenderType as Sender,
-  MessageType as MsgType,
-};

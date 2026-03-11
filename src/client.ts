@@ -232,6 +232,12 @@ export class ChatWebSocketClient {
           this.config.callbacks?.onSessionClosed?.();
         });
 
+        // ── MESSAGE_READ (read receipts / "Seen ✓" indicator) ─────────────
+        this.socket.on(WS_EVENTS.MESSAGE_READ, (data: any) => {
+          console.log('[ChatClient] MESSAGE_READ:', data);
+          this.emit('messageRead', data);
+        });
+
         // ── ERRORS ─────────────────────────────────────────────────────────
         this.socket.on(WS_EVENTS.ERROR, (error: any) => {
           const err = new Error(error.message ?? String(error));
