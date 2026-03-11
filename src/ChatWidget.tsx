@@ -262,88 +262,67 @@ const CompactAudioPlayer = React.memo(function CompactAudioPlayer({
   );
 });
 
-
-// Stateless: creates a new RegExp each call to avoid lastIndex drift.
-function renderTextWithLinks(text: string, isCustomer: boolean): React.ReactNode {
-  const URL_PATTERN = /(\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+\.[^\s<>"']{2,})/gi;
-  const parts = text.split(URL_PATTERN);
-  const urlTest = /^(\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+\.[^\s<>"']{2,})$/i;
-  return parts.map((part, i) => {
-    if (urlTest.test(part)) {
-      const href = part.startsWith('http') ? part : `https://${part}`;
-      return (
-        <a
-          key={i}
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            color: isCustomer ? 'rgba(255,255,255,0.92)' : '#5b4fcf',
-            textDecoration: 'underline',
-            textUnderlineOffset: '2px',
-            wordBreak: 'break-all',
-            cursor: 'pointer',
-          }}
-          onClick={e => e.stopPropagation()}
-        >
-          {part}
-        </a>
-      );
-    }
-    return <React.Fragment key={i}>{part}</React.Fragment>;
-  });
-}
-
-
-// ── MessageBubble ─────────────────────────────────────────────────────────────
-const MessageBubble = React.memo(function MessageBubble({
-  message, styles, onImageClick, onReply, replyToResolved,
-}: {
-  message: ChatMessage;
-  styles: Record<string, React.CSSProperties>;
-  userName?: string;
-  onImageClick?: (url: string, fileName: string) => void;
-  onReply?: (msg: ChatMessage) => void;
-  replyToResolved?: ChatMessage | null;
-}) {
+const MessageBubble = React.memo(function MessageBubble({ message, styles, onImageClick, onReply, replyToResolved }: { message: ChatMessage; styles: Record<string, React.CSSProperties>; userName?: string; onImageClick?: (url: string, fileName: string) => void; onReply?: (msg: ChatMessage) => void; replyToResolved?: ChatMessage | null }) {
   const isCustomer = message.senderType === 'CUSTOMER';
   const isSystem   = message.senderType === 'SYSTEM';
   const isBot      = message.senderType === 'BOT';
+  // FIX #4: use helper that always outputs 12-hour format
   const time = formatTime(message.timestamp);
   const [hovered, setHovered] = useState(false);
 
+  // Filter out system messages that are just raw hex IDs (no real text content)
   if (isSystem && looksLikeRawId(message.content?.trim())) return null;
+
   if (isSystem) return <div style={styles.bubbleSystem}>{message.content}</div>;
 
-  const rawName   = message.senderName;
+  // Use senderName, but fall back to 'Agent' if it's missing or looks like a raw ID
+  const rawName = message.senderName;
   const agentLabel = (rawName && !looksLikeRawId(rawName)) ? rawName : 'Agent';
   const label = isCustomer ? null : isBot ? 'AI Assistant' : agentLabel;
 
+  // Check if this is an attachment message
   const attachment = message.attachment ?? (message.metadata?.attachment as any) ?? null;
-  const contentUrl = message.content ?? '';
 
+  const contentUrl = message.content ?? '';
+  // Detect media type from URL extension.
+  // NOTE: .webm is intentionally excluded from isVideoUrl — it's ambiguous
+  // (can be audio or video). Let messageType/mimeType decide for .webm files.
   const isImageUrl = /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(contentUrl);
-  const isVideoUrl = /\.(mp4|mov|avi|mkv|flv|wmv)(\?.*)?$/i.test(contentUrl);
+  const isVideoUrl = /\.(mp4|mov|avi|mkv|flv|wmv)(\?.*)?$/i.test(contentUrl); // no .webm
   const isAudioUrl = /\.(mp3|wav|ogg|m4a|aac|flac|opus|webm)(\?.*)?$/i.test(contentUrl)
-                  || /\/audio\//i.test(contentUrl);
+                  || /\/audio\//i.test(contentUrl); // path contains /audio/
   const isFileUrl  = /^https?:\/\//i.test(contentUrl);
 
+  // Resolve effective type.
+  // STRICT PRIORITY: messageType > mimeType > URL extension.
+  // messageType is checked ALONE first to prevent URL extension from overriding it.
   let effectiveType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | null = null;
   if      (message.messageType === 'IMAGE')  effectiveType = 'IMAGE';
   else if (message.messageType === 'VIDEO')  effectiveType = 'VIDEO';
   else if (message.messageType === 'AUDIO')  effectiveType = 'AUDIO';
   else if (message.messageType === 'FILE')   effectiveType = 'FILE';
+  // messageType not set or TEXT — fall back to mimeType
   else if (attachment?.mimeType?.startsWith('image/'))  effectiveType = 'IMAGE';
   else if (attachment?.mimeType?.startsWith('video/'))  effectiveType = 'VIDEO';
   else if (attachment?.mimeType?.startsWith('audio/'))  effectiveType = 'AUDIO';
+  // Last resort: URL extension
   else if (isImageUrl) effectiveType = 'IMAGE';
   else if (isVideoUrl) effectiveType = 'VIDEO';
   else if (isAudioUrl) effectiveType = 'AUDIO';
   else if (attachment || (isFileUrl && contentUrl.includes('/') && !contentUrl.includes(' '))) effectiveType = 'FILE';
 
+  // Only log media messages (not every text message)
+  if (effectiveType !== null) {
+    console.log('[ChatWidget:Bubble] media detected:', {
+      id: message.id?.slice(0,8), messageType: message.messageType,
+      mimeType: attachment?.mimeType, effectiveType, url: contentUrl.slice(0,80),
+    });
+  }
+
   const isAttachment = effectiveType !== null;
   const isAudio = effectiveType === 'AUDIO';
 
+  // Resolve reply-to message
   const replyTo = message.replyToMessage ?? replyToResolved ?? null;
 
   const renderReplyQuote = () => {
@@ -361,7 +340,8 @@ const MessageBubble = React.memo(function MessageBubble({
           borderLeft: `3px solid ${isCustomer ? 'rgba(255,255,255,0.5)' : '#7c3aed'}`,
           borderRadius: '4px',
           backgroundColor: isCustomer ? 'rgba(255,255,255,0.12)' : '#f5f3ff',
-          fontSize: '11px', lineHeight: '1.4', cursor: 'pointer',
+          fontSize: '11px', lineHeight: '1.4',
+          cursor: 'pointer',
         }}
         onClick={(e) => {
           e.stopPropagation();
@@ -406,8 +386,11 @@ const MessageBubble = React.memo(function MessageBubble({
       return <video src={url} controls style={{ maxWidth: '240px', maxHeight: '180px', borderRadius: '12px' }} preload="metadata" />;
     }
     if (effectiveType === 'AUDIO') {
+      // Native <audio> ignores height CSS and renders 54px+ of browser chrome.
+      // CompactAudioPlayer is always exactly 40px tall regardless of browser.
       return <CompactAudioPlayer src={url} isCustomer={isCustomer} />;
     }
+    // Generic file
     return (
       <a href={url} target="_blank" rel="noopener noreferrer"
         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderRadius: '10px', backgroundColor: isCustomer ? 'rgba(255,255,255,0.15)' : '#f3f4f6', color: isCustomer ? '#fff' : '#5b4fcf', fontSize: '13px', fontWeight: 600, textDecoration: 'none' }}>
@@ -418,6 +401,9 @@ const MessageBubble = React.memo(function MessageBubble({
     );
   };
 
+  // Audio: compact bubble — just enough padding for the 40px player + timestamp
+  // Audio bubble: fixed-width pill that wraps snugly around the custom player.
+  // Must NOT use maxWidth% here — the outer wrapper is already fit-content.
   const bubbleStyle: React.CSSProperties = isAudio
     ? {
         ...(isCustomer
@@ -436,17 +422,17 @@ const MessageBubble = React.memo(function MessageBubble({
       onMouseLeave={() => setHovered(false)}
     >
       {label && <div style={styles.senderLabel}>{label}</div>}
+      {/*
+        For audio bubbles: width must be fit-content so the purple/white pill
+        shrinks to wrap the player (≈250px) instead of stretching to 82% of
+        the widget width. For all other types: keep maxWidth: 82%.
+      */}
       <div style={{ position: 'relative', ...(isAudio ? { width: 'fit-content' } : { maxWidth: '82%' }) }}>
         <div style={{ ...bubbleStyle, ...(isAudio ? {} : { maxWidth: '100%' }) }}>
           {renderReplyQuote()}
-          {isAttachment
-            ? renderAttachmentContent()
-            // ↓ CHANGED: was `message.content` — now uses link renderer
-            : renderTextWithLinks(message.content, isCustomer)
-          }
-          {!isAudio && (
-            <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left' }}>{time}</div>
-          )}
+          {isAttachment ? renderAttachmentContent() : message.content}
+          {!isAudio && <div style={{ ...styles.timestamp, textAlign: isCustomer ? 'right' : 'left' }}>{time}</div>}
+          {/* Timestamp sits inside the audio bubble, right-aligned under the player */}
           {isAudio && (
             <div style={{ ...styles.timestamp, textAlign: 'right', marginTop: '2px', opacity: 0.7 }}>{time}</div>
           )}
@@ -468,10 +454,7 @@ const MessageBubble = React.memo(function MessageBubble({
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#ede9fe'; (e.currentTarget as HTMLElement).style.color = '#5b4fcf'; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#f3f4f6'; (e.currentTarget as HTMLElement).style.color = '#6b7280'; }}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="9 17 4 12 9 7"/>
-              <path d="M20 18v-2a4 4 0 00-4-4H4"/>
-            </svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 00-4-4H4"/></svg>
           </button>
         )}
       </div>
