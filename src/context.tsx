@@ -644,6 +644,7 @@ export function ChatProvider({ config, children }: {
           'X-Tenant-ID':   cfg.tenantId,
           'Content-Type':  'application/json',
         },
+        body: JSON.stringify({ customerId: cfg.user.id }),
       },
     );
     if (!res.ok) throw new Error('Failed to reopen session');
