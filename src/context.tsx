@@ -1,7 +1,3 @@
-
-
-
-
 import React, {
   createContext, useContext, useReducer, useEffect, useCallback, useRef,
 } from 'react';
@@ -30,7 +26,8 @@ type ChatAction =
   | { type: 'SET_UPLOADING'; uploading: boolean }
   | { type: 'SET_PAST_SESSIONS'; sessions: ChatSessionSummary[] }
   | { type: 'UPDATE_PAST_SESSION'; sessionId: string; updates: Partial<ChatSessionSummary> }
-  | { type: 'SET_AGENT_READ_AT'; readAt: Date };
+  | { type: 'SET_AGENT_READ_AT'; readAt: Date }
+  | { type: 'SET_CLOSE_REASON'; reason: string | null };  // ← NEW
 
 const initialState: ChatSDKState = {
   initialized:  false,
@@ -49,6 +46,7 @@ const initialState: ChatSDKState = {
   uploading:    false,
   pastSessions: [],
   agentReadAt:  null,
+  closeReason:  null,  // ← NEW: 'SWITCHED' | 'MANUAL' | null
 };
 
 function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
@@ -144,6 +142,9 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
     case 'SET_AGENT_READ_AT':
       return { ...state, agentReadAt: action.readAt };
 
+    case 'SET_CLOSE_REASON':  // ← NEW
+      return { ...state, closeReason: action.reason };
+
     default:
       return state;
   }
@@ -157,7 +158,6 @@ interface ChatContextValue {
 }
 const ChatContext = createContext<ChatContextValue | null>(null);
 
-// Prevent double-init in React StrictMode
 const _activeConnections = new Map<string, boolean>();
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -173,17 +173,13 @@ export function ChatProvider({ config, children }: {
   useEffect(() => { configRef.current = config; });
 
   const pendingReplaces = useRef<Map<string, string>>(new Map());
-
-  // Track pending attachment uploads — skip CUSTOMER echoes while uploading
   const pendingAttachTempIds = useRef<Set<string>>(new Set());
 
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
 
-  // ── Typing dedup ref ──────────────────────────────────────────────────────
   const lastTypingDispatch = useRef<{ isTyping: boolean; time: number } | null>(null);
 
-  // ── Initialize once ───────────────────────────────────────────────────────
   useEffect(() => {
     if (_activeConnections.get(connectionKey)) return;
     _activeConnections.set(connectionKey, true);
@@ -195,35 +191,27 @@ export function ChatProvider({ config, children }: {
         const client = new ChatWebSocketClient(cfg);
         clientRef.current = client;
 
-        // ── Message handler ──────────────────────────────────────────────
         client.on('message', (msg: unknown) => {
           const message = msg as ChatMessage;
-
-          // Skip CUSTOMER echoes that will be handled by replaceOptimistic
           if (
             message.senderType === 'CUSTOMER' &&
             !message.id.startsWith('temp-')
           ) {
-            // Text message echo — matched by content
             if (pendingReplaces.current.has(message.content)) {
               console.log('[Chat] Skipping text echo — replaceOptimistic will handle:', message.id);
               return;
             }
-            // Attachment echo — matched by pending temp ID set
             if (pendingAttachTempIds.current.size > 0) {
               console.log('[Chat] Skipping attachment echo — replaceOptimistic will handle:', message.id);
               return;
             }
           }
-
           dispatch({ type: 'ADD_MESSAGE', message });
         });
 
-        // ── Typing handler ───────────────────────────────────────────────
         client.on('typing', ((rawData: any) => {
           const isTyping  = rawData?.isTyping ?? false;
           const senderId  = rawData?.senderId ?? '';
-
           const rawSender  = rawData?.senderType ?? rawData?.sender_type ?? '';
           const senderType = String(rawSender).toUpperCase().trim();
 
@@ -261,14 +249,8 @@ export function ChatProvider({ config, children }: {
 
           dispatch({ type: 'SET_TYPING', isTyping, typingUser: senderId });
 
-          console.log(
-            `%c[Chat:TYPING] ✅ SET_TYPING dispatched → isTyping=${isTyping}`,
-            isTyping ? 'color:#10b981;font-weight:bold' : 'color:#6b7280;font-weight:bold'
-          );
-
           if (isTyping) {
             typingTimerRef.current = setTimeout(() => {
-              console.log('[Chat:TYPING] Auto-clear after 5s');
               dispatch({ type: 'SET_TYPING', isTyping: false });
               typingTimerRef.current     = null;
               lastTypingDispatch.current = null;
@@ -278,16 +260,17 @@ export function ChatProvider({ config, children }: {
           }
         }) as EventCallback);
 
-        // ── Other handlers ───────────────────────────────────────────────
         client.on('statusChange', ((data: any) => {
           dispatch({ type: 'UPDATE_SESSION', session: { status: data.status, mode: data.mode } });
-          
-          // Update past sessions list if this session is being reopened
           dispatch({
             type: 'UPDATE_PAST_SESSION',
             sessionId: data.chatSessionId,
             updates: { status: data.status, mode: data.mode, closedAt: null },
           });
+          // ← NEW: record close reason from status change so widget shows right message
+          if (data.status === 'CLOSED' && data.closeReason) {
+            dispatch({ type: 'SET_CLOSE_REASON', reason: data.closeReason });
+          }
         }) as EventCallback);
 
         client.on('agentJoined', ((data: any) => {
@@ -306,6 +289,15 @@ export function ChatProvider({ config, children }: {
               status: 'ASSIGNED',
             },
           });
+        }) as EventCallback);
+
+        client.on('sessionClosed', ((data: any) => {
+          // ← CHANGED: was `() => {}` with no payload. Now we read closeReason from the event.
+          // If reason === 'SWITCHED' the widget shows "put on hold" text.
+          // Otherwise (agent-closed, manual) the widget shows "session has been closed".
+          if (data?.closeReason) {
+            dispatch({ type: 'SET_CLOSE_REASON', reason: data.closeReason });
+          }
         }) as EventCallback);
 
         client.on('disconnect', () => {
@@ -332,9 +324,6 @@ export function ChatProvider({ config, children }: {
           dispatch({ type: 'TOKEN_EXPIRED' });
         });
 
-        // ── Read-receipt handler ─────────────────────────────────────────
-        // When an AGENT marks messages read, update agentReadAt so the
-        // widget can display Instagram-style "Seen ✓" indicators.
         client.on('messageRead', ((data: any) => {
           if (data?.readBy === 'AGENT' && data?.readAt) {
             dispatch({ type: 'SET_AGENT_READ_AT', readAt: new Date(data.readAt) });
@@ -343,7 +332,6 @@ export function ChatProvider({ config, children }: {
 
         let session = await client.connect();
 
-        // ── CLOSED session guard ─────────────────────────────────────────
         if (session.status === 'CLOSED') {
           console.log('[Chat] Got CLOSED session — creating fresh session via REST');
           try {
@@ -378,9 +366,7 @@ export function ChatProvider({ config, children }: {
           }
         }
 
-        // ── Initial load: SET_MESSAGES (replaces empty state) ─────────────
-        await fetchMessages(configRef.current, session.id, dispatch, false /* initial load — replace empty state */);
-
+        await fetchMessages(configRef.current, session.id, dispatch, false);
         dispatch({ type: 'INIT_SUCCESS', session });
         configRef.current.callbacks?.onConnected?.(session.id);
 
@@ -393,25 +379,12 @@ export function ChatProvider({ config, children }: {
 
     initChat();
 
-    // ── Fallback poll (safety net for missed WS messages) ────────────────
-    //
-    // FIX: Use mergeOnly=true so the poll NEVER replaces state.messages.
-    //
-    // The original code used SET_MESSAGES which wiped out any paginated
-    // older messages the user had loaded. This caused:
-    //   1. state.messages shrinks (e.g. 30 → 10)
-    //   2. allMessages recomputes with a different lastMsgId
-    //   3. lastMsgId useEffect fires → scrollToBottomNow() → rogue jump
-    //
-    // With mergeOnly=true the poll only dispatches ADD_MESSAGE for messages
-    // not already in state, so paginated history is preserved.
-    //
     const FALLBACK_POLL_MS = 10_000;
     const fallbackPollTimer = setInterval(async () => {
       const sid = stateRef.current.session?.id;
       if (!sid || stateRef.current.tokenExpired) return;
-      try { await fetchMessages(configRef.current, sid, dispatch, true /* mergeOnly */); }
-      catch (_) { /* swallow — non-critical */ }
+      try { await fetchMessages(configRef.current, sid, dispatch, true); }
+      catch (_) { /* swallow */ }
     }, FALLBACK_POLL_MS);
 
     return () => {
@@ -467,12 +440,10 @@ export function ChatProvider({ config, children }: {
   }, [state.session, state.tokenExpired]);
 
   const startTyping = useCallback(() => {
-    console.log('[Chat:TYPING] startTyping() called');
     clientRef.current?.startTyping?.();
   }, []);
 
   const stopTyping = useCallback(() => {
-    console.log('[Chat:TYPING] stopTyping() called');
     clientRef.current?.stopTyping?.();
   }, []);
 
@@ -587,7 +558,6 @@ export function ChatProvider({ config, children }: {
 
     try {
       await clientRef.current.sendAttachment(file);
-
       const replaceOptimistic: EventCallback = (raw: unknown) => {
         const msg = raw as ChatMessage;
         if (
@@ -613,7 +583,6 @@ export function ChatProvider({ config, children }: {
     }
   }, [state.session, state.tokenExpired]);
 
-  // ── fetchPastSessions ─────────────────────────────────────────────────────
   const fetchPastSessions = useCallback(async () => {
     const cfg = configRef.current;
     try {
@@ -633,8 +602,55 @@ export function ChatProvider({ config, children }: {
   }, []);
 
   // ── reopenSession ─────────────────────────────────────────────────────────
+  // ← CHANGED: now closes the current active session first with reason='SWITCHED'
+  //   so the user sees "put on hold" instead of "session closed"
   const reopenSession = useCallback(async (sessionId: string) => {
-    const cfg = configRef.current;
+    const cfg              = configRef.current;
+    const currentSessionId = stateRef.current.session?.id;
+    const currentStatus    = stateRef.current.session?.status;
+
+    // Step 1: If there is a current active (non-closed) session, put it on hold
+    if (currentSessionId && currentStatus !== 'CLOSED' && currentSessionId !== sessionId) {
+      try {
+        await fetch(
+          `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${currentSessionId}/close`,
+          {
+            method:  'POST',
+            headers: {
+              'Authorization': `Bearer ${cfg.token}`,
+              'X-Tenant-ID':   cfg.tenantId,
+              'Content-Type':  'application/json',
+            },
+            // Send closeReason so the backend can include it in any WS events it broadcasts
+            body: JSON.stringify({ customerId: cfg.user.id, closeReason: 'SWITCHED' }),
+          }
+        );
+        console.log('[Chat] Previous session put on hold:', currentSessionId);
+      } catch (e) {
+        console.warn('[Chat] Could not put previous session on hold:', e);
+        // Non-fatal — continue with the switch
+      }
+
+      // Inject a clear "on hold" system message into the current session's messages
+      // BEFORE we switch sessions, so the user sees it in the history panel.
+      dispatch({
+        type: 'ADD_MESSAGE',
+        message: {
+          id:            `system-hold-${Date.now()}`,
+          chatSessionId: currentSessionId,
+          senderType:    'SYSTEM',
+          senderId:      'system',
+          content:       '⏸ Your chat has been put on hold because you switched to another session.',
+          messageType:   'TEXT',
+          timestamp:     new Date(),
+        } as any,
+      });
+
+      // Mark the close reason so the widget renders the correct "on hold" UI
+      dispatch({ type: 'SET_CLOSE_REASON', reason: 'SWITCHED' });
+    }
+
+    // Step 2: Reopen the target session
     const res = await fetch(
       `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${sessionId}/reopen`,
       {
@@ -651,23 +667,20 @@ export function ChatProvider({ config, children }: {
     const json = await res.json();
     const data = json.data;
 
-    // Join the reopened session via WebSocket and update state
+    // Clear the close reason — we are now in a fresh active session
+    dispatch({ type: 'SET_CLOSE_REASON', reason: null });
+
     clientRef.current?.joinSession(data.sessionId ?? sessionId);
     dispatch({
       type:    'INIT_SUCCESS',
       session: { id: data.sessionId ?? sessionId, mode: 'HUMAN', status: 'WAITING_FOR_AGENT' },
     });
-
-    // Clear messages so they reload for the reopened session
     dispatch({ type: 'SET_MESSAGES', messages: [], hasMore: false });
-
-    // Fetch messages for the reopened session
     await fetchMessages(cfg, data.sessionId ?? sessionId, dispatch, false);
 
     return { sessionId: data.sessionId ?? sessionId, status: data.status, mode: data.mode };
   }, []);
 
-  // ── markMessagesRead ──────────────────────────────────────────────────────
   const markMessagesRead = useCallback(async () => {
     const s   = stateRef.current;
     const cfg = configRef.current;
@@ -712,15 +725,6 @@ export const useChatActions  = () => useChat().actions;
 export const useChatState    = () => useChat().state;
 
 // ─── fetchMessages ────────────────────────────────────────────────────────────
-//
-// mergeOnly=false (default, initial load): dispatches SET_MESSAGES which
-//   replaces state.messages. Correct on first load when state is empty.
-//
-// mergeOnly=true (fallback poll): dispatches ADD_MESSAGE only for messages
-//   not already in state. This preserves any paginated history the user loaded.
-//   Without this, the poll would wipe older messages, shrink state.messages,
-//   change lastMsgId, and trigger a rogue scroll-to-bottom in ChatWidget.
-//
 async function fetchMessages(
   config:     ChatSDKConfig,
   sessionId:  string,
@@ -770,12 +774,10 @@ async function fetchMessages(
     const hasMore = data.data.hasMore ?? false;
 
     if (mergeOnly) {
-      // Poll mode: add only new messages, never wipe paginated history
       for (const msg of messages) {
         dispatch({ type: 'ADD_MESSAGE', message: msg });
       }
     } else {
-      // Initial load: replace the empty message list
       dispatch({ type: 'SET_MESSAGES', messages, hasMore });
     }
 
@@ -795,4 +797,3 @@ async function fetchMessages(
     console.error('[Chat] fetchMessages failed:', e);
   }
 }
-

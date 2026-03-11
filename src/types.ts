@@ -211,6 +211,8 @@ export interface ChatSDKState {
   pastSessions: ChatSessionSummary[];
   /** When the agent last read messages in this session (from WS chat.message.read event) */
   agentReadAt: Date | null;
+
+  closeReason: string | null;  // 'SWITCHED' | 'MANUAL' | null
 }
 
 /**

@@ -2526,10 +2526,16 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     const cfg = configRef.current;
     if (sessionId) {
       try {
-        await fetch(
-          `${cfg.serviceUrl}/chat-services/api/v1/agent/sessions/${sessionId}/close`,
-          { method: 'POST', headers: { 'Authorization': `Bearer ${cfg.token}`, 'X-Tenant-ID': cfg.tenantId, 'Content-Type': 'application/json' }, body: JSON.stringify({}) }
-        );
+       await fetch(
+  // ← FIXED: was /agent/sessions/ — customers must use the customer close endpoint
+  `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${sessionId}/close`,
+  {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${cfg.token}`, 'X-Tenant-ID': cfg.tenantId, 'Content-Type': 'application/json' },
+    // ← Send closeReason so backend + WS events carry the reason through
+    body: JSON.stringify({ closeReason: 'MANUAL' }),
+  }
+);
       } catch (e) { console.warn('[Chat] End chat REST failed:', e); }
     }
     addLocal({ senderType: 'SYSTEM', senderId: 'system', content: '🔴 Chat session has ended.' });
@@ -2832,24 +2838,49 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
           )}
 
           {isClosed ? (
-            <div style={{ padding: '16px 14px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', borderTop: '1px solid #f0f0f5', backgroundColor: '#fafafa' }}>
-              <div style={{ fontSize: 28 }}>✅</div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Chat Ended</div>
-                <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.5 }}>This session has been closed.<br />Need more help?</div>
-              </div>
-              {onStartNewChat && (
-                <button
-                  onClick={onStartNewChat}
-                  style={{ padding: '10px 24px', borderRadius: 22, border: 'none', background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.primaryColor}cc)`, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', boxShadow: `0 3px 12px ${theme.primaryColor}44` }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.04)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; }}
-                >
-                  + Start New Chat
-                </button>
-              )}
-            </div>
-          ) : (
+  state.closeReason === 'SWITCHED' ? (
+    // ← "on hold" UI — shown when user switched to another session
+    <div style={{ padding: '16px 14px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', borderTop: '1px solid #f0f0f5', backgroundColor: '#fafafa' }}>
+      <div style={{ fontSize: 28 }}>⏸</div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Chat on Hold</div>
+        <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.5 }}>
+          This chat was put on hold while you switched to another session.
+          <br />You can resume it from your chat history.
+        </div>
+      </div>
+      {onStartNewChat && (
+        <button
+          onClick={onStartNewChat}
+          style={{ padding: '10px 24px', borderRadius: 22, border: 'none', background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.primaryColor}cc)`, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', boxShadow: `0 3px 12px ${theme.primaryColor}44` }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.04)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; }}
+        >
+          + Start New Chat
+        </button>
+      )}
+    </div>
+  ) : (
+    // ← "Chat Ended" UI — shown on manual or agent-initiated close
+    <div style={{ padding: '16px 14px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', borderTop: '1px solid #f0f0f5', backgroundColor: '#fafafa' }}>
+      <div style={{ fontSize: 28 }}>✅</div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Chat Ended</div>
+        <div style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.5 }}>This session has been closed.<br />Need more help?</div>
+      </div>
+      {onStartNewChat && (
+        <button
+          onClick={onStartNewChat}
+          style={{ padding: '10px 24px', borderRadius: 22, border: 'none', background: `linear-gradient(135deg, ${theme.primaryColor}, ${theme.primaryColor}cc)`, color: 'white', fontWeight: 700, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', boxShadow: `0 3px 12px ${theme.primaryColor}44` }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.04)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)'; }}
+        >
+          + Start New Chat
+        </button>
+      )}
+    </div>
+  )
+) : (
             <div style={{ flexShrink: 0 }}>
               {/* ── Upload progress banner ── */}
               {state.uploading && (
