@@ -929,7 +929,7 @@ async function mapCustomer(config: ChatSDKConfig): Promise<void> {
   try {
     console.log('%c[Chat] 🗺  mapCustomer → calling /customers/map', 'color:#7c3aed;font-weight:bold', {
       app_id:           config.tenantId,
-      external_user_id: config.user.id,
+      external_user_id: Number(config.user.id),
       username:         config.user.name,
       email:            config.user.email ?? '',
     });
@@ -943,7 +943,7 @@ async function mapCustomer(config: ChatSDKConfig): Promise<void> {
       },
       body: JSON.stringify({
         app_id:           config.tenantId,
-        external_user_id: config.user.id,
+        external_user_id: Number(config.user.id),
         username:         config.user.name,
         email:            config.user.email ?? '',
         role_id:          4,
