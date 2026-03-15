@@ -1,3 +1,6 @@
+
+
+
 // import React, {
 //   createContext, useContext, useReducer, useEffect, useCallback, useRef,
 // } from 'react';
@@ -5,8 +8,6 @@
 // import { ChatWebSocketClient } from './client';
 
 // type EventCallback = (...args: unknown[]) => void;
-
-// // ─── State / Actions ──────────────────────────────────────────────────────────
 
 // type ChatAction =
 //   | { type: 'INIT_START' }
@@ -27,7 +28,7 @@
 //   | { type: 'SET_PAST_SESSIONS'; sessions: ChatSessionSummary[] }
 //   | { type: 'UPDATE_PAST_SESSION'; sessionId: string; updates: Partial<ChatSessionSummary> }
 //   | { type: 'SET_AGENT_READ_AT'; readAt: Date }
-//   | { type: 'SET_CLOSE_REASON'; reason: string | null };  // ← NEW
+//   | { type: 'SET_CLOSE_REASON'; reason: string | null };
 
 // const initialState: ChatSDKState = {
 //   initialized:  false,
@@ -46,7 +47,7 @@
 //   uploading:    false,
 //   pastSessions: [],
 //   agentReadAt:  null,
-//   closeReason:  null,  // ← NEW: 'SWITCHED' | 'MANUAL' | null
+//   closeReason:  null,
 // };
 
 // function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
@@ -133,16 +134,14 @@
 //       return {
 //         ...state,
 //         pastSessions: state.pastSessions.map(s =>
-//           s.id === action.sessionId
-//             ? { ...s, ...action.updates }
-//             : s
+//           s.id === action.sessionId ? { ...s, ...action.updates } : s
 //         ),
 //       };
 
 //     case 'SET_AGENT_READ_AT':
 //       return { ...state, agentReadAt: action.readAt };
 
-//     case 'SET_CLOSE_REASON':  // ← NEW
+//     case 'SET_CLOSE_REASON':
 //       return { ...state, closeReason: action.reason };
 
 //     default:
@@ -150,7 +149,6 @@
 //   }
 // }
 
-// // ─── Context ──────────────────────────────────────────────────────────────────
 // interface ChatContextValue {
 //   state:   ChatSDKState;
 //   actions: ChatSDKActions;
@@ -160,7 +158,6 @@
 
 // const _activeConnections = new Map<string, boolean>();
 
-// // ─── Provider ─────────────────────────────────────────────────────────────────
 // export function ChatProvider({ config, children }: {
 //   config:   ChatSDKConfig;
 //   children: React.ReactNode;
@@ -172,7 +169,7 @@
 //   const configRef         = useRef<ChatSDKConfig>(config);
 //   useEffect(() => { configRef.current = config; });
 
-//   const pendingReplaces = useRef<Map<string, string>>(new Map());
+//   const pendingReplaces      = useRef<Map<string, string>>(new Map());
 //   const pendingAttachTempIds = useRef<Set<string>>(new Set());
 
 //   const stateRef = useRef(state);
@@ -193,10 +190,7 @@
 
 //         client.on('message', (msg: unknown) => {
 //           const message = msg as ChatMessage;
-//           if (
-//             message.senderType === 'CUSTOMER' &&
-//             !message.id.startsWith('temp-')
-//           ) {
+//           if (message.senderType === 'CUSTOMER' && !message.id.startsWith('temp-')) {
 //             if (pendingReplaces.current.has(message.content)) {
 //               console.log('[Chat] Skipping text echo — replaceOptimistic will handle:', message.id);
 //               return;
@@ -210,16 +204,13 @@
 //         });
 
 //         client.on('typing', ((rawData: any) => {
-//           const isTyping  = rawData?.isTyping ?? false;
-//           const senderId  = rawData?.senderId ?? '';
+//           const isTyping   = rawData?.isTyping ?? false;
+//           const senderId   = rawData?.senderId ?? '';
 //           const rawSender  = rawData?.senderType ?? rawData?.sender_type ?? '';
 //           const senderType = String(rawSender).toUpperCase().trim();
 
-//           console.log(
-//             `%c[Chat:TYPING] 📨 event received`,
-//             'color:#f59e0b;font-weight:bold',
-//             { isTyping, senderId, senderType, raw: rawData?.senderType }
-//           );
+//           console.log(`%c[Chat:TYPING] 📨 event received`, 'color:#f59e0b;font-weight:bold',
+//             { isTyping, senderId, senderType, raw: rawData?.senderType });
 
 //           if (senderType === 'CUSTOMER') {
 //             console.log('[Chat:TYPING] Skipping — explicit CUSTOMER echo');
@@ -228,25 +219,13 @@
 
 //           const now  = Date.now();
 //           const last = lastTypingDispatch.current;
-//           if (
-//             last !== null &&
-//             last.isTyping === isTyping &&
-//             (now - last.time) < 300
-//           ) {
-//             console.log(
-//               `%c[Chat:TYPING] Suppressed same-value duplicate (${isTyping}) within 300ms`,
-//               'color:#9ca3af'
-//             );
+//           if (last !== null && last.isTyping === isTyping && (now - last.time) < 300) {
+//             console.log(`%c[Chat:TYPING] Suppressed same-value duplicate (${isTyping}) within 300ms`, 'color:#9ca3af');
 //             return;
 //           }
 
 //           lastTypingDispatch.current = { isTyping, time: now };
-
-//           if (typingTimerRef.current) {
-//             clearTimeout(typingTimerRef.current);
-//             typingTimerRef.current = null;
-//           }
-
+//           if (typingTimerRef.current) { clearTimeout(typingTimerRef.current); typingTimerRef.current = null; }
 //           dispatch({ type: 'SET_TYPING', isTyping, typingUser: senderId });
 
 //           if (isTyping) {
@@ -263,11 +242,10 @@
 //         client.on('statusChange', ((data: any) => {
 //           dispatch({ type: 'UPDATE_SESSION', session: { status: data.status, mode: data.mode } });
 //           dispatch({
-//             type: 'UPDATE_PAST_SESSION',
+//             type:      'UPDATE_PAST_SESSION',
 //             sessionId: data.chatSessionId,
-//             updates: { status: data.status, mode: data.mode, closedAt: null },
+//             updates:   { status: data.status, mode: data.mode, closedAt: null },
 //           });
-//           // ← NEW: record close reason from status change so widget shows right message
 //           if (data.status === 'CLOSED' && data.closeReason) {
 //             dispatch({ type: 'SET_CLOSE_REASON', reason: data.closeReason });
 //           }
@@ -292,9 +270,6 @@
 //         }) as EventCallback);
 
 //         client.on('sessionClosed', ((data: any) => {
-//           // ← CHANGED: was `() => {}` with no payload. Now we read closeReason from the event.
-//           // If reason === 'SWITCHED' the widget shows "put on hold" text.
-//           // Otherwise (agent-closed, manual) the widget shows "session has been closed".
 //           if (data?.closeReason) {
 //             dispatch({ type: 'SET_CLOSE_REASON', reason: data.closeReason });
 //           }
@@ -305,9 +280,17 @@
 //           dispatch({ type: 'SET_CONNECTED', connected: false });
 //         });
 
+//         // ── Reconnect: re-enable UI and recover any messages missed during the gap ──
+//         // The poll has been removed. Instead we do one targeted fetch here so any
+//         // messages that arrived while the socket was down are merged in immediately.
 //         client.on('reconnect', () => {
 //           console.log('[Chat] Transport reconnected — re-enabling input');
 //           dispatch({ type: 'SET_CONNECTED', connected: true });
+//           const sid = stateRef.current.session?.id;
+//           if (sid && !stateRef.current.tokenExpired) {
+//             console.log('[Chat] Fetching missed messages after reconnect for session:', sid);
+//             fetchMessages(configRef.current, sid, dispatch, true).catch(() => {});
+//           }
 //         });
 
 //         client.on('connectionAck', ((data: any) => {
@@ -319,6 +302,7 @@
 //         }) as EventCallback);
 
 //         client.on('error', (error: unknown) => dispatch({ type: 'SET_ERROR', error: error as Error }));
+
 //         client.on('tokenExpired', () => {
 //           console.warn('[Chat] Token expired — blocking further messages');
 //           dispatch({ type: 'TOKEN_EXPIRED' });
@@ -379,18 +363,14 @@
 
 //     initChat();
 
-//     const FALLBACK_POLL_MS = 10_000;
-//     const fallbackPollTimer = setInterval(async () => {
-//       const sid = stateRef.current.session?.id;
-//       if (!sid || stateRef.current.tokenExpired) return;
-//       try { await fetchMessages(configRef.current, sid, dispatch, true); }
-//       catch (_) { /* swallow */ }
-//     }, FALLBACK_POLL_MS);
+//     // NOTE: The 10-second fallback poll has been intentionally removed.
+//     // All messages arrive via WebSocket (MESSAGE_RECEIVE → client.on('message')).
+//     // Gap recovery on reconnect is handled by the fetchMessages call in the
+//     // 'reconnect' handler above — one targeted fetch beats polling indefinitely.
 
 //     return () => {
 //       _activeConnections.delete(connectionKey);
 //       pendingReplaces.current.clear();
-//       clearInterval(fallbackPollTimer);
 //       if (typingTimerRef.current) {
 //         clearTimeout(typingTimerRef.current);
 //         typingTimerRef.current = null;
@@ -403,14 +383,16 @@
 //   }, [connectionKey, config.serviceUrl, config.token]);
 
 //   // ── Actions ───────────────────────────────────────────────────────────────
+
 //   const sendMessage = useCallback(async (content: string, type: MessageType = 'TEXT', replyToMessageId?: string) => {
-//     if (!clientRef.current || !state.session) throw new Error('Chat not initialized');
-//     if (clientRef.current.tokenExpired || state.tokenExpired) throw new Error('TOKEN_EXPIRED');
+//     const s = stateRef.current;
+//     if (!clientRef.current || !s.session) throw new Error('Chat not initialized');
+//     if (clientRef.current.tokenExpired || s.tokenExpired) throw new Error('TOKEN_EXPIRED');
 
 //     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 //     const optimistic: ChatMessage = {
 //       id:            tempId,
-//       chatSessionId: state.session.id,
+//       chatSessionId: s.session.id,
 //       senderType:    'CUSTOMER',
 //       senderId:      configRef.current.user.id,
 //       senderName:    configRef.current.user.name,
@@ -437,25 +419,21 @@
 //       clientRef.current?.off?.('message', replaceOptimistic);
 //       pendingReplaces.current.delete(content);
 //     }, 10_000);
-//   }, [state.session, state.tokenExpired]);
+//   }, []); // stable — reads live state via stateRef
 
-//   const startTyping = useCallback(() => {
-//     clientRef.current?.startTyping?.();
-//   }, []);
-
-//   const stopTyping = useCallback(() => {
-//     clientRef.current?.stopTyping?.();
-//   }, []);
+//   const startTyping = useCallback(() => { clientRef.current?.startTyping?.(); }, []);
+//   const stopTyping  = useCallback(() => { clientRef.current?.stopTyping?.();  }, []);
 
 //   const requestAgent = useCallback(async (reason?: string) => {
 //     clientRef.current?.requestAgent?.(reason);
 //   }, []);
 
 //   const closeSession = useCallback(async () => {
-//     if (!state.session) return;
+//     const session = stateRef.current.session;
+//     if (!session) return;
 //     const cfg = configRef.current;
 //     try {
-//       await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${state.session.id}/close`, {
+//       await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${session.id}/close`, {
 //         method: 'POST',
 //         headers: {
 //           'Authorization': `Bearer ${cfg.token}`,
@@ -467,7 +445,7 @@
 //     } catch (error) {
 //       dispatch({ type: 'SET_ERROR', error: error as Error });
 //     }
-//   }, [state.session]);
+//   }, []); // stable — reads live state via stateRef
 
 //   const reconnect = useCallback(async () => {
 //     if (clientRef.current) { clientRef.current.disconnect(); clientRef.current = null; }
@@ -488,8 +466,14 @@
 //     dispatch({ type: 'SET_WIDGET_OPEN', open });
 //   }, []);
 
+//   // ── loadOlderMessages ────────────────────────────────────────────────────
+//   // IMPORTANT: uses stateRef (not state) so this callback has a stable identity.
+//   // If it depended on state.messages / state.session directly, it would get a
+//   // new reference on every message arrival → the actions object would get a new
+//   // reference → any effect in ChatWidget.tsx that depends on actions would
+//   // re-run → fetchMessages('/full') would be called in a tight loop.
 //   const loadOlderMessages = useCallback(async () => {
-//     const s = state;
+//     const s = stateRef.current;
 //     if (!s.session || s.loadingMore || !s.hasMore) return;
 //     const oldest = s.messages[0];
 //     if (!oldest) return;
@@ -499,10 +483,7 @@
 //       const cfg = configRef.current;
 //       const url = `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${s.session.id}/messages?limit=20&before=${oldest.id}`;
 //       const res = await fetch(url, {
-//         headers: {
-//           'Authorization': `Bearer ${cfg.token}`,
-//           'X-Tenant-ID':   cfg.tenantId,
-//         },
+//         headers: { 'Authorization': `Bearer ${cfg.token}`, 'X-Tenant-ID': cfg.tenantId },
 //       });
 //       if (!res.ok) { dispatch({ type: 'SET_LOADING_MORE', loading: false }); return; }
 //       const json = await res.json();
@@ -529,21 +510,22 @@
 //       console.error('[Chat] loadOlderMessages failed:', err);
 //       dispatch({ type: 'SET_LOADING_MORE', loading: false });
 //     }
-//   }, [state.session, state.loadingMore, state.hasMore, state.messages]);
+//   }, []); // stable — reads live state via stateRef, config via configRef
 
 //   const sendAttachment = useCallback(async (file: File) => {
-//     if (!clientRef.current || !state.session) throw new Error('Chat not initialized');
-//     if (clientRef.current.tokenExpired || state.tokenExpired) throw new Error('TOKEN_EXPIRED');
+//     const s = stateRef.current;
+//     if (!clientRef.current || !s.session) throw new Error('Chat not initialized');
+//     if (clientRef.current.tokenExpired || s.tokenExpired) throw new Error('TOKEN_EXPIRED');
 
 //     let optType: MessageType = 'FILE';
-//     if (file.type.startsWith('image/'))  optType = 'IMAGE';
-//     else if (file.type.startsWith('video/')) optType = 'VIDEO';
-//     else if (file.type.startsWith('audio/')) optType = 'AUDIO';
+//     if (file.type.startsWith('image/'))       optType = 'IMAGE';
+//     else if (file.type.startsWith('video/'))  optType = 'VIDEO';
+//     else if (file.type.startsWith('audio/'))  optType = 'AUDIO';
 
 //     const tempId = `temp-attach-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 //     const optimistic: ChatMessage = {
 //       id:            tempId,
-//       chatSessionId: state.session.id,
+//       chatSessionId: s.session.id,
 //       senderType:    'CUSTOMER',
 //       senderId:      configRef.current.user.id,
 //       senderName:    configRef.current.user.name,
@@ -581,17 +563,14 @@
 //     } finally {
 //       dispatch({ type: 'SET_UPLOADING', uploading: false });
 //     }
-//   }, [state.session, state.tokenExpired]);
+//   }, []); // stable — reads live state via stateRef
 
 //   const fetchPastSessions = useCallback(async () => {
 //     const cfg = configRef.current;
 //     try {
 //       const url = `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/customer?tenantId=${encodeURIComponent(cfg.tenantId)}&customerId=${encodeURIComponent(cfg.user.id)}&limit=6`;
 //       const res = await fetch(url, {
-//         headers: {
-//           'Authorization': `Bearer ${cfg.token}`,
-//           'X-Tenant-ID':   cfg.tenantId,
-//         },
+//         headers: { 'Authorization': `Bearer ${cfg.token}`, 'X-Tenant-ID': cfg.tenantId },
 //       });
 //       if (!res.ok) return;
 //       const json = await res.json();
@@ -601,15 +580,11 @@
 //     }
 //   }, []);
 
-//   // ── reopenSession ─────────────────────────────────────────────────────────
-//   // ← CHANGED: now closes the current active session first with reason='SWITCHED'
-//   //   so the user sees "put on hold" instead of "session closed"
 //   const reopenSession = useCallback(async (sessionId: string) => {
 //     const cfg              = configRef.current;
 //     const currentSessionId = stateRef.current.session?.id;
 //     const currentStatus    = stateRef.current.session?.status;
 
-//     // Step 1: If there is a current active (non-closed) session, put it on hold
 //     if (currentSessionId && currentStatus !== 'CLOSED' && currentSessionId !== sessionId) {
 //       try {
 //         await fetch(
@@ -621,18 +596,14 @@
 //               'X-Tenant-ID':   cfg.tenantId,
 //               'Content-Type':  'application/json',
 //             },
-//             // Send closeReason so the backend can include it in any WS events it broadcasts
 //             body: JSON.stringify({ customerId: cfg.user.id, closeReason: 'SWITCHED' }),
 //           }
 //         );
 //         console.log('[Chat] Previous session put on hold:', currentSessionId);
 //       } catch (e) {
 //         console.warn('[Chat] Could not put previous session on hold:', e);
-//         // Non-fatal — continue with the switch
 //       }
 
-//       // Inject a clear "on hold" system message into the current session's messages
-//       // BEFORE we switch sessions, so the user sees it in the history panel.
 //       dispatch({
 //         type: 'ADD_MESSAGE',
 //         message: {
@@ -646,11 +617,9 @@
 //         } as any,
 //       });
 
-//       // Mark the close reason so the widget renders the correct "on hold" UI
 //       dispatch({ type: 'SET_CLOSE_REASON', reason: 'SWITCHED' });
 //     }
 
-//     // Step 2: Reopen the target session
 //     const res = await fetch(
 //       `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${sessionId}/reopen`,
 //       {
@@ -667,9 +636,7 @@
 //     const json = await res.json();
 //     const data = json.data;
 
-//     // Clear the close reason — we are now in a fresh active session
 //     dispatch({ type: 'SET_CLOSE_REASON', reason: null });
-
 //     clientRef.current?.joinSession(data.sessionId ?? sessionId);
 //     dispatch({
 //       type:    'INIT_SUCCESS',
@@ -713,7 +680,6 @@
 //   );
 // }
 
-// // ─── Hooks ────────────────────────────────────────────────────────────────────
 // export function useChat() {
 //   const ctx = useContext(ChatContext);
 //   if (!ctx) throw new Error('useChat must be used within a ChatProvider');
@@ -724,12 +690,11 @@
 // export const useChatActions  = () => useChat().actions;
 // export const useChatState    = () => useChat().state;
 
-// // ─── fetchMessages ────────────────────────────────────────────────────────────
 // async function fetchMessages(
-//   config:     ChatSDKConfig,
-//   sessionId:  string,
-//   dispatch:   React.Dispatch<ChatAction>,
-//   mergeOnly:  boolean = false,
+//   config:    ChatSDKConfig,
+//   sessionId: string,
+//   dispatch:  React.Dispatch<ChatAction>,
+//   mergeOnly: boolean = false,
 // ): Promise<void> {
 //   try {
 //     const res = await fetch(
@@ -797,7 +762,6 @@
 //     console.error('[Chat] fetchMessages failed:', e);
 //   }
 // }
-
 
 
 
@@ -958,6 +922,47 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 
 const _activeConnections = new Map<string, boolean>();
 
+// ── Map customer on first SDK init ────────────────────────────────────────────
+// Registers or updates the customer on the ticketing platform (upsert).
+// Fire-and-forget — any failure is logged as a warning and never blocks the chat.
+async function mapCustomer(config: ChatSDKConfig): Promise<void> {
+  try {
+    console.log('%c[Chat] 🗺  mapCustomer → calling /customers/map', 'color:#7c3aed;font-weight:bold', {
+      app_id:           config.tenantId,
+      external_user_id: config.user.id,
+      username:         config.user.name,
+      email:            config.user.email ?? '',
+    });
+
+    const res = await fetch('https://docs-dev.dhaamai.com/customers/map', {
+      method: 'POST',
+      headers: {
+        'accept':        'application/json',
+        'Authorization': `Bearer ${config.token}`,
+        'Content-Type':  'application/json',
+      },
+      body: JSON.stringify({
+        app_id:           config.tenantId,
+        external_user_id: config.user.id,
+        username:         config.user.name,
+        email:            config.user.email ?? '',
+        role_id:          4,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      console.warn('[Chat] mapCustomer failed:', res.status, body);
+      return;
+    }
+
+    const data = await res.json();
+    console.log('%c[Chat] ✅ mapCustomer success', 'color:#16a34a;font-weight:bold', data);
+  } catch (e) {
+    console.warn('[Chat] mapCustomer error (non-blocking):', e);
+  }
+}
+
 export function ChatProvider({ config, children }: {
   config:   ChatSDKConfig;
   children: React.ReactNode;
@@ -1080,9 +1085,6 @@ export function ChatProvider({ config, children }: {
           dispatch({ type: 'SET_CONNECTED', connected: false });
         });
 
-        // ── Reconnect: re-enable UI and recover any messages missed during the gap ──
-        // The poll has been removed. Instead we do one targeted fetch here so any
-        // messages that arrived while the socket was down are merged in immediately.
         client.on('reconnect', () => {
           console.log('[Chat] Transport reconnected — re-enabling input');
           dispatch({ type: 'SET_CONNECTED', connected: true });
@@ -1116,10 +1118,13 @@ export function ChatProvider({ config, children }: {
 
         let session = await client.connect();
 
+        // ── Map customer immediately after connection is established ──────────
+        // This is fire-and-forget. The chat initialisation continues in parallel.
+        mapCustomer(cfg);
+
         if (session.status === 'CLOSED') {
           console.log('[Chat] Got CLOSED session — creating fresh session via REST');
           try {
-            const cfg = configRef.current;
             const res = await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions`, {
               method:  'POST',
               headers: {
@@ -1162,11 +1167,6 @@ export function ChatProvider({ config, children }: {
     };
 
     initChat();
-
-    // NOTE: The 10-second fallback poll has been intentionally removed.
-    // All messages arrive via WebSocket (MESSAGE_RECEIVE → client.on('message')).
-    // Gap recovery on reconnect is handled by the fetchMessages call in the
-    // 'reconnect' handler above — one targeted fetch beats polling indefinitely.
 
     return () => {
       _activeConnections.delete(connectionKey);
@@ -1219,7 +1219,7 @@ export function ChatProvider({ config, children }: {
       clientRef.current?.off?.('message', replaceOptimistic);
       pendingReplaces.current.delete(content);
     }, 10_000);
-  }, []); // stable — reads live state via stateRef
+  }, []);
 
   const startTyping = useCallback(() => { clientRef.current?.startTyping?.(); }, []);
   const stopTyping  = useCallback(() => { clientRef.current?.stopTyping?.();  }, []);
@@ -1245,7 +1245,7 @@ export function ChatProvider({ config, children }: {
     } catch (error) {
       dispatch({ type: 'SET_ERROR', error: error as Error });
     }
-  }, []); // stable — reads live state via stateRef
+  }, []);
 
   const reconnect = useCallback(async () => {
     if (clientRef.current) { clientRef.current.disconnect(); clientRef.current = null; }
@@ -1266,12 +1266,6 @@ export function ChatProvider({ config, children }: {
     dispatch({ type: 'SET_WIDGET_OPEN', open });
   }, []);
 
-  // ── loadOlderMessages ────────────────────────────────────────────────────
-  // IMPORTANT: uses stateRef (not state) so this callback has a stable identity.
-  // If it depended on state.messages / state.session directly, it would get a
-  // new reference on every message arrival → the actions object would get a new
-  // reference → any effect in ChatWidget.tsx that depends on actions would
-  // re-run → fetchMessages('/full') would be called in a tight loop.
   const loadOlderMessages = useCallback(async () => {
     const s = stateRef.current;
     if (!s.session || s.loadingMore || !s.hasMore) return;
@@ -1310,7 +1304,7 @@ export function ChatProvider({ config, children }: {
       console.error('[Chat] loadOlderMessages failed:', err);
       dispatch({ type: 'SET_LOADING_MORE', loading: false });
     }
-  }, []); // stable — reads live state via stateRef, config via configRef
+  }, []);
 
   const sendAttachment = useCallback(async (file: File) => {
     const s = stateRef.current;
@@ -1363,7 +1357,7 @@ export function ChatProvider({ config, children }: {
     } finally {
       dispatch({ type: 'SET_UPLOADING', uploading: false });
     }
-  }, []); // stable — reads live state via stateRef
+  }, []);
 
   const fetchPastSessions = useCallback(async () => {
     const cfg = configRef.current;
