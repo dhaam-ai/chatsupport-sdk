@@ -1,6 +1,5 @@
 
 
-
 // import React, {
 //   createContext, useContext, useReducer, useEffect, useCallback, useRef,
 // } from 'react';
@@ -158,6 +157,47 @@
 
 // const _activeConnections = new Map<string, boolean>();
 
+// // ── Map customer on first SDK init ────────────────────────────────────────────
+// // Registers or updates the customer on the ticketing platform (upsert).
+// // Fire-and-forget — any failure is logged as a warning and never blocks the chat.
+// async function mapCustomer(config: ChatSDKConfig): Promise<void> {
+//   try {
+//     console.log('%c[Chat] 🗺  mapCustomer → calling /customers/map', 'color:#7c3aed;font-weight:bold', {
+//       app_id:           config.tenantId,
+//       external_user_id: Number(config.user.id),
+//       username:         config.user.name,
+//       email:            config.user.email ?? '',
+//     });
+
+//     const res = await fetch('https://docs-dev.dhaamai.com/customers/map', {
+//       method: 'POST',
+//       headers: {
+//         'accept':        'application/json',
+//         'Authorization': `Bearer ${config.token}`,
+//         'Content-Type':  'application/json',
+//       },
+//       body: JSON.stringify({
+//         app_id:           config.tenantId,
+//         external_user_id: Number(config.user.id),
+//         username:         config.user.name,
+//         email:            config.user.email ?? '',
+//         role_id:          4,
+//       }),
+//     });
+
+//     if (!res.ok) {
+//       const body = await res.json().catch(() => ({}));
+//       console.warn('[Chat] mapCustomer failed:', res.status, body);
+//       return;
+//     }
+
+//     const data = await res.json();
+//     console.log('%c[Chat] ✅ mapCustomer success', 'color:#16a34a;font-weight:bold', data);
+//   } catch (e) {
+//     console.warn('[Chat] mapCustomer error (non-blocking):', e);
+//   }
+// }
+
 // export function ChatProvider({ config, children }: {
 //   config:   ChatSDKConfig;
 //   children: React.ReactNode;
@@ -280,9 +320,6 @@
 //           dispatch({ type: 'SET_CONNECTED', connected: false });
 //         });
 
-//         // ── Reconnect: re-enable UI and recover any messages missed during the gap ──
-//         // The poll has been removed. Instead we do one targeted fetch here so any
-//         // messages that arrived while the socket was down are merged in immediately.
 //         client.on('reconnect', () => {
 //           console.log('[Chat] Transport reconnected — re-enabling input');
 //           dispatch({ type: 'SET_CONNECTED', connected: true });
@@ -316,10 +353,13 @@
 
 //         let session = await client.connect();
 
+//         // ── Map customer immediately after connection is established ──────────
+//         // This is fire-and-forget. The chat initialisation continues in parallel.
+//         mapCustomer(cfg);
+
 //         if (session.status === 'CLOSED') {
 //           console.log('[Chat] Got CLOSED session — creating fresh session via REST');
 //           try {
-//             const cfg = configRef.current;
 //             const res = await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions`, {
 //               method:  'POST',
 //               headers: {
@@ -362,11 +402,6 @@
 //     };
 
 //     initChat();
-
-//     // NOTE: The 10-second fallback poll has been intentionally removed.
-//     // All messages arrive via WebSocket (MESSAGE_RECEIVE → client.on('message')).
-//     // Gap recovery on reconnect is handled by the fetchMessages call in the
-//     // 'reconnect' handler above — one targeted fetch beats polling indefinitely.
 
 //     return () => {
 //       _activeConnections.delete(connectionKey);
@@ -419,7 +454,7 @@
 //       clientRef.current?.off?.('message', replaceOptimistic);
 //       pendingReplaces.current.delete(content);
 //     }, 10_000);
-//   }, []); // stable — reads live state via stateRef
+//   }, []);
 
 //   const startTyping = useCallback(() => { clientRef.current?.startTyping?.(); }, []);
 //   const stopTyping  = useCallback(() => { clientRef.current?.stopTyping?.();  }, []);
@@ -445,7 +480,7 @@
 //     } catch (error) {
 //       dispatch({ type: 'SET_ERROR', error: error as Error });
 //     }
-//   }, []); // stable — reads live state via stateRef
+//   }, []);
 
 //   const reconnect = useCallback(async () => {
 //     if (clientRef.current) { clientRef.current.disconnect(); clientRef.current = null; }
@@ -466,12 +501,6 @@
 //     dispatch({ type: 'SET_WIDGET_OPEN', open });
 //   }, []);
 
-//   // ── loadOlderMessages ────────────────────────────────────────────────────
-//   // IMPORTANT: uses stateRef (not state) so this callback has a stable identity.
-//   // If it depended on state.messages / state.session directly, it would get a
-//   // new reference on every message arrival → the actions object would get a new
-//   // reference → any effect in ChatWidget.tsx that depends on actions would
-//   // re-run → fetchMessages('/full') would be called in a tight loop.
 //   const loadOlderMessages = useCallback(async () => {
 //     const s = stateRef.current;
 //     if (!s.session || s.loadingMore || !s.hasMore) return;
@@ -510,7 +539,7 @@
 //       console.error('[Chat] loadOlderMessages failed:', err);
 //       dispatch({ type: 'SET_LOADING_MORE', loading: false });
 //     }
-//   }, []); // stable — reads live state via stateRef, config via configRef
+//   }, []);
 
 //   const sendAttachment = useCallback(async (file: File) => {
 //     const s = stateRef.current;
@@ -563,7 +592,7 @@
 //     } finally {
 //       dispatch({ type: 'SET_UPLOADING', uploading: false });
 //     }
-//   }, []); // stable — reads live state via stateRef
+//   }, []);
 
 //   const fetchPastSessions = useCallback(async () => {
 //     const cfg = configRef.current;
@@ -923,8 +952,6 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 const _activeConnections = new Map<string, boolean>();
 
 // ── Map customer on first SDK init ────────────────────────────────────────────
-// Registers or updates the customer on the ticketing platform (upsert).
-// Fire-and-forget — any failure is logged as a warning and never blocks the chat.
 async function mapCustomer(config: ChatSDKConfig): Promise<void> {
   try {
     console.log('%c[Chat] 🗺  mapCustomer → calling /customers/map', 'color:#7c3aed;font-weight:bold', {
@@ -1006,6 +1033,27 @@ export function ChatProvider({ config, children }: {
             }
           }
           dispatch({ type: 'ADD_MESSAGE', message });
+
+          // ── FIX: Mark messages read immediately when widget is open ──────────
+          // Previously only fired on widget open/session change. Now fires on
+          // every incoming agent/bot message while the widget is already open,
+          // so the agent sees "Seen" in real time without close/reopen.
+          const isFromAgentOrBot = message.senderType === 'AGENT' || message.senderType === 'BOT';
+          if (isFromAgentOrBot && stateRef.current.isWidgetOpen && stateRef.current.session?.id) {
+            const cfg = configRef.current;
+            fetch(
+              `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${stateRef.current.session.id}/read`,
+              {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${cfg.token}`,
+                  'X-Tenant-ID':   cfg.tenantId,
+                  'Content-Type':  'application/json',
+                },
+                body: JSON.stringify({ customerId: cfg.user.id }),
+              }
+            ).catch(() => {}); // fire-and-forget — never blocks message display
+          }
         });
 
         client.on('typing', ((rawData: any) => {
@@ -1118,8 +1166,6 @@ export function ChatProvider({ config, children }: {
 
         let session = await client.connect();
 
-        // ── Map customer immediately after connection is established ──────────
-        // This is fire-and-forget. The chat initialisation continues in parallel.
         mapCustomer(cfg);
 
         if (session.status === 'CLOSED') {
