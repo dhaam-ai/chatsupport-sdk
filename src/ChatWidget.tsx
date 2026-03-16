@@ -987,18 +987,25 @@ export function ChatContent({ onClose, styles, config, theme, onStartNewChat }: 
   // }, [state.messages, flowStep]);
   }, [state.messages.length, flowStep]);
 
-  // ── Notification sound for new agent/bot messages ─────────────────────────
-  useEffect(() => {
-    const newCount = state.messages.length;
-    if (newCount > prevSoundCount.current) {
-      const newMsgs = state.messages.slice(prevSoundCount.current);
-      const hasAgentOrBotMsg = newMsgs.some(m => m.senderType === 'AGENT' || m.senderType === 'BOT');
-      if (hasAgentOrBotMsg && !state.isWidgetOpen) {
+// ── Notification sound + real-time read receipt ───────────────────────────
+useEffect(() => {
+  const newCount = state.messages.length;
+  if (newCount > prevSoundCount.current) {
+    const newMsgs = state.messages.slice(prevSoundCount.current);
+    const hasAgentOrBotMsg = newMsgs.some(m => m.senderType === 'AGENT' || m.senderType === 'BOT');
+    if (hasAgentOrBotMsg) {
+      if (!state.isWidgetOpen) {
         playNotificationSound();
+      } else {
+        // ── FIX: Widget is open → mark as read immediately ─────────────────
+        // Previously read receipts only fired on widget open/session change.
+        // Now fires the instant a new agent/bot message arrives while chat is open.
+        actionsRef.current.markMessagesRead?.().catch(() => {});
       }
     }
-    prevSoundCount.current = newCount;
-  }, [state.messages.length, state.isWidgetOpen]);
+  }
+  prevSoundCount.current = newCount;
+}, [state.messages.length, state.isWidgetOpen]);
 
   // ── Unlock audio on first user interaction ────────────────────────────────
   useEffect(() => {
@@ -2245,12 +2252,35 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
 
   // ── Send read receipt when customer opens (or re-opens) the widget ────────
   // This tells the agent "Seen ✓" so they know the customer has read their msgs.
-  useEffect(() => {
-    if (state.isWidgetOpen && state.session?.id) {
-      actionsRef.current.markMessagesRead?.().catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.isWidgetOpen, state.session?.id]);
+  // useEffect(() => {
+  //   if (state.isWidgetOpen && state.session?.id) {
+  //     actionsRef.current.markMessagesRead?.().catch(() => {});
+  //   }
+  // // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [state.isWidgetOpen, state.session?.id]);
+
+
+  // ── Send read receipt when widget opens OR new message arrives while open ──
+useEffect(() => {
+  if (state.isWidgetOpen && state.session?.id) {
+    actionsRef.current.markMessagesRead?.().catch(() => {});
+  }
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [state.isWidgetOpen, state.session?.id]);
+
+// ── FIX: Also fire read receipt when new agent/bot messages arrive ─────────
+// The above effect only fires on open/session change. This one fires whenever
+// a new message arrives while the widget is already open — gives real-time Seen.
+useEffect(() => {
+  if (!state.isWidgetOpen || !state.session?.id) return;
+  const lastMsg = state.messages[state.messages.length - 1];
+  if (!lastMsg) return;
+  const isFromAgentOrBot = lastMsg.senderType === 'AGENT' || lastMsg.senderType === 'BOT';
+  if (isFromAgentOrBot) {
+    actionsRef.current.markMessagesRead?.().catch(() => {});
+  }
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [state.messages.length]);
 
   // ── Fetch past sessions when history panel is opened ──────────────────────
   useEffect(() => {
