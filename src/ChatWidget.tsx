@@ -5435,6 +5435,19 @@ const msgByIdMap = useMemo(() => {
 
 const agentOnline = !!(state.session?.assignedAgentId);
 
+// Infer agentReadAt: use explicit WS receipt if available, otherwise infer
+// from the timestamp of the last agent message (if agent replied, they read everything before it)
+const inferredAgentReadAt = useMemo<Date | null>(() => {
+  if (state.agentReadAt) return new Date(state.agentReadAt);
+  // Find last agent message timestamp and use it as the read watermark
+  for (let i = allMessages.length - 1; i >= 0; i--) {
+    if (allMessages[i].senderType === 'AGENT') {
+      return new Date(allMessages[i].timestamp);
+    }
+  }
+  return null;
+}, [allMessages, state.agentReadAt]);
+
 const tickMap = useMemo(() => buildTickMap({
   messages: allMessages.map(m => ({
     id:         m.id,
@@ -5442,9 +5455,9 @@ const tickMap = useMemo(() => buildTickMap({
     senderType: m.senderType,
   })),
   viewerSenderType: 'CUSTOMER',
-  readAt:           state.agentReadAt ?? null,
+  readAt:           inferredAgentReadAt,
   otherPartyOnline: agentOnline,
-}), [allMessages, state.agentReadAt, agentOnline]);
+}), [allMessages, inferredAgentReadAt, agentOnline]);
 
 
   const handleImageClick = useCallback((url: string, fileName: string) => setViewerImage({ url, fileName }), []);
