@@ -3022,9 +3022,9 @@
 
 
 // ═══════════════════════════════════════════════════════════════════
-// ChatWidget.tsx  ·  PATCHED BUILD  ·  v2026-03-19-seen-tick-fix
+// ChatWidget.tsx  ·  PATCHED BUILD  ·  v2026-03-19-tick-fix-v3
 // To verify this file is loaded, check the console for:
-//   [ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-19-seen-tick-fix
+//   [ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-19-tick-fix-v3
 // ═══════════════════════════════════════════════════════════════════
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { ChatProvider, useChat } from './context';
@@ -4098,10 +4098,10 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   // ── PATCH VERIFICATION ────────────────────────────────────────────────────
   useEffect(() => {
     console.log(
-      '%c[ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-19-seen-tick-fix',
+      '%c[ChatWidget] ✅ PATCHED BUILD LOADED v2026-03-19-tick-fix-v3',
       'background:#5b4fcf;color:#fff;padding:4px 10px;border-radius:4px;font-weight:bold'
     );
-    console.log('[ChatWidget] Seen tick fix: inferredAgentReadAt now uses ONLY real WS agentReadAt — no fallback inference from agent message timestamps');
+    console.log('[ChatWidget] Tick fix v3: agentReadAt from context + agentOnline from message history');
   }, []);
 
   useEffect(() => {
@@ -4372,6 +4372,29 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     readAt:           agentReadAt,   // ← only real WS read receipts, never inferred
     otherPartyOnline: agentOnline,
   }), [allMessages, agentReadAt, agentOnline]);
+
+  // Debug: log tickMap state on every change
+  React.useEffect(() => {
+    const customerMsgs = allMessages.filter(m => m.senderType === 'CUSTOMER' && !m.id.startsWith('temp-'));
+    if (customerMsgs.length === 0) return;
+    console.log(
+      '%c[ChatWidget:Ticks] tickMap debug',
+      'color:#7c3aed;font-weight:bold',
+      {
+        agentReadAt: agentReadAt?.toISOString() ?? 'null',
+        agentOnline,
+        customerMsgCount: customerMsgs.length,
+        sampleTickStatus: tickMap.get(customerMsgs[customerMsgs.length - 1]?.id) ?? 'none',
+        lastCustomerMsgId: customerMsgs[customerMsgs.length - 1]?.id?.slice(0, 8),
+        lastCustomerMsgTime: (() => {
+          const m = customerMsgs[customerMsgs.length - 1];
+          const ts = m?.timestamp instanceof Date ? m.timestamp : new Date(m?.timestamp as any);
+          return isNaN(ts?.getTime()) ? 'invalid' : ts.toISOString();
+        })(),
+      }
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickMap]);
 
   const handleImageClick = useCallback((url: string, fileName: string) => setViewerImage({ url, fileName }), []);
   const handleReply = useCallback((m: ChatMessage) => {
