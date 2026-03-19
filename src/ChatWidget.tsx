@@ -5441,19 +5441,24 @@ const inferredAgentReadAt = useMemo<Date | null>(() => {
   if (state.agentReadAt) return new Date(state.agentReadAt);
   // Find last agent message timestamp and use it as the read watermark
   for (let i = allMessages.length - 1; i >= 0; i--) {
-    if (allMessages[i].senderType === 'AGENT') {
-      return new Date(allMessages[i].timestamp);
+    const m = allMessages[i];
+    if (m.senderType === 'AGENT') {
+      const ts = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp as any);
+      if (!isNaN(ts.getTime())) return ts;
     }
   }
   return null;
 }, [allMessages, state.agentReadAt]);
 
 const tickMap = useMemo(() => buildTickMap({
-  messages: allMessages.map(m => ({
-    id:         m.id,
-    createdAt:  m.timestamp instanceof Date ? m.timestamp.toISOString() : String(m.timestamp),
-    senderType: m.senderType,
-  })),
+  messages: allMessages.map(m => {
+    const ts = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp as any);
+    return {
+      id:         m.id,
+      createdAt:  isNaN(ts.getTime()) ? new Date().toISOString() : ts.toISOString(),
+      senderType: m.senderType,
+    };
+  }),
   viewerSenderType: 'CUSTOMER',
   readAt:           inferredAgentReadAt,
   otherPartyOnline: agentOnline,
