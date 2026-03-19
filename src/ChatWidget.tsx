@@ -3281,6 +3281,42 @@ const CompactAudioPlayer = React.memo(function CompactAudioPlayer({
   );
 });
 
+// ── CustomerTick ─────────────────────────────────────────────────────────────
+// WhatsApp-style tick for customer (sent) messages on a PURPLE bubble.
+// All states use white/semi-white so they're visible against the dark background.
+//   sent      → single white tick       (message on server)
+//   delivered → double white tick       (agent connected)
+//   seen      → double bright white tick + "Seen" label
+function CustomerTick({ status }: { status: import('./Messageticks').TickStatus }) {
+  if (status === 'none') return null;
+
+  const WHITE      = 'rgba(255,255,255,0.95)';
+  const WHITE_MUTED = 'rgba(255,255,255,0.65)';
+
+  const SingleW = () => (
+    <svg width="14" height="10" viewBox="0 0 14 10" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+      <polyline points="1,5 5,9 13,1" stroke={WHITE_MUTED} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+
+  const DoubleW = ({ bright }: { bright: boolean }) => (
+    <svg width="18" height="10" viewBox="0 0 18 10" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}>
+      <polyline points="5,5 9,9 17,1" stroke={bright ? WHITE : WHITE_MUTED} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points="1,5 5,9 13,1" stroke={bright ? WHITE : WHITE_MUTED} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+
+  if (status === 'sent')      return <SingleW />;
+  if (status === 'delivered') return <DoubleW bright={false} />;
+  // seen
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+      <DoubleW bright={true} />
+      <span style={{ fontSize: 9, fontWeight: 700, color: WHITE, lineHeight: 1 }}>Seen</span>
+    </span>
+  );
+}
+
 const MessageBubble = React.memo(function MessageBubble({ message, styles, onImageClick, onReply, replyToResolved, tickStatus, primaryColor }: { message: ChatMessage; styles: Record<string, React.CSSProperties>; userName?: string; onImageClick?: (url: string, fileName: string) => void; onReply?: (msg: ChatMessage) => void; replyToResolved?: ChatMessage | null; tickStatus: TickStatus; primaryColor: string; }) {
   const isCustomer = message.senderType === 'CUSTOMER';
   const isSystem   = message.senderType === 'SYSTEM';
@@ -3434,13 +3470,7 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   isCustomer ? (
     <div style={{ ...styles.timestamp, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3 }}>
       <span>{time}</span>
-      <MessageTicks
-        status={tickStatus}
-        purple={primaryColor}
-        showLabel={tickStatus === 'seen'}
-        labelStyle={{ fontSize: 9, fontWeight: 700, opacity: 0.9 }}
-        style={{ opacity: 0.9 }}
-      />
+      <CustomerTick status={tickStatus} />
     </div>
   ) : (
     <div style={{ ...styles.timestamp, textAlign: 'left' }}>{time}</div>
@@ -3450,7 +3480,7 @@ const MessageBubble = React.memo(function MessageBubble({ message, styles, onIma
   isCustomer ? (
     <div style={{ ...styles.timestamp, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: '2px' }}>
       <span>{time}</span>
-      <MessageTicks status={tickStatus} purple={primaryColor} showLabel={false} style={{ opacity: 0.9 }} />
+      <CustomerTick status={tickStatus} />
     </div>
   ) : (
     <div style={{ ...styles.timestamp, textAlign: 'right', marginTop: '2px', opacity: 0.7 }}>{time}</div>
