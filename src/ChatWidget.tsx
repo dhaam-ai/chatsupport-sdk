@@ -5438,31 +5438,62 @@ const agentOnline = !!(state.session?.assignedAgentId);
 // Infer agentReadAt: use explicit WS receipt if available, otherwise infer
 // from the timestamp of the last agent message (if agent replied, they read everything before it)
 const inferredAgentReadAt = useMemo<Date | null>(() => {
-  if (state.agentReadAt) return new Date(state.agentReadAt);
-  // Find last agent message timestamp and use it as the read watermark
+  console.log('%c[Ticks] agentReadAt from state:', 'color:#7c3aed;font-weight:bold', state.agentReadAt);
+  console.log('%c[Ticks] allMessages count:', 'color:#7c3aed', allMessages.length);
+  console.log('%c[Ticks] senderTypes in messages:', 'color:#7c3aed',
+    allMessages.map(m => `${m.senderType}(${m.id?.slice(0,8)})`).join(', ')
+  );
+
+  if (state.agentReadAt) {
+    console.log('%c[Ticks] ✅ Using explicit agentReadAt:', 'color:#16a34a;font-weight:bold', state.agentReadAt);
+    return new Date(state.agentReadAt);
+  }
+
   for (let i = allMessages.length - 1; i >= 0; i--) {
     const m = allMessages[i];
     if (m.senderType === 'AGENT') {
       const ts = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp as any);
+      console.log('%c[Ticks] ✅ Inferred readAt from AGENT message:', 'color:#16a34a;font-weight:bold',
+        { id: m.id?.slice(0,8), timestamp: m.timestamp, parsed: ts, valid: !isNaN(ts.getTime()) }
+      );
       if (!isNaN(ts.getTime())) return ts;
     }
   }
+
+  console.log('%c[Ticks] ❌ No agent message found — readAt is null', 'color:#ef4444;font-weight:bold');
   return null;
 }, [allMessages, state.agentReadAt]);
 
-const tickMap = useMemo(() => buildTickMap({
-  messages: allMessages.map(m => {
+const tickMap = useMemo(() => {
+  const mappedMsgs = allMessages.map(m => {
     const ts = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp as any);
     return {
       id:         m.id,
       createdAt:  isNaN(ts.getTime()) ? new Date().toISOString() : ts.toISOString(),
       senderType: m.senderType,
     };
-  }),
-  viewerSenderType: 'CUSTOMER',
-  readAt:           inferredAgentReadAt,
-  otherPartyOnline: agentOnline,
-}), [allMessages, inferredAgentReadAt, agentOnline]);
+  });
+
+  console.log('%c[Ticks] buildTickMap inputs:', 'color:#0ea5e9;font-weight:bold', {
+    messageCount:     mappedMsgs.length,
+    viewerSenderType: 'CUSTOMER',
+    readAt:           inferredAgentReadAt,
+    otherPartyOnline: agentOnline,
+  });
+
+  const map = buildTickMap({
+    messages:         mappedMsgs,
+    viewerSenderType: 'CUSTOMER',
+    readAt:           inferredAgentReadAt,
+    otherPartyOnline: agentOnline,
+  });
+
+  console.log('%c[Ticks] tickMap results:', 'color:#0ea5e9',
+    Array.from(map.entries()).map(([id, status]) => `${id.slice(0,8)}→${status}`).join(', ')
+  );
+
+  return map;
+}, [allMessages, inferredAgentReadAt, agentOnline]);
 
 
   const handleImageClick = useCallback((url: string, fileName: string) => setViewerImage({ url, fileName }), []);
