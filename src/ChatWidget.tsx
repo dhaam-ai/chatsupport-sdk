@@ -4336,26 +4336,21 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     return map;
   }, [allMessages]);
 
-  // ── agentOnline: true only when agent is explicitly marked online ─────────
-  // FIX: Previously used just !!assignedAgentId which is always truthy once
-  // an agent is assigned. Now prefer the explicit isOnline flag so "delivered"
-  // ticks only show when the agent is actually connected.
-  const agentOnline = !!(
-    state.session?.assignedAgent?.isOnline ??
-    state.session?.assignedAgentId  // fallback: treat assigned as "online" if no isOnline flag
-  );
+  // ── agentOnline: true when agent is assigned (session or message history) ──
+  // Check session state first, then fall back to detecting an agent message
+  // in history. On reload, assignedAgent.isOnline may not be set yet because
+  // the agentJoined WS event does not re-fire — but if there is an AGENT message
+  // in the conversation, the agent is clearly part of this session.
+  const agentOnline = useMemo(() => {
+    if (state.session?.assignedAgent?.isOnline === true) return true;
+    if (state.session?.assignedAgentId) return true;
+    // Detect from message history — if any AGENT message exists, agent is assigned
+    return allMessages.some(m => m.senderType === 'AGENT');
+  }, [state.session?.assignedAgent?.isOnline, state.session?.assignedAgentId, allMessages]);
 
-  // ── FIX: inferredAgentReadAt — use ONLY real WS-driven agentReadAt ────────
-  //
-  // BEFORE (buggy): fell back to finding the last AGENT message timestamp.
-  // Since any session with an agent reply always has an agent message, this
-  // always returned a non-null date, making buildTickMap think the agent had
-  // read everything → ALL customer messages showed double purple "Seen" ticks
-  // permanently, regardless of whether the agent actually opened the chat.
-  //
-  // AFTER (fixed): only use state.agentReadAt which is set exclusively by the
-  // real WS MESSAGE_READ event (readBy === 'AGENT'). If that event hasn't fired,
-  // readAt stays null and ticks correctly show single/double grey instead of purple.
+  // ── agentReadAt: set by context.tsx via agent reply inference + WS events ──
+  // context.tsx seeds this from history (if any AGENT message exists, readAt=now)
+  // and updates on every new agent reply via the WS message handler.
   const agentReadAt = useMemo<Date | null>(() => {
     const raw = (state as any).agentReadAt;
     if (!raw) return null;

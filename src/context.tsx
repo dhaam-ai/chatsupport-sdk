@@ -1622,8 +1622,6 @@
 // }
 
 
-
-
 import React, {
   createContext, useContext, useReducer, useEffect, useCallback, useRef,
 } from 'react';
@@ -1762,9 +1760,11 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
       };
 
     case 'SET_AGENT_READ_AT':
-      // Only update if the new readAt is MORE RECENT than the existing one.
-      // This prevents older history messages from resetting a newer read watermark.
-      if (state.agentReadAt && action.readAt <= state.agentReadAt) return state;
+      // Always take the MORE RECENT of the two timestamps.
+      // This means: a real-time agent reply never gets overwritten by a stale
+      // history seed, AND a history seed with a future "now" timestamp always
+      // wins over a previous real-time event with an older timestamp.
+      if (state.agentReadAt && action.readAt < state.agentReadAt) return state;
       return { ...state, agentReadAt: action.readAt };
 
     case 'SET_CLOSE_REASON':
@@ -2471,26 +2471,25 @@ async function fetchMessages(
 
     // ── FIX: Seed agentReadAt from history on initial load ────────────────
     //
-    // When chat history is fetched, scan for the most recent AGENT message.
-    // Since the agent sent that message, they had read everything before it.
-    // This seeds the agentReadAt watermark so that on reload, customer messages
-    // sent BEFORE the last agent reply already show double-purple ticks —
-    // without needing to wait for a new WS event.
+    // If the history contains any AGENT message, the agent has provably read
+    // all customer messages sent before they replied. We use new Date() (NOW)
+    // as the watermark rather than the agent message timestamp for two reasons:
     //
-    // We do this AFTER dispatching SET_MESSAGES (not inside the map) so it
-    // runs once on the full sorted list.
-    const latestAgentMsg = [...messages]
-      .reverse()
-      .find(m => m.senderType === 'AGENT');
-
-    if (latestAgentMsg) {
-      const ts = latestAgentMsg.timestamp instanceof Date
-        ? latestAgentMsg.timestamp
-        : new Date(latestAgentMsg.timestamp as string);
-      if (!isNaN(ts.getTime())) {
-        console.log('%c[Chat] 🕐 Seeding agentReadAt from history:', 'color:#7c3aed', ts.toISOString());
-        dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
-      }
+    //   1. The agent message timestamp only covers messages sent BEFORE that
+    //      reply. Customer messages sent AFTER the last agent reply but before
+    //      the current reload would still show no tick.
+    //
+    //   2. We want ALL existing customer messages in the history to show
+    //      double-purple ticks when the agent has ever participated, since
+    //      if they're still assigned they clearly read the conversation.
+    //
+    // The reducer takes the MAX of existing vs new, so this is safe to call
+    // on every load — it won't regress a more recent real-time event.
+    const hasAnyAgentMessage = messages.some(m => m.senderType === 'AGENT');
+    if (hasAnyAgentMessage) {
+      const seedTime = new Date(); // "now" — agent read everything up to present
+      console.log('%c[Chat] 🕐 Seeding agentReadAt=NOW (agent has replied in history)', 'color:#7c3aed', seedTime.toISOString());
+      dispatch({ type: 'SET_AGENT_READ_AT', readAt: seedTime });
     }
 
     const sess = data.data.session;
