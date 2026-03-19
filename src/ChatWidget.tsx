@@ -4160,7 +4160,7 @@ useEffect(() => {
 // viewerSenderType='CUSTOMER' → ticks only on customer messages
 // readAt = agentReadAt (set by WS when agent opens the session)
 // otherPartyOnline = agent is assigned to this session
-const agentOnline = !!(state.session?.assignedAgentId);
+
 
 
 
@@ -5435,65 +5435,31 @@ const msgByIdMap = useMemo(() => {
 
 const agentOnline = !!(state.session?.assignedAgentId);
 
-// Infer agentReadAt: use explicit WS receipt if available, otherwise infer
-// from the timestamp of the last agent message (if agent replied, they read everything before it)
 const inferredAgentReadAt = useMemo<Date | null>(() => {
-  console.log('%c[Ticks] agentReadAt from state:', 'color:#7c3aed;font-weight:bold', state.agentReadAt);
-  console.log('%c[Ticks] allMessages count:', 'color:#7c3aed', allMessages.length);
-  console.log('%c[Ticks] senderTypes in messages:', 'color:#7c3aed',
-    allMessages.map(m => `${m.senderType}(${m.id?.slice(0,8)})`).join(', ')
-  );
-
-  if (state.agentReadAt) {
-    console.log('%c[Ticks] ✅ Using explicit agentReadAt:', 'color:#16a34a;font-weight:bold', state.agentReadAt);
-    return new Date(state.agentReadAt);
-  }
-
+  if ((state as any).agentReadAt) return new Date((state as any).agentReadAt);
   for (let i = allMessages.length - 1; i >= 0; i--) {
     const m = allMessages[i];
     if (m.senderType === 'AGENT') {
       const ts = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp as any);
-      console.log('%c[Ticks] ✅ Inferred readAt from AGENT message:', 'color:#16a34a;font-weight:bold',
-        { id: m.id?.slice(0,8), timestamp: m.timestamp, parsed: ts, valid: !isNaN(ts.getTime()) }
-      );
       if (!isNaN(ts.getTime())) return ts;
     }
   }
-
-  console.log('%c[Ticks] ❌ No agent message found — readAt is null', 'color:#ef4444;font-weight:bold');
   return null;
-}, [allMessages, state.agentReadAt]);
+}, [allMessages, (state as any).agentReadAt]);
 
-const tickMap = useMemo(() => {
-  const mappedMsgs = allMessages.map(m => {
+const tickMap = useMemo(() => buildTickMap({
+  messages: allMessages.map(m => {
     const ts = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp as any);
     return {
       id:         m.id,
       createdAt:  isNaN(ts.getTime()) ? new Date().toISOString() : ts.toISOString(),
       senderType: m.senderType,
     };
-  });
-
-  console.log('%c[Ticks] buildTickMap inputs:', 'color:#0ea5e9;font-weight:bold', {
-    messageCount:     mappedMsgs.length,
-    viewerSenderType: 'CUSTOMER',
-    readAt:           inferredAgentReadAt,
-    otherPartyOnline: agentOnline,
-  });
-
-  const map = buildTickMap({
-    messages:         mappedMsgs,
-    viewerSenderType: 'CUSTOMER',
-    readAt:           inferredAgentReadAt,
-    otherPartyOnline: agentOnline,
-  });
-
-  console.log('%c[Ticks] tickMap results:', 'color:#0ea5e9',
-    Array.from(map.entries()).map(([id, status]) => `${id.slice(0,8)}→${status}`).join(', ')
-  );
-
-  return map;
-}, [allMessages, inferredAgentReadAt, agentOnline]);
+  }),
+  viewerSenderType: 'CUSTOMER',
+  readAt:           inferredAgentReadAt,
+  otherPartyOnline: agentOnline,
+}), [allMessages, inferredAgentReadAt, agentOnline]);
 
 
   const handleImageClick = useCallback((url: string, fileName: string) => setViewerImage({ url, fileName }), []);
@@ -5900,16 +5866,16 @@ const tickMap = useMemo(() => {
   const isNewMsg = hasRenderedOnce.current && !renderedMsgIds.current.has(msg.id);
   return (
     <div key={msg.id} id={`chat-msg-${msg.id}`} style={isNewMsg ? { animation: 'chatFadeIn 0.2s ease', borderRadius: '12px' } : { borderRadius: '12px' }}>
-      <MessageBubble
-        message={msg}
-        styles={styles}
-        userName={config.user.name}
-        onImageClick={handleImageClick}
-        onReply={handleReply}
-        replyToResolved={msg.replyToMessageId ? msgByIdMap.get(msg.replyToMessageId) ?? null : null}
-        tickStatus={tickMap.get(msg.id) ?? 'none'}
-        primaryColor={theme.primaryColor}
-      />
+    <MessageBubble
+  message={msg}
+  styles={styles}
+  userName={config.user.name}
+  onImageClick={handleImageClick}
+  onReply={handleReply}
+  replyToResolved={msg.replyToMessageId ? msgByIdMap.get(msg.replyToMessageId) ?? null : null}
+  tickStatus={tickMap.get(msg.id) ?? 'none'}
+  primaryColor={theme.primaryColor}
+/>
     </div>
   );
 })}
