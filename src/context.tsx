@@ -1,5 +1,4 @@
 
-
 // import React, {
 //   createContext, useContext, useReducer, useEffect, useCallback, useRef,
 // } from 'react';
@@ -158,8 +157,6 @@
 // const _activeConnections = new Map<string, boolean>();
 
 // // ── Map customer on first SDK init ────────────────────────────────────────────
-// // Registers or updates the customer on the ticketing platform (upsert).
-// // Fire-and-forget — any failure is logged as a warning and never blocks the chat.
 // async function mapCustomer(config: ChatSDKConfig): Promise<void> {
 //   try {
 //     console.log('%c[Chat] 🗺  mapCustomer → calling /customers/map', 'color:#7c3aed;font-weight:bold', {
@@ -241,6 +238,27 @@
 //             }
 //           }
 //           dispatch({ type: 'ADD_MESSAGE', message });
+
+//           // ── FIX: Mark messages read immediately when widget is open ──────────
+//           // Previously only fired on widget open/session change. Now fires on
+//           // every incoming agent/bot message while the widget is already open,
+//           // so the agent sees "Seen" in real time without close/reopen.
+//           const isFromAgentOrBot = message.senderType === 'AGENT' || message.senderType === 'BOT';
+//           if (isFromAgentOrBot && stateRef.current.isWidgetOpen && stateRef.current.session?.id) {
+//             const cfg = configRef.current;
+//             fetch(
+//               `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${stateRef.current.session.id}/read`,
+//               {
+//                 method: 'POST',
+//                 headers: {
+//                   'Authorization': `Bearer ${cfg.token}`,
+//                   'X-Tenant-ID':   cfg.tenantId,
+//                   'Content-Type':  'application/json',
+//                 },
+//                 body: JSON.stringify({ customerId: cfg.user.id }),
+//               }
+//             ).catch(() => {}); // fire-and-forget — never blocks message display
+//           }
 //         });
 
 //         client.on('typing', ((rawData: any) => {
@@ -353,8 +371,6 @@
 
 //         let session = await client.connect();
 
-//         // ── Map customer immediately after connection is established ──────────
-//         // This is fire-and-forget. The chat initialisation continues in parallel.
 //         mapCustomer(cfg);
 
 //         if (session.status === 'CLOSED') {
@@ -791,6 +807,10 @@
 //     console.error('[Chat] fetchMessages failed:', e);
 //   }
 // }
+
+
+
+
 
 import React, {
   createContext, useContext, useReducer, useEffect, useCallback, useRef,
