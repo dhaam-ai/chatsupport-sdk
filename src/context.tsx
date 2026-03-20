@@ -2493,19 +2493,46 @@ async function fetchMessages(
       dispatch({ type: 'SET_AGENT_READ_AT', readAt: seedTime });
     }
 
-    const sess = data.data.session;
-    if (sess) {
-      dispatch({
-        type: 'UPDATE_SESSION',
-        session: {
-          ...(sess.assignedAgentId            && { assignedAgentId:   sess.assignedAgentId }),
-          ...(sess.assignedAgent              && { assignedAgent:     sess.assignedAgent }),
-          ...(sess.assignedAgent?.displayName && { assignedAgentName: sess.assignedAgent.displayName }),
-          ...(sess.customer                   && { customer:          sess.customer }),
-        },
-      });
-    }
-  } catch (e) {
-    console.error('[Chat] fetchMessages failed:', e);
+  const sess = data.data.session;
+if (sess) {
+  dispatch({
+    type: 'UPDATE_SESSION',
+    session: {
+      ...(sess.assignedAgentId            && { assignedAgentId:   sess.assignedAgentId }),
+      ...(sess.assignedAgent              && { assignedAgent:     sess.assignedAgent }),
+      ...(sess.assignedAgent?.displayName && { assignedAgentName: sess.assignedAgent.displayName }),
+      ...(sess.customer                   && { customer:          sess.customer }),
+    },
+  });
+}
+
+// ── Restore read watermarks from participants array ───────────────────
+// participants[].lastReadAt persists on the backend — use it to restore
+// tick state across page refreshes without any backend changes.
+const participants: any[] = data.data.participants ?? [];
+
+const agentParticipant = participants.find(
+  (p: any) => p.participantType === 'AGENT' && p.lastReadAt
+);
+if (agentParticipant?.lastReadAt) {
+  const ts = new Date(agentParticipant.lastReadAt);
+  if (!isNaN(ts.getTime())) {
+    console.log('%c[Chat] ✅ Restored agentReadAt from participants', 'color:#16a34a', ts.toISOString());
+    dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
   }
 }
+
+const customerParticipant = participants.find(
+  (p: any) => p.participantType === 'CUSTOMER' && p.lastReadAt
+);
+if (customerParticipant?.lastReadAt) {
+  const ts = new Date(customerParticipant.lastReadAt);
+  if (!isNaN(ts.getTime())) {
+    console.log('%c[Chat] ✅ Restored customerReadAt from participants', 'color:#16a34a', ts.toISOString());
+    // Store on session for agent panel to pick up
+    dispatch({ type: 'UPDATE_SESSION', session: { customerReadAt: ts } as any });
+  }
+}
+} catch (e) {
+    console.warn('[Chat] fetchMessages failed:', e);
+  }}
