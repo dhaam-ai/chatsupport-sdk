@@ -1760,12 +1760,12 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
         ),
       };
 
+    // ── SET_AGENT_READ_AT ─────────────────────────────────────────────────
+    // No forward-only guard here. The participants restore on load gives us
+    // the real backend timestamp. Real-time WS events will naturally be newer.
+    // Removing the guard prevents the "seed to NOW" race from blocking the
+    // accurate participants timestamp.
     case 'SET_AGENT_READ_AT':
-      // Always take the MORE RECENT of the two timestamps.
-      // This means: a real-time agent reply never gets overwritten by a stale
-      // history seed, AND a history seed with a future "now" timestamp always
-      // wins over a previous real-time event with an older timestamp.
-      if (state.agentReadAt && action.readAt < state.agentReadAt) return state;
       return { ...state, agentReadAt: action.readAt };
 
     case 'SET_CLOSE_REASON':
@@ -1893,16 +1893,10 @@ export function ChatProvider({ config, children }: {
             ).catch(() => {}); // fire-and-forget
           }
 
-          // ── FIX: Infer agentReadAt from agent replies ─────────────────────
-          //
-          // The server fires chat.message.read with readBy='CUSTOMER' (the
-          // customer calling /read), NOT readBy='AGENT'. There is no explicit
-          // agent-read event in this backend. However, when the agent sends a
-          // reply they have provably read all prior customer messages.
-          //
-          // Strategy: use the agent message timestamp as the agentReadAt
-          // watermark. The reducer only advances this forward (never back),
-          // so it's safe to call on every agent message.
+          // ── Infer agentReadAt from real-time agent replies ─────────────────
+          // When the agent sends a message, they have provably read all prior
+          // customer messages. Use the message timestamp as the read watermark.
+          // This covers the live case; page-refresh is handled by participants.
           if (message.senderType === 'AGENT') {
             const ts = safeDate(message.timestamp);
             if (ts) {
@@ -2014,24 +2008,16 @@ export function ChatProvider({ config, children }: {
           dispatch({ type: 'TOKEN_EXPIRED' });
         });
 
-        // ── messageRead: handles explicit server read receipts ───────────────
-        //
-        // FIX: The server in this system sends readBy='CUSTOMER' (echo of the
-        // customer calling /read), not readBy='AGENT'. We handle both cases:
-        //   1. readBy='AGENT' — explicit agent-read receipt (ideal, future-proof)
-        //   2. readBy is anything other than CUSTOMER/SYSTEM/BOT — treat as agent
-        //      (covers servers that send the agentId string instead of 'AGENT')
-        //
-        // NOTE: Even if this never fires correctly for 'AGENT', the agent-reply
-        // inference in the message handler above handles the common case.
+        // ── messageRead: handles explicit server read receipts ────────────────
+        // The server sends readBy='CUSTOMER' when the customer calls /read.
+        // We also handle readBy='AGENT' for future-proofing, and any non-standard
+        // value (e.g. the server sends an agentId string instead of 'AGENT').
         client.on('messageRead', ((data: any) => {
           if (!data?.readAt) return;
 
           const readBy = String(data.readBy ?? '').toUpperCase().trim();
           console.log('[Chat] messageRead event:', { readBy: data.readBy, readAt: data.readAt });
 
-          // Accept explicit AGENT, or any non-customer/non-system/non-bot value
-          // (handles case where server sends an agent userId like "12775")
           const isAgentRead =
             readBy === 'AGENT' ||
             (readBy.length > 0 &&
@@ -2470,69 +2456,49 @@ async function fetchMessages(
       dispatch({ type: 'SET_MESSAGES', messages, hasMore });
     }
 
-    // ── FIX: Seed agentReadAt from history on initial load ────────────────
-    //
-    // If the history contains any AGENT message, the agent has provably read
-    // all customer messages sent before they replied. We use new Date() (NOW)
-    // as the watermark rather than the agent message timestamp for two reasons:
-    //
-    //   1. The agent message timestamp only covers messages sent BEFORE that
-    //      reply. Customer messages sent AFTER the last agent reply but before
-    //      the current reload would still show no tick.
-    //
-    //   2. We want ALL existing customer messages in the history to show
-    //      double-purple ticks when the agent has ever participated, since
-    //      if they're still assigned they clearly read the conversation.
-    //
-    // The reducer takes the MAX of existing vs new, so this is safe to call
-    // on every load — it won't regress a more recent real-time event.
-    const hasAnyAgentMessage = messages.some(m => m.senderType === 'AGENT');
-    if (hasAnyAgentMessage) {
-      const seedTime = new Date(); // "now" — agent read everything up to present
-      console.log('%c[Chat] 🕐 Seeding agentReadAt=NOW (agent has replied in history)', 'color:#7c3aed', seedTime.toISOString());
-      dispatch({ type: 'SET_AGENT_READ_AT', readAt: seedTime });
+    // ── Session metadata ──────────────────────────────────────────────────
+    const sess = data.data.session;
+    if (sess) {
+      dispatch({
+        type: 'UPDATE_SESSION',
+        session: {
+          ...(sess.assignedAgentId            && { assignedAgentId:   sess.assignedAgentId }),
+          ...(sess.assignedAgent              && { assignedAgent:     sess.assignedAgent }),
+          ...(sess.assignedAgent?.displayName && { assignedAgentName: sess.assignedAgent.displayName }),
+          ...(sess.customer                   && { customer:          sess.customer }),
+        },
+      });
     }
 
-  const sess = data.data.session;
-if (sess) {
-  dispatch({
-    type: 'UPDATE_SESSION',
-    session: {
-      ...(sess.assignedAgentId            && { assignedAgentId:   sess.assignedAgentId }),
-      ...(sess.assignedAgent              && { assignedAgent:     sess.assignedAgent }),
-      ...(sess.assignedAgent?.displayName && { assignedAgentName: sess.assignedAgent.displayName }),
-      ...(sess.customer                   && { customer:          sess.customer }),
-    },
-  });
-}
+    // ── Restore read watermarks from participants ──────────────────────────
+    // participants[].lastReadAt is persisted by the backend, so it survives
+    // page refreshes. We use it as the source of truth instead of seeding
+    // an artificial "now" timestamp.
+    const participants: any[] = data.data.participants ?? [];
 
-// ── Restore read watermarks from participants array ───────────────────
-// participants[].lastReadAt persists on the backend — use it to restore
-// tick state across page refreshes without any backend changes.
-const participants: any[] = data.data.participants ?? [];
+    const agentParticipant = participants.find(
+      (p: any) => p.participantType === 'AGENT' && p.lastReadAt
+    );
+    if (agentParticipant?.lastReadAt) {
+      const ts = new Date(agentParticipant.lastReadAt);
+      if (!isNaN(ts.getTime())) {
+        console.log('%c[Chat] ✅ Restored agentReadAt from participants', 'color:#16a34a', ts.toISOString());
+        dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
+      }
+    }
 
-const agentParticipant = participants.find(
-  (p: any) => p.participantType === 'AGENT' && p.lastReadAt
-);
-if (agentParticipant?.lastReadAt) {
-  const ts = new Date(agentParticipant.lastReadAt);
-  if (!isNaN(ts.getTime())) {
-    console.log('%c[Chat] ✅ Restored agentReadAt from participants', 'color:#16a34a', ts.toISOString());
-    dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
+    const customerParticipant = participants.find(
+      (p: any) => p.participantType === 'CUSTOMER' && p.lastReadAt
+    );
+    if (customerParticipant?.lastReadAt) {
+      const ts = new Date(customerParticipant.lastReadAt);
+      if (!isNaN(ts.getTime())) {
+        console.log('%c[Chat] ✅ Restored customerReadAt from participants', 'color:#16a34a', ts.toISOString());
+        dispatch({ type: 'UPDATE_SESSION', session: { customerReadAt: ts } as any });
+      }
+    }
+
+  } catch (e) {
+    console.error('[Chat] fetchMessages failed:', e);
   }
 }
-
-const customerParticipant = participants.find(
-  (p: any) => p.participantType === 'CUSTOMER' && p.lastReadAt
-);
-if (customerParticipant?.lastReadAt) {
-  const ts = new Date(customerParticipant.lastReadAt);
-  if (!isNaN(ts.getTime())) {
-    console.log('%c[Chat] ✅ Restored customerReadAt from participants', 'color:#16a34a', ts.toISOString());
-    // Store on session for agent panel to pick up
-    dispatch({ type: 'UPDATE_SESSION', session: { customerReadAt: ts } as any });
-  }
-}
-} catch (e) {
-    console.warn('[Chat] fetchMessages failed:', e);
-  }}
