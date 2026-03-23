@@ -1170,13 +1170,16 @@ export function ChatProvider({ config, children }: {
           // When the agent sends a message, they have provably read all prior
           // customer messages. Use the message timestamp as the read watermark.
           // This covers the live case; page-refresh is handled by participants.
-          if (message.senderType === 'AGENT') {
-            const ts = safeDate(message.timestamp);
-            if (ts) {
-              console.log('%c[Chat] 📨 Agent reply → inferring agentReadAt', 'color:#7c3aed', ts.toISOString());
-              dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
-            }
-          }
+         if (message.senderType === 'AGENT') {
+  const ts = safeDate(message.timestamp);
+  if (ts) {
+    // Use the later of: message timestamp or current time
+    // This handles clock skew between server and client
+    const readAt = new Date(Math.max(ts.getTime(), Date.now()));
+    console.log('%c[Chat] 📨 Agent reply → inferring agentReadAt', 'color:#7c3aed', readAt.toISOString());
+    dispatch({ type: 'SET_AGENT_READ_AT', readAt });
+  }
+}
         });
 
         client.on('typing', ((rawData: any) => {
@@ -1793,16 +1796,23 @@ async function fetchMessages(
     // an artificial "now" timestamp.
     const participants: any[] = data.data.participants ?? [];
 
-    const agentParticipant = participants.find(
-      (p: any) => p.participantType === 'AGENT' && p.lastReadAt
-    );
-    if (agentParticipant?.lastReadAt) {
-      const ts = new Date(agentParticipant.lastReadAt);
-      if (!isNaN(ts.getTime())) {
-        console.log('%c[Chat] ✅ Restored agentReadAt from participants', 'color:#16a34a', ts.toISOString());
-        dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
-      }
-    }
+ // Use the LATEST lastReadAt across all agent participants
+// (there may be multiple agents in a session)
+const agentParticipants = participants.filter(
+  (p: any) => p.participantType === 'AGENT' && p.lastReadAt
+);
+if (agentParticipants.length > 0) {
+  const latestReadAt = agentParticipants.reduce((latest: Date | null, p: any) => {
+    const ts = new Date(p.lastReadAt);
+    if (isNaN(ts.getTime())) return latest;
+    return latest === null || ts > latest ? ts : latest;
+  }, null as Date | null);
+
+  if (latestReadAt) {
+    console.log('%c[Chat] ✅ Restored agentReadAt from participants', 'color:#16a34a', latestReadAt.toISOString());
+    dispatch({ type: 'SET_AGENT_READ_AT', readAt: latestReadAt });
+  }
+}
 
     const customerParticipant = participants.find(
       (p: any) => p.participantType === 'CUSTOMER' && p.lastReadAt
