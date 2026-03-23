@@ -1070,7 +1070,7 @@ async function mapCustomer(config: ChatSDKConfig): Promise<void> {
         'Content-Type':  'application/json',
       },
       body: JSON.stringify({
-        app_id:           config.tenantId,
+        app_id:           String(config.tenantId),
         external_user_id: Number(config.user.id),
         username:         config.user.name,
         email:            config.user.email ?? '',
