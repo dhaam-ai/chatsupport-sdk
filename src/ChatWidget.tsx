@@ -1469,7 +1469,33 @@ function FAQScreen({ primaryColor, onSelect, onBack }: {
   );
 }
 
-function EscalatingScreen({ primaryColor }: { primaryColor: string }) {
+// function EscalatingScreen({ primaryColor }: { primaryColor: string }) {
+//   return (
+//     <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'16px', padding:'32px', backgroundColor:'#fafafa', textAlign:'center' }}>
+//       <div style={{ fontSize:52 }}>👤</div>
+//       <div>
+//         <div style={{ fontWeight:700, fontSize:16, color:'#1a1a2e', marginBottom:8 }}>Connecting you to an agent</div>
+//         <div style={{ fontSize:13, color:'#6b7280', lineHeight:1.7 }}>You've been added to the support queue.<br/>An agent will join shortly.</div>
+//       </div>
+//       <div style={{ display:'flex', gap:8 }}>
+//         {[0,0.2,0.4].map((d,i)=><div key={i} style={{width:9,height:9,borderRadius:'50%',backgroundColor:primaryColor,animation:`chatTypingBounce 1.2s ${d}s infinite ease-in-out`}}/>)}
+//       </div>
+//       <div style={{ padding:'8px 20px', borderRadius:20, backgroundColor:'#ede9fe', color:primaryColor, fontSize:12, fontWeight:700 }}>Est. wait: &lt; 2 min</div>
+//     </div>
+//   );
+// }
+
+
+function EscalatingScreen({ primaryColor, onTimeout }: { primaryColor: string; onTimeout: () => void }) {
+  useEffect(() => {
+    // Hard fallback — if still on this screen after 5s, force transition to free chat
+    const t = setTimeout(() => {
+      console.warn('[Chat] EscalatingScreen timeout — forcing transition to free');
+      onTimeout();
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [onTimeout]);
+
   return (
     <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:'16px', padding:'32px', backgroundColor:'#fafafa', textAlign:'center' }}>
       <div style={{ fontSize:52 }}>👤</div>
@@ -2038,19 +2064,51 @@ const agentReadAt = useMemo<Date|null>(()=>{
         break;
 
       // Human agent → escalation flow (unchanged)
-      case 'human': {
-        setFlowStep('escalating');
-        try {
-          const sessionId = await waitForSession();
-          await escalateToAgent(sessionId, 'Customer requested human agent');
+      // case 'human': {
+      //   setFlowStep('escalating');
+      //   try {
+      //     const sessionId = await waitForSession();
+      //     await escalateToAgent(sessionId, 'Customer requested human agent');
          
-        } catch(err: any) {
-          setEscalationError(err?.message ?? 'Could not connect. Please try again.');
-          setFlowStep('menu');
-          setTimeout(()=>setShowQuickReplies(true), 500);
-        }
-        break;
+      //   } catch(err: any) {
+      //     setEscalationError(err?.message ?? 'Could not connect. Please try again.');
+      //     setFlowStep('menu');
+      //     setTimeout(()=>setShowQuickReplies(true), 500);
+      //   }
+      //   break;
+      // }
+
+      case 'human': {
+  setFlowStep('escalating');
+
+  const sessionId = stateRef.current.session?.id;
+
+  if (!sessionId) {
+    setEscalationError('Session not ready. Please try again.');
+    setFlowStep('menu');
+    setTimeout(() => setShowQuickReplies(true), 500);
+    break;
+  }
+
+  // Safety net — force free after 5s no matter what
+  const forceFreetimer = setTimeout(() => {
+    setFlowStep('free');
+    setShowQuickReplies(false);
+  }, 5000);
+
+  escalateToAgent(sessionId, 'Customer requested human agent')
+    .then(() => clearTimeout(forceFreetimer))
+    .catch((err: any) => {
+      clearTimeout(forceFreetimer);
+      if (stateRef.current.session?.status !== 'ASSIGNED' &&
+          stateRef.current.session?.mode   !== 'HUMAN') {
+        setEscalationError(err?.message ?? 'Could not connect. Please try again.');
+        setFlowStep('menu');
+        setTimeout(() => setShowQuickReplies(true), 500);
       }
+    });
+  break;
+}
     }
   }, [sendRealMessage, waitForSession, escalateToAgent]);
 
@@ -2175,9 +2233,12 @@ const agentReadAt = useMemo<Date|null>(()=>{
             <FeedbackModal primaryColor={theme.primaryColor}
               onSubmit={()=>{setShowFeedback(false);onClose();onStartNewChat?.();}}
               onSkip={()=>{setShowFeedback(false);onClose();onStartNewChat?.();}}/>
-          ):flowStep==='escalating'?(
-            <EscalatingScreen primaryColor={theme.primaryColor}/>
-          ):(
+          ) : flowStep==='escalating' ? (
+  <EscalatingScreen primaryColor={theme.primaryColor} onTimeout={() => {
+    setFlowStep('free');
+    setShowQuickReplies(false);
+  }}/>
+) : (
             <>
               {/* ── Message list ──────────────────────────────────────── */}
               <div style={{...styles.messages,position:'relative' as const}} ref={messagesAreaRef} onScroll={handleMessagesScroll}>
