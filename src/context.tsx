@@ -1170,16 +1170,27 @@ export function ChatProvider({ config, children }: {
           // When the agent sends a message, they have provably read all prior
           // customer messages. Use the message timestamp as the read watermark.
           // This covers the live case; page-refresh is handled by participants.
-         if (message.senderType === 'AGENT') {
+  
+//           if (message.senderType === 'AGENT') {
+//   const ts = safeDate(message.timestamp);
+//   if (ts) {
+//     // Use the later of: message timestamp or current time
+//     // This handles clock skew between server and client
+//     const readAt = new Date(Math.max(ts.getTime(), Date.now()));
+//     console.log('%c[Chat] 📨 Agent reply → inferring agentReadAt', 'color:#7c3aed', readAt.toISOString());
+//     dispatch({ type: 'SET_AGENT_READ_AT', readAt });
+//   }
+// }
+ if (message.senderType === 'AGENT') {
   const ts = safeDate(message.timestamp);
   if (ts) {
-    // Use the later of: message timestamp or current time
-    // This handles clock skew between server and client
-    const readAt = new Date(Math.max(ts.getTime(), Date.now()));
-    console.log('%c[Chat] 📨 Agent reply → inferring agentReadAt', 'color:#7c3aed', readAt.toISOString());
-    dispatch({ type: 'SET_AGENT_READ_AT', readAt });
+    // Agent sending a message means they've read everything up to this point
+    // Use the message timestamp — no artificial Date.now() floor
+    dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
   }
 }
+
+
         });
 
         client.on('typing', ((rawData: any) => {
@@ -1311,27 +1322,53 @@ export function ChatProvider({ config, children }: {
         // The server sends readBy='CUSTOMER' when the customer calls /read.
         // We also handle readBy='AGENT' for future-proofing, and any non-standard
         // value (e.g. the server sends an agentId string instead of 'AGENT').
+      
+      
+        // client.on('messageRead', ((data: any) => {
+        //   if (!data?.readAt) return;
+
+        //   const readBy = String(data.readBy ?? '').toUpperCase().trim();
+        //   console.log('[Chat] messageRead event:', { readBy: data.readBy, readAt: data.readAt });
+
+        //   const isAgentRead =
+        //     readBy === 'AGENT' ||
+        //     (readBy.length > 0 &&
+        //       readBy !== 'CUSTOMER' &&
+        //       readBy !== 'SYSTEM' &&
+        //       readBy !== 'BOT');
+
+        //   if (isAgentRead) {
+        //     const ts = safeDate(data.readAt);
+        //     if (ts) {
+        //       console.log('%c[Chat] ✅ SET_AGENT_READ_AT from messageRead', 'color:#10b981', ts.toISOString());
+        //       dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
+        //     }
+        //   }
+        // }) as EventCallback);
+
+
         client.on('messageRead', ((data: any) => {
-          if (!data?.readAt) return;
+  if (!data?.readAt) return;
 
-          const readBy = String(data.readBy ?? '').toUpperCase().trim();
-          console.log('[Chat] messageRead event:', { readBy: data.readBy, readAt: data.readAt });
+  const readBy = String(data.readBy ?? '').toUpperCase().trim();
 
-          const isAgentRead =
-            readBy === 'AGENT' ||
-            (readBy.length > 0 &&
-              readBy !== 'CUSTOMER' &&
-              readBy !== 'SYSTEM' &&
-              readBy !== 'BOT');
+  const isAgentRead =
+    readBy === 'AGENT' ||
+    (readBy.length > 0 &&
+      readBy !== 'CUSTOMER' &&
+      readBy !== 'SYSTEM' &&
+      readBy !== 'BOT');
 
-          if (isAgentRead) {
-            const ts = safeDate(data.readAt);
-            if (ts) {
-              console.log('%c[Chat] ✅ SET_AGENT_READ_AT from messageRead', 'color:#10b981', ts.toISOString());
-              dispatch({ type: 'SET_AGENT_READ_AT', readAt: ts });
-            }
-          }
-        }) as EventCallback);
+  if (isAgentRead) {
+    const ts = safeDate(data.readAt);
+    if (ts) {
+      // ✅ Use max of server timestamp and now — covers clock skew
+      // but do NOT use Date.now() - 5000 as that creates a stale floor
+      const readAt = new Date(Math.max(ts.getTime(), Date.now()));
+      dispatch({ type: 'SET_AGENT_READ_AT', readAt });
+    }
+  }
+}) as EventCallback);
 
         let session = await client.connect();
 

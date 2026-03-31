@@ -1838,31 +1838,49 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     return allMessages.some(m=>m.senderType==='AGENT');
   },[state.session?.assignedAgent?.isOnline, state.session?.assignedAgentId, allMessages]);
 
-  // const agentReadAt = useMemo<Date|null>(()=>{
-  //   const raw=(state as any).agentReadAt;
-  //   if(!raw)return null;
-  //   const d=new Date(raw);
-  //   return isNaN(d.getTime())?null:d;
-  // },[(state as any).agentReadAt]);
 
 
-  const agentReadAt = useMemo<Date|null>(()=>{
+//   const agentReadAt = useMemo<Date|null>(()=>{
+//   const raw=(state as any).agentReadAt;
+//   if(!raw)return null;
+//   const d=new Date(raw);
+//   if(isNaN(d.getTime())) return null;
+
+//   // If agent has sent a message, they've read everything up to NOW
+//   // Find the latest agent message timestamp and use whichever is later
+//   const latestAgentMsg = [...allMessages]
+//     .reverse()
+//     .find(m => m.senderType === 'AGENT');
+
+//   if (latestAgentMsg) {
+//     const agentMsgTime = new Date(latestAgentMsg.timestamp);
+//     // Use the max of stored readAt and latest agent message time
+//     // This ensures customer messages sent BEFORE agent reply show as Seen
+//     return new Date(Math.max(d.getTime(), agentMsgTime.getTime(), Date.now() - 5000));
+//   }
+
+//   return d;
+// },[(state as any).agentReadAt, allMessages]);
+
+// AFTER — trust the server's readAt timestamp directly
+
+
+const agentReadAt = useMemo<Date|null>(()=>{
   const raw=(state as any).agentReadAt;
   if(!raw)return null;
   const d=new Date(raw);
   if(isNaN(d.getTime())) return null;
 
-  // If agent has sent a message, they've read everything up to NOW
-  // Find the latest agent message timestamp and use whichever is later
+  // If agent has replied, their reply timestamp is a lower bound on readAt
+  // (they must have read everything before they could reply)
   const latestAgentMsg = [...allMessages]
     .reverse()
     .find(m => m.senderType === 'AGENT');
 
   if (latestAgentMsg) {
     const agentMsgTime = new Date(latestAgentMsg.timestamp);
-    // Use the max of stored readAt and latest agent message time
-    // This ensures customer messages sent BEFORE agent reply show as Seen
-    return new Date(Math.max(d.getTime(), agentMsgTime.getTime(), Date.now() - 5000));
+    return new Date(Math.max(d.getTime(), agentMsgTime.getTime()));
+    // No Date.now() floor — that was blocking new messages from ever showing Seen
   }
 
   return d;
