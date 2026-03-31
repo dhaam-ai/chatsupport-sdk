@@ -233,10 +233,25 @@ export class ChatWebSocketClient {
         });
 
         // ── MESSAGE_READ (read receipts / "Seen ✓" indicator) ─────────────
-        this.socket.on(WS_EVENTS.MESSAGE_READ, (data: any) => {
-          console.log('[ChatClient] MESSAGE_READ:', data);
-          this.emit('messageRead', data);
-        });
+        // this.socket.on(WS_EVENTS.MESSAGE_READ, (data: any) => {
+        //   console.log('[ChatClient] MESSAGE_READ:', data);
+        //   this.emit('messageRead', data);
+        // });
+
+        // ── MESSAGE_READ (read receipts / "Seen ✓" indicator) ─────────────
+this.socket.on(WS_EVENTS.MESSAGE_READ, (data: any) => {
+  console.log('[ChatClient] MESSAGE_READ:', data);
+  this.emit('messageRead', data);
+});
+
+this.socket.on('chat.ticket.linked', (data: any) => {
+  console.log('[ChatClient] TICKET_LINKED:', data);
+  this.emit('ticketLinked', data);
+});
+this.socket.on('TICKET_LINKED', (data: any) => {
+  console.log('[ChatClient] TICKET_LINKED (alt):', data);
+  this.emit('ticketLinked', data);
+});
 
         // ── ERRORS ─────────────────────────────────────────────────────────
         this.socket.on(WS_EVENTS.ERROR, (error: any) => {

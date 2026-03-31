@@ -1583,6 +1583,8 @@ export function ChatWidget({ config, defaultOpen = false }: ChatWidgetProps): JS
   const [launchHover, setLaunchHover] = useState(false);
   const [chatKey, setChatKey]         = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [ticketId, setTicketId] = useState<string|null>(null);
+const handleTicketChange = useCallback((id: string|null) => setTicketId(id), []);
   const theme: FullTheme = { ...defaultTheme, ...config.theme };
   const styles = getStyles(config.theme);
   const scrollToBottomRef = useRef<(()=>void)|null>(null);
@@ -1600,10 +1602,25 @@ export function ChatWidget({ config, defaultOpen = false }: ChatWidgetProps): JS
           onClick={()=>setIsOpen(true)} onMouseEnter={()=>setLaunchHover(true)} onMouseLeave={()=>setLaunchHover(false)} aria-label="Open chat support">
           <ChatIcon/>
           {unreadCount>0&&<span style={{position:'absolute',top:'-4px',right:'-4px',minWidth:'20px',height:'20px',borderRadius:'10px',backgroundColor:'#ef4444',color:'#ffffff',fontSize:'11px',fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',padding:'0 5px',boxShadow:'0 2px 6px rgba(239,68,68,0.5)',border:'2px solid #ffffff',fontFamily:'system-ui,sans-serif',lineHeight:1}}>{unreadCount>99?'99+':unreadCount}</span>}
+
+
+          {ticketId && (
+  <span style={{
+    position:'absolute', bottom:'-4px', left:'-4px',
+    backgroundColor:'#7c3aed', color:'#fff',
+    fontSize:'9px', fontWeight:700,
+    padding:'2px 5px', borderRadius:'8px',
+    border:'2px solid #fff', lineHeight:1.2,
+    whiteSpace:'nowrap',
+    boxShadow:'0 2px 6px rgba(124,58,237,0.5)',
+  }}>
+    🎫 #{ticketId}
+  </span>
+)}
         </button>
       )}
       <ChatProvider config={config} key={chatKey}>
-        <UnreadTracker isOpen={isOpen} onUnreadChange={handleUnreadChange}/>
+       <UnreadTracker isOpen={isOpen} onUnreadChange={handleUnreadChange} onTicketChange={handleTicketChange}/>
         <div style={{display:isOpen?'block':'none'}}>
           <ChatContentWithScrollRef onClose={()=>setIsOpen(false)} styles={styles} config={config} theme={theme} onStartNewChat={handleStartNewChat} scrollToBottomRef={scrollToBottomRef}/>
         </div>
@@ -1612,12 +1629,28 @@ export function ChatWidget({ config, defaultOpen = false }: ChatWidgetProps): JS
   );
 }
 
-function UnreadTracker({ isOpen, onUnreadChange }: { isOpen:boolean; onUnreadChange:(c:number)=>void; }) {
+// function UnreadTracker({ isOpen, onUnreadChange }: { isOpen:boolean; onUnreadChange:(c:number)=>void; }) {
+//   const { state, actions } = useChat();
+//   const setWidgetOpenRef = useRef(actions.setWidgetOpen);
+//   setWidgetOpenRef.current = actions.setWidgetOpen;
+//   useEffect(() => { setWidgetOpenRef.current(isOpen); }, [isOpen]);
+//   useEffect(() => { onUnreadChange(state.unreadCount); }, [state.unreadCount, onUnreadChange]);
+//   return null;
+// }
+
+function UnreadTracker({ isOpen, onUnreadChange, onTicketChange }: {
+  isOpen: boolean;
+  onUnreadChange: (c: number) => void;
+  onTicketChange: (id: string|null) => void;
+}) {
   const { state, actions } = useChat();
   const setWidgetOpenRef = useRef(actions.setWidgetOpen);
   setWidgetOpenRef.current = actions.setWidgetOpen;
   useEffect(() => { setWidgetOpenRef.current(isOpen); }, [isOpen]);
   useEffect(() => { onUnreadChange(state.unreadCount); }, [state.unreadCount, onUnreadChange]);
+  useEffect(() => {
+    onTicketChange((state.session as any)?.ticketId ?? null);
+  }, [(state.session as any)?.ticketId, onTicketChange]);
   return null;
 }
 
@@ -1755,6 +1788,17 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     prevMsgCount.current = newCount;
   }, [state.messages, flowStep]);
 
+
+  useEffect(() => {
+  if (flowStep !== 'escalating') return;
+  const status = state.session?.status;
+  const mode   = state.session?.mode;
+  if (status === 'ASSIGNED' || status === 'WAITING_FOR_AGENT' || mode === 'HUMAN') {
+    setFlowStep('free');
+    setShowQuickReplies(false);
+  }
+}, [state.session?.status, state.session?.mode, flowStep]);
+
   // Notification sound
   useEffect(() => {
     const newCount = state.messages.length;
@@ -1824,7 +1868,7 @@ useEffect(() => {
         body: JSON.stringify({ reason }),
       });
     } catch(e) { console.warn('[Chat] REST escalation failed:', e); }
-    actionsRef.current.requestAgent?.(reason);
+   
   }, []);
 
   // All messages are purely from the real WS — no localMessages merging
@@ -1999,7 +2043,7 @@ const agentReadAt = useMemo<Date|null>(()=>{
         try {
           const sessionId = await waitForSession();
           await escalateToAgent(sessionId, 'Customer requested human agent');
-          setFlowStep('free');
+         
         } catch(err: any) {
           setEscalationError(err?.message ?? 'Could not connect. Please try again.');
           setFlowStep('menu');

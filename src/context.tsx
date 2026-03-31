@@ -1347,7 +1347,31 @@ export function ChatProvider({ config, children }: {
         // }) as EventCallback);
 
 
-        client.on('messageRead', ((data: any) => {
+//         client.on('messageRead', ((data: any) => {
+//   if (!data?.readAt) return;
+
+//   const readBy = String(data.readBy ?? '').toUpperCase().trim();
+
+//   const isAgentRead =
+//     readBy === 'AGENT' ||
+//     (readBy.length > 0 &&
+//       readBy !== 'CUSTOMER' &&
+//       readBy !== 'SYSTEM' &&
+//       readBy !== 'BOT');
+
+//   if (isAgentRead) {
+//     const ts = safeDate(data.readAt);
+//     if (ts) {
+//       // ✅ Use max of server timestamp and now — covers clock skew
+//       // but do NOT use Date.now() - 5000 as that creates a stale floor
+//       const readAt = new Date(Math.max(ts.getTime(), Date.now()));
+//       dispatch({ type: 'SET_AGENT_READ_AT', readAt });
+//     }
+//   }
+// }) as EventCallback);
+
+
+client.on('messageRead', ((data: any) => {
   if (!data?.readAt) return;
 
   const readBy = String(data.readBy ?? '').toUpperCase().trim();
@@ -1362,12 +1386,35 @@ export function ChatProvider({ config, children }: {
   if (isAgentRead) {
     const ts = safeDate(data.readAt);
     if (ts) {
-      // ✅ Use max of server timestamp and now — covers clock skew
-      // but do NOT use Date.now() - 5000 as that creates a stale floor
       const readAt = new Date(Math.max(ts.getTime(), Date.now()));
       dispatch({ type: 'SET_AGENT_READ_AT', readAt });
     }
   }
+}) as EventCallback);
+
+// ← ADD THIS RIGHT HERE ↓
+client.on('ticketLinked', ((data: any) => {
+  const ticketId   = data?.ticketId   ?? data?.ticket_id   ?? data?.id   ?? '';
+  const ticketUrl  = data?.ticketUrl  ?? data?.ticket_url  ?? null;
+  const ticketCode = data?.ticketCode ?? data?.code        ?? ticketId;
+
+  // Update session so the launcher badge shows the ticket ID
+  dispatch({
+    type:    'UPDATE_SESSION',
+    session: { ticketId: ticketCode, ticketUrl } as any,
+  });
+
+  // Inject a chat announcement
+  const sysMsg: any = {
+    id:            `ticket-linked-${ticketId}-${Date.now()}`,
+    chatSessionId: stateRef.current.session?.id ?? '',
+    senderType:    'SYSTEM',
+    senderId:      'system',
+    content:       `🎫 Ticket #${ticketCode} has been created for this chat.${ticketUrl ? ` Track it at: ${ticketUrl}` : ''}`,
+    messageType:   'TEXT',
+    timestamp:     new Date(),
+  };
+  dispatch({ type: 'ADD_MESSAGE', message: sysMsg });
 }) as EventCallback);
 
         let session = await client.connect();
