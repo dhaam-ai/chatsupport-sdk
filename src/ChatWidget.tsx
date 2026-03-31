@@ -1234,18 +1234,29 @@ const PhoneDownIcon = () => (
 // Helpers
 // ==========================================
 
+// function looksLikeRawId(s: string | undefined): boolean {
+//   if (!s) return false;
+//   // Long hex/UUID strings (Cognito sub, UUID without hyphens)
+//   if (/^[0-9a-fA-F-]{20,}$/.test(s)) return true;
+//   // Pure numeric strings — phone numbers, user IDs (e.g. "8585081497")
+//   if (/^\d{6,}$/.test(s)) return true;
+//   // Cognito given_name encoded format: "tenantId::roleId::userId" or "3::1::12775"
+//   if (/^\d+::\d+::\d+$/.test(s)) return true;
+//   // Email addresses that leaked through
+//   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return true;
+//   return false;
+// }
+
 function looksLikeRawId(s: string | undefined): boolean {
   if (!s) return false;
-  // Long hex/UUID strings (Cognito sub, UUID without hyphens)
   if (/^[0-9a-fA-F-]{20,}$/.test(s)) return true;
-  // Pure numeric strings — phone numbers, user IDs (e.g. "8585081497")
   if (/^\d{6,}$/.test(s)) return true;
-  // Cognito given_name encoded format: "tenantId::roleId::userId" or "3::1::12775"
   if (/^\d+::\d+::\d+$/.test(s)) return true;
-  // Email addresses that leaked through
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return true;
+  if (/^(ADMIN|AGENT|BOT|SYSTEM)\d*$/i.test(s)) return true;
   return false;
 }
+
 function formatTime(date: Date | string): string {
   return new Date(date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 }
@@ -1765,18 +1776,27 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   // }, [state.isWidgetOpen, state.session?.id]);
 
 
-  useEffect(() => {
-  if (!state.isWidgetOpen || !state.session?.id) return;
-  const last = state.messages[state.messages.length - 1];
-  if (!last || (last.senderType !== 'AGENT' && last.senderType !== 'BOT')) return;
-  actionsRef.current.markMessagesRead?.().catch(() => {});
-}, [state.isWidgetOpen, state.session?.id, state.messages.length]);
+//   useEffect(() => {
+//   if (!state.isWidgetOpen || !state.session?.id) return;
+//   const last = state.messages[state.messages.length - 1];
+//   if (!last || (last.senderType !== 'AGENT' && last.senderType !== 'BOT')) return;
+//   actionsRef.current.markMessagesRead?.().catch(() => {});
+// }, [state.isWidgetOpen, state.session?.id, state.messages.length]);
 
-  useEffect(() => {
-    if (!state.isWidgetOpen || !state.session?.id) return;
-    const last = state.messages[state.messages.length-1];
-    if (last?.senderType==='AGENT'||last?.senderType==='BOT') actionsRef.current.markMessagesRead?.().catch(()=>{});
-  }, [state.messages.length]);
+//   useEffect(() => {
+//     if (!state.isWidgetOpen || !state.session?.id) return;
+//     const last = state.messages[state.messages.length-1];
+//     if (last?.senderType==='AGENT'||last?.senderType==='BOT') actionsRef.current.markMessagesRead?.().catch(()=>{});
+//   }, [state.messages.length]);
+
+
+useEffect(() => {
+  if (!state.isWidgetOpen || !state.session?.id) return;
+  const t = setTimeout(() => {
+    actionsRef.current.markMessagesRead?.().catch(() => {});
+  }, 200);
+  return () => clearTimeout(t);
+}, [state.isWidgetOpen, state.session?.id, state.messages.length]);
 
   useEffect(() => {
     if (showHistory) actionsRef.current.fetchPastSessions?.().catch(()=>{});
