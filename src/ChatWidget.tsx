@@ -1760,9 +1760,17 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     return () => window.removeEventListener('click', unlock);
   }, []);
 
+  // useEffect(() => {
+  //   if (state.isWidgetOpen && state.session?.id) actionsRef.current.markMessagesRead?.().catch(()=>{});
+  // }, [state.isWidgetOpen, state.session?.id]);
+
+
   useEffect(() => {
-    if (state.isWidgetOpen && state.session?.id) actionsRef.current.markMessagesRead?.().catch(()=>{});
-  }, [state.isWidgetOpen, state.session?.id]);
+  if (!state.isWidgetOpen || !state.session?.id) return;
+  const last = state.messages[state.messages.length - 1];
+  if (!last || (last.senderType !== 'AGENT' && last.senderType !== 'BOT')) return;
+  actionsRef.current.markMessagesRead?.().catch(() => {});
+}, [state.isWidgetOpen, state.session?.id, state.messages.length]);
 
   useEffect(() => {
     if (!state.isWidgetOpen || !state.session?.id) return;
