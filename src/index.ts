@@ -5,7 +5,7 @@
 // ==========================================
 
 // Components
-export { ChatWidget } from './ChatWidget';
+export { ChatWidget } from './ChatWidget'; 
 export type { ChatWidgetProps } from './ChatWidget';
 
 // Context and Hooks
