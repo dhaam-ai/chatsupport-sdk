@@ -328,6 +328,7 @@ this.socket.on('TICKET_LINKED', (data: any) => {
       chatSessionId: this.session.id,
       content,
       messageType,
+       token: this.config.token,
       ...(replyToMessageId ? { replyToMessageId } : {}),
     });
   }
@@ -377,6 +378,7 @@ this.socket.on('TICKET_LINKED', (data: any) => {
       chatSessionId: this.session.id,
       content: uploadData.url,
       messageType,
+      token: this.config.token,  
       metadata: {
         attachment: {
           url:       uploadData.url,
