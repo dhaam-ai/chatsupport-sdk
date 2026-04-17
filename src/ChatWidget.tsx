@@ -1888,13 +1888,19 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
   const escalateToAgent = useCallback(async (sessionId: string, reason: string) => {
     const cfg = configRef.current;
     try {
-      await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${sessionId}/escalate`, {
+      const res = await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${sessionId}/escalate`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${cfg.token}`, 'X-Tenant-ID': cfg.tenantId, 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason }),
       });
-    } catch (e) { console.warn('[Chat] REST escalation failed:', e); }
-
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`Escalation failed (${res.status}): ${body}`);
+      }
+    } catch (e: any) {
+      console.error('[Chat] REST escalation failed:', e);
+      throw e;
+    }
   }, []);
 
   // All messages are purely from the real WS — no localMessages merging
