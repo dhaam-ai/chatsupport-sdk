@@ -8,25 +8,60 @@ import { toSenderType, toMessageType, toChatStatus, toChatMode } from './shared/
 // Normalise any integer or string enum value the backend sends to the canonical
 // STRING name that context.tsx and types.ts expect.
 // Backend uses §12 integer enums: CUSTOMER=1, AGENT=2, BOT=3, SYSTEM=4, etc.
+// Using explicit if-chains rather than object lookups to avoid any JS engine
+// quirk with numeric-keyed object property access.
 function normalizeSenderType(raw: unknown): string {
-  const n = toSenderType(raw);
-  return ({ 1:'CUSTOMER', 2:'AGENT', 3:'BOT', 4:'SYSTEM' } as Record<number, string>)[n] ?? 'SYSTEM';
+  if (raw === 'CUSTOMER' || raw === 1) return 'CUSTOMER';
+  if (raw === 'AGENT'    || raw === 2) return 'AGENT';
+  if (raw === 'BOT'      || raw === 3) return 'BOT';
+  if (raw === 'SYSTEM'   || raw === 4) return 'SYSTEM';
+  const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
+  if (n === 1) return 'CUSTOMER';
+  if (n === 2) return 'AGENT';
+  if (n === 3) return 'BOT';
+  return 'SYSTEM';
 }
 function normalizeMessageType(raw: unknown): string {
-  const n = toMessageType(raw);
-  return ({ 1:'TEXT', 2:'SYSTEM', 3:'FILE', 4:'IMAGE', 5:'VIDEO', 6:'AUDIO' } as Record<number, string>)[n] ?? 'TEXT';
+  if (raw === 'TEXT'   || raw === 1) return 'TEXT';
+  if (raw === 'SYSTEM' || raw === 2) return 'SYSTEM';
+  if (raw === 'FILE'   || raw === 3) return 'FILE';
+  if (raw === 'IMAGE'  || raw === 4) return 'IMAGE';
+  if (raw === 'VIDEO'  || raw === 5) return 'VIDEO';
+  if (raw === 'AUDIO'  || raw === 6) return 'AUDIO';
+  const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
+  if (n === 1) return 'TEXT';
+  if (n === 2) return 'SYSTEM';
+  if (n === 3) return 'FILE';
+  if (n === 4) return 'IMAGE';
+  if (n === 5) return 'VIDEO';
+  if (n === 6) return 'AUDIO';
+  return 'TEXT';
 }
 function normalizeChatStatus(raw: unknown): string {
+  if (raw === 'OPEN'             || raw === 1) return 'OPEN';
+  if (raw === 'WAITING_FOR_AGENT'|| raw === 2) return 'WAITING_FOR_AGENT';
+  if (raw === 'ASSIGNED'         || raw === 3) return 'ASSIGNED';
+  if (raw === 'CLOSED'           || raw === 4) return 'CLOSED';
+  if (raw === 'RESOLVED'         || raw === 5) return 'RESOLVED';
+  if (raw === 'ON_HOLD'          || raw === 6) return 'ON_HOLD';
   if (raw == null) return 'OPEN';
-  const n = toChatStatus(raw);
-  return ({
-    1: 'OPEN', 2: 'WAITING_FOR_AGENT', 3: 'ASSIGNED', 4: 'CLOSED', 5: 'RESOLVED', 6: 'ON_HOLD',
-  } as Record<number, string>)[n] ?? 'OPEN';
+  const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
+  if (n === 1) return 'OPEN';
+  if (n === 2) return 'WAITING_FOR_AGENT';
+  if (n === 3) return 'ASSIGNED';
+  if (n === 4) return 'CLOSED';
+  if (n === 5) return 'RESOLVED';
+  if (n === 6) return 'ON_HOLD';
+  return 'OPEN';
 }
 function normalizeChatMode(raw: unknown): string {
+  if (raw === 'BOT'   || raw === 1) return 'BOT';
+  if (raw === 'HUMAN' || raw === 2) return 'HUMAN';
   if (raw == null) return 'BOT';
-  const n = toChatMode(raw);
-  return ({ 1: 'BOT', 2: 'HUMAN' } as Record<number, string>)[n] ?? 'BOT';
+  const n = typeof raw === 'string' ? parseInt(raw, 10) : Number(raw);
+  if (n === 1) return 'BOT';
+  if (n === 2) return 'HUMAN';
+  return 'BOT';
 }
 
 type EventCallback = (...args: unknown[]) => void;

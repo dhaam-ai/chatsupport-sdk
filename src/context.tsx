@@ -163,6 +163,63 @@ function safeDate(v: Date | string | null | undefined): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// ── Normalize backend integer enums → strings ────────────────────────────────
+// Backend sends §12 integer enums. These helpers accept both integer and string
+// forms so the widget always works regardless of what the deployed client.ts
+// build produces. Add at the boundary (fetch + WS handler) so state never
+// contains raw integers.
+function normSender(v: unknown): string {
+  if (v === 'CUSTOMER' || v === 1) return 'CUSTOMER';
+  if (v === 'AGENT'    || v === 2) return 'AGENT';
+  if (v === 'BOT'      || v === 3) return 'BOT';
+  if (v === 'SYSTEM'   || v === 4) return 'SYSTEM';
+  const n = Number(v);
+  if (n === 1) return 'CUSTOMER';
+  if (n === 2) return 'AGENT';
+  if (n === 3) return 'BOT';
+  return 'SYSTEM';
+}
+function normMsgType(v: unknown): string {
+  if (v === 'TEXT'   || v === 1) return 'TEXT';
+  if (v === 'SYSTEM' || v === 2) return 'SYSTEM';
+  if (v === 'FILE'   || v === 3) return 'FILE';
+  if (v === 'IMAGE'  || v === 4) return 'IMAGE';
+  if (v === 'VIDEO'  || v === 5) return 'VIDEO';
+  if (v === 'AUDIO'  || v === 6) return 'AUDIO';
+  const n = Number(v);
+  if (n === 1) return 'TEXT';
+  if (n === 2) return 'SYSTEM';
+  if (n === 3) return 'FILE';
+  if (n === 4) return 'IMAGE';
+  if (n === 5) return 'VIDEO';
+  if (n === 6) return 'AUDIO';
+  return 'TEXT';
+}
+function normStatus(v: unknown): string {
+  if (v === 'OPEN'              || v === 1) return 'OPEN';
+  if (v === 'WAITING_FOR_AGENT' || v === 2) return 'WAITING_FOR_AGENT';
+  if (v === 'ASSIGNED'          || v === 3) return 'ASSIGNED';
+  if (v === 'CLOSED'            || v === 4) return 'CLOSED';
+  if (v === 'RESOLVED'          || v === 5) return 'RESOLVED';
+  if (v === 'ON_HOLD'           || v === 6) return 'ON_HOLD';
+  if (v == null) return 'OPEN';
+  const n = Number(v);
+  if (n === 1) return 'OPEN';
+  if (n === 2) return 'WAITING_FOR_AGENT';
+  if (n === 3) return 'ASSIGNED';
+  if (n === 4) return 'CLOSED';
+  if (n === 5) return 'RESOLVED';
+  if (n === 6) return 'ON_HOLD';
+  return 'OPEN';
+}
+function normMode(v: unknown): string {
+  if (v === 'BOT'   || v === 1) return 'BOT';
+  if (v === 'HUMAN' || v === 2) return 'HUMAN';
+  if (v == null) return 'BOT';
+  const n = Number(v);
+  return n === 2 ? 'HUMAN' : 'BOT';
+}
+
 interface ChatContextValue {
   state:   ChatSDKState;
   actions: ChatSDKActions;
@@ -246,7 +303,8 @@ export function ChatProvider({ config, children }: {
         clientRef.current = client;
 
         client.on('message', (msg: unknown) => {
-          const message = msg as ChatMessage;
+          const _raw = msg as any;
+          const message: ChatMessage = { ..._raw, senderType: normSender(_raw.senderType) as any, messageType: normMsgType(_raw.messageType) as any };
           if (message.senderType === 'CUSTOMER' && !message.id.startsWith('temp-')) {
             if (pendingReplaces.current.has(message.content)) {
               console.log('[Chat] Skipping text echo — replaceOptimistic will handle:', message.id);
@@ -355,7 +413,7 @@ export function ChatProvider({ config, children }: {
         }) as EventCallback);
 
         client.on('statusChange', ((data: any) => {
-          dispatch({ type: 'UPDATE_SESSION', session: { status: data.status, mode: data.mode } });
+          dispatch({ type: 'UPDATE_SESSION', session: { status: normStatus(data.status) as any, mode: normMode(data.mode) as any } });
           dispatch({
             type:      'UPDATE_PAST_SESSION',
             sessionId: data.chatSessionId,
@@ -432,7 +490,7 @@ export function ChatProvider({ config, children }: {
           console.log('[Chat] connectionAck received — ensuring connected=true', data);
           dispatch({ type: 'SET_CONNECTED', connected: true });
           if (data?.status || data?.mode) {
-            dispatch({ type: 'UPDATE_SESSION', session: { status: data.status, mode: data.mode } });
+            dispatch({ type: 'UPDATE_SESSION', session: { status: normStatus(data.status) as any, mode: normMode(data.mode) as any } });
           }
         }) as EventCallback);
 
@@ -684,8 +742,9 @@ client.on('ticketLinked', ((data: any) => {
       }, 15_000);
     }
 
-    const replaceOptimistic: EventCallback = (raw: unknown) => {
-      const msg = raw as ChatMessage;
+    const replaceOptimistic: EventCallback = (rawEvt: unknown) => {
+      const _r = rawEvt as any;
+      const msg: ChatMessage = { ..._r, senderType: normSender(_r.senderType) as any, messageType: normMsgType(_r.messageType) as any };
       if (msg.senderType === 'CUSTOMER' && msg.content === content && !msg.id.startsWith('temp-')) {
         dispatch({ type: 'REPLACE_TEMP', tempId, message: msg });
         pendingReplaces.current.delete(content);
@@ -765,11 +824,11 @@ client.on('ticketLinked', ((data: any) => {
         return {
           id:               m.id,
           chatSessionId:    m.chatSessionId,
-          senderType:       m.senderType,
+          senderType:       normSender(m.senderType)   as any,
           senderId:         m.senderId,
           senderName:       m.senderName,
           content:          m.content,
-          messageType:      m.messageType ?? 'TEXT',
+          messageType:      normMsgType(m.messageType) as any,
           timestamp:        isNaN(d.getTime()) ? new Date() : d,
           metadata:         m.metadata,
           attachment:       m.attachment ?? m.metadata?.attachment ?? undefined,
@@ -812,8 +871,9 @@ client.on('ticketLinked', ((data: any) => {
 
     try {
       await clientRef.current.sendAttachment(file);
-      const replaceOptimistic: EventCallback = (raw: unknown) => {
-        const msg = raw as ChatMessage;
+      const replaceOptimistic: EventCallback = (rawEvt: unknown) => {
+        const _r = rawEvt as any;
+        const msg: ChatMessage = { ..._r, senderType: normSender(_r.senderType) as any, messageType: normMsgType(_r.messageType) as any };
         if (
           msg.senderType === 'CUSTOMER' &&
           !msg.id.startsWith('temp-') &&
@@ -995,11 +1055,11 @@ async function fetchMessages(
       return {
         id:               m.id,
         chatSessionId:    m.chatSessionId,
-        senderType:       m.senderType,
+        senderType:       normSender(m.senderType)    as any,
         senderId:         m.senderId,
         senderName:       m.senderName,
         content:          m.content,
-        messageType:      m.messageType ?? 'TEXT',
+        messageType:      normMsgType(m.messageType)  as any,
         timestamp:        isNaN(d.getTime()) ? new Date() : d,
         metadata:         m.metadata,
         attachment:       m.attachment ?? m.metadata?.attachment ?? undefined,
