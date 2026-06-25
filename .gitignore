@@ -82,7 +82,8 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-dist
+# dist is intentionally committed so GitHub installs don't need a build step
+# dist
 
 # Gatsby files
 .cache/
