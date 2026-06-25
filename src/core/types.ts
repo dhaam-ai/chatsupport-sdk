@@ -2,11 +2,10 @@
 // Chat SDK - Type Definitions
 // ==========================================
 
-// Integer enums (mirror of chat-service §12) — values + coercion in shared/enums.ts.
-export type ChatMode = number;
-export type ChatStatus = number;
-export type SenderType = number;
-export type MessageType = number;
+export type ChatMode = 'BOT' | 'HUMAN';
+export type ChatStatus = 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
+export type SenderType = 'CUSTOMER' | 'AGENT' | 'BOT' | 'SYSTEM';
+export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE' | 'VIDEO' | 'AUDIO';
 
 /**
  * SDK Configuration
@@ -266,19 +265,7 @@ export const WS_EVENTS = {
   AGENT_LEFT: 'chat.agent.left',
   SESSION_CLOSED: 'chat.session.closed',
   STATUS_CHANGED: 'chat.status.changed',
-  SESSION_JOINED: 'chat.session.joined',
-  ESCALATED: 'chat.escalated',
   ERROR: 'chat.error',
-  TYPING: 'chat.typing',
-  // Read / delivery receipts (Phase 3)
+  // Read receipts
   MESSAGE_READ: 'chat.message.read',
-  MARK_READ: 'chat.message.markRead',
-  MESSAGE_ACK: 'chat.message.ack',
-  MESSAGE_DELIVERED: 'chat.message.delivered',
-  // Presence (§13)
-  HEARTBEAT: 'chat.heartbeat',
-  SET_PRESENCE: 'chat.presence.set',
-  PRESENCE_QUERY: 'chat.presence.query',
-  PRESENCE_UPDATE: 'chat.presence.update',
-  PRESENCE_STATE: 'chat.presence.state',
 } as const;

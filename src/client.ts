@@ -3,6 +3,7 @@
 import { io, Socket } from 'socket.io-client';
 import type { ChatSDKConfig, ChatMessage, ChatSession, MessageType, FileAttachment } from './types';
 import { WS_EVENTS } from './types';
+import { MessageType as MT, ChatStatus, toSenderType, toMessageType } from './shared/enums';
 
 type EventCallback = (...args: unknown[]) => void;
 
@@ -23,11 +24,11 @@ function normalizeMessage(raw: any, sessionId: string): ChatMessage | null {
   return {
     id,
     chatSessionId: raw.chatSessionId ?? raw.chat_session_id ?? sessionId,
-    senderType:    raw.senderType    ?? raw.sender_type    ?? 'SYSTEM',
+    senderType:    toSenderType(raw.senderType ?? raw.sender_type),
     senderId:      raw.senderId      ?? raw.sender_id      ?? '',
     senderName:    raw.senderName    ?? raw.sender_name,
     content:       raw.content       ?? raw.text           ?? '',
-    messageType:   raw.messageType   ?? raw.message_type   ?? 'TEXT',
+    messageType:   toMessageType(raw.messageType ?? raw.message_type),
     timestamp,
     metadata:      raw.metadata,
     attachment:    raw.attachment ?? raw.metadata?.attachment ?? undefined,
@@ -43,6 +44,7 @@ export class ChatWebSocketClient {
   private reconnectAttempts    = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay       = 1000;
+  private heartbeatTimer:       ReturnType<typeof setInterval> | null = null;
 
   public session:       ChatSession | null = null;
   public connected      = false;
@@ -164,6 +166,7 @@ export class ChatWebSocketClient {
 
         this.socket.on('connect', () => {
           console.log('%c[ChatClient] 📡 Transport connected 3', 'color:#0ea5e9;font-weight:bold');
+          this._startHeartbeat();
         });
 
         // ── MESSAGE_RECEIVE ────────────────────────────────────────────────
@@ -181,7 +184,7 @@ export class ChatWebSocketClient {
         const handleTypingEvent = (data: any, sourceEvent: string) => {
           const isTyping   = data?.isTyping   ?? false;
           const senderId   = data?.senderId   ?? '';
-          const senderType = data?.senderType ?? 'AGENT';
+          const senderType = toSenderType(data?.senderType);
 
           console.log(
             `%c[ChatClient:TYPING] 🖊 Received "${sourceEvent}"`,
@@ -227,7 +230,7 @@ export class ChatWebSocketClient {
         });
 
         this.socket.on(WS_EVENTS.SESSION_CLOSED, () => {
-          if (this.session) this.session.status = 'CLOSED';
+          if (this.session) this.session.status = ChatStatus.CLOSED;
           this.emit('sessionClosed', {});
           this.config.callbacks?.onSessionClosed?.();
         });
@@ -244,6 +247,24 @@ this.socket.on(WS_EVENTS.MESSAGE_READ, (data: any) => {
   this.emit('messageRead', data);
 });
 
+this.socket.on(WS_EVENTS.MESSAGE_ACK, (data: any) => {
+  const clientMessageId = data?.clientMessageId;
+  const messageId       = data?.messageId ?? data?.id;
+  const chatSessionId   = data?.chatSessionId ?? data?.sessionId;
+  if (!clientMessageId || !messageId) return;
+  this.emit('messageAck', { clientMessageId, messageId, chatSessionId, seq: data?.seq ?? null });
+});
+
+const handlePresenceUpdate = (data: any) => {
+  const userId = data?.userId ?? data?.agentId;
+  if (!userId) return;
+  const status   = data?.status ?? (data?.isOnline ? 1 : 2);
+  const lastSeen = data?.lastSeen ?? null;
+  this.emit('presenceUpdate', { userId, status, lastSeen });
+};
+this.socket.on(WS_EVENTS.PRESENCE_UPDATE, handlePresenceUpdate);
+this.socket.on('PRESENCE_UPDATE',          handlePresenceUpdate);
+
 this.socket.on('chat.ticket.linked', (data: any) => {
   console.log('[ChatClient] TICKET_LINKED:', data);
   this.emit('ticketLinked', data);
@@ -252,6 +273,22 @@ this.socket.on('TICKET_LINKED', (data: any) => {
   console.log('[ChatClient] TICKET_LINKED (alt):', data);
   this.emit('ticketLinked', data);
 });
+
+// NEW_MESSAGE_NOTIFICATION — customer widget: only WS in-app, never push
+const handleNewMsgNotif = (data: any) => {
+  if (!data?.chatSessionId) return;
+  this.emit('newMessageNotification', {
+    eventType:     data.eventType     ?? 1,
+    chatSessionId: data.chatSessionId,
+    messageId:     data.messageId     ?? '',
+    senderType:    data.senderType    ?? 0,
+    senderName:    data.senderName    ?? '',
+    preview:       data.preview       ?? '',
+    timestamp:     data.timestamp     ?? new Date().toISOString(),
+  });
+};
+this.socket.on('chat.notification.new_message', handleNewMsgNotif);
+this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
 
         // ── ERRORS ─────────────────────────────────────────────────────────
         this.socket.on(WS_EVENTS.ERROR, (error: any) => {
@@ -304,6 +341,7 @@ this.socket.on('TICKET_LINKED', (data: any) => {
             'color:#10b981;font-weight:bold');
           this.connected         = true;
           this.reconnectAttempts = 0;
+          this._startHeartbeat();
 
           // Re-join session room so server sends a new CONNECTION_ACK
           if (this.session?.id) {
@@ -321,16 +359,45 @@ this.socket.on('TICKET_LINKED', (data: any) => {
     });
   }
 
-  sendMessage(content: string, messageType: MessageType = 'TEXT', replyToMessageId?: string): void {
+  sendMessage(content: string, messageType: MessageType = MT.TEXT, replyToMessageId?: string, clientMessageId?: string): void {
     if (this.tokenExpired) throw new Error('TOKEN_EXPIRED');
     if (!this.socket || !this.connected || !this.session) throw new Error('Not connected');
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
       content,
       messageType,
-       token: this.config.token,
+      token: this.config.token,
       ...(replyToMessageId ? { replyToMessageId } : {}),
+      ...(clientMessageId  ? { clientMessageId }  : {}),
     });
+  }
+
+  markRead(): void {
+    if (!this.socket || !this.connected || !this.session) return;
+    this.socket.emit(WS_EVENTS.MARK_READ, { chatSessionId: this.session.id });
+  }
+
+  presenceQuery(userIds: string[]): void {
+    if (!this.socket || !this.connected || !userIds.length) return;
+    this.socket.emit(WS_EVENTS.PRESENCE_QUERY, { userIds });
+  }
+
+  setPresence(status: number): void {
+    if (!this.socket || !this.connected) return;
+    this.socket.emit(WS_EVENTS.SET_PRESENCE, { status });
+  }
+
+  private _startHeartbeat(): void {
+    this._stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.socket?.connected) {
+        this.socket.emit(WS_EVENTS.HEARTBEAT, { timestamp: Date.now() });
+      }
+    }, 25_000);
+  }
+
+  private _stopHeartbeat(): void {
+    if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
   }
 
   /**
@@ -369,10 +436,10 @@ this.socket.on('TICKET_LINKED', (data: any) => {
     const result     = await response.json();
     const uploadData = result.data;
 
-    let messageType: MessageType = 'FILE';
-    if (uploadData.mediaType === 'images') messageType = 'IMAGE';
-    else if (uploadData.mediaType === 'videos') messageType = 'VIDEO';
-    else if (uploadData.mediaType === 'audio')  messageType = 'AUDIO';
+    let messageType: MessageType = MT.FILE;
+    if (uploadData.mediaType === 'images') messageType = MT.IMAGE;
+    else if (uploadData.mediaType === 'videos') messageType = MT.VIDEO;
+    else if (uploadData.mediaType === 'audio')  messageType = MT.AUDIO;
 
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
@@ -422,11 +489,12 @@ this.socket.on('TICKET_LINKED', (data: any) => {
     }
     this.socket.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
     if (this.session) {
-      this.session = { ...this.session, id: sessionId, status: 'OPEN' };
+      this.session = { ...this.session, id: sessionId, status: ChatStatus.OPEN };
     }
   }
 
   disconnect(): void {
+    this._stopHeartbeat();
     if (this.socket) { this.socket.disconnect(); this.socket = null; }
     this.connected = false;
     this.session   = null;

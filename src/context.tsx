@@ -66,7 +66,7 @@
 
 //     case 'ADD_MESSAGE': {
 //       if (state.messages.some(m => m.id === action.message.id)) return state;
-//       const isFromAgentOrBot = action.message.senderType === 'AGENT' || action.message.senderType === 'BOT';
+//       const isFromAgentOrBot = action.message.senderType === SenderType.AGENT || action.message.senderType === SenderType.BOT;
 //       const shouldIncrement  = !state.isWidgetOpen && isFromAgentOrBot;
 //       return {
 //         ...state,
@@ -241,7 +241,7 @@
 
 //         client.on('message', (msg: unknown) => {
 //           const message = msg as ChatMessage;
-//           if (message.senderType === 'CUSTOMER' && !message.id.startsWith('temp-')) {
+//           if (message.senderType === SenderType.CUSTOMER && !message.id.startsWith('temp-')) {
 //             if (pendingReplaces.current.has(message.content)) {
 //               console.log('[Chat] Skipping text echo — replaceOptimistic will handle:', message.id);
 //               return;
@@ -254,7 +254,7 @@
 //           dispatch({ type: 'ADD_MESSAGE', message });
 
 //           // ── Mark customer-read when widget is open ────────────────────────
-//           const isFromAgentOrBot = message.senderType === 'AGENT' || message.senderType === 'BOT';
+//           const isFromAgentOrBot = message.senderType === SenderType.AGENT || message.senderType === SenderType.BOT;
 //           if (isFromAgentOrBot && stateRef.current.isWidgetOpen && stateRef.current.session?.id) {
 //             const cfg = configRef.current;
 //             fetch(
@@ -275,7 +275,7 @@
 //           // When the agent sends a message, they have provably read all prior
 //           // customer messages. Use the message timestamp as the read watermark.
 //           // This covers the live case; page-refresh is handled by participants.
-//           if (message.senderType === 'AGENT') {
+//           if (message.senderType === SenderType.AGENT) {
 //             const ts = safeDate(message.timestamp);
 //             if (ts) {
 //               console.log('%c[Chat] 📨 Agent reply → inferring agentReadAt', 'color:#7c3aed', ts.toISOString());
@@ -293,7 +293,7 @@
 //           console.log(`%c[Chat:TYPING] 📨 event received`, 'color:#f59e0b;font-weight:bold',
 //             { isTyping, senderId, senderType, raw: rawData?.senderType });
 
-//           if (senderType === 'CUSTOMER') {
+//           if (senderType === SenderType.CUSTOMER) {
 //             console.log('[Chat:TYPING] Skipping — explicit CUSTOMER echo');
 //             return;
 //           }
@@ -327,7 +327,7 @@
 //             sessionId: data.chatSessionId,
 //             updates:   { status: data.status, mode: data.mode, closedAt: null },
 //           });
-//           if (data.status === 'CLOSED' && data.closeReason) {
+//           if (data.status === ChatStatus.CLOSED && data.closeReason) {
 //             dispatch({ type: 'SET_CLOSE_REASON', reason: data.closeReason });
 //           }
 //         }) as EventCallback);
@@ -344,8 +344,8 @@
 //                 avatarUrl:   data.avatarUrl  || null,
 //                 isOnline:    true,
 //               } : undefined,
-//               mode:   'HUMAN',
-//               status: 'ASSIGNED',
+//               mode:   ChatMode.HUMAN,
+//               status: ChatStatus.ASSIGNED,
 //             },
 //           });
 //         }) as EventCallback);
@@ -387,7 +387,7 @@
 //         });
 
 //         // ── messageRead: handles explicit server read receipts ────────────────
-//         // The server sends readBy='CUSTOMER' when the customer calls /read.
+//         // The server sends readBy=SenderType.CUSTOMER when the customer calls /read.
 //         // We also handle readBy='AGENT' for future-proofing, and any non-standard
 //         // value (e.g. the server sends an agentId string instead of 'AGENT').
 //         client.on('messageRead', ((data: any) => {
@@ -397,10 +397,10 @@
 //           console.log('[Chat] messageRead event:', { readBy: data.readBy, readAt: data.readAt });
 
 //           const isAgentRead =
-//             readBy === 'AGENT' ||
+//             readBy === SenderType.AGENT ||
 //             (readBy.length > 0 &&
-//               readBy !== 'CUSTOMER' &&
-//               readBy !== 'SYSTEM' &&
+//               readBy !== SenderType.CUSTOMER &&
+//               readBy !== SenderType.SYSTEM &&
 //               readBy !== 'BOT');
 
 //           if (isAgentRead) {
@@ -416,7 +416,7 @@
 
 //         mapCustomer(cfg);
 
-//         if (session.status === 'CLOSED') {
+//         if (session.status === ChatStatus.CLOSED) {
 //           console.log('[Chat] Got CLOSED session — creating fresh session via REST');
 //           try {
 //             const res = await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions`, {
@@ -436,8 +436,8 @@
 //             if (res.ok) {
 //               const json      = await res.json();
 //               const newId     = json.data?.sessionId ?? json.data?.id;
-//               const newMode   = json.data?.mode      ?? 'BOT';
-//               const newStatus = json.data?.status    ?? 'OPEN';
+//               const newMode   = json.data?.mode      ?? ChatMode.BOT;
+//               const newStatus = json.data?.status    ?? ChatStatus.OPEN;
 //               if (newId) {
 //                 client.joinSession(newId);
 //                 session = { id: newId, mode: newMode, status: newStatus };
@@ -478,7 +478,7 @@
 
 //   // ── Actions ───────────────────────────────────────────────────────────────
 
-//   const sendMessage = useCallback(async (content: string, type: MessageType = 'TEXT', replyToMessageId?: string) => {
+//   const sendMessage = useCallback(async (content: string, type: MessageType = MT.TEXT, replyToMessageId?: string) => {
 //     const s = stateRef.current;
 //     if (!clientRef.current || !s.session) throw new Error('Chat not initialized');
 //     if (clientRef.current.tokenExpired || s.tokenExpired) throw new Error('TOKEN_EXPIRED');
@@ -487,7 +487,7 @@
 //     const optimistic: ChatMessage = {
 //       id:            tempId,
 //       chatSessionId: s.session.id,
-//       senderType:    'CUSTOMER',
+//       senderType:    SenderType.CUSTOMER,
 //       senderId:      configRef.current.user.id,
 //       senderName:    configRef.current.user.name,
 //       content,
@@ -502,7 +502,7 @@
 
 //     const replaceOptimistic: EventCallback = (raw: unknown) => {
 //       const msg = raw as ChatMessage;
-//       if (msg.senderType === 'CUSTOMER' && msg.content === content && !msg.id.startsWith('temp-')) {
+//       if (msg.senderType === SenderType.CUSTOMER && msg.content === content && !msg.id.startsWith('temp-')) {
 //         dispatch({ type: 'REPLACE_TEMP', tempId, message: msg });
 //         pendingReplaces.current.delete(content);
 //         clientRef.current?.off?.('message', replaceOptimistic);
@@ -535,7 +535,7 @@
 //           'Content-Type':  'application/json',
 //         },
 //       });
-//       dispatch({ type: 'UPDATE_SESSION', session: { status: 'CLOSED' } });
+//       dispatch({ type: 'UPDATE_SESSION', session: { status: ChatStatus.CLOSED } });
 //     } catch (error) {
 //       dispatch({ type: 'SET_ERROR', error: error as Error });
 //     }
@@ -585,7 +585,7 @@
 //           senderId:         m.senderId,
 //           senderName:       m.senderName,
 //           content:          m.content,
-//           messageType:      m.messageType ?? 'TEXT',
+//           messageType:      m.messageType ?? MT.TEXT,
 //           timestamp:        isNaN(d.getTime()) ? new Date() : d,
 //           metadata:         m.metadata,
 //           attachment:       m.attachment ?? m.metadata?.attachment ?? undefined,
@@ -605,16 +605,16 @@
 //     if (!clientRef.current || !s.session) throw new Error('Chat not initialized');
 //     if (clientRef.current.tokenExpired || s.tokenExpired) throw new Error('TOKEN_EXPIRED');
 
-//     let optType: MessageType = 'FILE';
-//     if (file.type.startsWith('image/'))       optType = 'IMAGE';
-//     else if (file.type.startsWith('video/'))  optType = 'VIDEO';
-//     else if (file.type.startsWith('audio/'))  optType = 'AUDIO';
+//     let optType: MessageType = MT.FILE;
+//     if (file.type.startsWith('image/'))       optType = MT.IMAGE;
+//     else if (file.type.startsWith('video/'))  optType = MT.VIDEO;
+//     else if (file.type.startsWith('audio/'))  optType = MT.AUDIO;
 
 //     const tempId = `temp-attach-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 //     const optimistic: ChatMessage = {
 //       id:            tempId,
 //       chatSessionId: s.session.id,
-//       senderType:    'CUSTOMER',
+//       senderType:    SenderType.CUSTOMER,
 //       senderId:      configRef.current.user.id,
 //       senderName:    configRef.current.user.name,
 //       content:       file.name,
@@ -631,9 +631,9 @@
 //       const replaceOptimistic: EventCallback = (raw: unknown) => {
 //         const msg = raw as ChatMessage;
 //         if (
-//           msg.senderType === 'CUSTOMER' &&
+//           msg.senderType === SenderType.CUSTOMER &&
 //           !msg.id.startsWith('temp-') &&
-//           (msg.messageType === optType || msg.messageType === 'FILE')
+//           (msg.messageType === optType || msg.messageType === MT.FILE)
 //         ) {
 //           dispatch({ type: 'REPLACE_TEMP', tempId, message: msg });
 //           pendingAttachTempIds.current.delete(tempId);
@@ -673,7 +673,7 @@
 //     const currentSessionId = stateRef.current.session?.id;
 //     const currentStatus    = stateRef.current.session?.status;
 
-//     if (currentSessionId && currentStatus !== 'CLOSED' && currentSessionId !== sessionId) {
+//     if (currentSessionId && currentStatus !== ChatStatus.CLOSED && currentSessionId !== sessionId) {
 //       try {
 //         await fetch(
 //           `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${currentSessionId}/close`,
@@ -697,10 +697,10 @@
 //         message: {
 //           id:            `system-hold-${Date.now()}`,
 //           chatSessionId: currentSessionId,
-//           senderType:    'SYSTEM',
+//           senderType:    SenderType.SYSTEM,
 //           senderId:      'system',
 //           content:       '⏸ Your chat has been put on hold because you switched to another session.',
-//           messageType:   'TEXT',
+//           messageType:   MT.TEXT,
 //           timestamp:     new Date(),
 //         } as any,
 //       });
@@ -728,7 +728,7 @@
 //     clientRef.current?.joinSession(data.sessionId ?? sessionId);
 //     dispatch({
 //       type:    'INIT_SUCCESS',
-//       session: { id: data.sessionId ?? sessionId, mode: 'HUMAN', status: 'WAITING_FOR_AGENT' },
+//       session: { id: data.sessionId ?? sessionId, mode: ChatMode.HUMAN, status: ChatStatus.WAITING_FOR_AGENT },
 //     });
 //     dispatch({ type: 'SET_MESSAGES', messages: [], hasMore: false });
 //     await fetchMessages(cfg, data.sessionId ?? sessionId, dispatch, false);
@@ -805,7 +805,7 @@
 //         m.content.includes('/video/') ||
 //         /\.(mp3|wav|ogg|m4a|aac|mp4|webm|mov)(\?|$)/i.test(m.content)
 //       );
-//       if ((m.messageType && m.messageType !== 'TEXT') || hasMediaContent || m.metadata?.attachment) {
+//       if ((m.messageType && m.messageType !== MT.TEXT) || hasMediaContent || m.metadata?.attachment) {
 //         console.log('[Chat] fetchMessages MEDIA message RAW:', JSON.stringify(m, null, 2));
 //       }
 //       return {
@@ -815,7 +815,7 @@
 //         senderId:         m.senderId,
 //         senderName:       m.senderName,
 //         content:          m.content,
-//         messageType:      m.messageType ?? 'TEXT',
+//         messageType:      m.messageType ?? MT.TEXT,
 //         timestamp:        isNaN(d.getTime()) ? new Date() : d,
 //         metadata:         m.metadata,
 //         attachment:       m.attachment ?? m.metadata?.attachment ?? undefined,
@@ -855,7 +855,7 @@
 //     const participants: any[] = data.data.participants ?? [];
 
 //     const agentParticipant = participants.find(
-//       (p: any) => p.participantType === 'AGENT' && p.lastReadAt
+//       (p: any) => p.participantType === SenderType.AGENT && p.lastReadAt
 //     );
 //     if (agentParticipant?.lastReadAt) {
 //       const ts = new Date(agentParticipant.lastReadAt);
@@ -866,7 +866,7 @@
 //     }
 
 //     const customerParticipant = participants.find(
-//       (p: any) => p.participantType === 'CUSTOMER' && p.lastReadAt
+//       (p: any) => p.participantType === SenderType.CUSTOMER && p.lastReadAt
 //     );
 //     if (customerParticipant?.lastReadAt) {
 //       const ts = new Date(customerParticipant.lastReadAt);
@@ -887,6 +887,7 @@ import React, {
   createContext, useContext, useReducer, useEffect, useCallback, useRef,
 } from 'react';
 import type { ChatSDKConfig, ChatSDKState, ChatSDKActions, ChatMessage, ChatSessionSummary, MessageType } from './types';
+import { SenderType, MessageType as MT, ChatStatus, ChatMode, toSenderType } from './shared/enums';
 import { ChatWebSocketClient } from './client';
 
 type EventCallback = (...args: unknown[]) => void;
@@ -948,7 +949,7 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
 
     case 'ADD_MESSAGE': {
       if (state.messages.some(m => m.id === action.message.id)) return state;
-      const isFromAgentOrBot = action.message.senderType === 'AGENT' || action.message.senderType === 'BOT';
+      const isFromAgentOrBot = action.message.senderType === SenderType.AGENT || action.message.senderType === SenderType.BOT;
       const shouldIncrement  = !state.isWidgetOpen && isFromAgentOrBot;
       return {
         ...state,
@@ -1106,6 +1107,8 @@ export function ChatProvider({ config, children }: {
 
   const pendingReplaces      = useRef<Map<string, string>>(new Map());
   const pendingAttachTempIds = useRef<Set<string>>(new Set());
+  // clientMessageId → tempId (for MESSAGE_ACK reconciliation)
+  const clientMsgMap         = useRef<Map<string, string>>(new Map());
 
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
@@ -1125,7 +1128,7 @@ export function ChatProvider({ config, children }: {
 
         client.on('message', (msg: unknown) => {
           const message = msg as ChatMessage;
-          if (message.senderType === 'CUSTOMER' && !message.id.startsWith('temp-')) {
+          if (message.senderType === SenderType.CUSTOMER && !message.id.startsWith('temp-')) {
             if (pendingReplaces.current.has(message.content)) {
               console.log('[Chat] Skipping text echo — replaceOptimistic will handle:', message.id);
               return;
@@ -1138,7 +1141,7 @@ export function ChatProvider({ config, children }: {
 
           // ── Clear bot typing indicator when bot/agent reply arrives ──────────
           // We show a fake typing indicator while the AI processes. Clear it now.
-          if (message.senderType === 'BOT' || message.senderType === 'AGENT') {
+          if (message.senderType === SenderType.BOT || message.senderType === SenderType.AGENT) {
             if (botTypingTimerRef.current) {
               clearTimeout(botTypingTimerRef.current);
               botTypingTimerRef.current = null;
@@ -1149,8 +1152,11 @@ export function ChatProvider({ config, children }: {
           dispatch({ type: 'ADD_MESSAGE', message });
 
           // ── Mark customer-read when widget is open ────────────────────────
-          const isFromAgentOrBot = message.senderType === 'AGENT' || message.senderType === 'BOT';
+          const isFromAgentOrBot = message.senderType === SenderType.AGENT || message.senderType === SenderType.BOT;
           if (isFromAgentOrBot && stateRef.current.isWidgetOpen && stateRef.current.session?.id) {
+            // WS real-time read receipt (updates agent tick to READ)
+            client.markRead();
+            // REST persistence (updates participant lastReadAt in DB)
             const cfg = configRef.current;
             fetch(
               `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${stateRef.current.session.id}/read`,
@@ -1171,7 +1177,7 @@ export function ChatProvider({ config, children }: {
           // customer messages. Use the message timestamp as the read watermark.
           // This covers the live case; page-refresh is handled by participants.
   
-//           if (message.senderType === 'AGENT') {
+//           if (message.senderType === SenderType.AGENT) {
 //   const ts = safeDate(message.timestamp);
 //   if (ts) {
 //     // Use the later of: message timestamp or current time
@@ -1181,7 +1187,7 @@ export function ChatProvider({ config, children }: {
 //     dispatch({ type: 'SET_AGENT_READ_AT', readAt });
 //   }
 // }
- if (message.senderType === 'AGENT') {
+ if (message.senderType === SenderType.AGENT) {
   const ts = safeDate(message.timestamp);
   if (ts) {
     // Agent sending a message means they've read everything up to this point
@@ -1197,12 +1203,12 @@ export function ChatProvider({ config, children }: {
           const isTyping   = rawData?.isTyping ?? false;
           const senderId   = rawData?.senderId ?? '';
           const rawSender  = rawData?.senderType ?? rawData?.sender_type ?? '';
-          const senderType = String(rawSender).toUpperCase().trim();
+          const senderType = toSenderType(rawSender);
 
           console.log(`%c[Chat:TYPING] 📨 event received`, 'color:#f59e0b;font-weight:bold',
             { isTyping, senderId, senderType, raw: rawData?.senderType });
 
-          if (senderType === 'CUSTOMER') {
+          if (senderType === SenderType.CUSTOMER) {
             console.log('[Chat:TYPING] Skipping — explicit CUSTOMER echo');
             return;
           }
@@ -1236,7 +1242,7 @@ export function ChatProvider({ config, children }: {
             sessionId: data.chatSessionId,
             updates:   { status: data.status, mode: data.mode, closedAt: null },
           });
-          if (data.status === 'CLOSED' && data.closeReason) {
+          if (data.status === ChatStatus.CLOSED && data.closeReason) {
             dispatch({ type: 'SET_CLOSE_REASON', reason: data.closeReason });
           }
           // Clear bot typing indicator when session changes status (escalation, assigned, etc.)
@@ -1259,8 +1265,8 @@ export function ChatProvider({ config, children }: {
                 avatarUrl:   data.avatarUrl  || null,
                 isOnline:    true,
               } : undefined,
-              mode:   'HUMAN',
-              status: 'ASSIGNED',
+              mode:   ChatMode.HUMAN,
+              status: ChatStatus.ASSIGNED,
             },
           });
 
@@ -1272,10 +1278,10 @@ export function ChatProvider({ config, children }: {
             const localSysMsg: any = {
               id:            `agentjoined-local-${data.agentId}-${Date.now()}`,
               chatSessionId: stateRef.current.session?.id ?? '',
-              senderType:    'SYSTEM',
+              senderType:    SenderType.SYSTEM,
               senderId:      'system',
               content:       `${data.agentName} has joined the chat.`,
-              messageType:   'TEXT',
+              messageType:   MT.TEXT,
               timestamp:     new Date(),
             };
             dispatch({ type: 'ADD_MESSAGE', message: localSysMsg });
@@ -1319,7 +1325,7 @@ export function ChatProvider({ config, children }: {
         });
 
         // ── messageRead: handles explicit server read receipts ────────────────
-        // The server sends readBy='CUSTOMER' when the customer calls /read.
+        // The server sends readBy=SenderType.CUSTOMER when the customer calls /read.
         // We also handle readBy='AGENT' for future-proofing, and any non-standard
         // value (e.g. the server sends an agentId string instead of 'AGENT').
       
@@ -1331,10 +1337,10 @@ export function ChatProvider({ config, children }: {
         //   console.log('[Chat] messageRead event:', { readBy: data.readBy, readAt: data.readAt });
 
         //   const isAgentRead =
-        //     readBy === 'AGENT' ||
+        //     readBy === SenderType.AGENT ||
         //     (readBy.length > 0 &&
-        //       readBy !== 'CUSTOMER' &&
-        //       readBy !== 'SYSTEM' &&
+        //       readBy !== SenderType.CUSTOMER &&
+        //       readBy !== SenderType.SYSTEM &&
         //       readBy !== 'BOT');
 
         //   if (isAgentRead) {
@@ -1353,10 +1359,10 @@ export function ChatProvider({ config, children }: {
 //   const readBy = String(data.readBy ?? '').toUpperCase().trim();
 
 //   const isAgentRead =
-//     readBy === 'AGENT' ||
+//     readBy === SenderType.AGENT ||
 //     (readBy.length > 0 &&
-//       readBy !== 'CUSTOMER' &&
-//       readBy !== 'SYSTEM' &&
+//       readBy !== SenderType.CUSTOMER &&
+//       readBy !== SenderType.SYSTEM &&
 //       readBy !== 'BOT');
 
 //   if (isAgentRead) {
@@ -1374,14 +1380,9 @@ export function ChatProvider({ config, children }: {
 client.on('messageRead', ((data: any) => {
   if (!data?.readAt) return;
 
-  const readBy = String(data.readBy ?? '').toUpperCase().trim();
-
-  const isAgentRead =
-    readBy === 'AGENT' ||
-    (readBy.length > 0 &&
-      readBy !== 'CUSTOMER' &&
-      readBy !== 'SYSTEM' &&
-      readBy !== 'BOT');
+  // readBy is an integer (ParticipantType/SenderType) from the backend.
+  const readBy = toSenderType(data.readBy);
+  const isAgentRead = readBy === SenderType.AGENT;
 
   if (isAgentRead) {
     const ts = safeDate(data.readAt);
@@ -1392,7 +1393,36 @@ client.on('messageRead', ((data: any) => {
   }
 }) as EventCallback);
 
+client.on('messageAck', ((data: any) => {
+  const tempId = clientMsgMap.current.get(data?.clientMessageId);
+  if (!tempId || !data?.messageId) return;
+  clientMsgMap.current.delete(data.clientMessageId);
+  pendingReplaces.current.delete(stateRef.current.messages.find(m => m.id === tempId)?.content ?? '');
+  const existing = stateRef.current.messages.find(m => m.id === tempId);
+  if (!existing) return;
+  dispatch({ type: 'REPLACE_TEMP', tempId, message: { ...existing, id: data.messageId } });
+}) as EventCallback);
+
+client.on('presenceUpdate', ((data: any) => {
+  const session = stateRef.current.session;
+  if (!session || !data?.userId) return;
+  if (data.userId !== session.assignedAgentId) return;
+  const isOnline = data.status === 1; // PresenceStatus.ONLINE
+  if (!session.assignedAgent) return;
+  dispatch({
+    type:    'UPDATE_SESSION',
+    session: { assignedAgent: { ...session.assignedAgent, isOnline } } as any,
+  });
+}) as EventCallback);
+
 // ← ADD THIS RIGHT HERE ↓
+// NEW_MESSAGE_NOTIFICATION — customer widget receives this when online.
+// Unread badge is already handled by ADD_MESSAGE (triggered by MESSAGE_RECEIVE).
+// This handler is a no-op stub; future: add vibration/sound for mobile widget.
+client.on('newMessageNotification', ((_data: any) => {
+  // no-op: ADD_MESSAGE handles badge; no push/Firebase for customer ever
+}) as EventCallback);
+
 client.on('ticketLinked', ((data: any) => {
   const ticketId   = data?.ticketId   ?? data?.ticket_id   ?? data?.id   ?? '';
   const ticketUrl  = data?.ticketUrl  ?? data?.ticket_url  ?? null;
@@ -1408,10 +1438,10 @@ client.on('ticketLinked', ((data: any) => {
   const sysMsg: any = {
     id:            `ticket-linked-${ticketId}-${Date.now()}`,
     chatSessionId: stateRef.current.session?.id ?? '',
-    senderType:    'SYSTEM',
+    senderType:    SenderType.SYSTEM,
     senderId:      'system',
     content:       `🎫 Ticket #${ticketCode} has been created for this chat.${ticketUrl ? ` Track it at: ${ticketUrl}` : ''}`,
-    messageType:   'TEXT',
+    messageType:   MT.TEXT,
     timestamp:     new Date(),
   };
   dispatch({ type: 'ADD_MESSAGE', message: sysMsg });
@@ -1421,7 +1451,7 @@ client.on('ticketLinked', ((data: any) => {
 
         mapCustomer(cfg);
 
-        if (session.status === 'CLOSED') {
+        if (session.status === ChatStatus.CLOSED) {
           console.log('[Chat] Got CLOSED session — creating fresh session via REST');
           try {
             const res = await fetch(`${cfg.serviceUrl}/chat-services/api/v1/chat/sessions`, {
@@ -1441,8 +1471,8 @@ client.on('ticketLinked', ((data: any) => {
             if (res.ok) {
               const json      = await res.json();
               const newId     = json.data?.sessionId ?? json.data?.id;
-              const newMode   = json.data?.mode      ?? 'BOT';
-              const newStatus = json.data?.status    ?? 'OPEN';
+              const newMode   = json.data?.mode      ?? ChatMode.BOT;
+              const newStatus = json.data?.status    ?? ChatStatus.OPEN;
               if (newId) {
                 client.joinSession(newId);
                 session = { id: newId, mode: newMode, status: newStatus };
@@ -1458,6 +1488,11 @@ client.on('ticketLinked', ((data: any) => {
         dispatch({ type: 'INIT_SUCCESS', session });
         configRef.current.callbacks?.onConnected?.(session.id);
 
+        // Hydrate assigned agent presence on session start
+        if (session.assignedAgentId) {
+          client.presenceQuery([session.assignedAgentId]);
+        }
+
       } catch (error) {
         _activeConnections.delete(connectionKey);
         dispatch({ type: 'INIT_ERROR', error: error as Error });
@@ -1470,6 +1505,7 @@ client.on('ticketLinked', ((data: any) => {
     return () => {
       _activeConnections.delete(connectionKey);
       pendingReplaces.current.clear();
+      clientMsgMap.current.clear();
       if (typingTimerRef.current) {
         clearTimeout(typingTimerRef.current);
         typingTimerRef.current = null;
@@ -1487,16 +1523,19 @@ client.on('ticketLinked', ((data: any) => {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  const sendMessage = useCallback(async (content: string, type: MessageType = 'TEXT', replyToMessageId?: string) => {
+  const sendMessage = useCallback(async (content: string, type: MessageType = MT.TEXT, replyToMessageId?: string) => {
     const s = stateRef.current;
     if (!clientRef.current || !s.session) throw new Error('Chat not initialized');
     if (clientRef.current.tokenExpired || s.tokenExpired) throw new Error('TOKEN_EXPIRED');
 
-    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const clientMessageId = crypto.randomUUID();
+    const tempId          = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    clientMsgMap.current.set(clientMessageId, tempId);
+
     const optimistic: ChatMessage = {
       id:            tempId,
       chatSessionId: s.session.id,
-      senderType:    'CUSTOMER',
+      senderType:    SenderType.CUSTOMER,
       senderId:      configRef.current.user.id,
       senderName:    configRef.current.user.name,
       content,
@@ -1507,14 +1546,14 @@ client.on('ticketLinked', ((data: any) => {
 
     pendingReplaces.current.set(content, tempId);
     dispatch({ type: 'ADD_MESSAGE', message: optimistic });
-    clientRef.current.sendMessage(content, type, replyToMessageId);
+    clientRef.current.sendMessage(content, type, replyToMessageId, clientMessageId);
 
     // ── Show bot typing indicator while AI processes the message ─────────────
     // Only in BOT mode sessions — if an agent is assigned, they have their
     // own real typing events. We auto-clear after 15 s as a safety fallback.
     const currentMode   = stateRef.current.session?.mode;
     const currentStatus = stateRef.current.session?.status;
-    const isBotSession  = currentMode !== 'HUMAN' && currentStatus !== 'ASSIGNED' && currentStatus !== 'WAITING_FOR_AGENT';
+    const isBotSession  = currentMode !== ChatMode.HUMAN && currentStatus !== ChatStatus.ASSIGNED && currentStatus !== ChatStatus.WAITING_FOR_AGENT;
     if (isBotSession) {
       // Clear any existing bot typing timer
       if (botTypingTimerRef.current) clearTimeout(botTypingTimerRef.current);
@@ -1528,7 +1567,7 @@ client.on('ticketLinked', ((data: any) => {
 
     const replaceOptimistic: EventCallback = (raw: unknown) => {
       const msg = raw as ChatMessage;
-      if (msg.senderType === 'CUSTOMER' && msg.content === content && !msg.id.startsWith('temp-')) {
+      if (msg.senderType === SenderType.CUSTOMER && msg.content === content && !msg.id.startsWith('temp-')) {
         dispatch({ type: 'REPLACE_TEMP', tempId, message: msg });
         pendingReplaces.current.delete(content);
         clientRef.current?.off?.('message', replaceOptimistic);
@@ -1561,7 +1600,7 @@ client.on('ticketLinked', ((data: any) => {
           'Content-Type':  'application/json',
         },
       });
-      dispatch({ type: 'UPDATE_SESSION', session: { status: 'CLOSED' } });
+      dispatch({ type: 'UPDATE_SESSION', session: { status: ChatStatus.CLOSED } });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', error: error as Error });
     }
@@ -1611,7 +1650,7 @@ client.on('ticketLinked', ((data: any) => {
           senderId:         m.senderId,
           senderName:       m.senderName,
           content:          m.content,
-          messageType:      m.messageType ?? 'TEXT',
+          messageType:      m.messageType ?? MT.TEXT,
           timestamp:        isNaN(d.getTime()) ? new Date() : d,
           metadata:         m.metadata,
           attachment:       m.attachment ?? m.metadata?.attachment ?? undefined,
@@ -1631,16 +1670,16 @@ client.on('ticketLinked', ((data: any) => {
     if (!clientRef.current || !s.session) throw new Error('Chat not initialized');
     if (clientRef.current.tokenExpired || s.tokenExpired) throw new Error('TOKEN_EXPIRED');
 
-    let optType: MessageType = 'FILE';
-    if (file.type.startsWith('image/'))       optType = 'IMAGE';
-    else if (file.type.startsWith('video/'))  optType = 'VIDEO';
-    else if (file.type.startsWith('audio/'))  optType = 'AUDIO';
+    let optType: MessageType = MT.FILE;
+    if (file.type.startsWith('image/'))       optType = MT.IMAGE;
+    else if (file.type.startsWith('video/'))  optType = MT.VIDEO;
+    else if (file.type.startsWith('audio/'))  optType = MT.AUDIO;
 
     const tempId = `temp-attach-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const optimistic: ChatMessage = {
       id:            tempId,
       chatSessionId: s.session.id,
-      senderType:    'CUSTOMER',
+      senderType:    SenderType.CUSTOMER,
       senderId:      configRef.current.user.id,
       senderName:    configRef.current.user.name,
       content:       file.name,
@@ -1657,9 +1696,9 @@ client.on('ticketLinked', ((data: any) => {
       const replaceOptimistic: EventCallback = (raw: unknown) => {
         const msg = raw as ChatMessage;
         if (
-          msg.senderType === 'CUSTOMER' &&
+          msg.senderType === SenderType.CUSTOMER &&
           !msg.id.startsWith('temp-') &&
-          (msg.messageType === optType || msg.messageType === 'FILE')
+          (msg.messageType === optType || msg.messageType === MT.FILE)
         ) {
           dispatch({ type: 'REPLACE_TEMP', tempId, message: msg });
           pendingAttachTempIds.current.delete(tempId);
@@ -1699,7 +1738,7 @@ client.on('ticketLinked', ((data: any) => {
     const currentSessionId = stateRef.current.session?.id;
     const currentStatus    = stateRef.current.session?.status;
 
-    if (currentSessionId && currentStatus !== 'CLOSED' && currentSessionId !== sessionId) {
+    if (currentSessionId && currentStatus !== ChatStatus.CLOSED && currentSessionId !== sessionId) {
       try {
         await fetch(
           `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/${currentSessionId}/close`,
@@ -1723,10 +1762,10 @@ client.on('ticketLinked', ((data: any) => {
         message: {
           id:            `system-hold-${Date.now()}`,
           chatSessionId: currentSessionId,
-          senderType:    'SYSTEM',
+          senderType:    SenderType.SYSTEM,
           senderId:      'system',
           content:       '⏸ Your chat has been put on hold because you switched to another session.',
-          messageType:   'TEXT',
+          messageType:   MT.TEXT,
           timestamp:     new Date(),
         } as any,
       });
@@ -1754,7 +1793,7 @@ client.on('ticketLinked', ((data: any) => {
     clientRef.current?.joinSession(data.sessionId ?? sessionId);
     dispatch({
       type:    'INIT_SUCCESS',
-      session: { id: data.sessionId ?? sessionId, mode: 'HUMAN', status: 'WAITING_FOR_AGENT' },
+      session: { id: data.sessionId ?? sessionId, mode: ChatMode.HUMAN, status: ChatStatus.WAITING_FOR_AGENT },
     });
     dispatch({ type: 'SET_MESSAGES', messages: [], hasMore: false });
     await fetchMessages(cfg, data.sessionId ?? sessionId, dispatch, false);
@@ -1831,7 +1870,7 @@ async function fetchMessages(
         m.content.includes('/video/') ||
         /\.(mp3|wav|ogg|m4a|aac|mp4|webm|mov)(\?|$)/i.test(m.content)
       );
-      if ((m.messageType && m.messageType !== 'TEXT') || hasMediaContent || m.metadata?.attachment) {
+      if ((m.messageType && m.messageType !== MT.TEXT) || hasMediaContent || m.metadata?.attachment) {
         console.log('[Chat] fetchMessages MEDIA message RAW:', JSON.stringify(m, null, 2));
       }
       return {
@@ -1841,7 +1880,7 @@ async function fetchMessages(
         senderId:         m.senderId,
         senderName:       m.senderName,
         content:          m.content,
-        messageType:      m.messageType ?? 'TEXT',
+        messageType:      m.messageType ?? MT.TEXT,
         timestamp:        isNaN(d.getTime()) ? new Date() : d,
         metadata:         m.metadata,
         attachment:       m.attachment ?? m.metadata?.attachment ?? undefined,
@@ -1883,7 +1922,7 @@ async function fetchMessages(
  // Use the LATEST lastReadAt across all agent participants
 // (there may be multiple agents in a session)
 const agentParticipants = participants.filter(
-  (p: any) => p.participantType === 'AGENT' && p.lastReadAt
+  (p: any) => p.participantType === SenderType.AGENT && p.lastReadAt
 );
 if (agentParticipants.length > 0) {
   const latestReadAt = agentParticipants.reduce((latest: Date | null, p: any) => {
@@ -1899,7 +1938,7 @@ if (agentParticipants.length > 0) {
 }
 
     const customerParticipant = participants.find(
-      (p: any) => p.participantType === 'CUSTOMER' && p.lastReadAt
+      (p: any) => p.participantType === SenderType.CUSTOMER && p.lastReadAt
     );
     if (customerParticipant?.lastReadAt) {
       const ts = new Date(customerParticipant.lastReadAt);
