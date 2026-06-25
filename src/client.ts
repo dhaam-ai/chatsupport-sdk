@@ -1,9 +1,33 @@
 
 
 import { io, Socket } from 'socket.io-client';
-import type { ChatSDKConfig, ChatMessage, ChatSession, MessageType, FileAttachment } from './types';
+import type { ChatSDKConfig, ChatMessage, ChatSession, MessageType, FileAttachment, SenderType, ChatMode, ChatStatus } from './types';
 import { WS_EVENTS } from './types';
-import { MessageType as MT, ChatStatus, toSenderType, toMessageType } from './shared/enums';
+import { toSenderType, toMessageType, toChatStatus, toChatMode } from './shared/enums';
+
+// Normalise any integer or string enum value the backend sends to the canonical
+// STRING name that context.tsx and types.ts expect.
+// Backend uses §12 integer enums: CUSTOMER=1, AGENT=2, BOT=3, SYSTEM=4, etc.
+function normalizeSenderType(raw: unknown): string {
+  const n = toSenderType(raw);
+  return ({ 1:'CUSTOMER', 2:'AGENT', 3:'BOT', 4:'SYSTEM' } as Record<number, string>)[n] ?? 'SYSTEM';
+}
+function normalizeMessageType(raw: unknown): string {
+  const n = toMessageType(raw);
+  return ({ 1:'TEXT', 2:'SYSTEM', 3:'FILE', 4:'IMAGE', 5:'VIDEO', 6:'AUDIO' } as Record<number, string>)[n] ?? 'TEXT';
+}
+function normalizeChatStatus(raw: unknown): string {
+  if (raw == null) return 'OPEN';
+  const n = toChatStatus(raw);
+  return ({
+    1: 'OPEN', 2: 'WAITING_FOR_AGENT', 3: 'ASSIGNED', 4: 'CLOSED', 5: 'RESOLVED', 6: 'ON_HOLD',
+  } as Record<number, string>)[n] ?? 'OPEN';
+}
+function normalizeChatMode(raw: unknown): string {
+  if (raw == null) return 'BOT';
+  const n = toChatMode(raw);
+  return ({ 1: 'BOT', 2: 'HUMAN' } as Record<number, string>)[n] ?? 'BOT';
+}
 
 type EventCallback = (...args: unknown[]) => void;
 
@@ -24,11 +48,11 @@ function normalizeMessage(raw: any, sessionId: string): ChatMessage | null {
   return {
     id,
     chatSessionId: raw.chatSessionId ?? raw.chat_session_id ?? sessionId,
-    senderType:    toSenderType(raw.senderType ?? raw.sender_type),
+    senderType:    normalizeSenderType(raw.senderType ?? raw.sender_type) as SenderType,
     senderId:      raw.senderId      ?? raw.sender_id      ?? '',
     senderName:    raw.senderName    ?? raw.sender_name,
     content:       raw.content       ?? raw.text           ?? '',
-    messageType:   toMessageType(raw.messageType ?? raw.message_type),
+    messageType:   normalizeMessageType(raw.messageType ?? raw.message_type) as MessageType,
     timestamp,
     metadata:      raw.metadata,
     attachment:    raw.attachment ?? raw.metadata?.attachment ?? undefined,
@@ -144,7 +168,9 @@ export class ChatWebSocketClient {
           );
 
           if (sessionId) {
-            this.session = { id: sessionId, mode: data.mode, status: data.status };
+            const mode   = normalizeChatMode(data.mode)    as ChatMode;
+            const status = normalizeChatStatus(data.status) as ChatStatus;
+            this.session = { id: sessionId, mode, status };
             this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
 
             // ── FIX: Emit 'connectionAck' on internal emitter ──────────────
@@ -152,7 +178,7 @@ export class ChatWebSocketClient {
             // after a reconnect. Without this, the input stays disabled because
             // the 'reconnect' socket event fires before the session is re-joined
             // and context.ts has no way to know the handshake completed again.
-            this.emit('connectionAck', { sessionId, mode: data.mode, status: data.status });
+            this.emit('connectionAck', { sessionId, mode, status });
           }
         };
 
@@ -184,7 +210,7 @@ export class ChatWebSocketClient {
         const handleTypingEvent = (data: any, sourceEvent: string) => {
           const isTyping   = data?.isTyping   ?? false;
           const senderId   = data?.senderId   ?? '';
-          const senderType = toSenderType(data?.senderType);
+          const senderType = normalizeSenderType(data?.senderType);
 
           console.log(
             `%c[ChatClient:TYPING] 🖊 Received "${sourceEvent}"`,
@@ -224,13 +250,15 @@ export class ChatWebSocketClient {
 
         // ── STATUS_CHANGED ─────────────────────────────────────────────────
         this.socket.on(WS_EVENTS.STATUS_CHANGED, (data: any) => {
-          if (this.session) { this.session.mode = data.mode; this.session.status = data.status; }
-          this.emit('statusChange', data);
-          this.config.callbacks?.onStatusChange?.(data.status, data.mode);
+          const mode   = normalizeChatMode(data.mode)    as ChatMode;
+          const status = normalizeChatStatus(data.status) as ChatStatus;
+          if (this.session) { this.session.mode = mode; this.session.status = status; }
+          this.emit('statusChange', { ...data, mode, status });
+          this.config.callbacks?.onStatusChange?.(status, mode);
         });
 
         this.socket.on(WS_EVENTS.SESSION_CLOSED, () => {
-          if (this.session) this.session.status = ChatStatus.CLOSED;
+          if (this.session) this.session.status = 'CLOSED';
           this.emit('sessionClosed', {});
           this.config.callbacks?.onSessionClosed?.();
         });
@@ -359,7 +387,7 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
     });
   }
 
-  sendMessage(content: string, messageType: MessageType = MT.TEXT, replyToMessageId?: string, clientMessageId?: string): void {
+  sendMessage(content: string, messageType: MessageType = 'TEXT', replyToMessageId?: string, clientMessageId?: string): void {
     if (this.tokenExpired) throw new Error('TOKEN_EXPIRED');
     if (!this.socket || !this.connected || !this.session) throw new Error('Not connected');
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
@@ -436,10 +464,10 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
     const result     = await response.json();
     const uploadData = result.data;
 
-    let messageType: MessageType = MT.FILE;
-    if (uploadData.mediaType === 'images') messageType = MT.IMAGE;
-    else if (uploadData.mediaType === 'videos') messageType = MT.VIDEO;
-    else if (uploadData.mediaType === 'audio')  messageType = MT.AUDIO;
+    let messageType: MessageType = 'FILE';
+    if (uploadData.mediaType === 'images') messageType = 'IMAGE';
+    else if (uploadData.mediaType === 'videos') messageType = 'VIDEO';
+    else if (uploadData.mediaType === 'audio')  messageType = 'AUDIO';
 
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
@@ -489,7 +517,7 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
     }
     this.socket.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
     if (this.session) {
-      this.session = { ...this.session, id: sessionId, status: ChatStatus.OPEN };
+      this.session = { ...this.session, id: sessionId, status: 'OPEN' };
     }
   }
 

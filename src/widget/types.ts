@@ -13,6 +13,6 @@ export interface QuickReply {
 export interface ReplyTarget {
   id: string;
   content: string;
-  senderType: number; // SenderType (§12)
+  senderType: string;
   senderName?: string;
 }

@@ -21,7 +21,7 @@
 // ============================================================
 
 import React from 'react';
-import { SenderType } from './shared/enums';
+import type { SenderType } from './types';
 
 // ── Colours ───────────────────────────────────────────────────────────────────
 const PURPLE = '#7c3aed';
@@ -96,7 +96,7 @@ export type TickStatus =
 export function getTickStatus(params: {
   msgTimestamp:     string | Date;
   msgId:            string;
-  senderType:       number;
+  senderType:       SenderType | string;
   isOwnMessage:     boolean;
   readAt:           Date | null;
   otherPartyOnline: boolean;
@@ -107,7 +107,7 @@ export function getTickStatus(params: {
   if (!isOwnMessage) return 'none';
 
   // Never show on SYSTEM messages
-  if (senderType === SenderType.SYSTEM) return 'none';
+  if (senderType === 'SYSTEM') return 'none';
 
   // Optimistic / temp messages: no tick yet (not on server)
   if (
@@ -208,8 +208,8 @@ export interface TickMap {
  * Call this once in the parent component, pass the resulting map down.
  */
 export function buildTickMap(params: {
-  messages:          Array<{ id: string; createdAt?: string; timestamp?: Date | string; senderType: number }>;
-  viewerSenderType:  number;   // SenderType — who is looking at the chat
+  messages:          Array<{ id: string; createdAt?: string; timestamp?: Date | string; senderType: string }>;
+  viewerSenderType:  string;   // SenderType — who is looking at the chat
   readAt:            Date | null;             // read watermark from the OTHER party
   otherPartyOnline:  boolean;
 }): Map<string, TickStatus> {
@@ -219,7 +219,7 @@ export function buildTickMap(params: {
   for (const msg of messages) {
     const isOwnMessage = msg.senderType === viewerSenderType ||
       // BOT messages are "owned" by the agent side (agent dashboard shows them)
-      (viewerSenderType === SenderType.AGENT && msg.senderType === SenderType.BOT);
+      (viewerSenderType === 'AGENT' && msg.senderType === 'BOT');
 
     const ts = msg.createdAt ?? (msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp) ?? '';
 

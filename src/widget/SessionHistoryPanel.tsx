@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import type { ChatSessionSummary } from '../types';
-import { ChatStatus } from '../shared/enums';
-
 interface SessionHistoryPanelProps {
   primaryColor: string;
   sessions: ChatSessionSummary[];
@@ -14,8 +12,8 @@ interface SessionHistoryPanelProps {
 export function SessionHistoryPanel({ primaryColor, sessions, currentSessionId, onSelectActive, onReopen }: SessionHistoryPanelProps) {
   const [reopening, setReopening] = useState<string | null>(null);
 
-  const active = sessions.filter(s => s.status !== ChatStatus.CLOSED);
-  const closed = sessions.filter(s => s.status === ChatStatus.CLOSED).slice(0, 5);
+  const active = sessions.filter(s => s.status !== 'CLOSED');
+  const closed = sessions.filter(s => s.status === 'CLOSED').slice(0, 5);
 
   const formatDate = (d: string | Date | null | undefined) => {
     if (!d) return '';
@@ -34,14 +32,14 @@ export function SessionHistoryPanel({ primaryColor, sessions, currentSessionId, 
     try { await onReopen(id); } finally { setReopening(null); }
   };
 
-  const badge = (status: number) => {
-    const map: Record<number, { label: string; bg: string; color: string }> = {
-      [ChatStatus.OPEN]:              { label: 'Open',    bg: '#dcfce7', color: '#166534' },
-      [ChatStatus.WAITING_FOR_AGENT]: { label: 'Waiting', bg: '#fef9c3', color: '#854d0e' },
-      [ChatStatus.ASSIGNED]:          { label: 'Active',  bg: '#dbeafe', color: '#1e40af' },
-      [ChatStatus.CLOSED]:            { label: 'Closed',  bg: '#f3f4f6', color: '#6b7280' },
+  const badge = (status: string) => {
+    const map: Record<string, { label: string; bg: string; color: string }> = {
+      OPEN:              { label: 'Open',    bg: '#dcfce7', color: '#166534' },
+      WAITING_FOR_AGENT: { label: 'Waiting', bg: '#fef9c3', color: '#854d0e' },
+      ASSIGNED:          { label: 'Active',  bg: '#dbeafe', color: '#1e40af' },
+      CLOSED:            { label: 'Closed',  bg: '#f3f4f6', color: '#6b7280' },
     };
-    const s = map[status] ?? { label: String(status), bg: '#f3f4f6', color: '#6b7280' };
+    const s = map[status] ?? { label: status, bg: '#f3f4f6', color: '#6b7280' };
     return <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 700, background: s.bg, color: s.color, letterSpacing: '0.03em' }}>{s.label}</span>;
   };
 

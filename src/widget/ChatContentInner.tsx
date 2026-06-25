@@ -3,7 +3,6 @@ import { useChat } from '../context';
 import type { ChatSDKConfig, ChatMessage } from '../types';
 import { playNotificationSound, unlockAudio } from '../notificationSound';
 import { buildTickMap } from '../Messageticks';
-import { SenderType, ChatStatus, ChatMode, MessageType } from '../shared/enums';
 import type { FlowStep, ReplyTarget } from './types';
 import { MAIN_MENU } from './constants';
 import type { FullTheme } from './constants';
@@ -99,13 +98,13 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     const msgs = stateRef.current.messages;
 
     const hasAgentSession =
-      sess?.status === ChatStatus.ASSIGNED ||
-      sess?.status === ChatStatus.WAITING_FOR_AGENT ||
-      sess?.mode === ChatMode.HUMAN;
+      sess?.status === 'ASSIGNED' ||
+      sess?.status === 'WAITING_FOR_AGENT' ||
+      sess?.mode === 'HUMAN';
 
     const hasHistory =
-      msgs.some(m => m.senderType === SenderType.CUSTOMER) ||
-      msgs.some(m => m.senderType === SenderType.AGENT);
+      msgs.some(m => m.senderType === 'CUSTOMER') ||
+      msgs.some(m => m.senderType === 'AGENT');
 
     if (hasAgentSession || hasHistory) {
       setFlowStep('free');
@@ -125,7 +124,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     const newCount = state.messages.length;
     if (newCount > prevMsgCount.current) {
       const newMsgs = state.messages.slice(prevMsgCount.current);
-      if (newMsgs.some(m => m.senderType === SenderType.AGENT) && flowStep !== 'free') {
+      if (newMsgs.some(m => m.senderType === 'AGENT') && flowStep !== 'free') {
         setFlowStep('free');
         setShowQuickReplies(false);
       }
@@ -137,7 +136,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     if (flowStep !== 'escalating') return;
     const status = state.session?.status;
     const mode = state.session?.mode;
-    if (status === ChatStatus.ASSIGNED || status === ChatStatus.WAITING_FOR_AGENT || mode === ChatMode.HUMAN) {
+    if (status === 'ASSIGNED' || status === 'WAITING_FOR_AGENT' || mode === 'HUMAN') {
       setFlowStep('free');
       setShowQuickReplies(false);
     }
@@ -148,7 +147,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     const newCount = state.messages.length;
     if (newCount > prevSoundCount.current) {
       const newMsgs = state.messages.slice(prevSoundCount.current);
-      if (newMsgs.some(m => m.senderType === SenderType.AGENT || m.senderType === SenderType.BOT) && !state.isWidgetOpen) playNotificationSound();
+      if (newMsgs.some(m => m.senderType === 'AGENT' || m.senderType === 'BOT') && !state.isWidgetOpen) playNotificationSound();
     }
     prevSoundCount.current = newCount;
   }, [state.messages.length, state.isWidgetOpen]);
@@ -244,7 +243,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
   const agentOnline = useMemo(() => {
     if (state.session?.assignedAgent?.isOnline === true) return true;
     if (state.session?.assignedAgentId) return true;
-    return allMessages.some(m => m.senderType === SenderType.AGENT);
+    return allMessages.some(m => m.senderType === 'AGENT');
   }, [state.session?.assignedAgent?.isOnline, state.session?.assignedAgentId, allMessages]);
 
   const agentReadAt = useMemo<Date | null>(() => {
@@ -252,7 +251,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     if (!raw) return null;
     const d = new Date(raw);
     if (isNaN(d.getTime())) return null;
-    const latestAgentMsg = [...allMessages].reverse().find(m => m.senderType === SenderType.AGENT);
+    const latestAgentMsg = [...allMessages].reverse().find(m => m.senderType === 'AGENT');
     if (latestAgentMsg) {
       const agentMsgTime = new Date(latestAgentMsg.timestamp);
       return new Date(Math.max(d.getTime(), agentMsgTime.getTime()));
@@ -265,7 +264,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
       const ts = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp as any);
       return { id: m.id, createdAt: isNaN(ts.getTime()) ? new Date().toISOString() : ts.toISOString(), senderType: m.senderType };
     }),
-    viewerSenderType: SenderType.CUSTOMER,
+    viewerSenderType: 'CUSTOMER',
     readAt: agentReadAt,
     otherPartyOnline: agentOnline,
   }), [allMessages, agentReadAt, agentOnline]);
@@ -296,7 +295,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     if (lastMsgId === lastMessageIdRef.current) return;
     lastMessageIdRef.current = lastMsgId;
     if (shouldScrollBottom.current) { scrollToBottomNow('smooth'); }
-    else { if (lastMsgType !== SenderType.CUSTOMER) { setUnreadWhileScrolled(c => c + 1); setShowJumpToBottom(true); } }
+    else { if (lastMsgType !== 'CUSTOMER') { setUnreadWhileScrolled(c => c + 1); setShowJumpToBottom(true); } }
   }, [lastMsgId, scrollToBottomNow]);
 
   useEffect(() => {
@@ -322,7 +321,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
   const sendRealMessage = useCallback((content: string) => {
     if (!stateRef.current.connected || stateRef.current.tokenExpired) return;
     try {
-      void actionsRef.current.sendMessage(content, MessageType.TEXT);
+      void actionsRef.current.sendMessage(content, 'TEXT');
       setFlowStep('free');
       setShowQuickReplies(false);
     } catch (err: any) {
@@ -360,7 +359,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
           .then(() => clearTimeout(forceFreetimer))
           .catch((err: any) => {
             clearTimeout(forceFreetimer);
-            if (stateRef.current.session?.status !== ChatStatus.ASSIGNED && stateRef.current.session?.mode !== ChatMode.HUMAN) {
+            if (stateRef.current.session?.status !== 'ASSIGNED' && stateRef.current.session?.mode !== 'HUMAN') {
               setEscalationError(err?.message ?? 'Could not connect. Please try again.');
               setFlowStep('menu');
               setTimeout(() => setShowQuickReplies(true), 500);
@@ -379,7 +378,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     const content = inputValue.trim();
     if (!content || !stateRef.current.connected || stateRef.current.tokenExpired) return;
     try {
-      void actionsRef.current.sendMessage(content, MessageType.TEXT, replyTarget?.id);
+      void actionsRef.current.sendMessage(content, 'TEXT', replyTarget?.id);
       setInputValue('');
       setReplyTarget(null);
       actionsRef.current.stopTyping?.();
@@ -457,11 +456,11 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     if (flowStep === 'escalating') return 'Connecting to agent...';
     const agentDisplayName = state.session?.assignedAgent?.displayName ?? state.session?.assignedAgentName;
     if (agentDisplayName && !looksLikeRawId(agentDisplayName)) return `Chatting with ${agentDisplayName}`;
-    if (state.session?.mode === ChatMode.HUMAN) return 'Connected to agent';
+    if (state.session?.mode === 'HUMAN') return 'Connected to agent';
     return 'AI Support · Online';
   })();
 
-  const isClosed = state.session?.status === ChatStatus.CLOSED;
+  const isClosed = state.session?.status === 'CLOSED';
   const canType = !isClosed && !state.tokenExpired && state.connected && flowStep !== 'escalating';
   const isActive = !!inputValue.trim() && canType;
 
@@ -646,7 +645,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
                   {replyTarget && (
                     <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f5', backgroundColor: '#f9fafb', display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <div style={{ flex: 1, borderLeft: `3px solid ${theme.primaryColor}`, paddingLeft: '10px', overflow: 'hidden' }}>
-                        <div style={{ fontSize: '11px', fontWeight: 700, color: theme.primaryColor, marginBottom: '1px' }}>{replyTarget.senderType === SenderType.CUSTOMER ? 'You' : (replyTarget.senderName || 'Agent')}</div>
+                        <div style={{ fontSize: '11px', fontWeight: 700, color: theme.primaryColor, marginBottom: '1px' }}>{replyTarget.senderType === 'CUSTOMER' ? 'You' : (replyTarget.senderName || 'Agent')}</div>
                         <div style={{ fontSize: '12px', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{replyTarget.content?.length > 80 ? replyTarget.content.slice(0, 80) + '…' : replyTarget.content}</div>
                       </div>
                       <button onClick={() => setReplyTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '18px', lineHeight: 1, padding: '2px', flexShrink: 0 }}>×</button>

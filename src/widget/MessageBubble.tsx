@@ -4,14 +4,12 @@ import type { TickStatus } from '../Messageticks';
 import { looksLikeRawId, formatTime } from './helpers';
 import { CompactAudioPlayer } from './AudioPlayer';
 import { ReplyIcon } from './icons';
-import { SenderType, MessageType } from '../shared/enums';
-
 // Media MessageType → human label (notes/previews).
-const MEDIA_LABEL: Record<number, string> = {
-  [MessageType.IMAGE]: 'Image',
-  [MessageType.VIDEO]: 'Video',
-  [MessageType.AUDIO]: 'Audio',
-  [MessageType.FILE]: 'File',
+const MEDIA_LABEL: Record<string, string> = {
+  IMAGE: 'Image',
+  VIDEO: 'Video',
+  AUDIO: 'Audio',
+  FILE:  'File',
 };
 
 // ── Typing indicator ──────────────────────────────────────────────────────────
@@ -71,9 +69,9 @@ interface MessageBubbleProps {
 export const MessageBubble = React.memo(function MessageBubble({
   message, styles, onImageClick, onReply, replyToResolved, tickStatus, primaryColor,
 }: MessageBubbleProps) {
-  const isCustomer = message.senderType === SenderType.CUSTOMER;
-  const isSystem   = message.senderType === SenderType.SYSTEM;
-  const isBot      = message.senderType === SenderType.BOT;
+  const isCustomer = message.senderType === 'CUSTOMER';
+  const isSystem   = message.senderType === 'SYSTEM';
+  const isBot      = message.senderType === 'BOT';
   const time       = formatTime(message.timestamp);
   const [hovered, setHovered] = useState(false);
 
@@ -92,10 +90,10 @@ export const MessageBubble = React.memo(function MessageBubble({
   const isFileUrl  = /^https?:\/\//i.test(contentUrl);
 
   let effectiveType: 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | null = null;
-  if      (message.messageType === MessageType.IMAGE) effectiveType = 'IMAGE';
-  else if (message.messageType === MessageType.VIDEO) effectiveType = 'VIDEO';
-  else if (message.messageType === MessageType.AUDIO) effectiveType = 'AUDIO';
-  else if (message.messageType === MessageType.FILE)  effectiveType = 'FILE';
+  if      (message.messageType === 'IMAGE') effectiveType = 'IMAGE';
+  else if (message.messageType === 'VIDEO') effectiveType = 'VIDEO';
+  else if (message.messageType === 'AUDIO') effectiveType = 'AUDIO';
+  else if (message.messageType === 'FILE')  effectiveType = 'FILE';
   else if (attachment?.mimeType?.startsWith('image/')) effectiveType = 'IMAGE';
   else if (attachment?.mimeType?.startsWith('video/')) effectiveType = 'VIDEO';
   else if (attachment?.mimeType?.startsWith('audio/')) effectiveType = 'AUDIO';
@@ -110,7 +108,7 @@ export const MessageBubble = React.memo(function MessageBubble({
 
   const renderReplyQuote = () => {
     if (!replyTo) return null;
-    const rName   = replyTo.senderType === SenderType.CUSTOMER ? 'You' : ((replyTo as any).senderName ?? (replyTo.senderType === SenderType.BOT ? 'AI Assistant' : 'Agent'));
+    const rName   = replyTo.senderType === 'CUSTOMER' ? 'You' : ((replyTo as any).senderName ?? (replyTo.senderType === 'BOT' ? 'AI Assistant' : 'Agent'));
     const mediaLabel = MEDIA_LABEL[replyTo.messageType];
     const preview = mediaLabel
       ? `📎 ${mediaLabel}`

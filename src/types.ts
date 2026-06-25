@@ -2,11 +2,10 @@
 // Chat SDK - Type Definitions
 // ==========================================
 
-// Integer enums (mirror of chat-service §12) — values + coercion in shared/enums.ts.
-export type ChatMode = number;
-export type ChatStatus = number;
-export type SenderType = number;
-export type MessageType = number;
+export type ChatMode = 'BOT' | 'HUMAN';
+export type ChatStatus = 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
+export type SenderType = 'CUSTOMER' | 'AGENT' | 'BOT' | 'SYSTEM';
+export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE' | 'VIDEO' | 'AUDIO';
 
 /**
  * SDK Configuration
