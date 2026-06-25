@@ -9,6 +9,9 @@ import type { ChatSDKConfig, ChatSDKState, ChatSDKActions, ChatMessage, ChatSess
 import { SenderType, toSenderType } from './shared/enums';
 import { ChatWebSocketClient } from './client';
 
+const _SDK_BUILD = '2026-06-26-enum-fix';
+console.log(`%c[ChatSDK] Build: ${_SDK_BUILD}`, 'background:#7c3aed;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700;font-family:monospace;');
+
 type EventCallback = (...args: unknown[]) => void;
 
 type ChatAction =
