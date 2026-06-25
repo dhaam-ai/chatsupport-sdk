@@ -624,7 +624,8 @@ client.on('ticketLinked', ((data: any) => {
   dispatch({ type: 'ADD_MESSAGE', message: sysMsg });
 }) as EventCallback);
 
-        let session = await client.connect();
+        let _rawSession = await client.connect();
+        let session = { ..._rawSession, mode: normMode(_rawSession.mode) as any, status: normStatus(_rawSession.status) as any };
 
         mapCustomer(cfg);
 
@@ -648,11 +649,11 @@ client.on('ticketLinked', ((data: any) => {
             if (res.ok) {
               const json      = await res.json();
               const newId     = json.data?.sessionId ?? json.data?.id;
-              const newMode   = json.data?.mode      ?? 'BOT';
-              const newStatus = json.data?.status    ?? 'OPEN';
+              const newMode   = normMode(json.data?.mode   ?? 'BOT');
+              const newStatus = normStatus(json.data?.status ?? 'OPEN');
               if (newId) {
                 client.joinSession(newId);
-                session = { id: newId, mode: newMode, status: newStatus };
+                session = { id: newId, mode: newMode as any, status: newStatus as any };
                 console.log('[Chat] Switched to fresh session:', newId);
               }
             }
@@ -1043,23 +1044,24 @@ async function fetchMessages(
     if (!data.success || !data.data?.messages) return;
 
     const messages: ChatMessage[] = data.data.messages.map((m: any) => {
-      const d = new Date(m.createdAt ?? m.timestamp);
+      const d           = new Date(m.createdAt ?? m.timestamp);
+      const msgType     = normMsgType(m.messageType);
       const hasMediaContent = m.content && (
         m.content.includes('/audio/') ||
         m.content.includes('/video/') ||
         /\.(mp3|wav|ogg|m4a|aac|mp4|webm|mov)(\?|$)/i.test(m.content)
       );
-      if ((m.messageType && m.messageType !== 'TEXT') || hasMediaContent || m.metadata?.attachment) {
+      if (msgType !== 'TEXT' || hasMediaContent || m.metadata?.attachment) {
         console.log('[Chat] fetchMessages MEDIA message RAW:', JSON.stringify(m, null, 2));
       }
       return {
         id:               m.id,
         chatSessionId:    m.chatSessionId,
-        senderType:       normSender(m.senderType)    as any,
+        senderType:       normSender(m.senderType) as any,
         senderId:         m.senderId,
         senderName:       m.senderName,
         content:          m.content,
-        messageType:      normMsgType(m.messageType)  as any,
+        messageType:      msgType as any,
         timestamp:        isNaN(d.getTime()) ? new Date() : d,
         metadata:         m.metadata,
         attachment:       m.attachment ?? m.metadata?.attachment ?? undefined,
