@@ -114,6 +114,10 @@ export interface FileAttachment {
  */
 export interface ChatMessage {
   id: string;
+  /** Stable React-list key: set once at optimistic-creation time and preserved
+   * across the optimistic→server-confirmed swap so the message subtree (and any
+   * in-progress media playback) isn't remounted when `id` changes to the real one. */
+  clientKey?: string;
   chatSessionId: string;
   senderType: SenderType;
   senderId?: string;

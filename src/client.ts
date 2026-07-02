@@ -428,7 +428,7 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
       content,
-      messageType,
+      messageType: toMessageType(messageType),
       token: this.config.token,
       ...(replyToMessageId ? { replyToMessageId } : {}),
       ...(clientMessageId  ? { clientMessageId }  : {}),
@@ -507,8 +507,8 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
       content: uploadData.url,
-      messageType,
-      token: this.config.token,  
+      messageType: toMessageType(messageType),
+      token: this.config.token,
       metadata: {
         attachment: {
           url:       uploadData.url,

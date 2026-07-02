@@ -203,7 +203,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
   const allMessages = useMemo(() => {
     const seen = new Set<string>();
     const result: ChatMessage[] = [];
-    for (const m of state.messages) { seen.add(m.id); result.push(m); }
+    for (const m of state.messages) { if (seen.has(m.id)) continue; seen.add(m.id); result.push(m); }
     return result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }, [state.messages]);
 
@@ -557,7 +557,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
                 {allMessages.map(msg => {
                   const isNew = hasRenderedOnce.current && !renderedMsgIds.current.has(msg.id);
                   return (
-                    <div key={msg.id} id={`chat-msg-${msg.id}`} style={isNew ? { animation: 'chatFadeIn 0.2s ease', borderRadius: '12px' } : { borderRadius: '12px' }}>
+                    <div key={msg.clientKey ?? msg.id} id={`chat-msg-${msg.id}`} style={isNew ? { animation: 'chatFadeIn 0.2s ease', borderRadius: '12px' } : { borderRadius: '12px' }}>
                       <MessageBubble
                         message={msg} styles={styles} userName={config.user.name}
                         onImageClick={handleImageClick} onReply={handleReply}

@@ -13,6 +13,7 @@ import {
 
 // src/shared/enums.ts
 var SenderType = { CUSTOMER: 1, AGENT: 2, BOT: 3, SYSTEM: 4 };
+var MessageType = { TEXT: 1, SYSTEM: 2, FILE: 3, IMAGE: 4, VIDEO: 5, AUDIO: 6, TYPING: 7 };
 function coerce(enumObj, value, fallback) {
   if (typeof value === "number" && Object.values(enumObj).includes(value)) return value;
   if (typeof value === "string") {
@@ -24,6 +25,7 @@ function coerce(enumObj, value, fallback) {
   return fallback;
 }
 var toSenderType = (v) => coerce(SenderType, v, SenderType.SYSTEM);
+var toMessageType = (v) => coerce(MessageType, v, MessageType.TEXT);
 
 // src/client.ts
 import { io } from "socket.io-client";
@@ -407,7 +409,7 @@ var ChatWebSocketClient = class {
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
       content,
-      messageType,
+      messageType: toMessageType(messageType),
       token: this.config.token,
       ...replyToMessageId ? { replyToMessageId } : {},
       ...clientMessageId ? { clientMessageId } : {}
@@ -475,7 +477,7 @@ var ChatWebSocketClient = class {
     this.socket.emit(WS_EVENTS.MESSAGE_SEND, {
       chatSessionId: this.session.id,
       content: uploadData.url,
-      messageType,
+      messageType: toMessageType(messageType),
       token: this.config.token,
       metadata: {
         attachment: {
@@ -589,8 +591,11 @@ function chatReducer(state, action) {
         unreadCount: shouldIncrement ? state.unreadCount + 1 : state.unreadCount
       };
     }
-    case "SET_MESSAGES":
-      return { ...state, messages: action.messages, hasMore: action.hasMore ?? true };
+    case "SET_MESSAGES": {
+      const seen = /* @__PURE__ */ new Set();
+      const deduped = action.messages.filter((m) => seen.has(m.id) ? false : (seen.add(m.id), true));
+      return { ...state, messages: deduped, hasMore: action.hasMore ?? true };
+    }
     case "PREPEND_MESSAGES": {
       if (!action.messages.length) return { ...state, hasMore: action.hasMore, loadingMore: false };
       const existingIds = new Set(state.messages.map((m) => m.id));
@@ -612,7 +617,7 @@ function chatReducer(state, action) {
         return { ...state, messages: [...state.messages, action.message] };
       }
       const updated = [...state.messages];
-      updated[idx] = action.message;
+      updated[idx] = { ...action.message, clientKey: state.messages[idx].clientKey ?? action.tempId };
       return { ...state, messages: updated };
     }
     case "SET_TYPING":
@@ -766,6 +771,7 @@ function ChatProvider({ config, children }) {
   useEffect(() => {
     if (_activeConnections.get(connectionKey)) return;
     _activeConnections.set(connectionKey, true);
+    let cancelled = false;
     const initChat = async () => {
       dispatch({ type: "INIT_START" });
       try {
@@ -984,6 +990,7 @@ function ChatProvider({ config, children }) {
           dispatch({ type: "ADD_MESSAGE", message: sysMsg });
         }));
         let _rawSession = await client.connect();
+        if (cancelled) return;
         let session = { ..._rawSession, mode: normMode(_rawSession.mode), status: normStatus(_rawSession.status) };
         mapCustomer(cfg);
         if (session.status === "CLOSED") {
@@ -1019,12 +1026,14 @@ function ChatProvider({ config, children }) {
           }
         }
         await fetchMessages(configRef.current, session.id, dispatch, false);
+        if (cancelled) return;
         dispatch({ type: "INIT_SUCCESS", session });
         configRef.current.callbacks?.onConnected?.(session.id);
         if (session.assignedAgentId) {
           client.presenceQuery([session.assignedAgentId]);
         }
       } catch (error) {
+        if (cancelled) return;
         _activeConnections.delete(connectionKey);
         dispatch({ type: "INIT_ERROR", error });
         configRef.current.callbacks?.onError?.(error);
@@ -1032,6 +1041,7 @@ function ChatProvider({ config, children }) {
     };
     initChat();
     return () => {
+      cancelled = true;
       _activeConnections.delete(connectionKey);
       pendingReplaces.current.clear();
       clientMsgMap.current.clear();
@@ -1238,7 +1248,12 @@ function ChatProvider({ config, children }) {
       });
       if (!res.ok) return;
       const json = await res.json();
-      dispatch({ type: "SET_PAST_SESSIONS", sessions: json.data?.sessions ?? [] });
+      const sessions = (json.data?.sessions ?? []).map((s) => ({
+        ...s,
+        status: normStatus(s.status),
+        mode: normMode(s.mode)
+      }));
+      dispatch({ type: "SET_PAST_SESSIONS", sessions });
     } catch (e) {
       console.warn("[Chat] fetchPastSessions failed:", e);
     }
@@ -2395,6 +2410,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
     const seen = /* @__PURE__ */ new Set();
     const result = [];
     for (const m of state.messages) {
+      if (seen.has(m.id)) continue;
       seen.add(m.id);
       result.push(m);
     }
@@ -2769,7 +2785,7 @@ function ChatContentInner({ onClose, styles, config, theme, onStartNewChat, exte
                 tickStatus: tickMap.get(msg.id) ?? "none",
                 primaryColor: theme.primaryColor
               }
-            ) }, msg.id);
+            ) }, msg.clientKey ?? msg.id);
           }),
           state.isTyping && /* @__PURE__ */ jsx10(TypingIndicator, { styles }),
           /* @__PURE__ */ jsx10("div", { ref: messagesEndRef })

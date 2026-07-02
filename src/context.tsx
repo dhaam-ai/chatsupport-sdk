@@ -80,8 +80,11 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
       };
     }
 
-    case 'SET_MESSAGES':
-      return { ...state, messages: action.messages, hasMore: action.hasMore ?? true };
+    case 'SET_MESSAGES': {
+      const seen = new Set<string>();
+      const deduped = action.messages.filter(m => (seen.has(m.id) ? false : (seen.add(m.id), true)));
+      return { ...state, messages: deduped, hasMore: action.hasMore ?? true };
+    }
 
     case 'PREPEND_MESSAGES': {
       if (!action.messages.length) return { ...state, hasMore: action.hasMore, loadingMore: false };
@@ -106,7 +109,10 @@ function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
         return { ...state, messages: [...state.messages, action.message] };
       }
       const updated = [...state.messages];
-      updated[idx]  = action.message;
+      // Preserve the temp message's identity as the React list key so the
+      // message subtree (and any in-progress media playback) isn't remounted
+      // just because the server-confirmed `id` differs from the temp id.
+      updated[idx]  = { ...action.message, clientKey: state.messages[idx].clientKey ?? action.tempId };
       return { ...state, messages: updated };
     }
 
@@ -297,6 +303,12 @@ export function ChatProvider({ config, children }: {
   useEffect(() => {
     if (_activeConnections.get(connectionKey)) return;
     _activeConnections.set(connectionKey, true);
+    // Guards against a stale run (e.g. a token refresh re-triggering this effect
+    // while the previous connect/fetch is still in flight) dispatching into the
+    // reducer after a newer run has already taken over — without this, the two
+    // overlapping runs could interleave and make the widget appear to flip
+    // between two different chat sessions.
+    let cancelled = false;
 
     const initChat = async () => {
       dispatch({ type: 'INIT_START' });
@@ -628,6 +640,7 @@ client.on('ticketLinked', ((data: any) => {
 }) as EventCallback);
 
         let _rawSession = await client.connect();
+        if (cancelled) return;
         let session = { ..._rawSession, mode: normMode(_rawSession.mode) as any, status: normStatus(_rawSession.status) as any };
 
         mapCustomer(cfg);
@@ -666,6 +679,7 @@ client.on('ticketLinked', ((data: any) => {
         }
 
         await fetchMessages(configRef.current, session.id, dispatch, false);
+        if (cancelled) return;
         dispatch({ type: 'INIT_SUCCESS', session });
         configRef.current.callbacks?.onConnected?.(session.id);
 
@@ -675,6 +689,7 @@ client.on('ticketLinked', ((data: any) => {
         }
 
       } catch (error) {
+        if (cancelled) return;
         _activeConnections.delete(connectionKey);
         dispatch({ type: 'INIT_ERROR', error: error as Error });
         configRef.current.callbacks?.onError?.(error as Error);
@@ -684,6 +699,7 @@ client.on('ticketLinked', ((data: any) => {
     initChat();
 
     return () => {
+      cancelled = true;
       _activeConnections.delete(connectionKey);
       pendingReplaces.current.clear();
       clientMsgMap.current.clear();
@@ -910,7 +926,12 @@ client.on('ticketLinked', ((data: any) => {
       });
       if (!res.ok) return;
       const json = await res.json();
-      dispatch({ type: 'SET_PAST_SESSIONS', sessions: json.data?.sessions ?? [] });
+      const sessions: ChatSessionSummary[] = (json.data?.sessions ?? []).map((s: any) => ({
+        ...s,
+        status: normStatus(s.status) as any,
+        mode:   normMode(s.mode) as any,
+      }));
+      dispatch({ type: 'SET_PAST_SESSIONS', sessions });
     } catch (e) {
       console.warn('[Chat] fetchPastSessions failed:', e);
     }
