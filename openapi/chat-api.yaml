@@ -1,0 +1,1359 @@
+openapi: 3.1.0
+info:
+  title: Chat SDK v2 REST API
+  version: 1.0.0
+  summary: >-
+    REST surface for chat-service: secret-key token minting, session
+    lifecycle, message history, attachment upload, and outbound webhooks.
+  description: |
+    ## Scope and relationship to the WebSocket protocol
+
+    This document is the **source of truth** for chat-service's REST surface.
+    It is consumed two ways: (1) generated into Python and Go backend clients
+    (plan task T19), and (2) hand-consumed by `@dhaam-ccrm/node` (plan task
+    T16) for token minting and webhook verification. It is versioned
+    independently of the `@dhaam-ccrm/*` npm package line — `1.0.0` here means
+    "first stable release of this HTTP API," not "chat SDK v2."
+
+    The realtime WebSocket frame protocol (envelope, frame-type catalog,
+    `ErrorCode` enum) is specified separately in `packages/core/src/protocol`
+    (plan task T1) and is referenced here only in prose — no WS frames are
+    defined in this file. Several REST endpoints below exist specifically
+    because backend SDKs (Python/Go, generated from this spec) are
+    request/response clients with **no WebSocket connection at all** — they
+    need a REST-only path to everything a browser client can also reach over
+    the socket. A browser-side `@dhaam-ccrm/core` client may get some of this
+    same data for free via the WS `connection.ack` snapshot; that overlap is
+    intentional, not a design mistake.
+
+    ## Response shape
+
+    Successful responses (`2xx`) return the resource **directly** — there is
+    no `{ success, data }` envelope. This is a deliberate simplification over
+    v1, which wrapped every REST response body in `{ success: boolean, data:
+    {...} }`; the HTTP status code alone now carries success/failure, and
+    generated clients (T19) deserialize response bodies straight into typed
+    resources without an unwrapping step.
+
+    ## Auth model — one consistent scheme, replacing v1's three
+
+    v1 mixed three different auth conventions across its own surface (PRD
+    §12.6): REST used `Authorization: Bearer` **+** `X-Tenant-ID`; the
+    WebSocket used a `tenantId` **query parameter** instead of a header; and
+    the file-upload endpoint sent `Authorization: Bearer` with **no** tenant
+    identification at all. v2 fixes this with exactly one REST convention,
+    applied to every browser-facing endpoint with no exceptions:
+
+    - `Authorization: Bearer <accessToken>` — the short-lived JWT minted by
+      `POST /tokens` (PRD §10.3) and supplied to the SDK via `getToken()`
+      (PRD §6.1, §10.4). Encodes the authenticated end user and their tenant.
+    - `X-Publishable-Key: pk_live_...` / `pk_test_...` — identifies the
+      tenant. Required on every request alongside the access token. The
+      server rejects a request whose `X-Publishable-Key` tenant does not
+      match the `accessToken`'s tenant claim with `AUTH_INVALID` — the exact
+      wrong-tenant rejection behavior PRD §10.2 specifies for the WS
+      handshake, applied identically here so the two transports share one
+      auth story instead of two.
+
+    Per PRD §10.1, a publishable key **identifies a tenant and grants nothing
+    on its own** — it is not a bearer credential and never appears alone in a
+    `security` requirement below. This also replaces v1's raw `X-Tenant-ID`
+    (an internal tenant identifier exposed to the browser) with an opaque,
+    rotatable, browser-safe key, closing the "don't expose internal IDs"
+    gap at the same time as the auth-consistency gap.
+
+    The WebSocket transport (T1) is expected to carry the equivalent of these
+    same two credentials in `connection.hello.d` (`publishableKey` and the
+    access token) rather than v1's ad hoc query-string `tenantId` — see PRD
+    §10.2. That frame contract is out of scope for this document; it is
+    referenced here only so the two transports are visibly using one model,
+    not two.
+
+    ### The two key types are never interchangeable
+
+    - **Secret key** (`sk_live_...` / `sk_test_...`) is valid in exactly two
+      places in this whole system: as the `Authorization: Bearer` credential
+      on `POST /tokens`, and as the HMAC signing key for webhook signature
+      verification (below). It is never a valid credential on any endpoint a
+      browser calls, and it never leaves the customer's own backend (PRD
+      §10.1, §10.7, §14).
+    - **Publishable key** (`pk_live_...` / `pk_test_...`) identifies a tenant
+      and, per PRD §10.1, grants nothing by itself — every browser-facing
+      endpoint below requires it *together with* a valid `accessToken`, never
+      in place of one.
+
+    ## Read-state model — REST is read-only here
+
+    `GET /sessions/{sessionId}/full` exposes each participant's read
+    watermark (`participants[].lastReadAt`) — the same watermark model PRD
+    §9.5 confirms already exists in v1. **Advancing** that watermark is,
+    by design, a WebSocket-only write path in v2: the `message.markRead`
+    frame (T1) is the single source of truth. v1 fired both a WS event *and*
+    a redundant `POST /sessions/{id}/read` REST call for the same fact (PRD
+    §12.9); §9.5 deliberately collapses that to one write path, so this
+    OpenAPI document intentionally contains no REST endpoint for advancing
+    a read watermark. See Open Questions in the T2 handoff for why this
+    isn't an oversight.
+
+    ## Error taxonomy
+
+    Every non-2xx response body has exactly one shape (`#/components/schemas/Error`),
+    reusing the **same** `ErrorCode` enum and `{ code, message, retryable,
+    details? }` payload shape the WS `error`/`ack` frames use (PRD §7.2,
+    §7.4) — one canonical error model across both transports, per decision
+    D4's "one canonical name per concept."
+
+    | Code | Typical HTTP status | Retryable? | Meaning |
+    |---|---|---|---|
+    | `VALIDATION_FAILED` | 400, 413, 415 | No | Request body/query/multipart failed schema or semantic validation (includes oversized or wrong-mime-type attachments, and invalid state-transition requests such as reopening a non-closed session). |
+    | `AUTH_INVALID` | 401 | No | Missing, malformed, revoked, or wrong-tenant credential (secret key, publishable key, or access token). Mirrors the WS handshake rejection in PRD §10.2. |
+    | `AUTH_EXPIRED` | 401 | Yes, after refresh | The `accessToken` has expired. Distinguished from `AUTH_INVALID` so a client can trigger `getToken()` and retry rather than treating it as a hard failure (PRD §10.6, replacing v1's `message.toLowerCase().includes('expired')` string match). |
+    | `SESSION_NOT_FOUND` | 404 | No | The session does not exist, or is not visible to the authenticated caller. Returned instead of `403` for sessions the caller doesn't own, to avoid confirming they exist. |
+    | `SESSION_CLOSED` | 409 | No | The action is not permitted because the session is in `CLOSED` status (e.g. uploading an attachment to a closed session). |
+    | `RATE_LIMITED` | 429 | Yes, after `Retry-After` | Too many requests for this credential. See rate-limit headers below. |
+    | `PROTOCOL_VERSION_UNSUPPORTED` | — | — | WS-only (protocol version negotiation happens on `connection.hello`, not over REST). Included here only so the enum is identical across both transports; no REST endpoint returns it. |
+    | `INTERNAL` | 500, 503 | Yes (`retryable` field authoritative) | Unexpected server-side fault or an unavailable downstream dependency. |
+
+    ## Idempotency
+
+    Every mutating endpoint below documents its idempotency strategy
+    explicitly in its own description. In summary: `POST /sessions`,
+    `POST /sessions/{sessionId}/reopen`, and `POST /sessions/{sessionId}/attachments`
+    accept an optional `Idempotency-Key` header (retry-safe replay of the
+    same result for 24h); `POST /sessions/{sessionId}/close` is naturally
+    idempotent (closing an already-closed session returns its current state,
+    not an error); `POST /tokens` has no persisted side effect to
+    de-duplicate — minting is a pure function of credentials plus claims, so
+    retries are inherently safe.
+
+    ## Pagination
+
+    `GET /sessions/{sessionId}/messages` uses v1's proven backward-cursor
+    shape (PRD §12.10): `before` is an opaque message id, `limit` bounds the
+    page, and the response carries `hasMore` — there is no forward cursor,
+    because new messages arrive over the WebSocket, not by polling this
+    endpoint.
+
+    ## Rate limiting
+
+    Every response carries `RateLimit-Limit` / `RateLimit-Remaining` /
+    `RateLimit-Reset` headers, scoped per credential (secret key,
+    publishable key, or access token — whichever authenticated the request).
+    Numeric ceilings are not fixed by this document; see the T2 handoff's
+    Open Questions.
+
+    ## Webhook delivery contract
+
+    Every webhook event body shares the same four top-level fields: `id`
+    (unique per event; also sent as the `X-ChatSDK-Webhook-Id` header — use
+    it for de-duplication, since delivery is at-least-once), `type` (a
+    literal string constant, also sent as `X-ChatSDK-Event-Type`),
+    `createdAt` (ISO-8601), and `tenantId`. Unlike browser-facing REST
+    responses elsewhere in this document, `tenantId` is the raw tenant
+    identifier here — webhooks are a server-to-server channel to the
+    customer's own trusted backend, not a browser, so exposing it is
+    appropriate even though it is deliberately withheld from browser-facing
+    payloads (which identify tenant only via the opaque publishable key).
+    See `X-ChatSDK-Signature` (in each webhook operation's parameters) for
+    the signing/verification contract, and `X-ChatSDK-Webhook-Attempt` for
+    retry semantics. The event catalog below (four events, mirroring a
+    subset of the WS server-push frame catalog in T1) is a reasoned starting
+    set, not a PRD-mandated list — see this document's handoff notes. New
+    event types are additive and never remove or repurpose an existing one.
+
+    ## Observability
+
+    Every response — success or error — carries `X-Request-Id`, generated
+    server-side unless the caller supplies one on the request, and every
+    error body echoes the same value as `error.details.requestId` for
+    support correlation.
+  license:
+    name: Proprietary
+    identifier: "UNLICENSED"
+tags:
+  - name: Tokens
+    description: Secret-key JWT minting, called only by the customer's own backend (PRD §10.3).
+  - name: Sessions
+    description: Chat session lifecycle — create, fetch full state, close, reopen (PRD §6.2, §12.5).
+  - name: Messages
+    description: Cursor-paginated message history (PRD §6.3, §12.10).
+  - name: Attachments
+    description: Two-step upload-then-announce attachment flow (PRD §6.3, §12.10).
+
+servers:
+  - url: "{apiUrl}/v1"
+    description: >-
+      Base URL is a deployment-specific chat-service origin, supplied by the
+      SDK consumer as `ChatClientConfig.apiUrl` (PRD §6.1) — there is no
+      single fixed multi-tenant SaaS domain to hardcode. No port-swap
+      heuristics are used to derive this from a WebSocket URL or vice versa
+      (PRD §12.7, an explicitly-rejected v1 anti-pattern); `apiUrl` and
+      `wsUrl` are independent, explicit configuration values.
+    variables:
+      apiUrl:
+        default: https://api.chatsdk.example.com
+        description: Deployment-specific chat-service origin (scheme + host, no trailing slash, no path segment).
+
+paths:
+  /tokens:
+    post:
+      operationId: mintToken
+      tags: [Tokens]
+      summary: Mint a short-lived, scoped user access token.
+      description: |
+        Called by the **customer's own backend** using their `sk_live_...` /
+        `sk_test_...` secret key — never by a browser (PRD §10.3). The
+        customer's frontend calls *their own* backend endpoint (commonly
+        one they name `/token` or similar), which in turn calls this
+        endpoint and relays only the resulting `accessToken` to the
+        frontend, which supplies it to the SDK via `getToken()` (PRD §6.1,
+        §10.4).
+
+        Idempotency: N/A — minting has no persisted side effect to
+        de-duplicate. Each call mints a fresh, independent token; retrying
+        after a timeout is always safe.
+
+        **Open Question (PRD §18 Q6, unresolved):** whether this endpoint
+        should also absorb v1's separate, hardcoded external identity-mapping
+        call (`mapCustomer()` → `https://docs-dev.dhaamai.com/customers/map`,
+        PRD §12.6) so that v2 clients make one identity-related network call
+        instead of two. This spec models the contract as it stands today
+        (claims in, token out) and does **not** invent an absorbed
+        identity-mapping shape pending that decision.
+      security:
+        - secretKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MintTokenRequest"
+            examples:
+              minimal:
+                summary: Minimal request
+                value:
+                  userId: "cust_8f2a1e"
+              withCustomClaims:
+                summary: With optional profile fields and a custom claim
+                value:
+                  userId: "cust_8f2a1e"
+                  name: "Priya Shah"
+                  email: "priya@example.com"
+                  planTier: "enterprise"
+      responses:
+        "201":
+          description: Token minted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MintTokenResponse"
+              examples:
+                default:
+                  value:
+                    accessToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjdXN0XzhmMmExZSJ9.signature"
+                    expiresIn: 3600
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sessions:
+    post:
+      operationId: createSession
+      tags: [Sessions]
+      summary: Create a new chat session for the authenticated customer.
+      description: |
+        Starts a new session, defaulting to `mode: BOT` and `status: OPEN`
+        (PRD §12.5's observed lifecycle). The caller's identity comes
+        entirely from the validated `accessToken` — the request body carries
+        only optional client-side context, never customer identity fields,
+        which fixes v1's pattern of re-sending `customerId`/`customerName`/
+        `customerEmail` in the body even though the same values were already
+        embedded in the auth token.
+
+        **Open Question (not resolved by the PRD):** PRD §12.3 documents
+        that in v1, explicit REST session creation is a **client-orchestrated
+        recovery path** — used only when the socket's `connection.ack`
+        resolves to an already-`CLOSED` session — and PRD §8.3 explicitly
+        leaves open whether v2 keeps this client-side responsibility or
+        moves it server-side inside `connection.ack` itself. This endpoint
+        is included because backend (non-WebSocket) SDKs need an explicit,
+        REST-only way to start a session regardless of how that question is
+        resolved for the browser client; whether `@dhaam-ccrm/core` ever
+        calls it directly is exactly the open question above, not something
+        this document can settle.
+
+        Idempotency: supports `Idempotency-Key`. Without it, retrying after
+        a timeout may create two sessions; with it, a replayed request
+        within the key's 24h window returns the original session unchanged.
+      security:
+        - accessToken: []
+          publishableKey: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: Session created.
+          headers:
+            Location:
+              description: URL of the new session's full-state resource.
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sessions/{sessionId}/full:
+    get:
+      operationId: getSessionFull
+      tags: [Sessions]
+      summary: Fetch full session state — session, participants (with read watermarks), and the most recent page of messages.
+      description: |
+        Generalizes v1's `GET /sessions/{id}/full` (PRD §12.9, §12.10), which
+        this spec confirms is the origin of the read-watermark model: each
+        entry in `participants[]` carries `lastReadAt`, and a customer
+        widget seeds its "seen" UI from the **maximum** `lastReadAt` across
+        all `AGENT` participants (defending against multi-agent sessions).
+        This is a read-only view of that watermark — see this document's
+        top-level description for why there is no corresponding write
+        endpoint here.
+
+        `messages` is the most recent page (see `limit`), returned in
+        ascending chronological order (oldest first). Use
+        `GET /sessions/{sessionId}/messages` with `before` to page further
+        back.
+      security:
+        - accessToken: []
+          publishableKey: []
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: Full session state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionFull"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sessions/{sessionId}/messages:
+    get:
+      operationId: listSessionMessages
+      tags: [Messages]
+      summary: Cursor-paginated message history, walking backward from a given message.
+      description: |
+        Matches v1's proven pagination shape exactly (PRD §12.10, §6.3):
+        opaque-id backward cursor (`before`), a `limit`, and a `hasMore`
+        boolean in the response. There is no forward cursor — live messages
+        arrive over the WebSocket (`message.new`, T1), not by polling this
+        endpoint. Omit `before` to fetch the most recent page (equivalent to
+        the first page a scroll-up pagination UI would request).
+
+        Returned in ascending chronological order (oldest first) — the
+        oldest message in the response is the one immediately following the
+        given `before` cursor, so a client can prepend the page to its
+        existing message list without re-sorting.
+      security:
+        - accessToken: []
+          publishableKey: []
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+        - $ref: "#/components/parameters/BeforeCursorQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: A page of messages.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sessions/{sessionId}/close:
+    post:
+      operationId: closeSession
+      tags: [Sessions]
+      summary: Close a session.
+      description: |
+        Transitions `status` to `CLOSED`. Backs the core method
+        `client.closeSession(): Promise<void>` (PRD §6.2) — there is no
+        WebSocket frame type for this action in the T1 catalog, so it is a
+        REST-only operation in v2, same as v1.
+
+        Idempotency: naturally idempotent. Calling this on a session that is
+        already `CLOSED` returns `200` with its current state, not an error
+        — repeats are always safe with no `Idempotency-Key` needed.
+      security:
+        - accessToken: []
+          publishableKey: []
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseSessionRequest"
+      responses:
+        "200":
+          description: Session closed (or already was — see Idempotency above).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sessions/{sessionId}/reopen:
+    post:
+      operationId: reopenSession
+      tags: [Sessions]
+      summary: Reopen a closed session, bypassing the bot straight to WAITING_FOR_AGENT.
+      description: |
+        Backs `client.reopenSession(sessionId): Promise<ChatSession>` (PRD
+        §6.2). Deliberately **bypasses** the AI bot and jumps directly to
+        `status: WAITING_FOR_AGENT`, `mode: HUMAN` — the exact semantics PRD
+        §12.5 confirms for v1's `reopenSession()`. There is no WebSocket
+        frame type for this action in the T1 catalog, so it is REST-only, as
+        in v1.
+
+        Only a session in `CLOSED` status can be reopened. Reopening a
+        session in any other status returns `400 VALIDATION_FAILED` — this
+        is a request-validity error given current state, not a
+        `SESSION_CLOSED` error (which means the opposite: the session *is*
+        closed and an action requires it not to be).
+
+        Idempotency: supports `Idempotency-Key`, since reopening has a
+        real side effect (bypassing the bot, notifying agent routing) that
+        should not be duplicated by a naive client retry.
+      security:
+        - accessToken: []
+          publishableKey: []
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      responses:
+        "200":
+          description: Session reopened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sessions/{sessionId}/attachments:
+    post:
+      operationId: uploadSessionAttachment
+      tags: [Attachments]
+      summary: Upload a file attachment for a session (step 1 of the upload-then-announce flow).
+      description: |
+        Step 1 of the two-step flow PRD §6.3 and §12.10 generalize from v1:
+        this endpoint uploads and stores the file and returns its metadata
+        only. It does **not** create a chat message. The caller (core's
+        `client.sendAttachment()`) must follow up by sending a WS
+        `message.send` frame (T1) whose `d.metadata.attachment` carries this
+        response verbatim — exactly as v1's client emits `chat.message.send`
+        with `metadata.attachment` immediately after this REST call
+        succeeds.
+
+        `attachment` is the message model's **one** canonical location for
+        attachment data (see `Message.attachment`) — v1 read it from either
+        `message.attachment` or `message.metadata.attachment`
+        interchangeably (`raw.attachment ?? raw.metadata?.attachment`),
+        which D4's "one canonical name per concept" rule closes for v2.
+
+        The session is identified by the URL path, not a form field — v1
+        passed `chatSessionId` redundantly inside the multipart body even
+        though the REST call already had nowhere else to route to; this is
+        a deliberate cleanup, not a functional change.
+
+        **This endpoint models the proxied-upload flow v1 actually uses today
+        (multipart straight to chat-service).** PRD §18 Open Question 7 —
+        whether v2 keeps this proxied shape or moves to direct-to-S3
+        presigned URLs minted via REST — is explicitly **unresolved** and
+        owned by the backend team. A presigned-URL design would replace this
+        single multipart `POST` with a pair of calls (e.g. `POST
+        .../attachments/upload-url` returning a presigned PUT target, then a
+        client-side `PUT` straight to storage) and would change this
+        response shape to include upload-target fields instead of a final
+        `url`. **Do not implement against a presigned flow from this spec —
+        it is not modeled here, only flagged.**
+
+        Idempotency: supports `Idempotency-Key`. Without it, retrying a
+        timed-out upload may store the file twice.
+
+        File size and MIME-type limits are enforced server-side; the exact
+        ceiling is not fixed by the PRD (tracked as an open question in the
+        T2 handoff, not invented here). Violating either returns
+        `VALIDATION_FAILED` (`413` for size, `415` for an unsupported MIME
+        type).
+      security:
+        - accessToken: []
+          publishableKey: []
+      parameters:
+        - $ref: "#/components/parameters/SessionIdPath"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  contentEncoding: binary
+                  description: >-
+                    The file to upload. Accepted categories map to
+                    `mediaType` in the response: images, video, audio, and
+                    common document formats (pdf, doc/docx, xls/xlsx, csv,
+                    txt, zip). Exact allow-list and max size are
+                    server-enforced and not fixed by this spec.
+              additionalProperties: false
+      responses:
+        "201":
+          description: Attachment stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Attachment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          description: Attachment exceeds the maximum allowed size.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: Attachment MIME type is not on the allow-list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+webhooks:
+  messageCreated:
+    post:
+      operationId: webhookMessageCreated
+      tags: [Messages]
+      summary: A message was created in a session (mirrors WS frame message.new).
+      description: |
+        Pushed to the customer's backend for every message persisted in any
+        of their tenant's sessions, regardless of sender. See "Webhook
+        delivery contract" below for the shared envelope, signing, and
+        retry semantics.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WebhookSignatureHeader"
+        - $ref: "#/components/parameters/WebhookIdHeader"
+        - $ref: "#/components/parameters/WebhookEventTypeHeader"
+        - $ref: "#/components/parameters/WebhookAttemptHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookMessageCreatedEvent"
+      responses:
+        "200":
+          description: Any `2xx` response acknowledges the delivery. Non-`2xx` (or timeout) triggers a retry per the delivery contract.
+
+  sessionUpdated:
+    post:
+      operationId: webhookSessionUpdated
+      tags: [Sessions]
+      summary: A session's status, mode, or assignment changed (mirrors WS frame session.updated).
+      description: |
+        Pushed whenever `status`, `mode`, or `assignedAgent` changes for any
+        reason (bot escalation, agent assignment, manual status change).
+        For a transition specifically into `CLOSED`, see `sessionClosed`
+        below instead, which carries the structured `closeReason` this
+        event does not.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WebhookSignatureHeader"
+        - $ref: "#/components/parameters/WebhookIdHeader"
+        - $ref: "#/components/parameters/WebhookEventTypeHeader"
+        - $ref: "#/components/parameters/WebhookAttemptHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookSessionUpdatedEvent"
+      responses:
+        "200":
+          description: Any `2xx` response acknowledges the delivery. Non-`2xx` (or timeout) triggers a retry per the delivery contract.
+
+  sessionClosed:
+    post:
+      operationId: webhookSessionClosed
+      tags: [Sessions]
+      summary: A session transitioned to CLOSED (mirrors WS frame session.closed).
+      description: |
+        Carries the structured `closeReason` PRD §12.5 calls for
+        (`MANUAL` vs `SWITCHED` — v1 overloads `CLOSED` to mean both
+        "genuinely ended" and "parked because the customer moved to another
+        session," and this event's `closeReason` is what disambiguates the
+        two for a downstream CRM sync).
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WebhookSignatureHeader"
+        - $ref: "#/components/parameters/WebhookIdHeader"
+        - $ref: "#/components/parameters/WebhookEventTypeHeader"
+        - $ref: "#/components/parameters/WebhookAttemptHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookSessionClosedEvent"
+      responses:
+        "200":
+          description: Any `2xx` response acknowledges the delivery. Non-`2xx` (or timeout) triggers a retry per the delivery contract.
+
+  ticketLinked:
+    post:
+      operationId: webhookTicketLinked
+      tags: [Sessions]
+      summary: A CRM ticket was linked to a session (mirrors WS frame ticket.linked).
+      description: >-
+        Mirrors v1's `chat.ticket.linked` WS event (PRD §7.3). The primary
+        reason a `@dhaam-ccrm/node`-consuming backend would subscribe to
+        webhooks at all — syncing ticket linkage into the customer's own
+        CRM/ticketing system without needing a live socket connection.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WebhookSignatureHeader"
+        - $ref: "#/components/parameters/WebhookIdHeader"
+        - $ref: "#/components/parameters/WebhookEventTypeHeader"
+        - $ref: "#/components/parameters/WebhookAttemptHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookTicketLinkedEvent"
+      responses:
+        "200":
+          description: Any `2xx` response acknowledges the delivery. Non-`2xx` (or timeout) triggers a retry per the delivery contract.
+
+components:
+  securitySchemes:
+    secretKey:
+      type: http
+      scheme: bearer
+      bearerFormat: "sk_live_... / sk_test_..."
+      description: >-
+        Tenant secret key. Valid **only** as the credential on `POST
+        /tokens` (never on any endpoint a browser calls) and, separately, as
+        the HMAC-SHA256 signing key for webhook signature verification. Must
+        never leave the customer's backend (PRD §10.1, §14).
+    accessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Short-lived, scoped user JWT minted by `POST /tokens` and supplied
+        to `@dhaam-ccrm/core` via `getToken()` (PRD §6.1, §10.4). Required,
+        together with `publishableKey`, on every session/message/attachment
+        endpoint.
+    publishableKey:
+      type: apiKey
+      in: header
+      name: X-Publishable-Key
+      description: >-
+        Tenant-identifying key (`pk_live_...` / `pk_test_...`), safe to ship
+        in a client bundle. Identifies a tenant and grants nothing on its
+        own (PRD §10.1) — always required together with `accessToken`, never
+        as a sole credential. The server rejects a request whose
+        `X-Publishable-Key` tenant does not match the `accessToken`'s tenant
+        claim with `401 AUTH_INVALID` (PRD §10.2).
+
+  parameters:
+    SessionIdPath:
+      name: sessionId
+      in: path
+      required: true
+      description: Opaque session identifier. Do not parse or rely on its internal structure.
+      schema:
+        type: string
+        minLength: 1
+    BeforeCursorQuery:
+      name: before
+      in: query
+      required: false
+      description: >-
+        Opaque message id cursor. Returns the page of messages immediately
+        preceding this message. Omit to fetch the most recent page.
+      schema:
+        type: string
+        minLength: 1
+    LimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of items to return.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        Client-generated opaque token (UUID recommended). A replayed request
+        with the same key within 24h returns the original response instead
+        of repeating the side effect.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+    WebhookSignatureHeader:
+      name: X-ChatSDK-Signature
+      in: header
+      required: true
+      description: |
+        `t=<unix-seconds>,v1=<hex-encoded HMAC-SHA256>`. The signed payload
+        is `${t}.${rawRequestBody}`, HMAC-SHA256'd with the tenant's secret
+        key (`sk_live_...` / `sk_test_...`) as the key. Verify by
+        recomputing the HMAC over the *raw, unparsed* body and comparing
+        with constant-time comparison; reject if `t` is more than 5 minutes
+        from the receiver's clock (replay protection).
+        `@dhaam-ccrm/node` (T16) implements this verification so consumers
+        never hand-roll it.
+      schema:
+        type: string
+    WebhookIdHeader:
+      name: X-ChatSDK-Webhook-Id
+      in: header
+      required: true
+      description: >-
+        Unique id for this delivery attempt's underlying event (same value
+        as the body's `id`). Use for de-duplication — retries of the same
+        event reuse this id.
+      schema:
+        type: string
+    WebhookEventTypeHeader:
+      name: X-ChatSDK-Event-Type
+      in: header
+      required: true
+      description: Same value as the body's `type`. Lets a receiver route without parsing the body first.
+      schema:
+        type: string
+    WebhookAttemptHeader:
+      name: X-ChatSDK-Webhook-Attempt
+      in: header
+      required: true
+      description: 1-indexed delivery attempt number. Retries use exponential backoff; receivers should treat delivery as at-least-once and dedupe on `X-ChatSDK-Webhook-Id`.
+      schema:
+        type: integer
+        minimum: 1
+
+  headers:
+    RateLimitLimit:
+      description: Request ceiling for the current window, for the credential that authenticated this request.
+      schema:
+        type: integer
+    RateLimitRemaining:
+      description: Requests remaining in the current window.
+      schema:
+        type: integer
+    RateLimitReset:
+      description: Unix epoch seconds when the current window resets.
+      schema:
+        type: integer
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+    RequestId:
+      description: Correlation id for this request, echoed in any error body as `error.details.requestId`.
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Request failed validation, or is invalid given the resource's current state.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            default:
+              value:
+                error:
+                  code: VALIDATION_FAILED
+                  message: "userId is required."
+                  retryable: false
+                  details:
+                    field: userId
+                    requestId: "req_5f9a2c"
+    Unauthorized:
+      description: Missing, malformed, expired, revoked, or wrong-tenant credential.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            invalid:
+              summary: AUTH_INVALID
+              value:
+                error:
+                  code: AUTH_INVALID
+                  message: "The provided credentials could not be verified."
+                  retryable: false
+            expired:
+              summary: AUTH_EXPIRED
+              value:
+                error:
+                  code: AUTH_EXPIRED
+                  message: "The access token has expired."
+                  retryable: true
+    NotFound:
+      description: The resource does not exist, or is not visible to the authenticated caller.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            default:
+              value:
+                error:
+                  code: SESSION_NOT_FOUND
+                  message: "No session found with the given id."
+                  retryable: false
+    Conflict:
+      description: The request conflicts with the resource's current state.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            default:
+              value:
+                error:
+                  code: SESSION_CLOSED
+                  message: "This session is closed and no longer accepts attachments."
+                  retryable: false
+    TooManyRequests:
+      description: Rate limit exceeded for this credential.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+        RateLimit-Limit:
+          $ref: "#/components/headers/RateLimitLimit"
+        RateLimit-Remaining:
+          $ref: "#/components/headers/RateLimitRemaining"
+        RateLimit-Reset:
+          $ref: "#/components/headers/RateLimitReset"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            default:
+              value:
+                error:
+                  code: RATE_LIMITED
+                  message: "Too many requests."
+                  retryable: true
+    InternalError:
+      description: Unexpected server-side fault, or a downstream dependency is unavailable.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          examples:
+            default:
+              value:
+                error:
+                  code: INTERNAL
+                  message: "An unexpected error occurred."
+                  retryable: true
+
+  schemas:
+    ChatStatus:
+      type: string
+      description: >-
+        The full six-value status set (PRD §12.1, D4) — v1's own type system
+        modeled only four of these (`OPEN`/`WAITING_FOR_AGENT`/`ASSIGNED`/
+        `CLOSED`), silently collapsing `RESOLVED`/`ON_HOLD` traffic to `OPEN`.
+      enum: [OPEN, WAITING_FOR_AGENT, ASSIGNED, CLOSED, RESOLVED, ON_HOLD]
+    ChatMode:
+      type: string
+      enum: [BOT, HUMAN]
+    SenderType:
+      type: string
+      enum: [CUSTOMER, AGENT, BOT, SYSTEM]
+    ParticipantType:
+      type: string
+      description: Who a session participant is. Distinct from SenderType — a participant has no SYSTEM value.
+      enum: [CUSTOMER, AGENT, BOT]
+    MessageType:
+      type: string
+      enum: [TEXT, SYSTEM, FILE, IMAGE, VIDEO, AUDIO]
+    MediaType:
+      type: string
+      description: >-
+        Attachment category. Normalized to upper-snake-case for consistency
+        with every other enum in this document (D4) — v1's wire value was
+        lower-case-plural (`images`/`videos`/`audio`/`documents`); this is a
+        deliberate v1→v2 casing fix, not a PRD-mandated rename, and should be
+        reconciled with the backend team alongside the other D4 backend work
+        (plan §2, B4).
+      enum: [IMAGE, VIDEO, AUDIO, DOCUMENT]
+    CloseReason:
+      type: string
+      description: >-
+        First-class enum for why a session entered CLOSED (PRD §12.5) — v1
+        only had this as a loose `string | null` code comment
+        (`'SWITCHED' | 'MANUAL' | null`).
+      enum: [MANUAL, SWITCHED]
+    ErrorCode:
+      type: string
+      description: >-
+        Identical to the WS protocol's canonical `ErrorCode` (PRD §7.4) —
+        one enum shared by both transports. Not every value can occur on
+        every surface (e.g. `PROTOCOL_VERSION_UNSUPPORTED` is WS-only); see
+        this document's top-level Error Taxonomy table for the REST-specific
+        subset and HTTP status mapping.
+      enum:
+        - AUTH_INVALID
+        - AUTH_EXPIRED
+        - PROTOCOL_VERSION_UNSUPPORTED
+        - RATE_LIMITED
+        - VALIDATION_FAILED
+        - SESSION_NOT_FOUND
+        - SESSION_CLOSED
+        - INTERNAL
+    ErrorPayload:
+      type: object
+      description: Identical shape to the WS protocol's ErrorPayload (PRD §7.2).
+      required: [code, message, retryable]
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+          description: Human-readable. Not for programmatic branching — branch on `code`.
+        retryable:
+          type: boolean
+        details:
+          type: object
+          description: Structured, error-specific context (e.g. which field failed validation).
+          additionalProperties: true
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorPayload"
+
+    Profile:
+      type: object
+      description: Enriched participant profile, generalized from v1's assignedAgent/customer shapes.
+      required: [displayName, email, avatarUrl, isOnline]
+      properties:
+        displayName:
+          type: string
+        email:
+          type: [string, "null"]
+          format: email
+        avatarUrl:
+          type: [string, "null"]
+          format: uri
+        isOnline:
+          type: boolean
+
+    Ticket:
+      type: object
+      description: A linked CRM/support ticket (see the `ticket.linked` WS frame and webhook).
+      required: [id]
+      properties:
+        id:
+          type: string
+          description: Opaque ticket identifier.
+        url:
+          type: [string, "null"]
+          format: uri
+
+    Participant:
+      type: object
+      required: [participantType, lastReadAt]
+      properties:
+        participantType:
+          $ref: "#/components/schemas/ParticipantType"
+        userId:
+          type: [string, "null"]
+          description: Opaque identifier of the participant, null for a BOT participant.
+        lastReadAt:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            The read watermark model (PRD §9.5, §12.9). Null if this
+            participant has not read any messages yet. When multiple AGENT
+            participants exist, a client should take the maximum
+            `lastReadAt` across them.
+
+    Attachment:
+      type: object
+      required: [url, fileName, mimeType, size, mediaType]
+      properties:
+        url:
+          type: string
+          format: uri
+        fileName:
+          type: string
+        mimeType:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+          description: Size in bytes.
+        mediaType:
+          $ref: "#/components/schemas/MediaType"
+
+    MessageReplyPreview:
+      type: object
+      description: Denormalized preview of the message being replied to.
+      required: [id, content, senderType]
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        senderType:
+          $ref: "#/components/schemas/SenderType"
+        senderId:
+          type: [string, "null"]
+        senderName:
+          type: [string, "null"]
+        messageType:
+          $ref: "#/components/schemas/MessageType"
+
+    Message:
+      type: object
+      required: [id, chatSessionId, senderType, content, messageType, createdAt]
+      properties:
+        id:
+          type: string
+          description: >-
+            Opaque message identifier. Under D1, this is the client-generated
+            ULID for customer-sent messages — it never changes after
+            creation; there is no separate server-assigned id to swap in
+            later.
+        chatSessionId:
+          type: string
+        senderType:
+          $ref: "#/components/schemas/SenderType"
+        senderId:
+          type: [string, "null"]
+        senderName:
+          type: [string, "null"]
+        content:
+          type: string
+        messageType:
+          $ref: "#/components/schemas/MessageType"
+        createdAt:
+          type: string
+          format: date-time
+          description: >-
+            The one canonical timestamp field for this concept (D4) — v1
+            aliased this across four different field names
+            (`timestamp`/`createdAt`/`created_at`/`sentAt`) depending on
+            endpoint and rollout era.
+        attachment:
+          oneOf:
+            - $ref: "#/components/schemas/Attachment"
+            - type: "null"
+          description: >-
+            The **one** canonical location for attachment data (D4) — v1
+            read this from either `message.attachment` or
+            `message.metadata.attachment` interchangeably.
+        replyToMessageId:
+          type: [string, "null"]
+        replyToMessage:
+          oneOf:
+            - $ref: "#/components/schemas/MessageReplyPreview"
+            - type: "null"
+        metadata:
+          type: object
+          description: Free-form additional context. Never used for attachment data — see `attachment`.
+          additionalProperties: true
+
+    ChatSession:
+      type: object
+      required: [id, status, mode, createdAt, closedAt, assignedAgent, customer, ticket]
+      properties:
+        id:
+          type: string
+          description: Opaque session identifier.
+        status:
+          $ref: "#/components/schemas/ChatStatus"
+        mode:
+          $ref: "#/components/schemas/ChatMode"
+        createdAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: [string, "null"]
+          format: date-time
+        assignedAgent:
+          oneOf:
+            - $ref: "#/components/schemas/Profile"
+            - type: "null"
+        customer:
+          oneOf:
+            - $ref: "#/components/schemas/Profile"
+            - type: "null"
+        ticket:
+          oneOf:
+            - $ref: "#/components/schemas/Ticket"
+            - type: "null"
+
+    SessionFull:
+      type: object
+      required: [session, participants, messages, hasMore]
+      properties:
+        session:
+          $ref: "#/components/schemas/ChatSession"
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Participant"
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+          description: Most recent page, ascending chronological order (oldest first).
+        hasMore:
+          type: boolean
+          description: Whether older messages exist beyond this page. Page further back with `GET /sessions/{sessionId}/messages`.
+
+    MessagePage:
+      type: object
+      required: [messages, hasMore]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        hasMore:
+          type: boolean
+
+    CreateSessionRequest:
+      type: object
+      description: >-
+        Customer identity is derived entirely from the validated
+        `accessToken` — this body never repeats it.
+      properties:
+        metadata:
+          type: object
+          description: Optional free-form client-side context (e.g. originating page URL, locale).
+          additionalProperties: true
+
+    CloseSessionRequest:
+      type: object
+      properties:
+        reason:
+          $ref: "#/components/schemas/CloseReason"
+          default: MANUAL
+
+    MintTokenRequest:
+      type: object
+      required: [userId]
+      properties:
+        userId:
+          type: string
+          minLength: 1
+          description: >-
+            Stable identifier for the end user in the customer's own system.
+            Becomes the token's `sub` claim and the resulting session's
+            customer identity.
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+      additionalProperties:
+        description: >-
+          Arbitrary customer-defined claims embedded in the minted JWT (e.g.
+          plan tier, account region). Reserved claim names (`sub`, `iat`,
+          `exp`, `iss`, `aud`, `tenantId`) are rejected with `400
+          VALIDATION_FAILED`.
+
+    MintTokenResponse:
+      type: object
+      required: [accessToken, expiresIn]
+      properties:
+        accessToken:
+          type: string
+          description: Short-lived JWT. Pass to the SDK via `getToken()` (PRD §6.1).
+        expiresIn:
+          type: integer
+          minimum: 1
+          description: Token lifetime in seconds from the moment of minting.
+
+    WebhookMessageCreatedEvent:
+      type: object
+      required: [id, type, createdAt, tenantId, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: message.created
+        createdAt:
+          type: string
+          format: date-time
+        tenantId:
+          type: string
+        data:
+          $ref: "#/components/schemas/Message"
+
+    WebhookSessionUpdatedEvent:
+      type: object
+      required: [id, type, createdAt, tenantId, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: session.updated
+        createdAt:
+          type: string
+          format: date-time
+        tenantId:
+          type: string
+        data:
+          $ref: "#/components/schemas/ChatSession"
+
+    WebhookSessionClosedEvent:
+      type: object
+      required: [id, type, createdAt, tenantId, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: session.closed
+        createdAt:
+          type: string
+          format: date-time
+        tenantId:
+          type: string
+        data:
+          type: object
+          required: [session, closeReason]
+          properties:
+            session:
+              $ref: "#/components/schemas/ChatSession"
+            closeReason:
+              $ref: "#/components/schemas/CloseReason"
+
+    WebhookTicketLinkedEvent:
+      type: object
+      required: [id, type, createdAt, tenantId, data]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          const: ticket.linked
+        createdAt:
+          type: string
+          format: date-time
+        tenantId:
+          type: string
+        data:
+          type: object
+          required: [sessionId, ticket]
+          properties:
+            sessionId:
+              type: string
+            ticket:
+              $ref: "#/components/schemas/Ticket"
