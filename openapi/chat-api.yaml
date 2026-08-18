@@ -262,6 +262,44 @@ paths:
           $ref: "#/components/responses/InternalError"
 
   /sessions:
+    get:
+      operationId: listSessions
+      tags: [Sessions]
+      summary: List the authenticated customer's recent sessions.
+      description: |
+        Hydrates `ChatState.pastSessions` (PRD §6.4), which the PRD
+        specifies as state but never gave a data source — this endpoint
+        closes that gap.
+
+        Replaces v1's `GET /chat/sessions/customer?tenantId=&customerId=`
+        (`src/context.tsx:923`). That shape is not carried forward: taking
+        `customerId` as a query parameter means the endpoint trusts the
+        caller to declare whose sessions to return, so any customer could
+        enumerate another's history by changing one parameter. Here both
+        tenant and customer identity are derived from the validated
+        `accessToken` and publishable key, and are not accepted as inputs.
+
+        Ordered most-recent-first. Includes closed sessions — a customer
+        reopening an earlier conversation (PRD §12.5) needs to see them.
+      security:
+        - accessToken: []
+          publishableKey: []
+      parameters:
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: A page of session summaries, most recent first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionSummaryPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
     post:
       operationId: createSession
       tags: [Sessions]
@@ -1213,6 +1251,51 @@ components:
         hasMore:
           type: boolean
           description: Whether older messages exist beyond this page. Page further back with `GET /sessions/{sessionId}/messages`.
+
+    ChatSessionSummary:
+      type: object
+      description: >-
+        Lightweight session projection for history lists. Deliberately
+        smaller than `ChatSession` — a history panel renders a label, a
+        timestamp, and an unread badge, and should not pay for participant
+        or ticket payloads it will not draw.
+      required: [id, status, mode, createdAt, closedAt, lastMessageAt, unreadCount]
+      properties:
+        id:
+          type: string
+          description: Opaque session identifier.
+        status:
+          $ref: "#/components/schemas/ChatStatus"
+        mode:
+          $ref: "#/components/schemas/ChatMode"
+        createdAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: [string, "null"]
+          format: date-time
+        lastMessageAt:
+          type: [string, "null"]
+          format: date-time
+          description: Timestamp of the most recent message, or null if the session has none.
+        lastMessagePreview:
+          type: string
+          description: Truncated plain-text preview of the most recent message.
+        unreadCount:
+          type: integer
+          minimum: 0
+          description: Messages after this customer's read watermark (PRD §9.5).
+
+    SessionSummaryPage:
+      type: object
+      required: [sessions, hasMore]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatSessionSummary"
+        hasMore:
+          type: boolean
 
     MessagePage:
       type: object
