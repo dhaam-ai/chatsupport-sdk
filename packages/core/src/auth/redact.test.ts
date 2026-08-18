@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { InvalidPublishableKeyError, SecretKeyInClientError, parsePublishableKey } from './keys.js';
+import {
+  InvalidPublishableKeyError,
+  SecretKeyInClientError,
+  isPublishableKey,
+  parsePublishableKey,
+} from './keys.js';
 import { REDACTED, containsCredentialMaterial, redact, scrubCredentials } from './redact.js';
 import { InvalidTokenResponseError, toAuthToken } from './token-source.js';
 
@@ -14,6 +19,7 @@ const PK_LIVE = 'dhp' + '_live_';
 const PK_TEST = 'dhp' + '_test_';
 const SK_LIVE = 'dhk' + '_live_';
 const RETIRED_PK_LIVE = 'dh' + 'pk' + '_live_';
+const RETIRED_PK_TEST = 'dh' + 'pk' + '_test_';
 const RETIRED_SK_LIVE = 'dh' + 'sk' + '_live_';
 const FOREIGN_SK_LIVE = 'sk' + '_live_';
 
@@ -74,11 +80,26 @@ describe('scrubCredentials', () => {
   });
 
   it('still removes our RETIRED scheme, which is still in customer config', () => {
-    // `dhsk_`/`dhpk_` keys no longer validate, but they are still pasted into
-    // config and still echoed back inside third-party error messages — which
-    // is precisely the string this module exists to clean.
+    // `dhpk_` is accepted by `keys.ts` for the length of the deprecation
+    // window, so these are live credentials rather than historical ones. They
+    // must stay covered after the window closes too: a key that no longer
+    // authenticates is still a credential, and it keeps turning up in old
+    // error messages and log archives long after it stops working.
     expect(scrubCredentials(`key=${RETIRED_SK_LIVE}QZXJ7WVMPRKD4NTB`)).toBe(`key=${REDACTED}`);
     expect(scrubCredentials(`key=${RETIRED_PK_LIVE}QZXJ7WVMPRKD4NTB`)).toBe(`key=${REDACTED}`);
+  });
+
+  it('covers every key form the parser accepts, so acceptance never outruns redaction', () => {
+    // Ties the two modules together: `keys.ts` grew a second accepted prefix,
+    // and a redactor that only knew the current one would have let a valid,
+    // in-use publishable key straight into a log line. Real keys from the real
+    // parser, so this cannot pass on a form the parser does not actually take.
+    for (const prefix of [PK_LIVE, PK_TEST, RETIRED_PK_LIVE, RETIRED_PK_TEST]) {
+      const key = parsePublishableKey(`${prefix}QZXJ7WVMPRKD4NTB`);
+      expect(isPublishableKey(key), `${prefix} is not actually accepted`).toBe(true);
+      expect(scrubCredentials(`key=${key}`), `not redacted: ${prefix}`).toBe(`key=${REDACTED}`);
+      expect(containsCredentialMaterial(`key=${key}`)).toBe(true);
+    }
   });
 
   it('removes a Bearer credential along with the scheme', () => {

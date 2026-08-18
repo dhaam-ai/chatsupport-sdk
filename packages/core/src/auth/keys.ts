@@ -77,8 +77,57 @@ export type PublishableKeyEnvironment = 'live' | 'test';
 // keys gets their own push blocked and blames the SDK, a genuine leak of ours
 // is triaged as a Stripe incident and routed to the wrong vendor, and no
 // scanner can attribute a key to us.
+//
+// ── Why `dhpk_` is still ACCEPTED, though never recommended ──────────────
+//
+// The rename first shipped recognising `dhp_` and nothing else. A publishable
+// key is baked into a browser bundle at build time and ships to every visitor
+// (§10.7), so the bundles that would start throwing at construction are
+// precisely the ones nobody can redeploy on our schedule — including bundles
+// already sitting in a browser cache. Refusing `dhpk_` here does not protect
+// anyone: the key is already in the wild, and the only thing the refusal
+// changes is whether the widget loads.
+//
+// So `dhpk_` is accepted for the length of the server-side deprecation window
+// and reported as deprecated, while the error text still names only the
+// current prefixes — nobody should be told to go and get a `dhpk_` key.
+//
+// `dhsk_` is NOT here. A retired SECRET key is a credential incident whatever
+// the window says; see FOREIGN_SECRET_PREFIXES below.
 const LIVE_PREFIX = 'dhp_live_';
 const TEST_PREFIX = 'dhp_test_';
+
+const DEPRECATED_LIVE_PREFIX = 'dhpk_live_';
+const DEPRECATED_TEST_PREFIX = 'dhpk_test_';
+
+/**
+ * Every publishable-key prefix this module accepts, with what it implies.
+ *
+ * ONE table, read by both `parsePublishableKey` and
+ * `publishableKeyEnvironment`. They were two separate `startsWith` chains, and
+ * that is exactly the shape that broke on the last rename: the environment
+ * check was `key.startsWith(LIVE_PREFIX) ? 'live' : 'test'`, so anything the
+ * parser accepted that was not byte-identical to `dhp_live_` silently reported
+ * itself as a TEST key. Adding `dhpk_live_` to one chain and not the other
+ * would have pointed a live customer at a test environment.
+ */
+interface AcceptedPrefix {
+  readonly prefix: string;
+  readonly environment: PublishableKeyEnvironment;
+  readonly deprecated: boolean;
+}
+
+const ACCEPTED_PREFIXES: readonly AcceptedPrefix[] = [
+  { prefix: LIVE_PREFIX, environment: 'live', deprecated: false },
+  { prefix: TEST_PREFIX, environment: 'test', deprecated: false },
+  { prefix: DEPRECATED_LIVE_PREFIX, environment: 'live', deprecated: true },
+  { prefix: DEPRECATED_TEST_PREFIX, environment: 'test', deprecated: true },
+];
+
+/** The accepted prefix `value` carries, or `null`. */
+function acceptedPrefixOf(value: string): AcceptedPrefix | null {
+  return ACCEPTED_PREFIXES.find((entry) => value.startsWith(entry.prefix)) ?? null;
+}
 
 /** Our own secret-key prefix. */
 const OUR_SECRET_PREFIX = 'dhk_';
@@ -88,15 +137,21 @@ const OUR_SECRET_PREFIX = 'dhk_';
  * as SECRET keys rather than as format errors.
  *
  * `sk_` is Stripe's (and several others' by convention). `dhsk_` is our own
- * retired scheme — it no longer validates anywhere, but keys carrying it were
- * provisioned and are still sitting in customer config.
+ * retired scheme — the server still accepts it during the deprecation window,
+ * and keys carrying it are still sitting in customer config.
  *
  * Both belong here for the same reason. Someone pasting either into this slot
  * has put a SECRET KEY in client config; telling them "must start with
  * dhp_live_" would send them hunting for a formatting error instead of
- * rotating an exposed credential. Dropping `dhsk_` when the prefix changed
- * would have silently downgraded exactly the population most likely to hit
- * this — the customers mid-migration.
+ * rotating an exposed credential.
+ *
+ * Note the deliberate asymmetry with `dhpk_`, which IS accepted above. A
+ * retired PUBLISHABLE key in client config is where it belongs and merely
+ * needs replacing; a retired SECRET key in client config is exposed no matter
+ * which scheme it uses, and the window the server grants it changes nothing
+ * about that. Dropping `dhsk_` from this list would silently downgrade a
+ * credential incident to a typo for exactly the population most likely to hit
+ * it — the customers mid-migration.
  */
 const FOREIGN_SECRET_PREFIXES = ['sk_', 'dhsk_'] as const;
 
@@ -197,17 +252,18 @@ export function parsePublishableKey(value: string): PublishableKey {
     throw new InvalidPublishableKeyError('it has leading or trailing whitespace');
   }
 
-  const prefix = value.startsWith(LIVE_PREFIX)
-    ? LIVE_PREFIX
-    : value.startsWith(TEST_PREFIX)
-      ? TEST_PREFIX
-      : null;
+  const accepted = acceptedPrefixOf(value);
 
-  if (prefix === null) {
+  if (accepted === null) {
+    // Names only the CURRENT prefixes. `dhpk_` is tolerated, not recommended,
+    // and telling someone to go and obtain one would be advice to adopt a
+    // scheme with a removal date. The message is also identical for every
+    // unrecognised prefix — a distinct one would disclose which scheme the
+    // input used, which §14 rules out.
     throw new InvalidPublishableKeyError(`it must start with "${LIVE_PREFIX}" or "${TEST_PREFIX}"`);
   }
 
-  const body = value.slice(prefix.length);
+  const body = value.slice(accepted.prefix.length);
   if (body === '') throw new InvalidPublishableKeyError('it has a prefix but no key body');
   if (!KEY_BODY.test(body)) {
     throw new InvalidPublishableKeyError(
@@ -236,5 +292,26 @@ export function isPublishableKey(value: string): value is PublishableKey {
  * that has not been proven to be a publishable key at all.
  */
 export function publishableKeyEnvironment(key: PublishableKey): PublishableKeyEnvironment {
-  return key.startsWith(LIVE_PREFIX) ? 'live' : 'test';
+  // Read from the same table `parsePublishableKey` accepted the key with, so
+  // the two cannot disagree about what a prefix means. The `?? 'test'` is
+  // unreachable for a branded key — only `parsePublishableKey` mints one, and
+  // it only mints one for a prefix in the table — and points at the
+  // non-production environment if a future cast ever makes it reachable.
+  return acceptedPrefixOf(key)?.environment ?? 'test';
+}
+
+/**
+ * True when `key` uses the retired `dhpk_` scheme (§10.1).
+ *
+ * The key still works: the server accepts it for the length of the deprecation
+ * window. This exists so a host app can surface "you are on a key format with
+ * a removal date" at its own log level, and so the window's population is
+ * observable from the client side rather than only from the server's database.
+ *
+ * Takes a {@link PublishableKey} for the same reason
+ * {@link publishableKeyEnvironment} does: the question is meaningless for a
+ * value that has not been proven to be a publishable key at all.
+ */
+export function isDeprecatedPublishableKey(key: PublishableKey): boolean {
+  return acceptedPrefixOf(key)?.deprecated ?? false;
 }

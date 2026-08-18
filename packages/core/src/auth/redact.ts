@@ -80,10 +80,13 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   // Three schemes, one pattern, and all three are still needed:
   //
   //   `dhp_`/`dhk_`   our current keys.
-  //   `dhpk_`/`dhsk_` our retired ones. They no longer validate, but they are
-  //                   still in customer config and still in error messages
-  //                   coming back off the wire, which is exactly the string
-  //                   this module is handed.
+  //   `dhpk_`/`dhsk_` our retired ones. `keys.ts` accepts `dhpk_` for the
+  //                   length of the deprecation window, so these are LIVE
+  //                   credentials, not merely historical ones — and they must
+  //                   stay here after the window closes too, because a key
+  //                   that no longer authenticates is still a credential and
+  //                   still turns up in old error messages and log archives
+  //                   long after it stops working.
   //   `pk_`/`sk_`     a foreign vendor's (Stripe's) — someone's Stripe key in
   //                   our log is still a credential in our log.
   //

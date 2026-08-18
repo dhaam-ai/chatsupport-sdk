@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   InvalidPublishableKeyError,
   SecretKeyInClientError,
+  isDeprecatedPublishableKey,
   isPublishableKey,
   parsePublishableKey,
   publishableKeyEnvironment,
@@ -30,6 +31,8 @@ const PK_LIVE = `${PK}live_`;
 const PK_TEST = `${PK}test_`;
 const SK_LIVE = `${SK}live_`;
 const SK_TEST = `${SK}test_`;
+const RETIRED_PK_LIVE = `${RETIRED_PK}live_`;
+const RETIRED_PK_TEST = `${RETIRED_PK}test_`;
 
 /** Every 4+ character slice of `value`. */
 function slices(value: string, min = 4): string[] {
@@ -200,6 +203,21 @@ describe('the accepted key format does not collide with a foreign vendor scheme'
     expect(retired.some((key) => FOREIGN_SECRET_SCANNER.test(key))).toBe(true);
   });
 
+  it('BOTH accepted forms parse, and only the retired one trips the scanner', () => {
+    // The deprecation window's cost, stated once and measured: the second
+    // format this parser accepts is exactly the format that gets customers'
+    // pushes blocked. That is the argument for the window being time-boxed
+    // rather than permanent — and it is why nothing here mints a `dhpk_` key,
+    // it only tolerates one that already exists.
+    const current = sample();
+    const retired = current.map((key) => key.replace(PK, RETIRED_PK));
+
+    for (const key of retired) expect(isPublishableKey(key)).toBe(true);
+
+    expect(current.filter((key) => FOREIGN_SECRET_SCANNER.test(key)).length).toBe(0);
+    expect(retired.filter((key) => FOREIGN_SECRET_SCANNER.test(key)).length).toBeGreaterThan(0);
+  });
+
   it('reproduces the ~46.6% hit rate of the retired scheme, so the regex is calibrated', () => {
     // A regex that merely "matches something" could still be the wrong regex.
     // The retired scheme's rate is a known quantity — `(62/64)^24` = 46.67%,
@@ -251,14 +269,14 @@ describe('secret keys are refused where a publishable key belongs (§14)', () =>
     expect(() => parsePublishableKey(`${RETIRED_SK}test_abc123`)).toThrow(SecretKeyInClientError);
   });
 
-  it('refuses the retired PUBLISHABLE prefix too, as a plain format error', () => {
-    // Correctly NOT a SecretKeyInClientError: a stale publishable key is a
-    // config error to fix, not a credential to rotate. It must still fail —
-    // silently accepting it would keep the old scheme alive on the wire.
-    expect(() => parsePublishableKey(`${RETIRED_PK}live_abc123`)).toThrow(
-      InvalidPublishableKeyError,
-    );
-    expect(isPublishableKey(`${RETIRED_PK}test_abc123`)).toBe(false);
+  it('does NOT treat the retired PUBLISHABLE prefix as a secret key', () => {
+    // The asymmetry is deliberate and is the whole shape of the change. A
+    // retired PUBLISHABLE key in client config is where a publishable key
+    // belongs — it needs replacing, not rotating — and the deprecation-window
+    // suite below asserts it is accepted. A retired SECRET key in client
+    // config is exposed whatever the window says, which is the test above.
+    expect(() => parsePublishableKey(`${RETIRED_PK_LIVE}abc123`)).not.toThrow();
+    expect(isPublishableKey(`${RETIRED_PK_TEST}abc123`)).toBe(true);
   });
 
   it('is not defeated by casing', () => {
@@ -399,15 +417,11 @@ describe('errors carry zero information about the input (§14)', () => {
 
   it('rejections in the same category produce an identical message', () => {
     const byCategory: ReadonlyArray<readonly string[]> = [
-      // Wrong prefix — including our own retired publishable prefix, which
-      // must not be distinguishable from any other unknown one.
-      [
-        'abc123',
-        'ak_live_QQQQ',
-        'https://example.test/x',
-        'eyJhbGciOiJIUzI1NiJ9.a.b',
-        `${RETIRED_PK}live_QQQQ`,
-      ],
+      // Wrong prefix. The retired PUBLISHABLE prefix is NOT here any more —
+      // it parses during the deprecation window, so `rejectionOf` would throw
+      // its "expected this input to be rejected" guard rather than silently
+      // passing.
+      ['abc123', 'ak_live_QQQQ', 'https://example.test/x', 'eyJhbGciOiJIUzI1NiJ9.a.b', 'dhq_live_Q'],
       // Prefix present, body empty.
       [PK_LIVE, PK_TEST],
       // Disallowed characters in the body.
@@ -433,7 +447,7 @@ describe('errors carry zero information about the input (§14)', () => {
       ` ${PK_LIVE}a`,
       `${SK_LIVE}a`,
       `${RETIRED_SK}live_a`,
-      `${RETIRED_PK}live_a`,
+      `${RETIRED_PK_LIVE}a.b`,
       'ak_x',
       `"${PK_LIVE}a"`,
     ];
@@ -447,9 +461,97 @@ describe('errors carry zero information about the input (§14)', () => {
 });
 
 describe('publishableKeyEnvironment', () => {
-  it('distinguishes live from test (§10.1)', () => {
-    expect(publishableKeyEnvironment(parsePublishableKey(`${PK_LIVE}abc123`))).toBe('live');
-    expect(publishableKeyEnvironment(parsePublishableKey(`${PK_TEST}abc123`))).toBe('test');
+  it.each([
+    ['current live', PK_LIVE, 'live'],
+    ['current test', PK_TEST, 'test'],
+    ['retired live', RETIRED_PK_LIVE, 'live'],
+    ['retired test', RETIRED_PK_TEST, 'test'],
+  ])('reads the environment off a %s key (§10.1)', (_label, prefix, environment) => {
+    // The retired rows are the load-bearing ones. This was
+    // `key.startsWith(LIVE_PREFIX) ? 'live' : 'test'` — a chain separate from
+    // the parser's — so the moment the parser accepted a prefix that was not
+    // byte-identical to `dhp_live_`, every such key reported itself as TEST.
+    // A live customer silently pointed at a test environment is worse than a
+    // key that is rejected outright, because nothing fails.
+    expect(publishableKeyEnvironment(parsePublishableKey(`${prefix}abc123`))).toBe(environment);
+  });
+});
+
+describe('the deprecation window (§10.1, §10.7)', () => {
+  // The server renamed `dhpk_`/`dhsk_` to `dhp_`/`dhk_` and, on the first
+  // attempt, stopped accepting the old scheme the moment it deployed. A
+  // publishable key is baked into a browser bundle at build time, so refusing
+  // it HERE fails at construction — before a socket, before `getToken()`,
+  // before the request that would have told the server anything. The bundles
+  // affected are the ones already sitting in browser caches, which nobody can
+  // redeploy on any schedule.
+  //
+  // Accepting `dhpk_` does not weaken anything: the key is already public by
+  // design, and it is still refused the moment the server drops it.
+
+  it.each([
+    ['retired live', RETIRED_PK_LIVE],
+    ['retired test', RETIRED_PK_TEST],
+  ])('accepts a %s publishable key and returns it unchanged', (_label, prefix) => {
+    const key = `${prefix}abc123`;
+    expect(parsePublishableKey(key)).toBe(key);
+    expect(isPublishableKey(key)).toBe(true);
+  });
+
+  it.each([
+    ['current live', PK_LIVE, false],
+    ['current test', PK_TEST, false],
+    ['retired live', RETIRED_PK_LIVE, true],
+    ['retired test', RETIRED_PK_TEST, true],
+  ])('reports a %s key as deprecated: %s', (_label, prefix, deprecated) => {
+    // Accepted must not mean indistinguishable. A host app that cannot tell
+    // the two apart cannot warn anyone, and a window nobody can measure never
+    // closes.
+    expect(isDeprecatedPublishableKey(parsePublishableKey(`${prefix}abc123`))).toBe(deprecated);
+  });
+
+  it('holds every rule that applies to a current key', () => {
+    // Acceptance is not a bypass: the retired prefix takes the same body
+    // charset, the same whitespace refusal, and the same empty-body refusal.
+    // A second, laxer code path would be a hole in the validation this module
+    // exists to provide.
+    expect(() => parsePublishableKey(RETIRED_PK_LIVE)).toThrow(/no key body/);
+    expect(() => parsePublishableKey(`${RETIRED_PK_LIVE}aaa.bbb`)).toThrow(/not allowed/);
+    expect(() => parsePublishableKey(` ${RETIRED_PK_LIVE}abc123`)).toThrow(/whitespace/);
+    expect(() => parsePublishableKey(`${RETIRED_PK_LIVE}a b`)).toThrow(InvalidPublishableKeyError);
+  });
+
+  it('still refuses the retired SECRET prefix, which the window does not cover', () => {
+    // The asymmetry restated where it can regress: someone widening the
+    // accepted list by prefix similarity rather than by meaning would let
+    // `dhsk_` through here, and a secret key would reach a browser bundle.
+    expect(() => parsePublishableKey(`${RETIRED_SK}live_abc123`)).toThrow(SecretKeyInClientError);
+    expect(() => parsePublishableKey(`${FOREIGN_SK}live_${'A'.repeat(24)}`)).toThrow(
+      SecretKeyInClientError,
+    );
+  });
+
+  it('never advertises the retired prefix as something to migrate TO', () => {
+    // Tolerated, not recommended. A message naming `dhpk_live_` would send a
+    // developer to obtain a key on a scheme with a removal date.
+    const message = rejectionOf('abc123').message;
+    expect(message).toContain(PK_LIVE);
+    expect(message).toContain(PK_TEST);
+    expect(message).not.toContain(RETIRED_PK_LIVE);
+    expect(message).not.toContain(RETIRED_PK_TEST);
+  });
+
+  it('discloses nothing extra about a key that used the retired scheme', () => {
+    // Every rejection category must stay byte-identical across the two
+    // schemes, or the error itself becomes a signal of which one was used.
+    const messages = new Set(
+      [
+        rejectionOf(`${PK_LIVE}a.b`).message,
+        rejectionOf(`${RETIRED_PK_LIVE}a.b`).message,
+        rejectionOf(`${RETIRED_PK_TEST}a.b`).message,
+      ],
+    );
+    expect(messages.size).toBe(1);
   });
 });
 
