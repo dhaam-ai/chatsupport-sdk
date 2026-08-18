@@ -1,12 +1,12 @@
 // Config the server hands to the page at load time.
 //
-// Everything here is public by construction. The secret key (`dhsk_…`) is
+// Everything here is public by construction. The secret key (`dhk_…`) is
 // deliberately absent: it never leaves the Node process (see
 // server/token-endpoint.mjs). The publishable key is designed to ship in a
 // browser bundle — that asymmetry is the whole point of the two-key model.
 
 export interface DemoRuntimeConfig {
-  /** `dhpk_live_…` / `dhpk_test_…`. Safe in the browser. */
+  /** `dhp_live_…` / `dhp_test_…`. Safe in the browser. */
   readonly publishableKey: string;
   /** Origin only — the REST adapter appends `/chat-services/api/v1` itself. */
   readonly apiUrl: string;

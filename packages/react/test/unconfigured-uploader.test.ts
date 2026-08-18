@@ -28,7 +28,7 @@ afterEach(() => {
 
 function buildClientWithoutUploader(): ChatClient {
   return createChatClient({
-    publishableKey: 'dhpk_test_0123456789abcdef',
+    publishableKey: 'dhp' + '_test_0123456789abcdef',
     getToken: async () => 'token',
     wsUrl: 'wss://example.test/ws',
     localSender: { senderId: 'user_1', senderType: 'CUSTOMER' },

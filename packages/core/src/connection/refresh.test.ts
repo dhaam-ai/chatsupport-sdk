@@ -186,7 +186,7 @@ function harness(
   const controller = new ConnectionController({
     store,
     url: 'wss://example.test/ws',
-    publishableKey: 'dhpk_test_1',
+    publishableKey: 'dhp_test_1',
     getToken: getToken as TokenProvider,
     schedule: timers.schedule,
     transportBackoff: new TransportBackoffPolicy({ random: () => 1 }),

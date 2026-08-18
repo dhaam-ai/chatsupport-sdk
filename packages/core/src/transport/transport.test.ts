@@ -13,7 +13,7 @@ import type { WebSocketTransportOptions } from './transport.js';
 
 const URL = 'wss://example.test/chat-services/v2/ws';
 const TOKEN = 'eyJhbGciOiJIUzI1NiJ9.SUPER_SECRET_TOKEN_BODY.sig';
-const HELLO = { token: TOKEN, publishableKey: 'dhpk_live_abc123' };
+const HELLO = { token: TOKEN, publishableKey: 'dhp_live_abc123' };
 const SERVER_ID = '01J0000000000000000000000Z';
 
 interface LoggedWarning {
@@ -174,7 +174,7 @@ describe('WebSocketTransport', () => {
       expect(factory.last.lastSentFrame()).toMatchObject({
         v: 1,
         t: 'connection.hello',
-        d: { token: TOKEN, publishableKey: 'dhpk_live_abc123', protocolVersion: 1 },
+        d: { token: TOKEN, publishableKey: 'dhp_live_abc123', protocolVersion: 1 },
       });
     });
 
@@ -681,7 +681,7 @@ describe('WebSocketTransport', () => {
       expect(warnings.length).toBeGreaterThan(0);
       expect(serialized).not.toContain(TOKEN);
       expect(serialized).not.toContain('SUPER_SECRET');
-      expect(serialized).not.toContain('dhpk_live_abc123');
+      expect(serialized).not.toContain('dhp_live_abc123');
       expect(serialized).not.toContain(TOKEN.slice(0, 8));
       expect(serialized).not.toContain(String(TOKEN.length));
     });

@@ -527,7 +527,7 @@ describe('no credential material escapes in a thrown message', () => {
       () => assertWebhookSignature({ payload: EVENT_BODY, signatureHeader: headerFor(EVENT_BODY, NOW - 10_000), secretKey: SECRET_KEY_LIVE, now: NOW }),
       () => assertWebhookSignature({ payload: EVENT_BODY, signatureHeader: header, secretKey: SECRET_KEY_OTHER, now: NOW }),
       () => assertWebhookSignature({ payload: EVENT_BODY, signatureHeader: header, secretKey: '', now: NOW }),
-      () => assertWebhookSignature({ payload: EVENT_BODY, signatureHeader: header, secretKey: 'dhpk_' + 'live_' + 'A'.repeat(43), now: NOW }),
+      () => assertWebhookSignature({ payload: EVENT_BODY, signatureHeader: header, secretKey: 'dhp' + '_live_' + 'A'.repeat(43), now: NOW }),
       () => constructWebhookEvent({ payload: 'not json', signatureHeader: headerFor('not json'), secretKey: SECRET_KEY_LIVE, now: NOW }),
     ];
 

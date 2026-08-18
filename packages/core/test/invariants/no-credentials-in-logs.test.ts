@@ -114,7 +114,7 @@ function harness(overrides: Partial<ChatClientConfig> = {}): Harness {
       .join(' ');
 
   const config: ChatClientConfig = {
-    publishableKey: 'dhpk_test_guard4key',
+    publishableKey: 'dhp' + '_test_guard4key',
     wsUrl: 'wss://example.test/chat-services/v2/ws',
     getToken: () => Promise.resolve(ACCESS_TOKEN),
     localSender: { senderId: 'participant_customer_1', senderType: 'CUSTOMER' },
@@ -241,7 +241,7 @@ describe('§14 guard: a full connect + send + receive cycle logs no credential',
         t: 'message.new',
         id: 'not-a-ulid',
         ts: 0,
-        d: { token: ACCESS_TOKEN, content: INBOUND_CONTENT, publishableKey: 'dhsk_live_secret' },
+        d: { token: ACCESS_TOKEN, content: INBOUND_CONTENT, publishableKey: 'dhk' + '_live_secret' },
       });
       h.sockets.last.emitJson({ garbage: true, token: ACCESS_TOKEN, content: INBOUND_CONTENT });
       h.sockets.last.emitJson('not json at all ' + ACCESS_TOKEN);
@@ -333,7 +333,7 @@ describe('§14 guard: host-authored error text is scrubbed before core re-emits 
 
   it('leaks nothing when getToken() rejects with a bare secret key in the text', async () => {
     const h = harness({
-      getToken: () => Promise.reject(new Error(`token endpoint rejected dhsk_live_${TOKEN_BODY}`)),
+      getToken: () => Promise.reject(new Error(`token endpoint rejected ${'dhk' + '_live_'}${TOKEN_BODY}`)),
     });
     const restore = captureConsole(h.consoleLines);
 

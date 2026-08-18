@@ -101,7 +101,7 @@ function harness(overrides: Partial<ChatClientConfig> = {}, storage = new Memory
   const history = new FakeHistory();
 
   const config: ChatClientConfig = {
-    publishableKey: 'dhpk_test_e2e123',
+    publishableKey: 'dhp' + '_test_e2e123',
     getToken: async () => 'tok_e2e',
     wsUrl: 'wss://example.test/chat-services/v2/ws',
     storage,
@@ -352,7 +352,7 @@ describe('createChatClient — end-to-end through the public API', () => {
   });
 
   it('rejects a secret key passed as the publishable key, loudly, at construction', () => {
-    const h = harness({ publishableKey: 'dhsk_live_should_never_reach_a_browser' });
+    const h = harness({ publishableKey: 'dhk' + '_live_should_never_reach_a_browser' });
 
     expect(() => createChatClient(h.config)).toThrowError(/secret key/i);
   });

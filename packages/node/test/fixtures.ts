@@ -12,7 +12,7 @@
 // they are never adjacent until `+` runs.
 
 /** Assemble a syntactically valid key. `body` must satisfy [A-Za-z0-9_-]{32,64}. */
-function key(kind: 'dhsk' | 'dhpk', env: 'live' | 'test', body: string): string {
+function key(kind: 'dhk' | 'dhp', env: 'live' | 'test', body: string): string {
   return kind + '_' + env + '_' + body;
 }
 
@@ -21,16 +21,16 @@ const BODY_A = 'A'.repeat(43);
 const BODY_B = 'B'.repeat(43);
 
 /** A well-formed live secret key. */
-export const SECRET_KEY_LIVE = key('dhsk', 'live', BODY_A);
+export const SECRET_KEY_LIVE = key('dhk', 'live', BODY_A);
 
 /** A well-formed test secret key. */
-export const SECRET_KEY_TEST = key('dhsk', 'test', BODY_A);
+export const SECRET_KEY_TEST = key('dhk', 'test', BODY_A);
 
 /** A well-formed but DIFFERENT secret key — the "wrong signing key" case. */
-export const SECRET_KEY_OTHER = key('dhsk', 'live', BODY_B);
+export const SECRET_KEY_OTHER = key('dhk', 'live', BODY_B);
 
 /** A well-formed publishable key. Belongs in the browser, never here. */
-export const PUBLISHABLE_KEY_LIVE = key('dhpk', 'live', BODY_A);
+export const PUBLISHABLE_KEY_LIVE = key('dhp', 'live', BODY_A);
 
 /** A foreign secret key, to prove the prefix check is anchored on ours. */
 export const FOREIGN_SECRET_KEY = 'sk' + '_live_' + BODY_A;

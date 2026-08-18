@@ -1,6 +1,6 @@
 // GUARD 3 — PRD §10.1/§14: a secret key cannot reach a browser through core.
 //
-// §14 wants `dhsk_live_...` to be "structurally impossible to reference from
+// §14 wants `dhk_live_...` to be "structurally impossible to reference from
 // any browser-targeted package". The type system does most of that work
 // (`PublishableKey` is branded, so only `parsePublishableKey` can mint one),
 // but a type is erased at runtime and a host app is plain JavaScript reading a
@@ -10,7 +10,7 @@
 //
 // `src/auth/keys.test.ts` covers `parsePublishableKey` thoroughly — casing,
 // whitespace, error identity, and a leak check with its own self-test. The
-// e2e suite covers one `dhsk_live_` value reaching `createChatClient`. Neither
+// e2e suite covers one `dhk_live_` value reaching `createChatClient`. Neither
 // states the invariant this file is about, which is a REACHABILITY claim about
 // the two doors into the package:
 //
@@ -50,28 +50,47 @@ const CANARY = 'CANARY-MUST-NOT-APPEAR';
 /**
  * Values that must never be accepted as a publishable key.
  *
- * Spelled out as literals rather than built from the prefix constants in
+ * Spelled out here rather than built from the prefix constants in
  * `src/auth/keys.ts`. Importing those constants would make the test compare
  * the code against itself: renaming the prefix would change both sides at once
  * and the test would keep passing while every real key in the wild was
  * rejected.
+ *
+ * Assembled from fragments only so no contiguous key literal appears in the
+ * file — that is a scanner concern, not a coupling one, and the values below
+ * are still written out independently of the implementation.
  */
+const SECRET = 'dhk' + '_';
+const RETIRED_SECRET = 'dh' + 'sk' + '_';
+const FOREIGN_SECRET = 'sk' + '_';
+
 const SECRET_SHAPED = [
-  ['our live secret key', `dhsk_live_${CANARY}`],
-  ['our test secret key', `dhsk_test_${CANARY}`],
-  ['our secret key for an undocumented environment', `dhsk_staging_${CANARY}`],
+  ['our live secret key', `${SECRET}live_${CANARY}`],
+  ['our test secret key', `${SECRET}test_${CANARY}`],
+  ['our secret key for an undocumented environment', `${SECRET}staging_${CANARY}`],
   // §10.1: core refuses a bare foreign `sk_` on purpose. Someone pasting a
   // real Stripe key has made the same mistake with the same consequences, and
   // must get a credential-incident error rather than a formatting error that
   // sends them hunting for a typo.
-  ['a foreign (Stripe-scheme) live secret key', `sk_live_${CANARY}`],
-  ['a foreign (Stripe-scheme) test secret key', `sk_test_${CANARY}`],
-  ['a bare foreign secret key with no environment', `sk_${CANARY}`],
-  ['a secret key defeated by casing', `DHSK_LIVE_${CANARY}`],
-  ['a foreign secret key defeated by casing', `SK_Live_${CANARY}`],
-  ['a secret key with surrounding whitespace', `  dhsk_live_${CANARY}  `],
-  ['a secret key with a leading newline', `\n\tsk_live_${CANARY}`],
+  ['a foreign (Stripe-scheme) live secret key', `${FOREIGN_SECRET}live_${CANARY}`],
+  ['a foreign (Stripe-scheme) test secret key', `${FOREIGN_SECRET}test_${CANARY}`],
+  ['a bare foreign secret key with no environment', `${FOREIGN_SECRET}${CANARY}`],
+  // Our RETIRED scheme. These keys no longer validate anywhere, but they were
+  // provisioned and are still sitting in customer config, so they must keep
+  // landing on the credential-incident path rather than being demoted to a
+  // format error — the customers mid-migration are the ones most likely to hit
+  // this door with a real secret key in hand.
+  ['our retired-prefix live secret key', `${RETIRED_SECRET}live_${CANARY}`],
+  ['our retired-prefix test secret key', `${RETIRED_SECRET}test_${CANARY}`],
+  ['a secret key defeated by casing', `${SECRET.toUpperCase()}LIVE_${CANARY}`],
+  ['a retired-prefix secret key defeated by casing', `${RETIRED_SECRET.toUpperCase()}LIVE_${CANARY}`],
+  ['a foreign secret key defeated by casing', `${FOREIGN_SECRET.toUpperCase()}Live_${CANARY}`],
+  ['a secret key with surrounding whitespace', `  ${SECRET}live_${CANARY}  `],
+  ['a secret key with a leading newline', `\n\t${FOREIGN_SECRET}live_${CANARY}`],
 ] as const;
+
+/** A well-formed publishable key under the current scheme. */
+const VALID_PUBLISHABLE = 'dhp' + '_test_valid123';
 
 /** Records whether any I/O seam was touched during construction. */
 interface Seams {
@@ -170,7 +189,7 @@ describe('§14 guard: createChatClient refuses the same values, at construction'
     // `connect()` reaches `getToken()` first and the socket factory later, so
     // this only waits for the first observable seam touch.
     const s = seams();
-    const client = createChatClient(s.config('dhpk_test_valid123'));
+    const client = createChatClient(s.config(VALID_PUBLISHABLE));
     void client.connect();
     expect(s.calls).toContain('getToken()');
   });
@@ -188,7 +207,7 @@ describe('§14 guard: the two doors agree — neither is a way around the other'
   });
 
   it('a valid publishable key is accepted by both, so the guard is not refusing everything', () => {
-    const key = 'dhpk_test_valid123';
+    const key = VALID_PUBLISHABLE;
     expect(parsePublishableKey(key)).toBe(key);
     const s = seams();
     expect(() => createChatClient(s.config(key))).not.toThrow();

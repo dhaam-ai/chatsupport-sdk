@@ -75,11 +75,42 @@ describe('parseSecretKey', () => {
     expect(() => parseSecretKey(FOREIGN_SECRET_KEY)).toThrow(InvalidSecretKeyError);
   });
 
+  it('rejects our RETIRED dhsk_ prefix, and says so instead of blaming the charset', () => {
+    // These keys were provisioned and are still in customer config. They no
+    // longer validate anywhere — grandfathering them would keep emitting the
+    // `sk_live_` substring the rename exists to remove — so the only useful
+    // thing this module can do is name the real problem. Falling through to
+    // the charset message would send someone hunting for an illegal character
+    // in a key that has none.
+    const retired = 'dh' + 'sk_' + 'live_' + 'A'.repeat(43);
+
+    expect(() => parseSecretKey(retired)).toThrow(InvalidSecretKeyError);
+    expect(() => parseSecretKey(retired)).toThrow(/retired/i);
+    expect(isSecretKey(retired)).toBe(false);
+  });
+
+  it('rejects the retired PUBLISHABLE prefix as a key mix-up, not a format error', () => {
+    // `dhpk_live_x` does not start with `dhp_`, so a check that only knew the
+    // current publishable prefix would misfile this as a charset failure and
+    // lose the "go check whether the secret key went the other way" prompt.
+    const retiredPublishable = 'dh' + 'pk_' + 'live_' + 'A'.repeat(43);
+    expect(() => parseSecretKey(retiredPublishable)).toThrow(PublishableKeyAsSecretError);
+  });
+
+  it('carries neither "sk_" nor "pk_" in the prefix of a key it accepts', () => {
+    // The property the rename bought, asserted on this package's own view of
+    // the format rather than trusting core or the server to hold it.
+    for (const key of [SECRET_KEY_LIVE, SECRET_KEY_TEST]) {
+      const prefix = key.slice(0, key.indexOf('_', key.indexOf('_') + 1) + 1);
+      expect(prefix.includes('sk_') || prefix.includes('pk_')).toBe(false);
+    }
+  });
+
   it('enforces the server body-length bounds so a key we admit is one the server can verify', () => {
-    const short = 'dhsk_' + 'live_' + 'A'.repeat(31);
-    const long = 'dhsk_' + 'live_' + 'A'.repeat(65);
-    const atLowerBound = 'dhsk_' + 'live_' + 'A'.repeat(32);
-    const atUpperBound = 'dhsk_' + 'live_' + 'A'.repeat(64);
+    const short = 'dhk_' + 'live_' + 'A'.repeat(31);
+    const long = 'dhk_' + 'live_' + 'A'.repeat(65);
+    const atLowerBound = 'dhk_' + 'live_' + 'A'.repeat(32);
+    const atUpperBound = 'dhk_' + 'live_' + 'A'.repeat(64);
 
     expect(() => parseSecretKey(short)).toThrow(InvalidSecretKeyError);
     expect(() => parseSecretKey(long)).toThrow(InvalidSecretKeyError);
@@ -91,7 +122,7 @@ describe('parseSecretKey', () => {
   it('rejects a body containing characters outside the charset', () => {
     // A JWT pasted into the secret-key slot: dot-separated, so it fails here
     // rather than travelling to the wire as an Authorization header.
-    const jwtish = 'dhsk_' + 'live_' + 'A'.repeat(20) + '.' + 'B'.repeat(20);
+    const jwtish = 'dhk_' + 'live_' + 'A'.repeat(20) + '.' + 'B'.repeat(20);
     expect(() => parseSecretKey(jwtish)).toThrow(InvalidSecretKeyError);
   });
 });
@@ -111,8 +142,10 @@ describe('maskSecretKey', () => {
     // on the FIRST underscore under the 5-character `dhsk_` and masked the
     // environment away, so `dhsk_live_…` and `dhsk_test_…` displayed
     // identically — an operator could not tell a live key from a test one.
-    expect(masked).toBe(`dhsk_live_…${SECRET_KEY_LIVE.slice(-4)}`);
-    expect(maskSecretKey(SECRET_KEY_TEST)).toBe(`dhsk_test_…${SECRET_KEY_TEST.slice(-4)}`);
+    // The prefix has since been 3, 5 and 4 characters long, which is exactly
+    // why the implementation walks instead of counting.
+    expect(masked).toBe(`${'dhk_' + 'live_'}…${SECRET_KEY_LIVE.slice(-4)}`);
+    expect(maskSecretKey(SECRET_KEY_TEST)).toBe(`${'dhk_' + 'test_'}…${SECRET_KEY_TEST.slice(-4)}`);
   });
 
   it('distinguishes live from test', () => {
@@ -121,7 +154,7 @@ describe('maskSecretKey', () => {
 
   it('reveals no more than 4 characters of the random body', () => {
     const masked = maskSecretKey(SECRET_KEY_LIVE);
-    const body = SECRET_KEY_LIVE.slice('dhsk_live_'.length);
+    const body = SECRET_KEY_LIVE.slice(('dhk_' + 'live_').length);
     // Everything after the elision must be exactly 4 chars of body.
     const revealed = masked.slice(masked.indexOf('…') + 1);
     expect(revealed).toHaveLength(4);
@@ -134,7 +167,7 @@ describe('maskSecretKey', () => {
     // One character short of the server's lower bound — the shape of a key
     // truncated by a copy-paste, which is exactly the value an operator would
     // most want echoed back and exactly the one that must not be.
-    const nearlyCorrect = 'dhsk_' + 'live_' + 'A'.repeat(31);
+    const nearlyCorrect = 'dhk_' + 'live_' + 'A'.repeat(31);
     expect(maskSecretKey(nearlyCorrect)).toBe('<invalid-key>');
     expect(maskSecretKey(PUBLISHABLE_KEY_LIVE)).toBe('<invalid-key>');
     expect(maskSecretKey(undefined)).toBe('<invalid-key>');

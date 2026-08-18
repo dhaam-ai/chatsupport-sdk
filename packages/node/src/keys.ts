@@ -41,17 +41,43 @@ export type SecretKey = string & { readonly [secretKeyBrand]: true };
 /** Which environment a secret key addresses (§10.1). */
 export type SecretKeyEnvironment = 'live' | 'test';
 
-// Namespaced with `dh` deliberately. A bare `pk_`/`sk_` scheme is
-// byte-identical to Stripe's, so GitHub's secret scanner attributes our keys
-// to Stripe — it blocked a push to this repo on two synthetic test fixtures.
-// The operational cost is worse than the annoyance: a customer committing one
-// of our keys gets their own push blocked and blames the SDK, and a genuine
-// leak of ours is triaged as a Stripe incident and routed to the wrong vendor.
-const SECRET_LIVE_PREFIX = 'dhsk_live_';
-const SECRET_TEST_PREFIX = 'dhsk_test_';
+// ── Why `dhk_` and not `sk_`, nor `dhsk_` ───────────────────────────────
+//
+// A bare `pk_`/`sk_` scheme is byte-identical to Stripe's, so GitHub's secret
+// scanner attributes our keys to Stripe — it blocked a push to this repo on
+// two synthetic test fixtures.
+//
+// The first fix namespaced them to `dhpk_`/`dhsk_`, which addressed the
+// symptom and not the cause: the scanner is not anchored, and `dhsk_test_X`
+// still CONTAINS `sk_test_X`. Measured over 200k generated keys, 46.66% of
+// namespaced keys still matched `/[sp]k_(live|test)_[A-Za-z0-9]{24,}/` — a
+// base64url body escapes only when a `-` or `_` lands inside its first 24
+// characters, which is `(62/64)^24` = 46.67% of the time.
+//
+// `dhk_` contains neither `sk_` nor `pk_` at any offset, so the collision is
+// structural rather than probabilistic. The operational cost of getting this
+// wrong is worse than the annoyance: a customer committing one of our keys
+// gets their own push blocked and blames the SDK, and a genuine leak of ours
+// is triaged as a Stripe incident and routed to the wrong vendor.
+const SECRET_LIVE_PREFIX = 'dhk_live_';
+const SECRET_TEST_PREFIX = 'dhk_test_';
 
-/** The publishable prefixes, recognised only so they can be refused precisely. */
-const PUBLISHABLE_PREFIX = 'dhpk_';
+/** The publishable prefix, recognised only so it can be refused precisely. */
+const PUBLISHABLE_PREFIX = 'dhp_';
+
+/**
+ * The retired schemes, recognised only so they can be refused with a diagnosis
+ * that names the actual problem.
+ *
+ * Keys carrying these were provisioned and are still in customer config. They
+ * no longer validate anywhere — deliberately, since grandfathering them would
+ * keep emitting the very substring the rename exists to remove — so the one
+ * useful thing this module can do is say "retired prefix, re-provision"
+ * instead of letting a stale but otherwise perfect key fail the charset check
+ * and read as a typo.
+ */
+const RETIRED_SECRET_PREFIX = 'dhsk_';
+const RETIRED_PUBLISHABLE_PREFIX = 'dhpk_';
 
 /**
  * Body charset and length, mirroring the SERVER's anchored regex
@@ -75,7 +101,7 @@ const PUBLISHABLE_PREFIX = 'dhpk_';
  * or a shell `$(cat …)` — which would then be sent as an `Authorization`
  * header value and rejected for a reason no one could see.
  */
-const SECRET_KEY_PATTERN = /^dhsk_(?:live|test)_[A-Za-z0-9_-]{32,64}$/;
+const SECRET_KEY_PATTERN = /^dhk_(?:live|test)_[A-Za-z0-9_-]{32,64}$/;
 
 /**
  * True when `value` looks like a publishable key.
@@ -87,7 +113,21 @@ const SECRET_KEY_PATTERN = /^dhsk_(?:live|test)_[A-Za-z0-9_-]{32,64}$/;
  * capital letter is not a guard.
  */
 function looksLikePublishableKey(value: string): boolean {
-  return value.trim().toLowerCase().startsWith(PUBLISHABLE_PREFIX);
+  const normalized = value.trim().toLowerCase();
+  // Both schemes. A retired publishable key is still a publishable key, and
+  // the caller's mistake — and its remedy, "go check whether the secret key
+  // went the other way" — is identical either way. Note the two prefixes do
+  // not nest: `dhpk_live_x` does not start with `dhp_`, so dropping the
+  // retired one would silently reclassify it as a charset failure.
+  return (
+    normalized.startsWith(PUBLISHABLE_PREFIX) ||
+    normalized.startsWith(RETIRED_PUBLISHABLE_PREFIX)
+  );
+}
+
+/** True when `value` carries our retired secret-key prefix. */
+function looksLikeRetiredSecretKey(value: string): boolean {
+  return value.trim().toLowerCase().startsWith(RETIRED_SECRET_PREFIX);
 }
 
 /**
@@ -131,9 +171,23 @@ export function parseSecretKey(value: string): SecretKey {
     throw new InvalidSecretKeyError('it has leading or trailing whitespace');
   }
 
+  // Checked before the pattern so a retired key gets the diagnosis that names
+  // its actual problem. Falling through to the charset message would tell a
+  // customer holding a perfectly well-formed (but stale) key to go hunting for
+  // an illegal character that is not there.
+  if (looksLikeRetiredSecretKey(value)) {
+    throw new InvalidSecretKeyError(
+      'it uses the retired "dhsk_" prefix. That scheme was withdrawn because ' +
+        '"dhsk_live_" contains "sk_live_", which secret scanners attribute to ' +
+        'another vendor. Re-provision this key: the current scheme is ' +
+        '"dhk_live_"/"dhk_test_". Retired keys are not accepted by the server ' +
+        'either, so rotating is the only fix',
+    );
+  }
+
   if (!SECRET_KEY_PATTERN.test(value)) {
     throw new InvalidSecretKeyError(
-      'it must be "dhsk_live_" or "dhsk_test_" followed by 32-64 characters ' +
+      'it must be "dhk_live_" or "dhk_test_" followed by 32-64 characters ' +
         'from the set [A-Za-z0-9_-]',
     );
   }
@@ -173,7 +227,7 @@ export function secretKeyEnvironment(key: SecretKey): SecretKeyEnvironment {
  * error, no log line, and no serialization here emits even a masked key. It
  * exists because customers WILL want to print which key a process loaded, and
  * the realistic alternative to giving them a correct helper is that they write
- * `key.slice(0, 12)` themselves — which on a `dhsk_test_` key leaks two
+ * `key.slice(0, 12)` themselves — which on a `dhk_test_` key leaks three
  * characters of the random component, and on the day the prefix length
  * changes leaks more.
  *
@@ -189,7 +243,8 @@ export function maskSecretKey(value: unknown): string {
   // Second underscore, found by walking rather than by a magic offset. The
   // server carried an `indexOf('_', 3)` tuned for a 3-character `sk_`; with
   // the 5-character `dhsk_` it landed on the FIRST underscore and masked the
-  // environment away too. Walking cannot drift when a prefix changes length.
+  // environment away too. The prefix has now been 3, 5 and 4 characters long,
+  // so walking is the only form of this that survives the next change.
   const firstUnderscore = value.indexOf('_');
   const prefixEnd = value.indexOf('_', firstUnderscore + 1) + 1;
   return `${value.slice(0, prefixEnd)}…${value.slice(-4)}`;

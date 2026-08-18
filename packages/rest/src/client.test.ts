@@ -4,7 +4,7 @@ import { createAttachmentUploader, createHistorySource, createSessionActions } f
 import { BASE_PATH, RestClient } from './client.js';
 import { RestApiError, RestTransportError } from './errors.js';
 
-const KEY = 'dhpk_test_' + 'A'.repeat(43);
+const KEY = 'dhp' + '_test_' + 'A'.repeat(43);
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -165,7 +165,7 @@ describe('error taxonomy', () => {
 
   it('never puts the raw error body into the message', async () => {
     // An error body is attacker-influencable and may echo request detail (§14).
-    const h = harness(() => new Response('token=dhsk_live_LEAKED', { status: 400 }));
+    const h = harness(() => new Response(`token=${'dhk' + '_live_'}LEAKED`, { status: 400 }));
 
     const error: unknown = await createHistorySource(h.client)
       .listMessages({ sessionId: 's1', limit: 20 })

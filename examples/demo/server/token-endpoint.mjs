@@ -7,7 +7,7 @@
 //
 // Contract (chat-service-node src/api/rest/routes/token.routes.ts):
 //   POST {apiUrl}/chat-services/api/v1/tokens
-//   Authorization: Bearer dhsk_…
+//   Authorization: Bearer dhk_…
 //   body    { userId, name?, email? }   — extra keys become custom JWT claims
 //   201     { accessToken, expiresIn }  — expiresIn is SECONDS (RFC 6749)
 //   4xx/5xx { error: { code, message, retryable } }
@@ -29,7 +29,7 @@ export class TokenMintError extends Error {
  *
  * @param {object} options
  * @param {string} options.apiUrl      Origin of chat-service, no path.
- * @param {string} options.secretKey   `dhsk_…`. Never leaves this process.
+ * @param {string} options.secretKey   `dhk_…`. Never leaves this process.
  * @param {{ userId: string, name?: string }} options.user
  * @param {typeof globalThis.fetch} [options.fetchImpl]  Injectable for tests.
  * @returns {Promise<{ accessToken: string, expiresIn?: number }>}
@@ -93,7 +93,7 @@ async function readJson(response) {
 function explainFailure(status, code) {
   if (status === 401) {
     return (
-      'chat-service rejected the secret key (401). Check CHAT_SECRET_KEY is the dhsk_… value ' +
+      'chat-service rejected the secret key (401). Check CHAT_SECRET_KEY is the dhk_… value ' +
       'from `keys:create`, that it has not been revoked, and that it matches CHAT_API_URL’s tenant.'
     );
   }

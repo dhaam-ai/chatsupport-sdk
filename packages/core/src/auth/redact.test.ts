@@ -7,9 +7,19 @@ import { InvalidTokenResponseError, toAuthToken } from './token-source.js';
 const JWT =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyXzEyMyJ9.QZXJ7WVMPRKD4NTBsignature';
 
+// Assembled from fragments, never written contiguously — a literal key-shaped
+// string in a test file is what got a push to this repo blocked. See the note
+// at the top of `keys.test.ts`.
+const PK_LIVE = 'dhp' + '_live_';
+const PK_TEST = 'dhp' + '_test_';
+const SK_LIVE = 'dhk' + '_live_';
+const RETIRED_PK_LIVE = 'dh' + 'pk' + '_live_';
+const RETIRED_SK_LIVE = 'dh' + 'sk' + '_live_';
+const FOREIGN_SK_LIVE = 'sk' + '_live_';
+
 describe('redact', () => {
   it('returns the marker for anything', () => {
-    expect(redact('dhsk_live_abc123')).toBe(REDACTED);
+    expect(redact(`${SK_LIVE}abc123`)).toBe(REDACTED);
     expect(redact(JWT)).toBe(REDACTED);
     expect(redact(undefined)).toBe(REDACTED);
     expect(redact({ token: 'abc' })).toBe(REDACTED);
@@ -19,7 +29,7 @@ describe('redact', () => {
     // A prefix, a length, or a hash would all vary with the input. This is the
     // property §14 asks for, stated as a test.
     const outputs = new Set(
-      ['dhsk_live_aaaa', 'dhpk_test_bbbbbbbbbbbb', JWT, '', 12345, null].map((value) => redact(value)),
+      [`${SK_LIVE}aaaa`, `${PK_TEST}bbbbbbbbbbbb`, JWT, '', 12345, null].map((value) => redact(value)),
     );
     expect(outputs.size).toBe(1);
   });
@@ -37,11 +47,38 @@ describe('scrubCredentials', () => {
   });
 
   it('removes a secret key', () => {
-    expect(scrubCredentials('using dhsk_live_QZXJ7WVMPRKD4NTB now')).toBe(`using ${REDACTED} now`);
+    expect(scrubCredentials(`using ${SK_LIVE}QZXJ7WVMPRKD4NTB now`)).toBe(`using ${REDACTED} now`);
   });
 
   it('removes a publishable key', () => {
-    expect(scrubCredentials('key=dhpk_live_QZXJ7WVMPRKD4NTB')).toBe(`key=${REDACTED}`);
+    expect(scrubCredentials(`key=${PK_LIVE}QZXJ7WVMPRKD4NTB`)).toBe(`key=${REDACTED}`);
+  });
+
+  it('removes a key whole, leaving no fragment of the prefix behind', () => {
+    // The failure mode this guards is specific and has happened: a pattern
+    // written as `[sp]k_…` fires on the `pk_` INSIDE `dhpk_…` and redacts from
+    // there, leaving a stray `dh` glued to the marker. Partial redaction of a
+    // credential is not redaction — and the leftover is a reliable signal of
+    // which scheme the value used.
+    for (const prefix of [PK_LIVE, PK_TEST, SK_LIVE, RETIRED_PK_LIVE, RETIRED_SK_LIVE]) {
+      const scrubbed = scrubCredentials(`key=${prefix}QZXJ7WVMPRKD4NTB`);
+      expect(scrubbed, `left a fragment for ${prefix}`).toBe(`key=${REDACTED}`);
+    }
+  });
+
+  it('still removes a foreign-vendor key, which ours no longer resembles', () => {
+    // Ours moved off `pk_`/`sk_`, but a customer's Stripe key landing in one
+    // of our log lines is still a credential in our log line. Narrowing the
+    // pattern to our own scheme would have quietly dropped that coverage.
+    expect(scrubCredentials(`key=${FOREIGN_SK_LIVE}QZXJ7WVMPRKD4NTB`)).toBe(`key=${REDACTED}`);
+  });
+
+  it('still removes our RETIRED scheme, which is still in customer config', () => {
+    // `dhsk_`/`dhpk_` keys no longer validate, but they are still pasted into
+    // config and still echoed back inside third-party error messages — which
+    // is precisely the string this module exists to clean.
+    expect(scrubCredentials(`key=${RETIRED_SK_LIVE}QZXJ7WVMPRKD4NTB`)).toBe(`key=${REDACTED}`);
+    expect(scrubCredentials(`key=${RETIRED_PK_LIVE}QZXJ7WVMPRKD4NTB`)).toBe(`key=${REDACTED}`);
   });
 
   it('removes a Bearer credential along with the scheme', () => {
@@ -55,12 +92,14 @@ describe('scrubCredentials', () => {
   });
 
   it('removes every occurrence, not just the first', () => {
-    const scrubbed = scrubCredentials('dhsk_live_aaaa and dhsk_live_bbbb and dhpk_test_cccc');
+    const scrubbed = scrubCredentials(
+      `${SK_LIVE}aaaa and ${SK_LIVE}bbbb and ${PK_TEST}cccc`,
+    );
     expect(scrubbed).toBe(`${REDACTED} and ${REDACTED} and ${REDACTED}`);
   });
 
   it('catches a key concatenated onto another word', () => {
-    expect(scrubCredentials('key:dhsk_live_QZXJ7WVMPRKD4NTB')).not.toContain('QZXJ');
+    expect(scrubCredentials(`key:${SK_LIVE}QZXJ7WVMPRKD4NTB`)).not.toContain('QZXJ');
   });
 
   it('leaves ordinary diagnostics untouched, so it stays switched on', () => {
@@ -100,8 +139,10 @@ describe('scrubCredentials', () => {
 describe('containsCredentialMaterial', () => {
   it('detects the formats this system issues', () => {
     expect(containsCredentialMaterial(`bad token ${JWT}`)).toBe(true);
-    expect(containsCredentialMaterial('dhsk_live_abc')).toBe(true);
-    expect(containsCredentialMaterial('dhpk_test_abc')).toBe(true);
+    expect(containsCredentialMaterial(`${SK_LIVE}abc`)).toBe(true);
+    expect(containsCredentialMaterial(`${PK_TEST}abc`)).toBe(true);
+    expect(containsCredentialMaterial(`${RETIRED_SK_LIVE}abc`)).toBe(true);
+    expect(containsCredentialMaterial(`${FOREIGN_SK_LIVE}abc`)).toBe(true);
     expect(containsCredentialMaterial('Bearer abc123')).toBe(true);
   });
 
@@ -117,7 +158,7 @@ describe("this module's own error paths are clean (§14)", () => {
   //
   // NOTE ON THE TOOL USED HERE. `containsCredentialMaterial` is deliberately
   // NOT the assertion below, and the reason is the whole argument of
-  // redact.ts. Our own error messages name `dhpk_live_`, `dhpk_test_` and `sk_`
+  // redact.ts. Our own error messages name `dhp_live_`, `dhp_test_` and `dhk_`
   // as remediation guidance — `SecretKeyInClientError` must say "use the
   // publishable key" and name it — so the scrubber fires on them. It cannot
   // tell documentation from an echo, because it only matches shapes. That is
@@ -130,11 +171,12 @@ describe("this module's own error paths are clean (§14)", () => {
   const SECRET_BODY = 'QZXJ7WVMPRKD4NTB';
 
   const credentialInputs = [
-    `dhsk_live_${SECRET_BODY}`,
-    `dhpk_live_${SECRET_BODY}.trailing`,
+    `${SK_LIVE}${SECRET_BODY}`,
+    `${PK_LIVE}${SECRET_BODY}.trailing`,
     JWT,
     `Bearer ${JWT}`,
-    `  dhsk_test_${SECRET_BODY}  `,
+    `  ${'dhk' + '_test_'}${SECRET_BODY}  `,
+    `${RETIRED_SK_LIVE}${SECRET_BODY}`,
   ];
 
   function thrownBy(run: () => unknown): Error {

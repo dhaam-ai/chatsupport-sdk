@@ -9,7 +9,7 @@
 //                     │  runs on their server, session-authenticated by
 //                     │  whatever they already use
 //                     ▼
-//               mintAccessToken()  ── Authorization: Bearer dhsk_… ──▶ chat-service
+//               mintAccessToken()  ── Authorization: Bearer dhk_… ──▶ chat-service
 //                     │
 //                     ◀── { accessToken, expiresIn } ──
 //                     │

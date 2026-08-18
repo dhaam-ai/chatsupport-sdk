@@ -25,11 +25,11 @@ describe('validateFrame — valid frames of every type pass', () => {
   const validFrames: Array<[string, unknown]> = [
     [
       'connection.hello',
-      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'dhpk_test_1', protocolVersion: 1 } },
+      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'dhp_test_1', protocolVersion: 1 } },
     ],
     [
       'connection.hello with resumeFrom',
-      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'dhpk_test_1', protocolVersion: 1, resumeFrom: 41 } },
+      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'dhp_test_1', protocolVersion: 1, resumeFrom: 41 } },
     ],
     ['connection.reauth', { v: 1, t: 'connection.reauth', id: ULID_A, ts: TS, d: { token: 'tok2' } }],
     ['session.join', { v: 1, t: 'session.join', id: ULID_A, ts: TS, d: { sessionId: 'sess_1' } }],

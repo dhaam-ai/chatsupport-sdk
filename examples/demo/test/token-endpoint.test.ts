@@ -11,8 +11,8 @@ import { loadConfig, toRuntimeConfig, describeConfig, ConfigError } from '../ser
 // @ts-expect-error — as above.
 import { mintAccessToken, TokenMintError } from '../server/token-endpoint.mjs';
 
-const PUBLISHABLE = `dhpk_test_${'a'.repeat(43)}`;
-const SECRET = `dhsk_test_${'b'.repeat(43)}`;
+const PUBLISHABLE = `${'dhp' + '_test_'}${'a'.repeat(43)}`;
+const SECRET = `${'dhk' + '_test_'}${'b'.repeat(43)}`;
 
 const VALID_ENV = {
   CHAT_PUBLISHABLE_KEY: PUBLISHABLE,
@@ -52,7 +52,7 @@ describe('loadConfig', () => {
   it('rejects halves of two different keys:create runs', () => {
     expect(() =>
       loadConfig({
-        CHAT_PUBLISHABLE_KEY: `dhpk_live_${'a'.repeat(43)}`,
+        CHAT_PUBLISHABLE_KEY: `${'dhp' + '_live_'}${'a'.repeat(43)}`,
         CHAT_SECRET_KEY: SECRET,
       }),
     ).toThrowError(/environment mismatch/i);
@@ -68,7 +68,7 @@ describe('what reaches the browser', () => {
   it('never includes the secret key in the runtime config', () => {
     const runtime = toRuntimeConfig(loadConfig(VALID_ENV));
     expect(JSON.stringify(runtime)).not.toContain(SECRET);
-    expect(JSON.stringify(runtime)).not.toContain('dhsk_');
+    expect(JSON.stringify(runtime)).not.toContain('dhk' + '_');
     expect(runtime.publishableKey).toBe(PUBLISHABLE);
   });
 

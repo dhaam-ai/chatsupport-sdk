@@ -59,7 +59,7 @@ export interface ChatServerClientOptions {
   readonly apiUrl: string;
 
   /**
-   * Your `dhsk_live_…` / `dhsk_test_…` secret key.
+   * Your `dhk_live_…` / `dhk_test_…` secret key.
    *
    * Read it from the environment. If this value is in your source tree it is
    * in your git history, and rotating it is the only remedy.
@@ -67,7 +67,7 @@ export interface ChatServerClientOptions {
   readonly secretKey: SecretKey | string;
 
   /**
-   * Your `dhpk_live_…` / `dhpk_test_…` publishable key.
+   * Your `dhp_live_…` / `dhp_test_…` publishable key.
    *
    * Required only for {@link ChatServerClient.asUser} — every browser-facing
    * route needs it alongside the access token. Omit it if this process only

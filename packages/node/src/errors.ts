@@ -118,8 +118,8 @@ export class InvalidSecretKeyError extends Error {
 export class PublishableKeyAsSecretError extends Error {
   constructor() {
     super(
-      'A publishable key (dhpk_live_.../dhpk_test_...) was supplied where a secret key ' +
-        '(dhsk_live_.../dhsk_test_...) is required. The publishable key identifies a tenant ' +
+      'A publishable key (dhp_live_.../dhp_test_...) was supplied where a secret key ' +
+        '(dhk_live_.../dhk_test_...) is required. The publishable key identifies a tenant ' +
         'and grants nothing on its own; only the secret key can mint user tokens. ' +
         'If these two were swapped, check whether the secret key was also shipped to your ' +
         'client bundle — if so, rotate it now. ' +

@@ -120,7 +120,7 @@ export class ChatClientConfigError extends Error {
  * header for exactly which fields are additive and why.
  */
 export interface ChatClientConfig {
-  /** `dhpk_live_…` / `dhpk_test_…`. Validated at construction (§10.1, §10.2, §14) — a secret key throws loudly rather than reaching the wire. */
+  /** `dhp_live_…` / `dhp_test_…`. Validated at construction (§10.1, §10.2, §14) — a secret key throws loudly rather than reaching the wire. */
   readonly publishableKey: string;
 
   /**

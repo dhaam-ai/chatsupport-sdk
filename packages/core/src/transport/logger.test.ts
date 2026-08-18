@@ -38,7 +38,7 @@ describe('frameLogContext', () => {
       t: 'connection.hello',
       id: '01J0000000000000000000000A',
       ts: 1,
-      d: { token, publishableKey: 'dhpk_live_abc123', protocolVersion: 1 },
+      d: { token, publishableKey: 'dhp_live_abc123', protocolVersion: 1 },
     });
 
     expect(context).toEqual({ t: 'connection.hello', id: '01J0000000000000000000000A' });
@@ -46,7 +46,7 @@ describe('frameLogContext', () => {
     const serialized = JSON.stringify(context);
     expect(serialized).not.toContain(token);
     expect(serialized).not.toContain('SUPER_SECRET');
-    expect(serialized).not.toContain('dhpk_live_abc123');
+    expect(serialized).not.toContain('dhp_live_abc123');
     // No prefix and no length oracle either.
     expect(serialized).not.toContain(token.slice(0, 8));
     expect(serialized).not.toContain(String(token.length));

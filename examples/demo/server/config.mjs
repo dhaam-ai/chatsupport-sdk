@@ -6,11 +6,11 @@
 //
 // Both keys are validated for *shape* at boot rather than on first request, so
 // pasting them the wrong way round fails immediately and loudly instead of
-// shipping a `dhsk_…` to a browser.
+// shipping a `dhk_…` to a browser.
 
 import { parsePublishableKey, publishableKeyEnvironment } from '@dhaam-ccrm/core';
 
-const SECRET_KEY_PATTERN = /^dhsk_(live|test)_[A-Za-z0-9_-]{32,64}$/;
+const SECRET_KEY_PATTERN = /^dhk_(live|test)_[A-Za-z0-9_-]{32,64}$/;
 
 export class ConfigError extends Error {
   constructor(message) {
@@ -41,16 +41,16 @@ export function loadConfig(env = process.env) {
   const publishableKey = required(
     env,
     'CHAT_PUBLISHABLE_KEY',
-    'Run `npm run keys:create -- --tenant <id> --env test` in chat-service-node and copy the dhpk_… value.',
+    'Run `npm run keys:create -- --tenant <id> --env test` in chat-service-node and copy the dhp_… value.',
   );
   const secretKey = required(
     env,
     'CHAT_SECRET_KEY',
-    'The dhsk_… value from the same keys:create run. It is shown once and never recoverable.',
+    'The dhk_… value from the same keys:create run. It is shown once and never recoverable.',
   );
 
   // Core's own validator, reused rather than reimplemented. It raises
-  // SecretKeyInClientError when a dhsk_ key is supplied where a dhpk_ one
+  // SecretKeyInClientError when a dhk_ key is supplied where a dhp_ one
   // belongs — exactly the paste-swap this check exists to catch.
   const parsedPublishable = parsePublishableKey(publishableKey);
   const environment = publishableKeyEnvironment(parsedPublishable);
@@ -58,7 +58,7 @@ export function loadConfig(env = process.env) {
   if (!SECRET_KEY_PATTERN.test(secretKey)) {
     // Deliberately does not echo the value.
     throw new ConfigError(
-      'CHAT_SECRET_KEY is not a well-formed secret key (expected dhsk_live_… or dhsk_test_…).',
+      'CHAT_SECRET_KEY is not a well-formed secret key (expected dhk_live_… or dhk_test_…).',
     );
   }
 
@@ -66,7 +66,7 @@ export function loadConfig(env = process.env) {
   // mismatch" when the token's environment differs from the publishable key's.
   // That error arrives late and reads like a tenancy problem, so catch the
   // real cause — mismatched halves of two different keys:create runs — here.
-  const secretEnvironment = secretKey.startsWith('dhsk_test_') ? 'test' : 'live';
+  const secretEnvironment = secretKey.startsWith('dhk_test_') ? 'test' : 'live';
   if (secretEnvironment !== environment) {
     throw new ConfigError(
       `Key environment mismatch: the publishable key is "${environment}" but the secret key is ` +
@@ -109,7 +109,7 @@ export function describeConfig(config) {
     `  WS       ${config.wsUrl}`,
     `  Key env  ${config.environment}`,
     `  Pub key  ${config.publishableKey}`,
-    `  Secret   dhsk_${config.environment}_… (loaded, never sent to the browser)`,
+    `  Secret   dhk_${config.environment}_… (loaded, never sent to the browser)`,
     `  User     ${config.user.userId} (${config.user.name})`,
   ].join('\n');
 }

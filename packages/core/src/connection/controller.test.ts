@@ -83,7 +83,7 @@ function harness(
   const controller = new ConnectionController({
     store,
     url: 'wss://example.test/chat-services/v2/ws',
-    publishableKey: 'dhpk_test_1',
+    publishableKey: 'dhp_test_1',
     getToken: getToken as TokenProvider,
     schedule: timers.schedule,
     // rng=1 pins full jitter to its ceiling, so the delay sequence is exact.
@@ -154,7 +154,7 @@ describe('ConnectionController — connect lifecycle', () => {
 
   it('sends the token and publishable key in connection.hello, and no credential in the URL', async () => {
     const h = await connected();
-    expect(h.transport.lastConnect.hello).toEqual({ token: 'tok_abc', publishableKey: 'dhpk_test_1' });
+    expect(h.transport.lastConnect.hello).toEqual({ token: 'tok_abc', publishableKey: 'dhp_test_1' });
     expect(h.transport.lastConnect.url).toBe('wss://example.test/chat-services/v2/ws');
     expect(h.transport.lastConnect.url).not.toContain('tok_abc');
   });
@@ -776,7 +776,7 @@ describe('getToken() failure reporting (§14)', () => {
   // Assembled rather than written as one literal: a source-literal string in
   // secret-key shape trips GitHub push protection, and every key in this repo
   // is a fixture.
-  const SECRET_KEY = `dhsk_live_${'AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKK'}`;
+  const SECRET_KEY = `${'dhk' + '_live_'}${'AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKK'}`;
 
   async function failWith(message: string) {
     const h = harness({

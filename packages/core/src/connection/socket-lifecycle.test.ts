@@ -72,7 +72,7 @@ function harness(
   const controller = new ConnectionController({
     store,
     url: 'wss://example.test/chat-services/v2/ws',
-    publishableKey: 'dhpk_test_1',
+    publishableKey: 'dhp_test_1',
     getToken: token ?? ((async () => 'tok_abc') as TokenProvider),
     schedule: timers.schedule,
     transportBackoff: new TransportBackoffPolicy({ random: () => 1 }),
@@ -136,7 +136,7 @@ describe('ConnectionController over the real transport', () => {
     expect(sentTypes(h.sockets.last)).toEqual(['connection.hello']);
     expect(helloOf(h.sockets.last)).toMatchObject({
       token: 'tok_abc',
-      publishableKey: 'dhpk_test_1',
+      publishableKey: 'dhp_test_1',
       protocolVersion: 1,
     });
     expect(h.controller.state).toBe('authenticating');

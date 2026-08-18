@@ -77,13 +77,22 @@ const CREDENTIAL_PATTERNS: readonly RegExp[] = [
   // boundary so a key concatenated onto another word is still caught —
   // over-redacting is the safe direction here.
   //
-  // The `dh` is optional so this catches both our namespaced `dhpk_`/`dhsk_`
-  // keys and a foreign-vendor `pk_`/`sk_` (Stripe's scheme, which ours
-  // deliberately no longer collides with). Without the optional group the
-  // pattern would still fire on the `pk_` inside `dhpk_…` but leave a
-  // dangling `dh` in the output — redacting a credential *almost* entirely is
-  // not redaction.
-  /(?:dh)?[sp]k_[A-Za-z0-9_-]+/gi,
+  // Three schemes, one pattern, and all three are still needed:
+  //
+  //   `dhp_`/`dhk_`   our current keys.
+  //   `dhpk_`/`dhsk_` our retired ones. They no longer validate, but they are
+  //                   still in customer config and still in error messages
+  //                   coming back off the wire, which is exactly the string
+  //                   this module is handed.
+  //   `pk_`/`sk_`     a foreign vendor's (Stripe's) — someone's Stripe key in
+  //                   our log is still a credential in our log.
+  //
+  // The alternation is ordered `dh[pk]` first so `dhp_`/`dhk_` match as a
+  // unit; `dhpk_`/`dhsk_` fall through to the second branch via the optional
+  // `dh`. That optional group is load-bearing: without it the pattern would
+  // still fire on the `pk_` inside `dhpk_…` but leave a dangling `dh` behind,
+  // and redacting a credential *almost* entirely is not redaction.
+  /(?:dh[pk]|(?:dh)?[sp]k)_[A-Za-z0-9_-]+/gi,
 ];
 
 /**

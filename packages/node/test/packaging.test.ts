@@ -1,7 +1,7 @@
 // The package's Node-only guarantees are structural, not documentary — so
 // they are asserted here rather than trusted to review.
 //
-// §14 requires that `dhsk_` be impossible to reach from a browser-targeted
+// §14 requires that `dhk_` be impossible to reach from a browser-targeted
 // package. Every check below is one of the mechanisms that makes that true,
 // and each has a plausible way of being undone by a well-meaning edit: someone
 // adds a `browser` field to "fix" a bundler warning, someone imports a type
@@ -88,7 +88,12 @@ describe('source imports', () => {
     // GitHub push protection blocked a push to this repo on two synthetic
     // fixtures. A full key written inline matches the pattern whether or not
     // the bytes are real — see test/fixtures.ts for how keys are assembled.
-    const scannable = /(dhsk|dhpk|sk|pk)_(live|test)_[A-Za-z0-9_-]{20,}/;
+    // Covers the current scheme as well as the retired one. A `dhk_`/`dhp_`
+    // literal trips no vendor scanner — that is the point of the rename — but
+    // this rule is about our own hygiene: keys stay assembled at runtime so the
+    // habit survives the next format change, and so a reader cannot tell a
+    // synthetic fixture from a real leaked key at a glance.
+    const scannable = /(dhk|dhp|dhsk|dhpk|sk|pk)_(live|test)_[A-Za-z0-9_-]{20,}/;
     for (const source of sources) {
       expect(source).not.toMatch(scannable);
     }

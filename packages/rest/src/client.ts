@@ -26,7 +26,7 @@ export interface RestClientOptions {
   /** Origin only — scheme and host, no path, no trailing slash. */
   readonly apiUrl: string;
 
-  /** `dhpk_live_…` / `dhpk_test_…`. Identifies the tenant; grants nothing alone (§10.1). */
+  /** `dhp_live_…` / `dhp_test_…`. Identifies the tenant; grants nothing alone (§10.1). */
   readonly publishableKey: string;
 
   /**

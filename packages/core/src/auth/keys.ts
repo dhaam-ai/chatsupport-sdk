@@ -1,6 +1,6 @@
 // Publishable-key hygiene — PRD §10.1, §10.2, §10.7, §14.
 //
-// §14 requires that `dhsk_live_...` be "structurally impossible to reference
+// §14 requires that `dhk_live_...` be "structurally impossible to reference
 // from any browser-targeted package". A lint rule or a code review cannot
 // deliver that; a type can. `PublishableKey` is a branded string that only
 // {@link parsePublishableKey} can produce, so a function demanding one cannot
@@ -22,7 +22,7 @@
 // module is that it is sometimes handed the secret key.
 //
 // Diagnosability is preserved by naming the CATEGORY of failure precisely —
-// "empty", "must start with dhpk_live_ or dhpk_test_", "contains characters that
+// "empty", "must start with dhp_live_ or dhp_test_", "contains characters that
 // are not allowed" — which tells a developer what to fix without echoing what
 // they typed. `SecretKeyInClientError` is its own class for the same reason:
 // the actionable fact is "you pasted a secret key into a browser config", and
@@ -44,7 +44,7 @@ declare const publishableKeyBrand: unique symbol;
  * at build/config time and ships to every browser, so there is no way to swap
  * it without shipping new client code.
  *
- * This is the opposite of the secret key (`dhsk_live_...`), which rotates with a
+ * This is the opposite of the secret key (`dhk_live_...`), which rotates with a
  * change on the customer's own backend and no client release at all, because
  * it never ships client-side — see {@link SecretKeyInClientError}. Customers
  * routinely assume both keys rotate the same way; they do not.
@@ -54,27 +54,51 @@ export type PublishableKey = string & { readonly [publishableKeyBrand]: true };
 /** Which environment a publishable key addresses (§10.1). */
 export type PublishableKeyEnvironment = 'live' | 'test';
 
-// Namespaced with `dh` deliberately. A bare `dhpk_live_`/`dhsk_live_` scheme is
-// byte-identical to Stripe's, so GitHub's secret scanner reports our keys as
-// Stripe keys — it blocked a push to this repo on two synthetic test fixtures.
-// Worse than the inconvenience: a customer committing one of our keys gets
-// their own push blocked and blames the SDK, and a genuine leak of ours is
-// triaged as a Stripe incident and routed to the wrong vendor.
-const LIVE_PREFIX = 'dhpk_live_';
-const TEST_PREFIX = 'dhpk_test_';
+// ── Why `dhp_`/`dhk_` and not `pk_`/`sk_`, nor `dhpk_`/`dhsk_` ───────────
+//
+// A bare `pk_`/`sk_` scheme is byte-identical to Stripe's, so GitHub's secret
+// scanner reports our keys as Stripe keys — it blocked a push to this repo on
+// two synthetic test fixtures.
+//
+// The first fix namespaced them to `dhpk_`/`dhsk_`, which addressed the
+// symptom and not the cause. Stripe's detector is NOT anchored, and
+// `dhsk_test_X` still CONTAINS `sk_test_X`. Measured over 200k generated keys,
+// 46.66% of namespaced keys still matched
+// `/[sp]k_(live|test)_[A-Za-z0-9]{24,}/`: a base64url body draws from
+// `[A-Za-z0-9_-]`, so the match breaks only when a `-` or `_` lands inside the
+// first 24 characters — `(62/64)^24` = 46.67% of the time.
+//
+// `dhp_`/`dhk_` contain neither `pk_` nor `sk_` at any offset, so the
+// collision is structural rather than probabilistic. `keys.test.ts` proves it
+// empirically over 2000 keys; that test is what stops this regressing a third
+// time.
+//
+// The stakes are operational, not cosmetic: a customer committing one of our
+// keys gets their own push blocked and blames the SDK, a genuine leak of ours
+// is triaged as a Stripe incident and routed to the wrong vendor, and no
+// scanner can attribute a key to us.
+const LIVE_PREFIX = 'dhp_live_';
+const TEST_PREFIX = 'dhp_test_';
 
 /** Our own secret-key prefix. */
-const OUR_SECRET_PREFIX = 'dhsk_';
+const OUR_SECRET_PREFIX = 'dhk_';
 
 /**
- * Foreign secret-key prefixes we also refuse.
+ * Secret-key prefixes that are not the current one but must still be refused
+ * as SECRET keys rather than as format errors.
  *
- * `sk_` is Stripe's (and several others' by convention). Someone pasting a
- * Stripe secret key into this slot has made the same mistake with the same
- * consequences, and telling them "must start with dhpk_live_" would send them
- * hunting for a formatting error instead of rotating an exposed credential.
+ * `sk_` is Stripe's (and several others' by convention). `dhsk_` is our own
+ * retired scheme — it no longer validates anywhere, but keys carrying it were
+ * provisioned and are still sitting in customer config.
+ *
+ * Both belong here for the same reason. Someone pasting either into this slot
+ * has put a SECRET KEY in client config; telling them "must start with
+ * dhp_live_" would send them hunting for a formatting error instead of
+ * rotating an exposed credential. Dropping `dhsk_` when the prefix changed
+ * would have silently downgraded exactly the population most likely to hit
+ * this — the customers mid-migration.
  */
-const FOREIGN_SECRET_PREFIXES = ['sk_'] as const;
+const FOREIGN_SECRET_PREFIXES = ['sk_', 'dhsk_'] as const;
 
 /**
  * Body charset: URL-safe base64 characters.
@@ -109,7 +133,7 @@ export class InvalidPublishableKeyError extends Error {
 export class SecretKeyInClientError extends Error {
   constructor() {
     super(
-      'A secret key was supplied where a publishable key (dhpk_live_.../dhpk_test_...) ' +
+      'A secret key was supplied where a publishable key (dhp_live_.../dhp_test_...) ' +
         'is required. Secret keys must never reach client-side code: they mint user tokens. ' +
         'Use the publishable key here, keep the secret key on your own backend (PRD §10.1), ' +
         'and rotate the exposed secret key now. ' +
@@ -131,10 +155,10 @@ export class SecretKeyInClientError extends Error {
 function looksLikeSecretKey(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (normalized.startsWith(OUR_SECRET_PREFIX)) return true;
-  // Checked as well as ours, not instead: narrowing this to our own prefix
-  // would let a real Stripe secret key fall through to the generic
-  // "must start with dhpk_live_" error, which reads as a typo rather than as
-  // the credential incident it is.
+  // Checked as well as ours, not instead: narrowing this to our own current
+  // prefix would let a real Stripe secret key — or one of our own retired
+  // `dhsk_` keys — fall through to the generic "must start with dhp_live_"
+  // error, which reads as a typo rather than as the credential incident it is.
   return FOREIGN_SECRET_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
