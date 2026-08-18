@@ -9,7 +9,12 @@
 // the exact payload type for that frame from `t` alone.
 
 import type { AckFrame, ErrorFrame, ErrorPayload, Frame } from './envelope.js';
-import type { MessageMetadata, PresenceEntry, SessionSnapshot } from './domain.js';
+import type {
+  AttachmentMetadata,
+  MessageMetadata,
+  PresenceEntry,
+  SessionSnapshot,
+} from './domain.js';
 import type { CloseReason, MessageType, PresenceStatus, SenderType } from './enums.js';
 
 /** Shared shape for frame types whose payload is deliberately empty. */
@@ -70,6 +75,10 @@ export interface MessageSendPayload {
   type: MessageType;
 
   replyToMessageId?: string;
+
+  /** Top-level, never under `metadata` — one canonical location (D4). */
+  attachment?: AttachmentMetadata;
+
   metadata?: MessageMetadata;
 }
 
@@ -160,6 +169,10 @@ export interface MessagePayload {
   type: MessageType;
   content: string;
   replyToMessageId?: string;
+
+  /** Top-level, never under `metadata` — one canonical location (D4). */
+  attachment?: AttachmentMetadata;
+
   metadata?: MessageMetadata;
 
   /** Ordering key (D2). Use this, never the envelope's `ts`, to order or detect gaps. */
@@ -207,7 +220,19 @@ export interface PresenceQueryAckData {
   presences: PresenceEntry[];
 }
 
-export type AckExtraData = MessageSendAckData | PresenceQueryAckData | EmptyPayload;
+/**
+ * An ack carrying nothing beyond `{ ok: true }` — what `connection.reauth`,
+ * `session.join`, and friends return.
+ *
+ * Deliberately NOT {@link EmptyPayload}: `AckFrame.d` is `{ ok: true } & T`,
+ * and `Record<string, never>` maps *every* string key to `never`, so that
+ * intersection demands `ok: never` and no data-free ack satisfies it.
+ * `Record<never, never>` constrains no keys, so the intersection is just
+ * `{ ok: true }`.
+ */
+export type EmptyAckData = Record<never, never>;
+
+export type AckExtraData = MessageSendAckData | PresenceQueryAckData | EmptyAckData;
 
 // =============================================================================
 // Frame type catalog

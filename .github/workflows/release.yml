@@ -1,0 +1,155 @@
+name: Release
+
+# ==============================================================================
+# THIS WORKFLOW NEVER RUNS BY ITSELF. There is no push or schedule trigger, on
+# purpose: merging to main must not be able to publish to npm.
+#
+# HOW TO ACTUALLY RELEASE (all four steps are manual):
+#
+#   1. Describe the change.   `pnpm changeset`
+#      Pick the bumped packages and severity, commit the generated
+#      .changeset/*.md with your PR. Do this while the change is fresh.
+#
+#   2. Bump the versions.     `pnpm version-packages`   (= changeset version)
+#      Consumes every pending .changeset/*.md, rewrites package.json versions
+#      and CHANGELOG.md. .changeset/config.json has `fixed: [["@dhaam-ccrm/*"]]`,
+#      so core / rest / react always move to the same version together.
+#      Commit the result, open a PR, get it reviewed, merge it to main.
+#
+#   3. Dry run.               Actions -> Release -> Run workflow -> mode: dry-run
+#      Default mode. Builds, re-runs every gate, and prints the exact tarballs
+#      that would be pushed. Publishes nothing. Read the file lists.
+#
+#   4. Publish.               Actions -> Release -> Run workflow -> mode: publish
+#      Requires the NPM_TOKEN repository secret (an npm automation token with
+#      publish rights on the @dhaam-ccrm scope) and approval on the
+#      `npm-publish` environment.
+#
+# BEFORE THE FIRST REAL PUBLISH, a repo admin must do two things:
+#   - Settings -> Secrets and variables -> Actions: add NPM_TOKEN.
+#   - Settings -> Environments -> npm-publish: add required reviewers.
+#     Without reviewers the environment is a label, not an approval gate.
+# ==============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'dry-run prints what would ship. publish pushes to npm.'
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - publish
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Always runs, in BOTH modes. This is the dry run: nothing below publishes.
+  # ---------------------------------------------------------------------------
+  dry-run:
+    name: dry run
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Refuse to publish from anything but main
+        if: inputs.mode == 'publish' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::mode=publish was requested from ${{ github.ref }}."
+          echo "::error::Releases are cut from main only. Merge first."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          # changeset publish reads existing tags to decide what is unpublished.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      # One Node version is enough here: a tarball's contents do not depend on
+      # the Node that packed it. CI's 18/20/22 matrix is what proves the code
+      # runs on every version we advertise.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Same order and same reason as ci.yml: dist/ is how the workspace
+      # packages resolve each other, so nothing type-checks or tests before it.
+      - name: Build
+        run: pnpm -r build
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # Informational. Fails when packages changed since main with no changeset
+      # attached, which is worth seeing but is not a reason to block a release
+      # that was already versioned and merged.
+      - name: Pending changesets
+        continue-on-error: true
+        run: pnpm changeset status --verbose
+
+      # `changeset publish` has no --dry-run, so this is the closest honest
+      # preview: same tarballs, same file lists, same skip rules, no upload.
+      # Both this and `changeset publish` skip `private: true` packages, which
+      # is how examples/demo stays out of the registry.
+      - name: What would be published
+        run: pnpm publish --recursive --dry-run --no-git-checks
+
+  # ---------------------------------------------------------------------------
+  # Only reachable with mode=publish, only after the dry run above went green,
+  # and only after a human approves the npm-publish environment.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: publish to npm
+    needs: dry-run
+    if: inputs.mode == 'publish'
+    runs-on: ubuntu-latest
+
+    environment: npm-publish
+
+    permissions:
+      # changeset publish writes a git tag per released package.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          # Writes an .npmrc pointing at npmjs and referencing NODE_AUTH_TOKEN.
+          # The token itself is never written to a file we control or echoed.
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm release` = `pnpm build && changeset publish`, so the tarballs are
+      # rebuilt from this exact commit rather than trusted from another job.
+      - name: Publish
+        run: pnpm release
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # changeset publish creates the tags locally; without this they never
+      # reach the remote and the next release cannot tell what already shipped.
+      - name: Push release tags
+        run: git push --follow-tags

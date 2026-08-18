@@ -1,0 +1,312 @@
+/* Deliberately plain. This is a reference integration, not a product UI —
+   the point is that you can read it and see what the SDK is doing. */
+
+:root {
+  --fg: #14171a;
+  --muted: #5b6570;
+  --line: #d8dee4;
+  --bg: #ffffff;
+  --panel: #f6f8fa;
+  --accent: #0b5fff;
+  --danger: #b3261e;
+  --ok: #1a7f37;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 1.5rem;
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.app-header h1 {
+  font-size: 1.25rem;
+  margin: 0 0 0.25rem;
+}
+
+.subtitle {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.layout {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 60rem;
+}
+
+@media (min-width: 60rem) {
+  .layout {
+    grid-template-columns: 18rem minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  background: var(--panel);
+}
+
+.panel h2 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
+}
+
+/* ---- connection ---- */
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  font-weight: 600;
+}
+
+.dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+
+.dot--connected {
+  background: var(--ok);
+}
+.dot--connecting,
+.dot--authenticating,
+.dot--reconnecting {
+  background: #b8860b;
+}
+.dot--suspended,
+.dot--closed {
+  background: var(--danger);
+}
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Never remove the focus ring — keyboard users need it. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.error {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--danger);
+  background: #fdf0ef;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+/* ---- sidebar ---- */
+
+.sidebar {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.unread {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.unread__text {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* ---- conversation ---- */
+
+.conversation {
+  display: flex;
+  flex-direction: column;
+  min-height: 26rem;
+}
+
+.messages {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.message-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow-y: auto;
+  max-height: 24rem;
+}
+
+.load-more {
+  align-self: center;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.message {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  max-width: 85%;
+}
+
+.message--mine {
+  align-self: flex-end;
+  border-color: #b9d0ff;
+  background: #f2f6ff;
+}
+
+.message--theirs {
+  align-self: flex-start;
+}
+
+.message__meta {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 0 0.25rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.message__sender {
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.message__body {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.message__attachment,
+.message__delivery {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.message__delivery--failed {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0.5rem 0;
+}
+
+.typing {
+  min-height: 1.25rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  font-style: italic;
+  color: var(--muted);
+}
+
+/* ---- composer ---- */
+
+.composer {
+  margin-top: 1rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.75rem;
+}
+
+.composer__label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.composer__row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.composer__input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: inherit;
+}
+
+.composer__input:disabled {
+  opacity: 0.6;
+}
+
+.composer__hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}

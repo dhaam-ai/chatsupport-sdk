@@ -25,11 +25,11 @@ describe('validateFrame — valid frames of every type pass', () => {
   const validFrames: Array<[string, unknown]> = [
     [
       'connection.hello',
-      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'pk_test_1', protocolVersion: 1 } },
+      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'dhpk_test_1', protocolVersion: 1 } },
     ],
     [
       'connection.hello with resumeFrom',
-      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'pk_test_1', protocolVersion: 1, resumeFrom: 41 } },
+      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'dhpk_test_1', protocolVersion: 1, resumeFrom: 41 } },
     ],
     ['connection.reauth', { v: 1, t: 'connection.reauth', id: ULID_A, ts: TS, d: { token: 'tok2' } }],
     ['session.join', { v: 1, t: 'session.join', id: ULID_A, ts: TS, d: { sessionId: 'sess_1' } }],
@@ -38,7 +38,7 @@ describe('validateFrame — valid frames of every type pass', () => {
     ['session.requestAgent with reason', { v: 1, t: 'session.requestAgent', id: ULID_A, ts: TS, d: { reason: 'billing' } }],
     ['message.send', { v: 1, t: 'message.send', id: ULID_A, ts: TS, d: { content: 'hi', type: 'TEXT' } }],
     [
-      'message.send with attachment metadata',
+      'message.send with a top-level attachment',
       {
         v: 1,
         t: 'message.send',
@@ -47,7 +47,7 @@ describe('validateFrame — valid frames of every type pass', () => {
         d: {
           content: 'see attached',
           type: 'FILE',
-          metadata: { attachment: { url: 'https://x/y', fileName: 'a.png', mimeType: 'image/png', size: 10, mediaType: 'image' } },
+          attachment: { url: 'https://x/y', fileName: 'a.png', mimeType: 'image/png', size: 10, mediaType: 'image' },
         },
       },
     ],
@@ -386,5 +386,30 @@ describe('isKnownFrameType', () => {
   it('recognizes every catalog member and rejects everything else', () => {
     expect(isKnownFrameType('message.send')).toBe(true);
     expect(isKnownFrameType('message.receive')).toBe(false);
+  });
+});
+
+// D4 requires exactly one canonical location per concept. v1's bug was reading
+// `message.attachment` and `message.metadata.attachment` interchangeably
+// (§12.2), and T1/T2 briefly reintroduced it by disagreeing across transports.
+// These lock the resolution in: top level, validated; under `metadata`, opaque.
+describe('attachment has exactly one canonical location (D4)', () => {
+  const attachment = { url: 'https://x/y', fileName: 'a.png', mimeType: 'image/png', size: 10, mediaType: 'image' };
+  const send = (d: Record<string, unknown>) => ({ v: 1, t: 'message.send', id: ULID_A, ts: TS, d });
+
+  it('validates a top-level attachment', () => {
+    expect(validateFrame(send({ content: 'x', type: 'FILE', attachment })).ok).toBe(true);
+  });
+
+  it('rejects a malformed top-level attachment', () => {
+    const result = validateFrame(send({ content: 'x', type: 'FILE', attachment: { url: 'https://x/y' } }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toContain('attachment');
+  });
+
+  it('does not interpret metadata.attachment — it is opaque application data', () => {
+    // Deliberately malformed *as an attachment*. It must still pass, because
+    // inside `metadata` it is just an app-defined key core never reads.
+    expect(validateFrame(send({ content: 'x', type: 'FILE', metadata: { attachment: { nonsense: true } } })).ok).toBe(true);
   });
 });

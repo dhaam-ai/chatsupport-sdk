@@ -47,7 +47,7 @@ info:
     - `Authorization: Bearer <accessToken>` — the short-lived JWT minted by
       `POST /tokens` (PRD §10.3) and supplied to the SDK via `getToken()`
       (PRD §6.1, §10.4). Encodes the authenticated end user and their tenant.
-    - `X-Publishable-Key: pk_live_...` / `pk_test_...` — identifies the
+    - `X-Publishable-Key: dhpk_live_...` / `dhpk_test_...` — identifies the
       tenant. Required on every request alongside the access token. The
       server rejects a request whose `X-Publishable-Key` tenant does not
       match the `accessToken`'s tenant claim with `AUTH_INVALID` — the exact
@@ -71,13 +71,13 @@ info:
 
     ### The two key types are never interchangeable
 
-    - **Secret key** (`sk_live_...` / `sk_test_...`) is valid in exactly two
+    - **Secret key** (`dhsk_live_...` / `dhsk_test_...`) is valid in exactly two
       places in this whole system: as the `Authorization: Bearer` credential
       on `POST /tokens`, and as the HMAC signing key for webhook signature
       verification (below). It is never a valid credential on any endpoint a
       browser calls, and it never leaves the customer's own backend (PRD
       §10.1, §10.7, §14).
-    - **Publishable key** (`pk_live_...` / `pk_test_...`) identifies a tenant
+    - **Publishable key** (`dhpk_live_...` / `dhpk_test_...`) identifies a tenant
       and, per PRD §10.1, grants nothing by itself — every browser-facing
       endpoint below requires it *together with* a valid `accessToken`, never
       in place of one.
@@ -181,7 +181,7 @@ tags:
     description: Two-step upload-then-announce attachment flow (PRD §6.3, §12.10).
 
 servers:
-  - url: "{apiUrl}/v1"
+  - url: "{apiUrl}/chat-services/api/v1"
     description: >-
       Base URL is a deployment-specific chat-service origin, supplied by the
       SDK consumer as `ChatClientConfig.apiUrl` (PRD §6.1) — there is no
@@ -189,6 +189,13 @@ servers:
       heuristics are used to derive this from a WebSocket URL or vice versa
       (PRD §12.7, an explicitly-rejected v1 anti-pattern); `apiUrl` and
       `wsUrl` are independent, explicit configuration values.
+
+      The `/chat-services/api/v1` path is not decoration: every route on the
+      service is mounted under it (`src/api/rest/server.ts`), and the v2
+      WebSocket endpoint sits at `/chat-services/v2/ws` for the same reason.
+      This block previously resolved to `{apiUrl}/v1`, which would have made
+      every client generated from this spec (T19) request a path the service
+      does not serve.
     variables:
       apiUrl:
         default: https://api.chatsdk.example.com
@@ -201,8 +208,8 @@ paths:
       tags: [Tokens]
       summary: Mint a short-lived, scoped user access token.
       description: |
-        Called by the **customer's own backend** using their `sk_live_...` /
-        `sk_test_...` secret key — never by a browser (PRD §10.3). The
+        Called by the **customer's own backend** using their `dhsk_live_...` /
+        `dhsk_test_...` secret key — never by a browser (PRD §10.3). The
         customer's frontend calls *their own* backend endpoint (commonly
         one they name `/token` or similar), which in turn calls this
         endpoint and relays only the resulting `accessToken` to the
@@ -743,7 +750,7 @@ components:
     secretKey:
       type: http
       scheme: bearer
-      bearerFormat: "sk_live_... / sk_test_..."
+      bearerFormat: "dhsk_live_... / dhsk_test_..."
       description: >-
         Tenant secret key. Valid **only** as the credential on `POST
         /tokens` (never on any endpoint a browser calls) and, separately, as
@@ -763,7 +770,7 @@ components:
       in: header
       name: X-Publishable-Key
       description: >-
-        Tenant-identifying key (`pk_live_...` / `pk_test_...`), safe to ship
+        Tenant-identifying key (`dhpk_live_...` / `dhpk_test_...`), safe to ship
         in a client bundle. Identifies a tenant and grants nothing on its
         own (PRD §10.1) — always required together with `accessToken`, never
         as a sole credential. The server rejects a request whose
@@ -818,7 +825,7 @@ components:
       description: |
         `t=<unix-seconds>,v1=<hex-encoded HMAC-SHA256>`. The signed payload
         is `${t}.${rawRequestBody}`, HMAC-SHA256'd with the tenant's secret
-        key (`sk_live_...` / `sk_test_...`) as the key. Verify by
+        key (`dhsk_live_...` / `dhsk_test_...`) as the key. Verify by
         recomputing the HMAC over the *raw, unparsed* body and comparing
         with constant-time comparison; reject if `t` is more than 5 minutes
         from the receiver's clock (replay protection).
@@ -1074,8 +1081,13 @@ components:
     Profile:
       type: object
       description: Enriched participant profile, generalized from v1's assignedAgent/customer shapes.
-      required: [displayName, email, avatarUrl, isOnline]
+      required: [participantId, displayName, email, avatarUrl]
       properties:
+        participantId:
+          type: string
+          description: >-
+            Correlation key. `presence.update` frames and `readWatermarks` are
+            both keyed by this, so without it neither can be bound to a person.
         displayName:
           type: string
         email:
@@ -1084,8 +1096,6 @@ components:
         avatarUrl:
           type: [string, "null"]
           format: uri
-        isOnline:
-          type: boolean
 
     Ticket:
       type: object
@@ -1153,7 +1163,7 @@ components:
         messageType:
           $ref: "#/components/schemas/MessageType"
 
-    Message:
+    ChatMessage:
       type: object
       required: [id, chatSessionId, senderType, content, messageType, createdAt]
       properties:
@@ -1246,7 +1256,7 @@ components:
         messages:
           type: array
           items:
-            $ref: "#/components/schemas/Message"
+            $ref: "#/components/schemas/ChatMessage"
           description: Most recent page, ascending chronological order (oldest first).
         hasMore:
           type: boolean
@@ -1304,7 +1314,7 @@ components:
         messages:
           type: array
           items:
-            $ref: "#/components/schemas/Message"
+            $ref: "#/components/schemas/ChatMessage"
         hasMore:
           type: boolean
 
@@ -1376,7 +1386,7 @@ components:
         tenantId:
           type: string
         data:
-          $ref: "#/components/schemas/Message"
+          $ref: "#/components/schemas/ChatMessage"
 
     WebhookSessionUpdatedEvent:
       type: object

@@ -82,7 +82,7 @@ v2 replaces the transport and state layer with a framework-agnostic core in plai
 |---|---|
 | Frontend engineer (React) | Installs `@dhaam-ccrm/core` + `@dhaam-ccrm/react`, wraps app in a provider with `publishableKey` + `getToken`, renders chat state via hooks, ships. |
 | Frontend engineer (Vue/Angular/vanilla) | Same shape of integration in ship-order steps 5–6, using the binding-conformance contract to know the behavior will match React's. |
-| Backend engineer | Uses `@dhaam-ccrm/node` (or a generated Python/Go SDK) with a `sk_live_...` secret key to mint short-lived scoped JWTs from their own auth session, exposes a `/token` endpoint their frontend calls before initializing the SDK. |
+| Backend engineer | Uses `@dhaam-ccrm/node` (or a generated Python/Go SDK) with a `dhsk_live_...` secret key to mint short-lived scoped JWTs from their own auth session, exposes a `/token` endpoint their frontend calls before initializing the SDK. |
 | End user (chatter, not an SDK consumer but the reason the SDK exists) | Opens a support widget, sends messages, goes offline momentarily (tunnel, tab sleep), comes back, and sees no duplicated or lost messages, with typing/presence/read-state behaving consistently regardless of which framework binding renders the UI. |
 | Our own team (dogfooding) | Builds the ship-order-2 demo app against only published packages, surfacing any core/binding gap before external customers do. |
 
@@ -129,7 +129,7 @@ Every functional requirement below is written so it can be delivered in this ord
 function createChatClient(config: ChatClientConfig): ChatClient
 
 interface ChatClientConfig {
-  publishableKey: string;              // pk_live_... / pk_test_...  — tenant identification only
+  publishableKey: string;              // dhpk_live_... / dhpk_test_...  — tenant identification only
   getToken: () => Promise<string>;     // async, core owns when/how often it's called (§10)
   apiUrl?: string;                     // REST base — explicit, no port-swap heuristics (§12.7)
   wsUrl?: string;                      // WS base — explicit, no port-swap heuristics (§12.7)
@@ -187,9 +187,16 @@ interface ChatState {
   uploading: boolean;
   pastSessions: ChatSessionSummary[];
   readWatermarks: Record<string /* participantId */, string /* ISO-8601 */>; // generalized from v1's single agentReadAt field
+  presence: Record<string /* participantId */, PresenceEntry>;                // AMENDED — see below
   lastError: ChatError | null;
 }
 ```
+
+**Amendment (2026-08-18, during B12):** the key prefixes are namespaced — `dhpk_live_`/`dhpk_test_` and `dhsk_live_`/`dhsk_test_`, not `pk_`/`sk_`. A bare `sk_live_` scheme is byte-identical to Stripe's, and GitHub's secret scanner blocked a push to this repo having detected two synthetic test fixtures as Stripe keys. The operational costs are the real reason: a customer committing one of our keys gets their own push blocked and concludes the SDK is broken, and a genuine leak of ours is triaged as a Stripe incident and routed to the wrong vendor. Core still rejects a bare `sk_` **in addition to** `dhsk_`, so someone pasting a real Stripe secret key into the publishable slot gets a credential-incident error rather than a formatting error.
+
+**Amendment (2026-08-18, during T10):** `ChatMessage` gained `delivery?: MessageDelivery`, and §6.5 gained a `sendFailed` event. As originally written the model had no way to express a send that will never arrive: `seq` is absent both for a message still in flight and for one the queue has permanently given up on, so a binding could not tell a spinner from a retry affordance. `MessageDelivery` is a union (`{state:'queued'}` | `{state:'failed', reason}`) so a reason cannot exist without a failure and a failure cannot exist without a reason. `SendFailureReason` is defined in `state/` and imported by `queue/`, rather than duplicated — a second copy of the union is exactly the drift D4 exists to prevent.
+
+**Amendment (2026-08-18, during T12):** `presence` was added as an eleventh field. As originally written this section specified ten fields with no home for presence, while the only presence-shaped field in the model — `isOnline` on the participant profile — sat on a type with no id, so a `presence.update` frame (keyed by `participantId`) could not be correlated to anyone. `ChatParticipantProfile` now carries `participantId`, and `isOnline` is removed: presence has exactly one canonical location (D4), rather than the two-locations-for-one-fact mistake v1 made with attachments (§12.2). A participant absent from the map has *unknown* presence, which is not the same as offline.
 
 `subscribe` fires synchronously (microtask-batched, not per-internal-mutation) on any change to any field of `ChatState`. Bindings are responsible for their framework's fine-grained-vs-coarse re-render tradeoff (e.g., React may want `useSyncExternalStore` with a selector) — core only guarantees the full, consistent snapshot is available on every notification; it does not do field-level diffing itself.
 
@@ -409,8 +416,8 @@ Queued sends should have a bounded age/size before being surfaced to the app as 
 
 ### 10.1 Key model (fixed)
 
-- **Publishable key** (`pk_live_…` / `pk_test_…`) — ships in client bundles. Identifies tenant only. Grants nothing on its own.
-- **Secret key** (`sk_live_…`) — never leaves the customer's server. Mints short-lived, scoped user JWTs.
+- **Publishable key** (`dhpk_live_…` / `dhpk_test_…`) — ships in client bundles. Identifies tenant only. Grants nothing on its own.
+- **Secret key** (`dhsk_live_…`) — never leaves the customer's server. Mints short-lived, scoped user JWTs.
 
 ### 10.2 Publishable key handshake
 
@@ -420,7 +427,7 @@ Queued sends should have a bounded age/size before being surfaced to the app as 
 
 ```
 POST /v1/tokens
-Authorization: Bearer sk_live_...
+Authorization: Bearer dhsk_live_...
 { userId, name?, email?, ...customerDefinedClaims }
 → { accessToken, expiresIn }
 ```
@@ -527,7 +534,7 @@ Read state: confirmed to already be a **watermark model** — `GET /sessions/{id
 
 ### 12.10 File upload and pagination (confirmed, generalized in §6.3/§9)
 
-Attachments are a two-step flow: multipart `POST /chat-services/api/v1/upload` (REST, Bearer-only, no tenant header — another auth-convention inconsistency vs. the rest of the REST surface) returns `{url, fileName, mimeType, size, mediaType}`, and the client then emits `message.send` over WS with that URL as content plus `metadata.attachment`. Pagination for message history uses an opaque-id cursor (`before={messageId}&limit=20`) with a `hasMore` boolean — no `after`/forward cursor exists because live messages arrive over WS, not by polling. Both patterns are sound enough to generalize into v2 (§6.3, §9), modulo Open Question 7 on whether upload stays proxied or moves to presigned URLs.
+Attachments are a two-step flow: multipart `POST /chat-services/api/v1/upload` (REST, Bearer-only, no tenant header — another auth-convention inconsistency vs. the rest of the REST surface) returns `{url, fileName, mimeType, size, mediaType}`, and the client then emits `message.send` over WS with that URL as content plus the attachment metadata. **Note this section describes v1**, which nested it at `metadata.attachment`; v2 carries a **top-level** `attachment` field per D4, because v1 read `message.attachment` and `message.metadata.attachment` interchangeably (§12.2) and one canonical location is the point. Do not read this paragraph as the v2 target shape. Pagination for message history uses an opaque-id cursor (`before={messageId}&limit=20`) with a `hasMore` boolean — no `after`/forward cursor exists because live messages arrive over WS, not by polling. Both patterns are sound enough to generalize into v2 (§6.3, §9), modulo Open Question 7 on whether upload stays proxied or moves to presigned URLs.
 
 ### 12.11 Heartbeat and reconnect policy (confirmed gap, motivates §8.2)
 
@@ -549,7 +556,7 @@ Prebuilt UI components (`@dhaam-ccrm/ui`) are explicitly deferred, possibly inde
   - Reconnect backoff bounds are fixed at base 500ms / cap 30s / full jitter (§8.2) regardless of final tuning numbers chosen.
 - **Security:**
   - No credential (token, secret key) is ever passed to `logger` or included in any log line core emits — logger calls must be reviewed for this on every PR touching auth code.
-  - `sk_live_...` secret keys must be structurally impossible to reference from any browser-targeted package (`core`, `react`, `vue`, `angular`, `js`) — only `node` and generated backend SDKs know this key exists.
+  - `dhsk_live_...` secret keys must be structurally impossible to reference from any browser-targeted package (`core`, `react`, `vue`, `angular`, `js`) — only `node` and generated backend SDKs know this key exists.
   - All inputs crossing the wire boundary (frame payloads) are validated against the schema in §7.2 before being applied to state; malformed frames are dropped with a logged warning, not applied partially.
 - **Accessibility:** Not applicable to `core`/bindings directly (no UI). Deferred to `@dhaam-ccrm/ui` (§13) and to each customer's own UI built on the bindings.
 - **Compatibility:**

@@ -1,0 +1,172 @@
+name: CI
+
+# Every PR and every push to main. Nothing merges without this being green.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A superseded push should stop burning runners, but never cancel main.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate 1-4: build, typecheck, test — on every Node version we claim to support.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: verify (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Report every Node version's result. If 18 breaks and 22 is fine we want
+      # to know that from one run, not from three re-runs.
+      fail-fast: false
+      matrix:
+        # Tracks the root package.json "engines.node": ">=18".
+        # 18 = the floor we advertise, 22 = current LTS, 20 = the one in between.
+        # If you drop a version here, drop it from "engines" in the same commit.
+        node: ['18', '20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm before setup-node: setup-node's `cache: pnpm` needs pnpm on PATH.
+      # Version comes from the root package.json "packageManager" field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      # --frozen-lockfile: a PR that changes a dependency without updating
+      # pnpm-lock.yaml fails here rather than silently resolving something else.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # BUILD RUNS FIRST, AND THAT IS DELIBERATE.
+      #
+      # The workspace packages consume each other through their package.json
+      # "exports" -> dist/, exactly as a customer would from npm (see
+      # examples/demo/server/build.mjs). dist/ is not committed. So until
+      # `pnpm -r build` has run, `@dhaam-ccrm/core` does not resolve, and both
+      # `pnpm -r typecheck` (packages/react) and `pnpm test` (packages/react,
+      # examples/demo) fail on module resolution rather than on real defects.
+      #
+      # This does NOT fold typecheck into build. See the next step.
+      - name: Build
+        run: pnpm -r build
+
+      # TYPECHECK IS ITS OWN GATE — do not merge it into the build step.
+      # `tsup` resolves from each package's entrypoint and type-checks nothing
+      # outside that graph, so test files are invisible to it. That is exactly
+      # how untypechecked test files reached main here once already.
+      # `pnpm -r typecheck` runs `tsc --noEmit` per package, and packages/react
+      # additionally runs it over tsconfig.test.json to cover test/**.
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      # A typecheck gate is only worth the minutes it costs if the test files
+      # are actually inside a tsconfig program. packages/core and packages/rest
+      # keep tests in src/ (covered by their "include"); packages/react keeps
+      # them in test/ and covers them with a second tsconfig.test.json pass.
+      # A package that does neither has tests vitest runs and tsc never sees,
+      # which is the first of the two defects this pipeline exists to stop.
+      - name: Every test file is typechecked
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/test-typecheck-coverage.mjs" <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import path from 'node:path';
+
+          const sh = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8' });
+
+          // What vitest will actually run.
+          const tests = sh('pnpm', ['exec', 'vitest', 'list', '--filesOnly'])
+            .split('\n').map((s) => s.trim()).filter((s) => /\.test\.tsx?$/.test(s));
+
+          // What tsc treats as a root file, across every workspace tsconfig.
+          const configs = sh('git', ['ls-files', '*/tsconfig*.json']).split('\n').filter(Boolean);
+          const checked = new Set();
+          for (const cfg of configs) {
+            const { files = [] } = JSON.parse(sh('node_modules/.bin/tsc', ['--showConfig', '-p', cfg]));
+            for (const f of files) checked.add(path.normalize(path.join(path.dirname(cfg), f)));
+          }
+
+          const orphans = tests.filter((t) => !checked.has(path.normalize(t)));
+          for (const o of orphans) {
+            console.log(`::error file=${o}::vitest runs this file, no tsconfig type-checks it`);
+          }
+          if (orphans.length > 0) {
+            console.log('::error::Add the directory to that package\'s tsconfig "include",');
+            console.log('::error::or give it a tsconfig.test.json and a second tsc pass in');
+            console.log('::error::its "typecheck" script, as packages/react does.');
+            process.exit(1);
+          }
+          console.log(`ok - all ${tests.length} test files are in a tsconfig program`);
+          NODE
+          node "$RUNNER_TEMP/test-typecheck-coverage.mjs"
+
+      - name: Test
+        run: pnpm test
+
+      # dist/ and examples/demo/public/app.js are gitignored on purpose ("v2:
+      # build output is NOT committed"). If a build starts writing a tracked
+      # file, catch it here instead of in a reviewer's diff.
+      - name: Working tree unchanged by build
+        run: git diff --exit-code
+
+  # ---------------------------------------------------------------------------
+  # Gate 5: no scannable credential literal anywhere in the checkout.
+  #
+  # GitHub push protection already blocked one push over synthetic sk_live_
+  # fixtures. Keys are dhpk_/dhsk_ now, but a contiguous literal would still
+  # trip a customer's scanner and force a key rotation. Cheapest fix: never
+  # let one land.
+  #
+  # No Node, no install: this job scans exactly the tracked checkout and
+  # nothing else, so node_modules/ and dist/ cannot produce false positives.
+  # ---------------------------------------------------------------------------
+  credential-scan:
+    name: credential literals
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for credential literals
+        run: |
+          set -euo pipefail
+
+          PATTERN='(dh)?[sp]k_(live|test)_[A-Za-z0-9]{20,}'
+
+          # --- Step 1: prove the pattern still matches something. ---
+          # A gate whose regex matches nothing is permanently green and
+          # therefore worthless. The violation is assembled at runtime from
+          # three fragments so that this file contains no contiguous literal
+          # for a scanner to flag.
+          probe="$(mktemp -d)/planted.txt"
+          printf 'const apiKey = "%s%s%s";\n' 'dhsk_' 'live_' 'A1b2C3d4E5f6G7h8I9j0K1' > "$probe"
+
+          if ! grep -qE "$PATTERN" "$probe"; then
+            echo "::error::The credential pattern no longer matches a planted violation."
+            echo "::error::This gate is dead and would pass on anything. Fix PATTERN."
+            exit 1
+          fi
+          echo "probe ok - pattern matches a planted violation"
+
+          # --- Step 2: scan the checkout. ---
+          # -I skips binaries (they cannot report a usable line/offset).
+          if grep -rInoE "$PATTERN" . --exclude-dir=.git; then
+            echo "::error::Credential literal(s) found above."
+            echo "::error::Split the prefix from the body (e.g. 'dhsk_' + 'live_' + body)"
+            echo "::error::or use an obviously-fake short body. Never commit a real key;"
+            echo "::error::if one of these is real, rotate it before doing anything else."
+            exit 1
+          fi
+          echo "scan ok - no credential literals in the checkout"

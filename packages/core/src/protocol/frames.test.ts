@@ -143,9 +143,9 @@ describe('exhaustive switch(frame.t) narrowing', () => {
         t: 'connection.hello',
         id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
         ts: 1,
-        d: { token: 'tok', publishableKey: 'pk_test_1', protocolVersion: 1 },
+        d: { token: 'tok', publishableKey: 'dhpk_test_1', protocolVersion: 1 },
       }),
-    ).toBe('hello:pk_test_1:1');
+    ).toBe('hello:dhpk_test_1:1');
 
     expect(
       describeFrame({

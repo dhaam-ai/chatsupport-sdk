@@ -13,7 +13,7 @@ import type { ChatMode, ChatStatus, ParticipantType, PresenceStatus } from './en
 /**
  * Generalized from v1's confirmed upload response shape (§12.10):
  * `POST /chat-services/api/v1/upload` → `{url, fileName, mimeType, size,
- * mediaType}`. Carried inside a message's `metadata.attachment` on both
+ * mediaType}`. Carried as a message's top-level `attachment` field on both
  * `message.send` (client→server) and `message.new` (server→client).
  */
 export interface AttachmentMetadata {
@@ -25,12 +25,10 @@ export interface AttachmentMetadata {
 }
 
 /**
- * Free-form message metadata bag. `attachment` is the one canonical key
- * this spec defines a shape for; other keys are opaque application data
- * core does not interpret.
+ * Free-form message metadata bag: opaque application data core never
+ * interprets. Attachments are NOT in here — see {@link AttachmentMetadata}.
  */
 export interface MessageMetadata {
-  attachment?: AttachmentMetadata;
   [key: string]: unknown;
 }
 

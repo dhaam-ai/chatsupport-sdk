@@ -1,0 +1,43 @@
+{
+  "name": "@dhaam-ccrm/node",
+  "version": "0.0.0",
+  "description": "Server-side chat SDK for the customer's own backend — secret-key token minting, webhook signature verification, cursor pagination. Node-only; holds the secret key.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
+  },
+  "keywords": [
+    "chat",
+    "sdk",
+    "node",
+    "server",
+    "webhooks"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43"
+  }
+}

@@ -298,7 +298,9 @@
       "skills_needed": [
         "incremental-implementation",
         "security-and-hardening"
-      ]
+      ],
+      "status": "done",
+      "resolution": "Absorbed by B1/B5. handlers.ts case 'connection.reauth' exists; B5 additionally fixed it to check tenantId, not just userId."
     },
     {
       "id": "B4",
@@ -309,7 +311,9 @@
       ],
       "skills_needed": [
         "incremental-implementation"
-      ]
+      ],
+      "status": "done",
+      "resolution": "Absorbed by B1's projection layer. No integer enum or snake_case key is emitted anywhere on the v2 path; verified by scan."
     },
     {
       "id": "B5",
@@ -331,7 +335,83 @@
       ],
       "skills_needed": [
         "security-and-hardening"
-      ]
+      ],
+      "status": "done",
+      "resolution": "Absorbed by B5. resolvePublishableKey resolves the tenant before the token is touched, and a tenant mismatch is rejected with AUTH_INVALID."
+    },
+    {
+      "id": "B7",
+      "title": "Restore multi-instance fan-out for /v2/ws via Redis pub/sub (parity with socket.io redis-adapter)",
+      "scope": "../chat-service-node",
+      "needs": [
+        "B1"
+      ],
+      "skills_needed": [
+        "incremental-implementation",
+        "test-driven-development"
+      ],
+      "blocker": "v2 cannot serve production on more than one replica until this lands. socket.io v1 already has this via @socket.io/redis-adapter ^8.3.0."
+    },
+    {
+      "id": "B8",
+      "title": "Authenticate v1 REST chat routes; remove auth bypasses and dead middleware",
+      "scope": "../chat-service-node",
+      "needs": [
+        "B5"
+      ],
+      "skills_needed": [
+        "security-and-hardening"
+      ],
+      "blocker": "chat.routes.ts mounts 8 routes with no auth and reads tenantId/customerId from the request body. Not yet live, so this is fixed outright rather than behind a compatibility flag."
+    },
+    {
+      "id": "B9",
+      "title": "Close socket.io no-credential agent bypass and WS v2 session.join cross-tenant IDOR",
+      "scope": "../chat-service-node",
+      "needs": [
+        "B8"
+      ],
+      "skills_needed": [
+        "security-and-hardening"
+      ],
+      "blocker": "socket.io handshake grants roles:['agent'] on any tenant with no token when role=AGENT is passed in the query. v2 session.join checks customerId but not tenantId."
+    },
+    {
+      "id": "B10",
+      "title": "Close v1 socket.io cross-tenant IDOR on JOIN_SESSION/AGENT_JOIN and customer join; stop logging token material",
+      "scope": "../chat-service-node",
+      "needs": [
+        "B9"
+      ],
+      "skills_needed": [
+        "security-and-hardening"
+      ],
+      "blocker": "B9 narrowed the handshake to authenticated callers, but v1 agent JOIN_SESSION/AGENT_JOIN still has no tenant or ownership check, so any authenticated agent reaches any tenant's session."
+    },
+    {
+      "id": "B11",
+      "title": "Add a unique constraint on (chatSessionId, seq) so ordering is structural, not lock-dependent",
+      "scope": "../chat-service-node",
+      "needs": [
+        "B2"
+      ],
+      "skills_needed": [
+        "incremental-implementation"
+      ],
+      "blocker": "chat_messages has @@index([chatSessionId, seq]) but no @@unique. Correctness currently rests entirely on Postgres row-lock discipline. Migration against live data, so it needs its own task."
+    },
+    {
+      "id": "B12",
+      "title": "Namespace the API key prefix to dhpk_/dhsk_ so it stops colliding with Stripe's scheme",
+      "scope": "../chat-service-node + packages/core + openapi",
+      "needs": [
+        "B5"
+      ],
+      "skills_needed": [
+        "security-and-hardening",
+        "incremental-implementation"
+      ],
+      "blocker": "sk_live_/pk_live_ is byte-identical to Stripe's format. GitHub push protection blocked a push on synthetic test fixtures; customers' scanners will misattribute real keys, and a genuine leak would be triaged to the wrong vendor."
     }
   ],
   "backend_repo": {

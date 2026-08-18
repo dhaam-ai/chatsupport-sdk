@@ -239,8 +239,10 @@ function validateAttachmentMetadata(value: unknown, path: string, frameType: str
 }
 
 function validateMessageMetadata(value: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  // Opaque application data — shape is not this spec's business. Attachments
+  // are validated at the payload level, not in here (D4: one location).
   if (!isPlainObject(value)) return fail(path, 'must be an object', frameType);
-  return optionalObject(value, 'attachment', path, validateAttachmentMetadata, frameType);
+  return null;
 }
 
 function validateParticipantSnapshot(value: unknown, path: string, frameType: string): FrameValidationFailure | null {
@@ -313,6 +315,7 @@ function validateMessageSend(d: unknown, path: string, frameType: string): Frame
     requireField(d, 'content', isString, path, 'a string', frameType) ??
     requireField(d, 'type', isMessageType, path, 'a valid MessageType', frameType) ??
     optionalField(d, 'replyToMessageId', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    optionalObject(d, 'attachment', path, validateAttachmentMetadata, frameType) ??
     optionalObject(d, 'metadata', path, validateMessageMetadata, frameType)
   );
 }
@@ -390,6 +393,7 @@ function validateMessageNew(d: unknown, path: string, frameType: string): FrameV
     requireField(d, 'type', isMessageType, path, 'a valid MessageType', frameType) ??
     requireField(d, 'content', isString, path, 'a string', frameType) ??
     optionalField(d, 'replyToMessageId', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    optionalObject(d, 'attachment', path, validateAttachmentMetadata, frameType) ??
     optionalObject(d, 'metadata', path, validateMessageMetadata, frameType) ??
     requireField(d, 'seq', isInteger, path, 'an integer', frameType) ??
     requireField(d, 'createdAt', isIsoTimestamp, path, 'an ISO-8601 timestamp string', frameType)

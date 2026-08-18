@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+
+    // DOM is deliberately absent (PRD §14). The base config ships
+    // `["ES2020", "DOM"]` because core and react are browser-targeted; this
+    // package is the opposite side of the wire and holds the secret key.
+    // Dropping DOM means a `window`, `localStorage`, or `document` reference
+    // in this package is a COMPILE ERROR rather than a review comment — the
+    // "node-only, structurally so" requirement enforced by the type system.
+    //
+    // `fetch`, `Response`, `Headers` and `FormData` are still typed here:
+    // @types/node >= 18 declares them as globals (via undici-types), so
+    // removing DOM costs nothing this package actually uses.
+    "lib": ["ES2020"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["dist", "node_modules"]
+}

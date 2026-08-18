@@ -1,0 +1,29 @@
+{
+  "name": "@dhaam-ccrm/rest",
+  "version": "0.0.0",
+  "description": "fetch-based REST adapters for @dhaam-ccrm/core's injected seams — history, attachments, session actions.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@dhaam-ccrm/core": "workspace:*"
+  },
+  "keywords": ["chat", "sdk", "rest"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" }
+}
