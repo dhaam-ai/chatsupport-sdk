@@ -82,8 +82,13 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-# dist is intentionally committed so GitHub installs don't need a build step
-# dist
+# v2: build output is NOT committed. Packages publish from CI via changesets.
+# The root dist/ is the legacy v1 artifact and is removed with src/ (plan task T24).
+packages/*/dist/
+examples/*/dist/
+
+# npm lockfile from v1 — this is a pnpm workspace now
+package-lock.json
 
 # Gatsby files
 .cache/
@@ -115,3 +120,6 @@ out
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# agent worktrees (embedded git repos)
+.claude/worktrees/

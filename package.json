@@ -1,55 +1,35 @@
 {
-  "name": "@chat-service/sdk",
-  "version": "1.0.0",
-  "description": "Chat Service SDK for React and Next.js applications",
-  "main": "dist/index.js",
-  "module": "dist/index.mjs",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
-    }
-  },
-  "files": [
-    "dist"
-  ],
+  "name": "dhaam-ccrm-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Framework-agnostic chat SDK \u2014 plain-TypeScript core plus thin framework bindings",
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "lint": "eslint src --ext .ts,.tsx",
-    "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
-  },
-  "peerDependencies": {
-    "react": ">=17.0.0",
-    "react-dom": ">=17.0.0",
-    "firebase": ">=10.0.0"
-  },
-  "dependencies": {
-    "socket.io-client": "^4.7.2"
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "pnpm -r typecheck",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "@changesets/cli": "^2.27.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vitest": "^2.1.0"
   },
-  "keywords": [
-    "chat",
-    "widget",
-    "sdk",
-    "react",
-    "nextjs",
-    "customer-support"
-  ],
-  "author": "Chat-sdk",
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/dhaamai/chat-sdk"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

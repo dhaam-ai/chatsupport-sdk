@@ -1,0 +1,30 @@
+{
+  "run_id": "2026-08-17-1915-chat-sdk-v2",
+  "workflow_type": "new-feature",
+  "nodes": [
+    { "id": "T1",  "title": "Define frame protocol contracts: envelope, frame-type catalog, enums, error codes", "scope": "packages/core/src/protocol", "needs": [], "skills_needed": ["api-and-interface-design"] },
+    { "id": "T2",  "title": "Write OpenAPI spec for the REST surface", "scope": "openapi", "needs": [], "skills_needed": ["api-and-interface-design"] },
+    { "id": "T4",  "title": "Implement StorageAdapter interface with in-memory and browser adapters", "scope": "packages/core/src/storage", "needs": [], "skills_needed": ["incremental-implementation"] },
+    { "id": "T5",  "title": "Implement full-jitter exponential backoff policy", "scope": "packages/core/src/backoff", "needs": [], "skills_needed": ["test-driven-development"] },
+    { "id": "T3",  "title": "Build observable store with getState, subscribe, and event emitter", "scope": "packages/core/src/state", "needs": ["T1"], "skills_needed": ["incremental-implementation", "test-driven-development"] },
+    { "id": "T6",  "title": "Build fake in-process WS server as protocol conformance target", "scope": "packages/core/test/fake-server", "needs": ["T1"], "skills_needed": ["incremental-implementation"] },
+    { "id": "T7",  "title": "Implement transport: WebSocket lifecycle, frame codec, validation, heartbeat", "scope": "packages/core/src/transport", "needs": ["T1", "T6"], "skills_needed": ["incremental-implementation", "test-driven-development"] },
+    { "id": "T8",  "title": "Implement connection state machine with seq-based resume", "scope": "packages/core/src/connection", "needs": ["T5", "T7"], "skills_needed": ["incremental-implementation", "test-driven-development"] },
+    { "id": "T12", "title": "Implement presence, typing, and read watermarks", "scope": "packages/core/src/presence", "needs": ["T3"], "skills_needed": ["incremental-implementation"] },
+    { "id": "T9",  "title": "Implement auth: getToken contract, proactive and reactive refresh, reauth", "scope": "packages/core/src/auth", "needs": ["T8"], "skills_needed": ["incremental-implementation", "security-and-hardening"] },
+    { "id": "T10", "title": "Implement offline send queue with durability, FIFO ordering, ULID dedup", "scope": "packages/core/src/queue", "needs": ["T4", "T8"], "skills_needed": ["incremental-implementation", "test-driven-development"] },
+    { "id": "T11", "title": "Implement message operations: optimistic send, attachments, pagination", "scope": "packages/core/src/messages", "needs": ["T3", "T10"], "skills_needed": ["incremental-implementation", "test-driven-development"] },
+    { "id": "T16", "title": "Build node backend SDK: token minting, webhook signature verification", "scope": "packages/node", "needs": ["T2"], "skills_needed": ["incremental-implementation", "security-and-hardening"] },
+    { "id": "T13", "title": "Assemble createChatClient and public barrel matching PRD section 6", "scope": "packages/core/src/index.ts", "needs": ["T9", "T11", "T12"], "skills_needed": ["api-and-interface-design", "incremental-implementation"] },
+    { "id": "T14", "title": "Add guard tests for core invariants: no framework deps, no secrets logged", "scope": "packages/core/test/invariants", "needs": ["T13"], "skills_needed": ["security-and-hardening", "test-driven-development"] },
+    { "id": "T15", "title": "Build React binding with useSyncExternalStore hooks", "scope": "packages/react", "needs": ["T13"], "skills_needed": ["frontend-ui-engineering", "incremental-implementation"] },
+    { "id": "T23", "title": "Set up CI: build, typecheck, test matrix, changesets release", "scope": ".github/workflows", "needs": ["T13"], "skills_needed": ["ci-cd-and-automation"] },
+    { "id": "T17", "title": "Build shared binding conformance suite every binding must pass", "scope": "packages/binding-conformance", "needs": ["T15"], "skills_needed": ["test-driven-development"] },
+    { "id": "T18", "title": "Build demo app dogfooding the published packages", "scope": "examples/demo", "needs": ["T15"], "skills_needed": ["frontend-ui-engineering"] },
+    { "id": "T19", "title": "Generate Python and Go backend clients from the OpenAPI spec", "scope": "clients", "needs": ["T2", "T16"], "skills_needed": ["incremental-implementation"] },
+    { "id": "T20", "title": "Build Vue binding as composables over the same store", "scope": "packages/vue", "needs": ["T17"], "skills_needed": ["frontend-ui-engineering"] },
+    { "id": "T21", "title": "Build Angular binding using signals and observables", "scope": "packages/angular", "needs": ["T17"], "skills_needed": ["frontend-ui-engineering"] },
+    { "id": "T22", "title": "Build vanilla JS binding", "scope": "packages/js", "needs": ["T17"], "skills_needed": ["frontend-ui-engineering"] },
+    { "id": "T24", "title": "Delete v1 src and dist, write ADRs for D1-D4, write v1 migration guide", "scope": "docs", "needs": ["T15", "T23"], "skills_needed": ["documentation-and-adrs"] }
+  ]
+}
