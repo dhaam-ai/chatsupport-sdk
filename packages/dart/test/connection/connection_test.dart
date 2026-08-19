@@ -41,13 +41,20 @@ String ackJson({
       },
     });
 
+/// A `message.new` frame at [seq].
+///
+/// The permanent message id varies with [seq] rather than being one constant:
+/// under D1 the id IS the message's identity, so two frames at different seqs
+/// sharing one id is a state the server cannot produce, and a fixture that
+/// produces it would let a dedup assertion — the thing D1 exists for — pass
+/// by collapsing two genuinely different messages.
 Map<String, Object?> messageFrame(int seq) => <String, Object?>{
       'v': 1,
       't': 'message.new',
       'id': _serverUlid,
       'ts': 1700000000000,
       'd': <String, Object?>{
-        'id': '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        'id': '01ARZ3NDEKTSV4RRFFQ69G${seq.toString().padLeft(4, '0')}',
         'sessionId': 's1',
         'senderId': 'u1',
         'senderType': 'AGENT',
