@@ -1,28 +1,7 @@
 {
   "name": "@dhaam-ccrm/angular",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Angular bindings for @dhaam-ccrm/core — one injectable store mapping core's observable snapshot store onto Angular signals. Zero WS/reconnect/dedup logic of its own.",
-  "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "sideEffects": false,
-  "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
-  },
   "keywords": [
     "chat",
     "sdk",
@@ -30,19 +9,58 @@
     "signals"
   ],
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
+  "author": "Dhaam AI",
+  "homepage": "https://github.com/dhaam-ai/chatsupport-sdk/tree/main/packages/angular#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhaam-ai/chatsupport-sdk.git",
+    "directory": "packages/angular"
   },
-  "dependencies": {
-    "@dhaam-ccrm/core": "workspace:*"
+  "bugs": {
+    "url": "https://github.com/dhaam-ai/chatsupport-sdk/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
   },
   "peerDependencies": {
+    "@dhaam-ccrm/core": "workspace:^",
     "@angular/core": ">=18.0.0"
   },
   "devDependencies": {
+    "@dhaam-ccrm/core": "workspace:*",
     "@angular/core": "^20.3.0",
     "@dhaam-ccrm/binding-conformance": "workspace:*",
     "rxjs": "^7.8.0",
     "zone.js": "^0.15.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

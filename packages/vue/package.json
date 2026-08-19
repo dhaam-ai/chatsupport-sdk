@@ -1,28 +1,7 @@
 {
   "name": "@dhaam-ccrm/vue",
-  "version": "0.0.0",
-  "description": "Vue 3 composables for @dhaam-ccrm/core \u2014 shallowRef-backed selectors over one ChatClient instance. Zero WS/reconnect/dedup logic of its own.",
-  "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "sideEffects": false,
-  "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
-  },
+  "version": "0.1.0",
+  "description": "Vue 3 composables for @dhaam-ccrm/core — shallowRef-backed selectors over one ChatClient instance. Zero WS/reconnect/dedup logic of its own.",
   "keywords": [
     "chat",
     "sdk",
@@ -30,19 +9,58 @@
     "composables"
   ],
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
+  "author": "Dhaam AI",
+  "homepage": "https://github.com/dhaam-ai/chatsupport-sdk/tree/main/packages/vue#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhaam-ai/chatsupport-sdk.git",
+    "directory": "packages/vue"
   },
-  "dependencies": {
-    "@dhaam-ccrm/core": "workspace:*"
+  "bugs": {
+    "url": "https://github.com/dhaam-ai/chatsupport-sdk/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
   },
   "peerDependencies": {
+    "@dhaam-ccrm/core": "workspace:^",
     "vue": ">=3.3.0 <4"
   },
   "devDependencies": {
+    "@dhaam-ccrm/core": "workspace:*",
     "@dhaam-ccrm/binding-conformance": "workspace:*",
     "@vue/test-utils": "^2.4.6",
     "jsdom": "^25.0.0",
     "vue": "^3.5.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

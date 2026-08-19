@@ -1,27 +1,7 @@
 {
   "name": "@dhaam-ccrm/react",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "React bindings for @dhaam-ccrm/core — useSyncExternalStore hooks over one ChatClient instance. Zero WS/reconnect/dedup logic of its own.",
-  "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
-  "files": [
-    "dist"
-  ],
-  "sideEffects": false,
-  "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
-  },
   "keywords": [
     "chat",
     "sdk",
@@ -29,22 +9,61 @@
     "hooks"
   ],
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
+  "author": "Dhaam AI",
+  "homepage": "https://github.com/dhaam-ai/chatsupport-sdk/tree/main/packages/react#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhaam-ai/chatsupport-sdk.git",
+    "directory": "packages/react"
   },
-  "dependencies": {
-    "@dhaam-ccrm/core": "workspace:*"
+  "bugs": {
+    "url": "https://github.com/dhaam-ai/chatsupport-sdk/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
   },
   "peerDependencies": {
+    "@dhaam-ccrm/core": "workspace:^",
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0"
   },
   "devDependencies": {
+    "@dhaam-ccrm/core": "workspace:*",
     "@testing-library/react": "^16.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "jsdom": "^25.0.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

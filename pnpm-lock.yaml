@@ -53,10 +53,6 @@ importers:
         version: 5.9.3
 
   packages/angular:
-    dependencies:
-      '@dhaam-ccrm/core':
-        specifier: workspace:*
-        version: link:../core
     devDependencies:
       '@angular/core':
         specifier: ^20.3.0
@@ -64,6 +60,9 @@ importers:
       '@dhaam-ccrm/binding-conformance':
         specifier: workspace:*
         version: link:../binding-conformance
+      '@dhaam-ccrm/core':
+        specifier: workspace:*
+        version: link:../core
       rxjs:
         specifier: ^7.8.0
         version: 7.8.2
@@ -105,14 +104,13 @@ importers:
   packages/core: {}
 
   packages/js:
-    dependencies:
-      '@dhaam-ccrm/core':
-        specifier: workspace:*
-        version: link:../core
     devDependencies:
       '@dhaam-ccrm/binding-conformance':
         specifier: workspace:*
         version: link:../binding-conformance
+      '@dhaam-ccrm/core':
+        specifier: workspace:*
+        version: link:../core
       esbuild:
         specifier: ^0.21.5
         version: 0.21.5
@@ -124,11 +122,10 @@ importers:
         version: 20.19.43
 
   packages/react:
-    dependencies:
+    devDependencies:
       '@dhaam-ccrm/core':
         specifier: workspace:*
         version: link:../core
-    devDependencies:
       '@testing-library/react':
         specifier: ^16.0.0
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -148,21 +145,16 @@ importers:
         specifier: ^18.3.0
         version: 18.3.1(react@18.3.1)
 
-  packages/rest:
-    dependencies:
-      '@dhaam-ccrm/core':
-        specifier: workspace:*
-        version: link:../core
+  packages/rest: {}
 
   packages/vue:
-    dependencies:
-      '@dhaam-ccrm/core':
-        specifier: workspace:*
-        version: link:../core
     devDependencies:
       '@dhaam-ccrm/binding-conformance':
         specifier: workspace:*
         version: link:../binding-conformance
+      '@dhaam-ccrm/core':
+        specifier: workspace:*
+        version: link:../core
       '@vue/test-utils':
         specifier: ^2.4.6
         version: 2.4.11(@vue/compiler-dom@3.5.41)(@vue/server-renderer@3.5.41)(vue@3.5.41(typescript@5.9.3))
@@ -176,13 +168,13 @@ importers:
   packages/widget:
     dependencies:
       '@dhaam-ccrm/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@dhaam-ccrm/js':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../js
       '@dhaam-ccrm/rest':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../rest
     devDependencies:
       esbuild:

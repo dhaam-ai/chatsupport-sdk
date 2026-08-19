@@ -1,28 +1,7 @@
 {
   "name": "@dhaam-ccrm/node",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Server-side chat SDK for the customer's own backend — secret-key token minting, webhook signature verification, cursor pagination. Node-only; holds the secret key.",
-  "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "sideEffects": false,
-  "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
-  },
   "keywords": [
     "chat",
     "sdk",
@@ -30,14 +9,51 @@
     "server",
     "webhooks"
   ],
+  "license": "MIT",
+  "author": "Dhaam AI",
+  "homepage": "https://github.com/dhaam-ai/chatsupport-sdk/tree/main/packages/node#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhaam-ai/chatsupport-sdk.git",
+    "directory": "packages/node"
+  },
+  "bugs": {
+    "url": "https://github.com/dhaam-ai/chatsupport-sdk/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
   "engines": {
     "node": ">=18.0.0"
   },
-  "license": "MIT",
-  "publishConfig": {
-    "access": "public"
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "^20.19.43"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

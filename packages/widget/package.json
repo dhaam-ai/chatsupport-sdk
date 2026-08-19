@@ -1,34 +1,7 @@
 {
   "name": "@dhaam-ccrm/widget",
-  "version": "0.0.0",
-  "description": "The drop-in embeddable chat widget \u2014 one script tag, shadow-DOM isolated, bubble / sidebar / sheet presentations. Built on @dhaam-ccrm/js.",
-  "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    },
-    "./widget.js": "./dist/widget.js"
-  },
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "sideEffects": [
-    "./dist/widget.js"
-  ],
-  "scripts": {
-    "build": "tsup && node scripts/bundle.mjs",
-    "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "size": "node scripts/bundle.mjs",
-    "dev:harness": "node scripts/dev-server.mjs",
-    "verify:browser": "node scripts/verify-browser.mjs"
-  },
+  "version": "0.1.0",
+  "description": "The drop-in embeddable chat widget — one script tag, shadow-DOM isolated, bubble / sidebar / sheet presentations. Built on @dhaam-ccrm/js.",
   "keywords": [
     "chat",
     "sdk",
@@ -37,16 +10,62 @@
     "shadow-dom"
   ],
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
+  "author": "Dhaam AI",
+  "homepage": "https://github.com/dhaam-ai/chatsupport-sdk/tree/main/packages/widget#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhaam-ai/chatsupport-sdk.git",
+    "directory": "packages/widget"
+  },
+  "bugs": {
+    "url": "https://github.com/dhaam-ai/chatsupport-sdk/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./widget.js": "./dist/widget.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": [
+    "./dist/widget.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup && node scripts/bundle.mjs",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "size": "node scripts/bundle.mjs",
+    "dev:harness": "node scripts/dev-server.mjs",
+    "verify:browser": "node scripts/verify-browser.mjs"
   },
   "dependencies": {
-    "@dhaam-ccrm/core": "workspace:*",
-    "@dhaam-ccrm/js": "workspace:*",
-    "@dhaam-ccrm/rest": "workspace:*"
+    "@dhaam-ccrm/core": "workspace:^",
+    "@dhaam-ccrm/js": "workspace:^",
+    "@dhaam-ccrm/rest": "workspace:^"
   },
   "devDependencies": {
     "esbuild": "^0.21.5",
     "jsdom": "^25.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
