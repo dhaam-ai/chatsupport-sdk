@@ -120,3 +120,74 @@ getter or plain value for the local participant id) and `app.runWithContext()`
 (the supported way to run an injecting composable outside a `setup()`, which this
 package's own error message points callers at) both landed in 3.3. Tested against
 3.5.
+
+## DOM-side composables
+
+Voice recording, waveform decode, and read tracking are implemented in
+[`@dhaam-ccrm/browser`](../browser), a framework-free package with zero
+dependencies. The Vue composables here (`useVoiceRecorder`, `useAudioWaveform`,
+`useReadTracker`) are thin wrappers that wire those state machines to scope
+lifecycle and Vue's reactivity.
+
+### Voice recording
+
+```vue
+<script setup lang="ts">
+import { useVoiceRecorder } from '@dhaam-ccrm/vue';
+
+const { status, amplitude, startRecording, stopRecording } = useVoiceRecorder();
+
+const handleRecord = () => {
+  startRecording();
+  setTimeout(() => {
+    const result = stopRecording();
+    if (result.status === 'success') {
+      client.sendAttachment({ blob: result.blob });
+    }
+  }, 5000);
+};
+</script>
+
+<template>
+  <button @click="handleRecord">{{ status === 'recording' ? 'Stop' : 'Record' }}</button>
+  <div v-if="status === 'recording'">Amplitude: {{ amplitude }}</div>
+</template>
+```
+
+### Waveform
+
+```vue
+<script setup lang="ts">
+import { useAudioWaveform } from '@dhaam-ccrm/vue';
+
+const { peaks, status } = useAudioWaveform(message.attachment?.blob);
+</script>
+
+<template>
+  <div v-if="status === 'success'" class="waveform">
+    <div v-for="(peak, i) in peaks" :key="i" :style="{ height: peak * 100 + '%' }" />
+  </div>
+</template>
+```
+
+### Read tracking
+
+```vue
+<script setup lang="ts">
+import { useReadTracker } from '@dhaam-ccrm/vue';
+import { useMessages } from '@dhaam-ccrm/vue';
+
+const { messages } = useMessages();
+const tracker = useReadTracker({
+  getMessages: () => messages.value,
+  onRead: (ids, watermark) => client.markRead(watermark),
+});
+
+// Update whenever DOM changes
+const onMounted = () => {
+  tracker.registerElements(
+    messages.value.map((m) => ({ id: m.id, element: document.getElementById(m.id) }))
+  );
+};
+</script>
+```

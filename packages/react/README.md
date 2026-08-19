@@ -85,6 +85,38 @@ The DOM-side hooks (`useReadTracker`, `useVoiceRecorder`) are SSR-safe: no
 `window`, `navigator`, `IntersectionObserver` or `MediaRecorder` is touched at
 module scope or during a render pass — only inside effects and event handlers.
 
+## Browser primitives
+
+Voice recording, waveform decode, and read tracking are implemented in
+[`@dhaam-ccrm/browser`](../browser), a framework-free package with zero
+dependencies. The React hooks here (`useVoiceRecorder`, `useAudioWaveform`,
+`useReadTracker`) are thin wrappers that wire those state machines to component
+lifecycle. This separation exists because `@dhaam-ccrm/js` compiles without the
+DOM lib — these primitives could not live there, and living in React only would
+mean Vue and Angular had to re-implement or import React. Installing
+`@dhaam-ccrm/browser` is automatic when you install this package.
+
+## Ticks
+
+Message delivery state (sent / delivered / read) is derived from core's
+snapshot, not re-implemented here. Core's `deriveTickState` and
+`deriveTickStateFromState` are re-exported so a React consumer never needs a
+second import specifier:
+
+```tsx
+import { useMessages, deriveTickStateFromState } from '@dhaam-ccrm/react';
+import { useChatState } from '@dhaam-ccrm/react';
+
+function MessageRow({ messageId }) {
+  const { state } = useChatState();
+  const tick = deriveTickStateFromState(state, messageId, localParticipantId);
+  return <span>{tick}</span>;
+}
+```
+
+The same `deriveTickStateFromState` is available from every binding and from
+core; there is one implementation and nothing drifts.
+
 ## License
 
 MIT

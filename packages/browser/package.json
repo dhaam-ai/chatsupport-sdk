@@ -1,20 +1,21 @@
 {
-  "name": "@dhaam-ccrm/angular",
+  "name": "@dhaam-ccrm/browser",
   "version": "0.1.0",
-  "description": "Angular bindings for @dhaam-ccrm/core \u2014 one injectable store mapping core's observable snapshot store onto Angular signals. Zero WS/reconnect/dedup logic of its own.",
+  "description": "Framework-free browser primitives for the chat SDK — voice recording, waveform decoding, and viewport read/delivery tracking. No framework, no core dependency, no module-scope side effects.",
   "keywords": [
     "chat",
     "sdk",
-    "angular",
-    "signals"
+    "voice",
+    "waveform",
+    "read-receipts"
   ],
   "license": "MIT",
   "author": "Dhaam AI",
-  "homepage": "https://github.com/dhaam-ai/chatsupport-sdk/tree/main/packages/angular#readme",
+  "homepage": "https://github.com/dhaam-ai/chatsupport-sdk/tree/main/packages/browser#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dhaam-ai/chatsupport-sdk.git",
-    "directory": "packages/angular"
+    "directory": "packages/browser"
   },
   "bugs": {
     "url": "https://github.com/dhaam-ai/chatsupport-sdk/issues"
@@ -49,21 +50,10 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
   },
-  "peerDependencies": {
-    "@dhaam-ccrm/core": "workspace:^",
-    "@angular/core": ">=18.0.0"
-  },
   "devDependencies": {
-    "@dhaam-ccrm/core": "workspace:*",
-    "@angular/core": "^20.3.0",
-    "@dhaam-ccrm/binding-conformance": "workspace:*",
-    "rxjs": "^7.8.0",
-    "zone.js": "^0.15.0"
+    "jsdom": "^25.0.0"
   },
   "publishConfig": {
     "access": "public"
-  },
-  "dependencies": {
-    "@dhaam-ccrm/browser": "workspace:^"
   }
 }

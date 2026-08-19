@@ -1,7 +1,7 @@
 {
   "name": "@dhaam-ccrm/react",
   "version": "0.1.0",
-  "description": "React bindings for @dhaam-ccrm/core — useSyncExternalStore hooks over one ChatClient instance. Zero WS/reconnect/dedup logic of its own.",
+  "description": "React bindings for @dhaam-ccrm/core \u2014 useSyncExternalStore hooks over one ChatClient instance. Zero WS/reconnect/dedup logic of its own.",
   "keywords": [
     "chat",
     "sdk",
@@ -65,5 +65,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@dhaam-ccrm/browser": "workspace:^"
   }
 }

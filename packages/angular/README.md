@@ -206,3 +206,86 @@ The package runs the shared
 [`@dhaam-ccrm/binding-conformance`](../binding-conformance) suite against its
 own public API, which is what keeps it behaving identically to the React, Vue,
 and vanilla bindings.
+
+## DOM-side stores
+
+Voice recording, waveform decode, and read tracking are implemented in
+[`@dhaam-ccrm/browser`](../browser), a framework-free package with zero
+dependencies. The Angular factories here (`createVoiceRecorder`,
+`createAudioWaveform`, `createReadTracker`) are thin wrappers that wire those
+state machines to Signal lifecycle and the DI context.
+
+### Voice recording
+
+```ts
+import { createVoiceRecorder } from '@dhaam-ccrm/angular';
+import { Component, effect } from '@angular/core';
+
+@Component({
+  selector: 'app-voice-recorder',
+  template: `
+    <button (click)="recorder.startRecording()" [disabled]="recorder.status() !== 'idle'">
+      {{ recorder.status() === 'recording' ? 'Stop' : 'Record' }}
+    </button>
+    <span *ngIf="recorder.status() === 'recording'">Amplitude: {{ recorder.amplitude() }}</span>
+  `,
+})
+export class VoiceRecorderComponent {
+  readonly recorder = createVoiceRecorder();
+
+  stopAndSend() {
+    const result = this.recorder.stopRecording();
+    if (result.status === 'success') {
+      this.chat.sendAttachment({ blob: result.blob });
+    }
+  }
+}
+```
+
+### Waveform
+
+```ts
+import { createAudioWaveform } from '@dhaam-ccrm/angular';
+import { Component } from '@angular/core';
+
+@Component({
+  selector: 'app-waveform',
+  template: `
+    <div class="waveform" *ngIf="waveform().status === 'success'">
+      <div *ngFor="let peak of waveform().peaks" [style.height]="peak * 100 + '%'"></div>
+    </div>
+  `,
+})
+export class WaveformComponent {
+  waveform = createAudioWaveform(() => this.message().attachment?.blob);
+
+  constructor(private message: MessageSignal) {}
+}
+```
+
+### Read tracking
+
+```ts
+import { createReadTracker } from '@dhaam-ccrm/angular';
+import { Component, afterRender } from '@angular/core';
+
+@Component({
+  selector: 'app-read-tracker',
+})
+export class ReadTrackerComponent {
+  private readonly tracker = createReadTracker({
+    getMessages: () => this.chat.messages(),
+    onRead: (ids, watermark) => this.chat.markRead(watermark),
+  });
+
+  constructor() {
+    afterRender(() => {
+      this.tracker.registerElements(
+        this.chat.messages().map((m) => ({
+          id: m.id,
+          element: document.getElementById(m.id),
+        }))
+      );
+    });
+  }
+}

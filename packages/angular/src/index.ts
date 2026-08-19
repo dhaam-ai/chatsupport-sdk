@@ -37,6 +37,43 @@ export type { ChatEventOptions, ChatStore, ChatStoreOptions, MaybeSignal, ZoneRu
 export { defaultIsEqual, shallowEqual } from './equality.js';
 
 // ---------------------------------------------------------------------------
+// DOM-side stores. Unlike everything above, these are not projections of
+// `ChatState` — they are the browser-facing half a chat UI needs and core
+// deliberately does not own (§4: core has "ZERO framework, UI, and
+// DOM-document dependencies"). All three are thin wrappers over
+// `@dhaam-ccrm/browser`, which owns the state machines so React, Vue, Angular
+// and the vanilla widget cannot drift apart on microphone teardown or on what
+// "read" means.
+// ---------------------------------------------------------------------------
+
+export { createVoiceRecorder } from './voice-recorder.js';
+export type { VoiceRecorderStore, VoiceRecorderStoreOptions } from './voice-recorder.js';
+
+export { createAudioWaveform } from './waveform.js';
+export type { AudioWaveformOptions } from './waveform.js';
+
+export { createReadTracker, DEFAULT_READ_DEBOUNCE_MS, DEFAULT_READ_THRESHOLD } from './read-tracker.js';
+export type { AngularReadTrackerOptions, ReadTrackerSource } from './read-tracker.js';
+
+export {
+  computeWaveformPeaks,
+  DEFAULT_AMPLITUDE_INTERVAL_MS,
+  DEFAULT_VOICE_MIME_TYPES,
+  DEFAULT_WAVEFORM_BUCKETS,
+  probeVoiceSupport,
+} from '@dhaam-ccrm/browser';
+export type {
+  AudioWaveformErrorCode,
+  AudioWaveformStatus,
+  ReadTracker,
+  VoiceRecorderError,
+  VoiceRecorderErrorCode,
+  VoiceRecorderState,
+  VoiceRecording,
+  WaveformResult,
+} from '@dhaam-ccrm/browser';
+
+// ---------------------------------------------------------------------------
 // Re-exported from @dhaam-ccrm/core so a consumer never needs a second
 // `dependencies` entry (or a deep import) just to type a component field as
 // `ChatState`/`ChatMessage`/etc. PRD §15: the binding's exposed `ChatState`

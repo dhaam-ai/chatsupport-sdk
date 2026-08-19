@@ -67,6 +67,28 @@ export type {
 } from './use-audio-waveform.js';
 
 // ---------------------------------------------------------------------------
+// Core's tick derivation, re-exported unchanged.
+//
+// Every binding renders the single/double/blue tick from these, and a binding
+// computing its own is precisely the divergence the conformance suite exists
+// to catch — v1 drew the double tick from presence ("the other party is
+// connected"), which reported a fact about a socket as a fact about a human.
+// @dhaam-ccrm/js and @dhaam-ccrm/angular already re-export them; React did
+// not, which left a React consumer importing @dhaam-ccrm/core directly for
+// them or, worse, writing the three-line derivation again.
+// ---------------------------------------------------------------------------
+
+export { MESSAGE_TICK_STATES, deriveTickState, deriveTickStateFromState } from '@dhaam-ccrm/core';
+export type { MessageTickState } from '@dhaam-ccrm/core';
+
+// ---------------------------------------------------------------------------
+// The message-list algebra, for a consumer writing custom optimistic UI. Same
+// reasoning as the ticks above: one implementation, in core.
+// ---------------------------------------------------------------------------
+
+export { compareBySeq, prependPage, sortMessages, upsertMessage } from '@dhaam-ccrm/core';
+
+// ---------------------------------------------------------------------------
 // Re-exported from @dhaam-ccrm/core so a consumer never needs a second
 // `dependencies` entry (or a deep import) just to type a prop as
 // `ChatState`/`ChatMessage`/etc. — the same shapes this package's own hooks

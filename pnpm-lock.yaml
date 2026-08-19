@@ -53,6 +53,10 @@ importers:
         version: 5.9.3
 
   packages/angular:
+    dependencies:
+      '@dhaam-ccrm/browser':
+        specifier: workspace:^
+        version: link:../browser
     devDependencies:
       '@angular/core':
         specifier: ^20.3.0
@@ -101,6 +105,12 @@ importers:
         specifier: ^18.3.0
         version: 18.3.1(react@18.3.1)
 
+  packages/browser:
+    devDependencies:
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.1
+
   packages/core: {}
 
   packages/js:
@@ -122,6 +132,10 @@ importers:
         version: 20.19.43
 
   packages/react:
+    dependencies:
+      '@dhaam-ccrm/browser':
+        specifier: workspace:^
+        version: link:../browser
     devDependencies:
       '@dhaam-ccrm/core':
         specifier: workspace:*
@@ -148,6 +162,10 @@ importers:
   packages/rest: {}
 
   packages/vue:
+    dependencies:
+      '@dhaam-ccrm/browser':
+        specifier: workspace:^
+        version: link:../browser
     devDependencies:
       '@dhaam-ccrm/binding-conformance':
         specifier: workspace:*

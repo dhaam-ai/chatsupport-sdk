@@ -12,16 +12,19 @@
 import { createConformanceChatClient } from '@dhaam-ccrm/binding-conformance';
 import type { ChatClientConfig } from '@dhaam-ccrm/core';
 import { describe, expect, it, vi } from 'vitest';
-import { createSSRApp, defineComponent, h } from 'vue';
+import { createSSRApp, defineComponent, h, ref } from 'vue';
 import { renderToString } from 'vue/server-renderer';
 
 import {
   createChatPlugin,
   provideChatClient,
+  useAudioWaveform,
   useChannel,
   useMessages,
   useMessageTicks,
+  useReadTracker,
   useUnreadCount,
+  useVoiceRecorder,
 } from '../src/index.js';
 
 function buildConfig(): ChatClientConfig {
@@ -139,5 +142,81 @@ describe('server-side rendering', () => {
     await renderToString(app);
 
     expect(client.__harness.subscriberCount()).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The DOM-side composables: unlike everything above, these are not selectors
+// over ChatState, they are thin wrappers over @dhaam-ccrm/browser. Their own
+// module headers each carry an "SSR-safe" claim (typeof-guarded globals, a
+// true-until-proven isSupported default, decode-never-throws) — this section
+// is where those claims get checked against a real DOM-less render rather
+// than taken on faith.
+// ---------------------------------------------------------------------------
+
+const DomWidget = defineComponent({
+  setup() {
+    const { state: recorderState } = useVoiceRecorder();
+    const waveform = useAudioWaveform(new Blob(['bytes']));
+    // A server render has no rows to register in the first place (there is
+    // no scroll event, no IntersectionObserver, no user) — the root ref
+    // simply never fills, matching the client-before-mount state exactly.
+    useReadTracker(ref<Element | null>(null), { onDelivered: () => {}, onRead: () => {} });
+
+    return () =>
+      h('div', [
+        h('span', { class: 'mic-supported' }, String(recorderState.value.isSupported)),
+        h('span', { class: 'waveform-status' }, waveform.value.status),
+      ]);
+  },
+});
+
+describe('DOM-side composables during server-side rendering', () => {
+  it('renders with no DOM present and warns about nothing — a component setup always has an effect scope', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const client = createConformanceChatClient();
+
+    const app = createSSRApp(DomWidget);
+    app.use(createChatPlugin(client));
+    const html = await renderToString(app);
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+
+    // `true`-until-proven-otherwise: `refreshSupport()` is guarded by
+    // `typeof window`, so this must never say `false` on the server — a
+    // button that renders disabled and then flips enabled a frame after
+    // hydration is exactly the flicker that default exists to avoid.
+    expect(html).toContain('class="mic-supported">true');
+
+    // The immediate-flush watcher ran during setup(); the decode itself is a
+    // fire-and-forget promise that never got a turn before renderToString
+    // captured the tree, so the server's HTML is always the loading state —
+    // regardless of whether the eventual decode will succeed or fail.
+    expect(html).toContain('class="waveform-status">loading');
+  });
+
+  it('touches no browser global constructing any of the three composables', async () => {
+    // If useVoiceRecorder, useAudioWaveform, or useReadTracker read `window`,
+    // `document`, `navigator`, or `IntersectionObserver` outside a `typeof`
+    // guard, this throws a ReferenceError before renderToString can return —
+    // there is no jsdom here to catch the mistake silently.
+    const client = createConformanceChatClient();
+    const app = createSSRApp(DomWidget);
+    app.use(createChatPlugin(client));
+
+    await expect(renderToString(app)).resolves.toBeTypeOf('string');
+  });
+
+  it('renders through provideChatClient just like the plain-state composables do', async () => {
+    const client = createConformanceChatClient();
+    const Root = defineComponent({
+      setup() {
+        provideChatClient(client);
+        return () => h(DomWidget);
+      },
+    });
+
+    await expect(renderToString(createSSRApp(Root))).resolves.toContain('class="mic-supported">true');
   });
 });

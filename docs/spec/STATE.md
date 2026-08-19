@@ -26,10 +26,25 @@ fan-out, all hardening — exists only on this machine. Push it first:
 
 - `@dhaam-ccrm/core` — protocol, transport, connection state machine, offline
   queue, presence, messages, auth, storage, backoff. Zero runtime deps, no DOM.
+- `@dhaam-ccrm/js` — framework-free binding. Selector subscriptions, event
+  subscriptions, tick derivation. ~1.1 KB gzipped.
+- `@dhaam-ccrm/browser` — voice recording (getUserMedia + MediaRecorder state
+  machine with amplitude tracking), waveform decode (AudioBuffer with automatic
+  AudioContext cleanup), read tracking (IntersectionObserver two-watermark).
+  Zero dependencies, SSR-safe. Exists so React, Vue, Angular cannot drift on
+  microphone teardown.
+- `@dhaam-ccrm/react` — hooks over core. useMessages, useVoiceRecorder,
+  useReadTracker, useAudioWaveform — delegates to @dhaam-ccrm/browser for DOM
+  primitives. Ticks re-exported from core.
+- `@dhaam-ccrm/vue` — Vue 3.3+ composables. useMessages, useVoiceRecorder,
+  useReadTracker, useAudioWaveform — delegates to @dhaam-ccrm/browser.
+- `@dhaam-ccrm/angular` — Angular 18+ signal stores. createVoiceRecorder,
+  createReadTracker, createAudioWaveform — delegates to @dhaam-ccrm/browser.
 - `@dhaam-ccrm/rest` — fetch adapters for the seams core deliberately does not
   implement (`MessageHistorySource`, `AttachmentUploader`, `SessionActions`).
-- `@dhaam-ccrm/react` — hooks over the core client. ~504 lines, React 18+.
 - `@dhaam-ccrm/node` — backend SDK: token minting, webhook signature verification.
+- `@dhaam-ccrm/widget` — embeddable HTML/CSS/JS widget, 32.6 KB gzipped. Owns
+  trimmed voice implementation in src/ui/voice.ts for bundle size.
 - `examples/demo` — runnable dogfooding app (token server + React page).
 
 ## Running locally

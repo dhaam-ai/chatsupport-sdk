@@ -59,3 +59,42 @@ export type { MessageTicks } from './use-message-ticks.js';
 // Events (§6.5). No React counterpart — see use-chat-event.ts's header.
 // ---------------------------------------------------------------------------
 export { useChatEvent } from './use-chat-event.js';
+
+// ---------------------------------------------------------------------------
+// DOM-side composables. Unlike everything above, these are not selectors over
+// `ChatState` — they are the browser-facing half a chat UI needs and core
+// deliberately does not own (§4: core has "ZERO framework, UI, and
+// DOM-document dependencies"). All three are thin wrappers over
+// `@dhaam-ccrm/browser`, which owns the state machines so that React, Vue,
+// Angular and the vanilla widget cannot drift apart on microphone teardown or
+// on what "read" means.
+// ---------------------------------------------------------------------------
+
+export { useVoiceRecorder } from './use-voice-recorder.js';
+export type { UseVoiceRecorderResult } from './use-voice-recorder.js';
+
+export { useAudioWaveform } from './use-audio-waveform.js';
+
+export { DEFAULT_READ_DEBOUNCE_MS, DEFAULT_READ_THRESHOLD, useReadTracker } from './use-read-tracker.js';
+export type { UseReadTrackerOptions, UseReadTrackerResult } from './use-read-tracker.js';
+
+// Types owned by @dhaam-ccrm/browser, re-exported so a consumer never needs a
+// second import specifier to type a recorder's state or a waveform's result.
+export {
+  computeWaveformPeaks,
+  DEFAULT_AMPLITUDE_INTERVAL_MS,
+  DEFAULT_VOICE_MIME_TYPES,
+  DEFAULT_WAVEFORM_BUCKETS,
+  probeVoiceSupport,
+} from '@dhaam-ccrm/browser';
+export type {
+  AudioWaveformErrorCode,
+  AudioWaveformStatus,
+  DecodeWaveformOptions,
+  VoiceRecorderError,
+  VoiceRecorderErrorCode,
+  VoiceRecorderOptions,
+  VoiceRecorderState,
+  VoiceRecording,
+  WaveformResult,
+} from '@dhaam-ccrm/browser';

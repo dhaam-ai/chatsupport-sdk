@@ -1,7 +1,7 @@
 {
   "name": "@dhaam-ccrm/vue",
   "version": "0.1.0",
-  "description": "Vue 3 composables for @dhaam-ccrm/core — shallowRef-backed selectors over one ChatClient instance. Zero WS/reconnect/dedup logic of its own.",
+  "description": "Vue 3 composables for @dhaam-ccrm/core \u2014 shallowRef-backed selectors over one ChatClient instance. Zero WS/reconnect/dedup logic of its own.",
   "keywords": [
     "chat",
     "sdk",
@@ -62,5 +62,8 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@dhaam-ccrm/browser": "workspace:^"
   }
 }
