@@ -21,6 +21,9 @@
 //                          prependPage, exported because ordering and dedup
 //                          are protocol rules (D1, D2) that a binding writing
 //                          its own optimistic UI has to honour identically
+//   the tick derivation    deriveTickState, for the same reason and more
+//                          urgently: four bindings render the tick, and four
+//                          independent derivations of it would disagree
 //
 // As with the other barrels, this decides what *this module* exposes to the
 // rest of core; T13's src/index.ts decides what leaves the package. §6.3
@@ -36,6 +39,9 @@ export { MessageController } from './controller.js';
 export type { MessageControllerOptions } from './controller.js';
 
 export { compareBySeq, prependPage, sortMessages, upsertMessage } from './list.js';
+
+export { MESSAGE_TICK_STATES, deriveTickState, deriveTickStateFromState } from './ticks.js';
+export type { MessageTickState, TickInput } from './ticks.js';
 
 export { DEFAULT_PAGE_SIZE, NoActiveSessionError } from './types.js';
 export type {

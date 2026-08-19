@@ -36,7 +36,7 @@ export {
 } from './typing.js';
 export type { TypingControllerOptions, TypingTimings } from './typing.js';
 
-export { WatermarkTracker, maxWatermark } from './watermarks.js';
+export { WatermarkTracker, maxDeliveredWatermark, maxWatermark } from './watermarks.js';
 export type { WatermarkTrackerOptions } from './watermarks.js';
 
 // Test support: a hand-driven Clock/ScheduleTimer pair. Exported so consumers

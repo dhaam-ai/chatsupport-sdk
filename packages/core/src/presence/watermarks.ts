@@ -1,5 +1,6 @@
-// Read-state sync — PRD §9.5 (the model), §9.4 (snapshot authority),
-// §6.4 (`ChatState.readWatermarks` / `unreadCount`), §12.9 (v1's reality).
+// Read- and delivery-state sync — PRD §9.5 (the model), §9.4 (snapshot
+// authority), §6.4 (`ChatState.readWatermarks` / `deliveredWatermarks` /
+// `unreadCount`), §12.9 (v1's reality).
 //
 // The model is a WATERMARK, not per-message receipts: one `lastReadAt` per
 // participant, confirmed real in v1 (§12.9 — `GET /sessions/{id}/full`
@@ -57,7 +58,31 @@
 // (status, mode, assignment) shadowing fresher server state — a per-key
 // maximum is not the field-by-field merge it prohibits.
 
+// ---------------------------------------------------------------------------
+// The second watermark — delivery (§6.4's `deliveredWatermarks`)
+// ---------------------------------------------------------------------------
+//
+// Everything above describes READ state, whose watermark is an ISO-8601
+// instant because §9.5's model — confirmed against v1's `lastReadAt` — is a
+// timestamp. Delivery state is the same *model* keyed on a different value:
+// `seq`, the ordering key (D2).
+//
+// The key differs because the comparison differs. A read watermark is
+// compared against a message's `createdAt`; a delivery watermark is compared
+// against its `seq`, which is what a message actually carries as its position
+// in the session's total order. Comparing delivery on a timestamp would
+// reintroduce exactly the failure the ISO-parsing note above describes, with
+// no `Date.parse` to save it: two participants' clocks are not comparable at
+// all, so `deliveredAt` is display-only and never an ordering input.
+//
+// Monotonicity is identical in shape and identical in motivation: every write
+// goes through `maxDeliveredWatermark`, so a replayed `message.delivered`
+// (D2 replays frames after `resumeFrom`, §7.3) or an out-of-order push cannot
+// walk a watermark backwards and un-deliver a message the user already saw
+// ticked.
+
 import type {
+  MessageDeliveredPayload,
   MessageReadPayload,
   ParticipantType,
   SessionSnapshot,
@@ -85,8 +110,32 @@ export function maxWatermark(current: string | undefined, next: string): string 
   return nextMs > currentMs ? next : current;
 }
 
+/**
+ * The higher of two delivery watermarks, compared numerically on `seq`.
+ *
+ * Returns `current` unchanged on a tie or a backwards move — same contract as
+ * {@link maxWatermark}, so callers detect "did anything change" with `!==`.
+ * A non-integral `next` is rejected in favour of `current` for the same
+ * reason an unparseable timestamp is: the invariant is that a watermark never
+ * regresses, and `NaN > x` is `false`, so an unguarded `NaN` would be written
+ * straight into state the first time a participant appears and then compare
+ * false against every real value afterwards — freezing that participant's
+ * watermark permanently.
+ *
+ * Returns `undefined` only when there was no current value and `next` was
+ * unusable.
+ */
+export function maxDeliveredWatermark(current: number | undefined, next: number): number | undefined {
+  if (!Number.isInteger(next)) return current;
+  if (current === undefined) return next;
+  return next > current ? next : current;
+}
+
 /** Shallow value equality, so an unchanged rebuild does not wake every binding. */
-function sameWatermarks(a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>): boolean {
+function sameWatermarks<T extends string | number>(
+  a: Readonly<Record<string, T>>,
+  b: Readonly<Record<string, T>>,
+): boolean {
   const aKeys = Object.keys(a);
   if (aKeys.length !== Object.keys(b).length) return false;
   return aKeys.every((key) => a[key] === b[key]);
@@ -184,6 +233,34 @@ export class WatermarkTracker {
     }
 
     this.#commit(next);
+    this.#pruneDeliveredWatermarks(snapshot);
+  }
+
+  /**
+   * Drops delivery watermarks for participants the snapshot no longer lists.
+   *
+   * The same half of §9.4 `applySessionSnapshot` applies to read state: the
+   * snapshot is wholesale authoritative over WHICH PARTICIPANTS EXIST. Values
+   * are carried across untouched rather than reconciled, because
+   * `ParticipantSnapshot` carries `lastReadAt` and deliberately carries no
+   * delivery equivalent — the wire contract puts delivery on `message.delivered`
+   * alone, and D2's replay redelivers those after `resumeFrom`, so there is
+   * nothing here to reconcile against and nothing lost by not trying.
+   *
+   * Pruning matters for the tick derivation specifically: a departed agent's
+   * stale watermark left in the map would keep answering "yes, delivered" for
+   * a participant who is no longer in the session.
+   */
+  #pruneDeliveredWatermarks(snapshot: SessionSnapshot): void {
+    const current = this.#store.getState().deliveredWatermarks;
+    const present = new Set(snapshot.participants.map((participant) => participant.participantId));
+
+    const next: Record<string, number> = {};
+    for (const [participantId, seq] of Object.entries(current)) {
+      if (present.has(participantId)) next[participantId] = seq;
+    }
+
+    this.#commitDelivered(next);
   }
 
   /** Applies a `message.read` watermark push (§7.3), monotonically. */
@@ -193,6 +270,24 @@ export class WatermarkTracker {
     if (advanced === current[payload.participantId]) return;
 
     this.#commit({ ...current, [payload.participantId]: advanced });
+  }
+
+  /**
+   * Applies a `message.delivered` watermark push (§7.3), monotonically.
+   *
+   * `payload.deliveredAt` is deliberately not read: it is display data, and
+   * ordering is on `seq` alone (D2). A frame replayed after `resumeFrom`, or
+   * one that overtakes a newer one in flight, therefore cannot un-deliver
+   * anything — the lower `deliveredUpToSeq` is discarded and nothing is
+   * written.
+   */
+  applyMessageDelivered(payload: MessageDeliveredPayload): void {
+    const current = this.#store.getState().deliveredWatermarks;
+    const previous = current[payload.participantId];
+    const advanced = maxDeliveredWatermark(previous, payload.deliveredUpToSeq);
+    if (advanced === undefined || advanced === previous) return;
+
+    this.#commitDelivered({ ...current, [payload.participantId]: advanced });
   }
 
   // ---------------------------------------------------------------------
@@ -234,6 +329,54 @@ export class WatermarkTracker {
       // the key must be genuinely absent to mean "up to latest".
       d: upToMessageId === undefined ? {} : { upToMessageId },
     });
+    return true;
+  }
+
+  /**
+   * Reports delivery up to `upToSeq`, advancing the local watermark
+   * optimistically and producing exactly one `message.markDelivered` intent.
+   *
+   * **Core decides WHAT to report; the caller decides WHEN.** Omitting
+   * `upToSeq` reports the highest `seq` currently in `ChatState.messages`,
+   * which is the whole point of the default: a binding never has to track
+   * message ids or sequence numbers to report delivery, it only has to say
+   * "now". It has to say it, though — the wire contract's `upToSeq` means
+   * "received *and rendered*", and whether a row is on screen is a DOM
+   * question core cannot answer from a state snapshot. A binding that wants
+   * the eager policy wires one line (`on('message', () => markDelivered())`);
+   * one that wants "actually visible" calls it from its own viewport
+   * observer, with or without an explicit seq.
+   *
+   * Returns `false` — writing nothing and sending nothing — when the local
+   * participant is unknown, when `upToSeq` is not an integer, when nothing
+   * with a `seq` has arrived yet, or when the watermark already covers the
+   * target. That last case is what makes the eager wiring safe: a burst of
+   * ten messages produces one frame, not ten, exactly as §9.5 requires of the
+   * read watermark on reconnect.
+   *
+   * @param upToSeq Report delivery up to and including this `seq`. Omit for
+   *   "everything this client currently holds".
+   */
+  markDelivered(upToSeq?: number): boolean {
+    const localId = this.#localParticipantId;
+    if (localId === null) return false;
+
+    const state = this.#store.getState();
+    const target = upToSeq ?? this.#highestSeq(state.messages);
+    // Guards a caller-supplied NaN/Infinity/fraction as well as the
+    // nothing-to-report case: an unusable target must not reach the wire, and
+    // `markDelivered()` is public API, so its input is as untrusted as a frame.
+    if (target === null || !Number.isInteger(target)) return false;
+
+    const current = state.deliveredWatermarks[localId];
+    const advanced = maxDeliveredWatermark(current, target);
+    if (advanced === undefined || advanced === current) return false;
+
+    // State first, then the intent — same ordering and same reason as
+    // `markRead`: a throwing sink must not leave the watermark unadvanced
+    // while the frame is already on its way out.
+    this.#commitDelivered({ ...state.deliveredWatermarks, [localId]: advanced });
+    this.#emitIntent({ t: 'message.markDelivered', d: { upToSeq: advanced } });
     return true;
   }
 
@@ -337,6 +480,43 @@ export class WatermarkTracker {
       if (toEpoch(message.createdAt, Number.POSITIVE_INFINITY) > watermarkMs) count += 1;
     }
     return count;
+  }
+
+  /**
+   * The highest `seq` this client currently holds, or `null` if it holds none.
+   *
+   * The maximum rather than the last element's, for the same reason
+   * `#resolveTarget` takes a maximum: an optimistic send with no `seq` sits at
+   * the end of the list, and an out-of-order arrival can land anywhere.
+   * Messages the local participant sent are deliberately included — a
+   * watermark is one integer covering a contiguous range, so skipping our own
+   * acked message would cap the watermark below it forever and leave every
+   * later message permanently undelivered.
+   */
+  #highestSeq(messages: readonly ChatMessage[]): number | null {
+    let highest: number | null = null;
+    for (const message of messages) {
+      if (message.seq === undefined) continue;
+      if (highest === null || message.seq > highest) highest = message.seq;
+    }
+    return highest;
+  }
+
+  /**
+   * Writes `nextDelivered`, if it differs by value.
+   *
+   * Separate from `#commit` rather than folded into it because delivery
+   * watermarks feed no derived field: `unreadCount` is a function of READ
+   * state, and recomputing it on every delivery receipt would be work with no
+   * possible effect. The value comparison is needed for the same reason it is
+   * there: the record is rebuilt on every call, so `setState`'s reference
+   * check alone would report a change every time.
+   */
+  #commitDelivered(nextDelivered: Record<string, number>): void {
+    const current = this.#store.getState().deliveredWatermarks;
+    if (sameWatermarks(current, nextDelivered)) return;
+
+    this.#store.setState({ deliveredWatermarks: nextDelivered });
   }
 
   /**

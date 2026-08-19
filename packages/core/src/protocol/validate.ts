@@ -325,6 +325,20 @@ function validateMessageMarkRead(d: unknown, path: string, frameType: string): F
   return optionalField(d, 'upToMessageId', isNonEmptyString, path, 'a non-empty string', frameType);
 }
 
+/**
+ * `upToSeq` is required and integral. Deliberately NOT range-checked beyond
+ * that: every other `seq` on the wire (`message.new.seq`,
+ * `connection.ack.seq`, `connection.hello.resumeFrom`) is validated as a
+ * bare integer, and a second, stricter rule for this one frame would be a
+ * shape a non-TypeScript client could not predict from the others. A
+ * nonsensical-but-integral value is rejected downstream by monotonicity,
+ * which is where "this watermark is wrong" is actually knowable.
+ */
+function validateMessageMarkDelivered(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+  return requireField(d, 'upToSeq', isInteger, path, 'an integer', frameType);
+}
+
 function validateTyping(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
   return optionalField(d, 'participantId', isNonEmptyString, path, 'a non-empty string', frameType);
@@ -408,6 +422,15 @@ function validateMessageRead(d: unknown, path: string, frameType: string): Frame
   );
 }
 
+function validateMessageDelivered(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+  return (
+    requireField(d, 'participantId', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    requireField(d, 'deliveredUpToSeq', isInteger, path, 'an integer', frameType) ??
+    requireField(d, 'deliveredAt', isIsoTimestamp, path, 'an ISO-8601 timestamp string', frameType)
+  );
+}
+
 function validatePresenceUpdate(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   return validatePresenceEntry(d, path, frameType);
 }
@@ -441,6 +464,7 @@ const PAYLOAD_VALIDATORS: Record<PlainFrameType, PayloadValidator> = {
   'session.requestAgent': validateSessionRequestAgent,
   'message.send': validateMessageSend,
   'message.markRead': validateMessageMarkRead,
+  'message.markDelivered': validateMessageMarkDelivered,
   'typing.start': validateTyping,
   'typing.stop': validateTyping,
   'presence.set': validatePresenceSet,
@@ -453,6 +477,7 @@ const PAYLOAD_VALIDATORS: Record<PlainFrameType, PayloadValidator> = {
   'agent.left': validateAgentEvent,
   'message.new': validateMessageNew,
   'message.read': validateMessageRead,
+  'message.delivered': validateMessageDelivered,
   'presence.update': validatePresenceUpdate,
   'ticket.linked': validateTicketLinked,
   'system.pong': validateEmptyPayload,

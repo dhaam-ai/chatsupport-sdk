@@ -127,7 +127,15 @@ describe('PresenceCoordinator — frame dispatch', () => {
 
   it('returns false for every push frame it does not own', () => {
     const h = harness();
-    const owned = new Set(['typing.start', 'typing.stop', 'presence.update', 'message.read', 'connection.ack', 'session.updated']);
+    const owned = new Set([
+      'typing.start',
+      'typing.stop',
+      'presence.update',
+      'message.read',
+      'message.delivered',
+      'connection.ack',
+      'session.updated',
+    ]);
 
     for (const type of SERVER_PUSH_FRAME_TYPES) {
       if (owned.has(type)) continue;

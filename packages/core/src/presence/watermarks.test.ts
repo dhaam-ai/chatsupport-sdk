@@ -3,7 +3,7 @@ import type { ParticipantSnapshot, SessionSnapshot } from '../protocol/index.js'
 import { ChatStore } from '../state/index.js';
 import type { ChatMessage } from '../state/index.js';
 import type { OutboundIntent } from './intents.js';
-import { WatermarkTracker, maxWatermark } from './watermarks.js';
+import { WatermarkTracker, maxDeliveredWatermark, maxWatermark } from './watermarks.js';
 
 const CUSTOMER = 'customer-1';
 
@@ -546,5 +546,268 @@ describe('WatermarkTracker — max across agents (§12.9)', () => {
 
     h.tracker.applySessionSnapshot(snapshot([{ participantId: CUSTOMER, type: 'CUSTOMER' }]));
     expect(h.tracker.getAgentReadWatermark()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Delivery watermarks. Same model as read watermarks, keyed on `seq` (D2)
+// instead of an instant — so every monotonicity check below compares numbers,
+// and none of them can be satisfied by a timestamp.
+// ---------------------------------------------------------------------------
+
+describe('maxDeliveredWatermark', () => {
+  it('takes an incoming value when there is no current one', () => {
+    expect(maxDeliveredWatermark(undefined, 5)).toBe(5);
+  });
+
+  it('advances forward', () => {
+    expect(maxDeliveredWatermark(5, 9)).toBe(9);
+  });
+
+  it('refuses to move backwards', () => {
+    expect(maxDeliveredWatermark(9, 5)).toBe(9);
+  });
+
+  it('returns the current value unchanged on a tie, so callers can detect no-change with !==', () => {
+    expect(maxDeliveredWatermark(9, 9)).toBe(9);
+  });
+
+  it('accepts seq 0 — a falsy but entirely valid ordering key', () => {
+    expect(maxDeliveredWatermark(undefined, 0)).toBe(0);
+    expect(maxDeliveredWatermark(0, 1)).toBe(1);
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a fraction', 2.5],
+  ])('rejects %s in favour of the current value', (_label, next) => {
+    expect(maxDeliveredWatermark(4, next)).toBe(4);
+    expect(maxDeliveredWatermark(undefined, next)).toBeUndefined();
+  });
+});
+
+describe('WatermarkTracker — inbound message.delivered', () => {
+  it('records a participant’s watermark', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.tracker.applyMessageDelivered({
+      participantId: 'agent-1',
+      deliveredUpToSeq: 7,
+      deliveredAt: '2024-01-01T00:00:00.000Z',
+    });
+
+    expect(h.store.getState().deliveredWatermarks['agent-1']).toBe(7);
+  });
+
+  it('refuses a replayed frame carrying a lower seq', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 9, deliveredAt: '2024-01-02T00:00:00.000Z' });
+    // Replayed after `resumeFrom` (D2) — older seq, NEWER timestamp. A
+    // timestamp comparison would accept this and walk the watermark back.
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 4, deliveredAt: '2024-01-03T00:00:00.000Z' });
+
+    expect(h.store.getState().deliveredWatermarks['agent-1']).toBe(9);
+  });
+
+  it('writes nothing at all when the value does not change', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 9, deliveredAt: '2024-01-02T00:00:00.000Z' });
+    const before = h.store.getState().deliveredWatermarks;
+
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 9, deliveredAt: '2024-01-02T00:00:00.000Z' });
+
+    // Same reference: a redundant push must not wake every binding.
+    expect(h.store.getState().deliveredWatermarks).toBe(before);
+  });
+
+  it('tracks each participant independently', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 3, deliveredAt: '2024-01-01T00:00:00.000Z' });
+    h.tracker.applyMessageDelivered({ participantId: 'agent-2', deliveredUpToSeq: 8, deliveredAt: '2024-01-01T00:00:00.000Z' });
+
+    expect(h.store.getState().deliveredWatermarks).toEqual({ 'agent-1': 3, 'agent-2': 8 });
+  });
+
+  it('does not touch unreadCount — delivery is not read state', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.setMessages([message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 1 })]);
+    const before = h.store.getState().unreadCount;
+
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 1, deliveredAt: '2024-01-02T00:00:00.000Z' });
+
+    expect(before).toBe(1);
+    expect(h.store.getState().unreadCount).toBe(1);
+  });
+});
+
+describe('WatermarkTracker.markDelivered', () => {
+  it('reports the highest seq the client holds and emits exactly one intent', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.setMessages([
+      message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 4 }),
+      message({ id: 'm2', createdAt: '2024-01-01T00:00:01.000Z', seq: 9 }),
+    ]);
+
+    expect(h.tracker.markDelivered()).toBe(true);
+    expect(h.intents).toEqual([{ t: 'message.markDelivered', d: { upToSeq: 9 } }]);
+    expect(h.store.getState().deliveredWatermarks[CUSTOMER]).toBe(9);
+  });
+
+  it('takes the MAXIMUM seq, not the last element’s', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    // Deliberately out of order in the array, and with an unconfirmed message
+    // (no seq) trailing — the shape an optimistic send produces.
+    h.setMessages([
+      message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 12 }),
+      message({ id: 'm2', createdAt: '2024-01-01T00:00:01.000Z', seq: 3 }),
+      message({ id: 'm3', createdAt: '2024-01-01T00:00:02.000Z' }),
+    ]);
+
+    h.tracker.markDelivered();
+
+    expect(h.intents).toEqual([{ t: 'message.markDelivered', d: { upToSeq: 12 } }]);
+  });
+
+  it('includes our own acked messages — a watermark is one contiguous range', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.setMessages([
+      message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 2 }),
+      message({ id: 'm2', createdAt: '2024-01-01T00:00:01.000Z', senderId: CUSTOMER, senderType: 'CUSTOMER', seq: 5 }),
+    ]);
+
+    h.tracker.markDelivered();
+
+    expect(h.intents).toEqual([{ t: 'message.markDelivered', d: { upToSeq: 5 } }]);
+  });
+
+  it('accepts an explicit seq from a caller that knows what became visible', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.setMessages([message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 20 })]);
+
+    expect(h.tracker.markDelivered(4)).toBe(true);
+    expect(h.intents).toEqual([{ t: 'message.markDelivered', d: { upToSeq: 4 } }]);
+  });
+
+  it('collapses a burst into one frame — the second call is silent', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.setMessages([message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 9 })]);
+
+    expect(h.tracker.markDelivered()).toBe(true);
+    expect(h.tracker.markDelivered()).toBe(false);
+    expect(h.intents).toHaveLength(1);
+  });
+
+  it('never walks its own watermark backwards', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.setMessages([message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 9 })]);
+    h.tracker.markDelivered();
+
+    expect(h.tracker.markDelivered(2)).toBe(false);
+    expect(h.intents).toHaveLength(1);
+    expect(h.store.getState().deliveredWatermarks[CUSTOMER]).toBe(9);
+  });
+
+  it('is a no-op when nothing with a seq has arrived yet', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.setMessages([message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z' })]);
+
+    expect(h.tracker.markDelivered()).toBe(false);
+    expect(h.intents).toHaveLength(0);
+    expect(h.store.getState().deliveredWatermarks).toEqual({});
+  });
+
+  it('is a no-op when the local participant is unknown', () => {
+    const h = harness();
+    h.setMessages([message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 9 })]);
+
+    expect(h.tracker.markDelivered()).toBe(false);
+    expect(h.intents).toHaveLength(0);
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a fraction', 1.5],
+  ])('refuses a caller-supplied %s rather than poisoning the watermark', (_label, seq) => {
+    const h = harness({ localParticipantId: CUSTOMER });
+
+    expect(h.tracker.markDelivered(seq)).toBe(false);
+    expect(h.intents).toHaveLength(0);
+    expect(h.store.getState().deliveredWatermarks).toEqual({});
+  });
+
+  it('commits state before emitting, so a throwing sink cannot lose the advance', () => {
+    const store = new ChatStore();
+    const tracker = new WatermarkTracker({
+      store,
+      emitIntent: () => {
+        throw new Error('socket exploded');
+      },
+      localParticipantId: CUSTOMER,
+    });
+    store.setState({ messages: [message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 6 })] });
+
+    expect(() => tracker.markDelivered()).toThrow('socket exploded');
+    expect(store.getState().deliveredWatermarks[CUSTOMER]).toBe(6);
+  });
+
+  it('notifies subscribers once for the advance', async () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.setMessages([message({ id: 'm1', createdAt: '2024-01-01T00:00:00.000Z', seq: 6 })]);
+    await flush();
+
+    const listener = vi.fn();
+    h.store.subscribe(listener);
+    h.tracker.markDelivered();
+    await flush();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0]?.[0].deliveredWatermarks).toEqual({ [CUSTOMER]: 6 });
+  });
+});
+
+describe('WatermarkTracker — delivery watermarks against a session snapshot', () => {
+  it('drops a participant the snapshot no longer lists', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 5, deliveredAt: '2024-01-01T00:00:00.000Z' });
+    h.tracker.applyMessageDelivered({ participantId: 'agent-2', deliveredUpToSeq: 8, deliveredAt: '2024-01-01T00:00:00.000Z' });
+
+    h.tracker.applySessionSnapshot(
+      snapshot([
+        { participantId: CUSTOMER, type: 'CUSTOMER' },
+        { participantId: 'agent-2', type: 'AGENT' },
+      ]),
+    );
+
+    expect(h.store.getState().deliveredWatermarks).toEqual({ 'agent-2': 8 });
+  });
+
+  it('keeps surviving participants’ values — a snapshot carries no delivery data to reconcile against', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 5, deliveredAt: '2024-01-01T00:00:00.000Z' });
+
+    h.tracker.applySessionSnapshot(
+      snapshot([
+        { participantId: CUSTOMER, type: 'CUSTOMER' },
+        { participantId: 'agent-1', type: 'AGENT', lastReadAt: '2024-01-01T00:00:00.000Z' },
+      ]),
+    );
+
+    expect(h.store.getState().deliveredWatermarks['agent-1']).toBe(5);
+  });
+
+  it('leaves the record reference untouched when the snapshot changes nothing', () => {
+    const h = harness({ localParticipantId: CUSTOMER });
+    h.tracker.applyMessageDelivered({ participantId: 'agent-1', deliveredUpToSeq: 5, deliveredAt: '2024-01-01T00:00:00.000Z' });
+    const before = h.store.getState().deliveredWatermarks;
+
+    h.tracker.applySessionSnapshot(
+      snapshot([
+        { participantId: CUSTOMER, type: 'CUSTOMER' },
+        { participantId: 'agent-1', type: 'AGENT' },
+      ]),
+    );
+
+    expect(h.store.getState().deliveredWatermarks).toBe(before);
   });
 });

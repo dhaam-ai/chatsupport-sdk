@@ -8,7 +8,7 @@ import {
 import type { AnyFrame } from './frames.js';
 
 describe('frame type catalog — §7.3', () => {
-  it('has exactly the 12 client→server frame types', () => {
+  it('has exactly the 13 client→server frame types', () => {
     expect(CLIENT_TO_SERVER_FRAME_TYPES).toEqual([
       'connection.hello',
       'connection.reauth',
@@ -17,6 +17,7 @@ describe('frame type catalog — §7.3', () => {
       'session.requestAgent',
       'message.send',
       'message.markRead',
+      'message.markDelivered',
       'typing.start',
       'typing.stop',
       'presence.set',
@@ -25,7 +26,7 @@ describe('frame type catalog — §7.3', () => {
     ]);
   });
 
-  it('has exactly the 12 plain server push frame types (excludes ack/error)', () => {
+  it('has exactly the 13 plain server push frame types (excludes ack/error)', () => {
     expect(SERVER_PUSH_FRAME_TYPES).toEqual([
       'connection.ack',
       'session.updated',
@@ -36,6 +37,7 @@ describe('frame type catalog — §7.3', () => {
       'typing.start',
       'typing.stop',
       'message.read',
+      'message.delivered',
       'presence.update',
       'ticket.linked',
       'system.pong',
@@ -48,9 +50,9 @@ describe('frame type catalog — §7.3', () => {
     expect(SERVER_TO_CLIENT_FRAME_TYPES).toEqual([...SERVER_PUSH_FRAME_TYPES, 'ack', 'error']);
   });
 
-  it('has 24 distinct frame type strings total (typing.start/stop shared, not double-counted)', () => {
+  it('has 26 distinct frame type strings total (typing.start/stop shared, not double-counted)', () => {
     const distinct = new Set(ALL_FRAME_TYPES);
-    expect(distinct.size).toBe(24);
+    expect(distinct.size).toBe(26);
   });
 
   it('typing.start and typing.stop are the one shared pair used in both directions (§7.3)', () => {
@@ -88,6 +90,8 @@ function describeFrame(frame: AnyFrame): string {
       return `send:${frame.d.content}:${frame.d.type}`;
     case 'message.markRead':
       return `markRead:${frame.d.upToMessageId ?? ''}`;
+    case 'message.markDelivered':
+      return `markDelivered:${frame.d.upToSeq}`;
     case 'typing.start':
       return `typingStart:${frame.d.participantId ?? ''}`;
     case 'typing.stop':
@@ -112,6 +116,8 @@ function describeFrame(frame: AnyFrame): string {
       return `messageNew:${frame.d.id}:${frame.d.seq}`;
     case 'message.read':
       return `messageRead:${frame.d.participantId}:${frame.d.readAt}`;
+    case 'message.delivered':
+      return `messageDelivered:${frame.d.participantId}:${frame.d.deliveredUpToSeq}`;
     case 'presence.update':
       return `presenceUpdate:${frame.d.participantId}:${frame.d.status}`;
     case 'ticket.linked':

@@ -214,7 +214,7 @@ export interface ChatSessionSummary {
 }
 
 /**
- * The observable state surface — exactly the ten fields of §6.4, in the
+ * The observable state surface — exactly the twelve fields of §6.4, in the
  * order that section lists them.
  *
  * Every value reachable from a `ChatState` handed out by the store is deeply
@@ -234,6 +234,25 @@ export interface ChatState {
 
   /** participantId → ISO-8601 watermark (§9.5, generalized from v1's single `agentReadAt`). */
   readWatermarks: Record<string, string>;
+
+  /**
+   * participantId → highest `seq` that participant has received (§9.5's
+   * watermark model, D2's ordering key).
+   *
+   * Keyed on `seq`, not a timestamp, and that is the whole difference from
+   * `readWatermarks`: a delivery watermark is compared against
+   * `ChatMessage.seq` to decide whether a message is delivered, so it must be
+   * the same total order the messages themselves are in (D2). A participant
+   * absent from this map has delivered nothing we know of — which is not the
+   * same as having delivered nothing.
+   *
+   * Never derived from presence. v1 rendered a double-grey tick when "the
+   * other party is connected", which is a statement about a socket, not about
+   * a message; the two diverge the moment a client is connected but has not
+   * caught up. See {@link ../messages/ticks.js} for the one derivation every
+   * binding must use.
+   */
+  deliveredWatermarks: Record<string, number>;
 
   /**
    * participantId → live presence. The one canonical location for presence
@@ -268,6 +287,7 @@ export function createInitialChatState(): ChatState {
     uploading: false,
     pastSessions: [],
     readWatermarks: {},
+    deliveredWatermarks: {},
     presence: {},
     lastError: null,
   };

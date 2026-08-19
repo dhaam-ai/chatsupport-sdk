@@ -115,6 +115,10 @@ export class PresenceCoordinator {
         this.watermarks.applyMessageRead(frame.d);
         return true;
 
+      case 'message.delivered':
+        this.watermarks.applyMessageDelivered(frame.d);
+        return true;
+
       // Both carry the same authoritative snapshot and are treated identically
       // (§9.4, and protocol/domain.ts's note on SessionSnapshot).
       case 'connection.ack':

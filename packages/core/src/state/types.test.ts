@@ -44,19 +44,22 @@ describe('createInitialChatState', () => {
       uploading: false,
       pastSessions: [],
       readWatermarks: {},
+      deliveredWatermarks: {},
       presence: {},
       lastError: null,
     });
   });
 
-  it('exposes exactly the eleven fields §6.4 specifies', () => {
+  it('exposes exactly the twelve fields §6.4 specifies', () => {
     // Guards against a field being quietly added to ChatState without a PRD
     // change — bindings are built against exactly this surface. `presence` was
-    // added by the 2026-08-18 §6.4 amendment; this test is what forced that
-    // amendment to be written down rather than slipped in.
+    // added by the 2026-08-18 §6.4 amendment and `deliveredWatermarks` by the
+    // 2026-08-19 one; this test is what forced both amendments to be written
+    // down rather than slipped in.
     expect(Object.keys(createInitialChatState()).sort()).toEqual(
       [
         'connectionState',
+        'deliveredWatermarks',
         'lastError',
         'messages',
         'pagination',
@@ -81,6 +84,7 @@ describe('createInitialChatState', () => {
     expect(a.messages).not.toBe(b.messages);
     expect(a.pastSessions).not.toBe(b.pastSessions);
     expect(a.readWatermarks).not.toBe(b.readWatermarks);
+    expect(a.deliveredWatermarks).not.toBe(b.deliveredWatermarks);
     expect(a.typing).not.toBe(b.typing);
     expect(a.pagination).not.toBe(b.pagination);
   });

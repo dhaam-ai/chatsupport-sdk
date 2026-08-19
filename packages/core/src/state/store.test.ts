@@ -39,6 +39,7 @@ describe('ChatStore.getState', () => {
       uploading: false,
       pastSessions: [],
       readWatermarks: {},
+      deliveredWatermarks: {},
       presence: {},
       lastError: null,
     });
@@ -230,7 +231,7 @@ describe('ChatStore microtask batching', () => {
     await nextTick();
 
     expect(delivered).toBe(store.getState());
-    expect(Object.keys(delivered ?? {})).toHaveLength(11);
+    expect(Object.keys(delivered ?? {})).toHaveLength(12);
     expect(delivered?.connectionState).toBe('idle');
   });
 });

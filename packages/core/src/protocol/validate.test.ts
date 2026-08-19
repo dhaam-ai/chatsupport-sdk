@@ -53,6 +53,8 @@ describe('validateFrame — valid frames of every type pass', () => {
     ],
     ['message.markRead', { v: 1, t: 'message.markRead', id: ULID_A, ts: TS, d: {} }],
     ['message.markRead with upToMessageId', { v: 1, t: 'message.markRead', id: ULID_A, ts: TS, d: { upToMessageId: ULID_B } }],
+    ['message.markDelivered', { v: 1, t: 'message.markDelivered', id: ULID_A, ts: TS, d: { upToSeq: 42 } }],
+    ['message.markDelivered at seq 0', { v: 1, t: 'message.markDelivered', id: ULID_A, ts: TS, d: { upToSeq: 0 } }],
     ['typing.start', { v: 1, t: 'typing.start', id: ULID_A, ts: TS, d: {} }],
     ['typing.stop', { v: 1, t: 'typing.stop', id: ULID_A, ts: TS, d: { participantId: 'p1' } }],
     ['presence.set', { v: 1, t: 'presence.set', id: ULID_A, ts: TS, d: { status: 'ONLINE' } }],
@@ -75,6 +77,10 @@ describe('validateFrame — valid frames of every type pass', () => {
       },
     ],
     ['message.read', { v: 1, t: 'message.read', id: ULID_A, ts: TS, d: { participantId: 'agent_1', readAt: ISO } }],
+    [
+      'message.delivered',
+      { v: 1, t: 'message.delivered', id: ULID_A, ts: TS, d: { participantId: 'agent_1', deliveredUpToSeq: 7, deliveredAt: ISO } },
+    ],
     ['presence.update', { v: 1, t: 'presence.update', id: ULID_A, ts: TS, d: { participantId: 'p1', status: 'AWAY' } }],
     ['ticket.linked', { v: 1, t: 'ticket.linked', id: ULID_A, ts: TS, d: { ticketId: 'tk_1' } }],
     ['system.pong', { v: 1, t: 'system.pong', id: ULID_A, ts: TS, d: {} }],
@@ -411,5 +417,105 @@ describe('attachment has exactly one canonical location (D4)', () => {
     // Deliberately malformed *as an attachment*. It must still pass, because
     // inside `metadata` it is just an app-defined key core never reads.
     expect(validateFrame(send({ content: 'x', type: 'FILE', metadata: { attachment: { nonsense: true } } })).ok).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// The delivery pair. `seq` is the ordering key (D2), so the two fields that
+// carry one must be integers or the frame is not applied at all — a watermark
+// built from a string or a float cannot be compared against `ChatMessage.seq`.
+// -----------------------------------------------------------------------------
+
+describe('delivery frames — message.markDelivered / message.delivered', () => {
+  const markDelivered = (d: unknown) => ({ v: 1, t: 'message.markDelivered', id: ULID_A, ts: TS, d });
+  const delivered = (d: unknown) => ({ v: 1, t: 'message.delivered', id: ULID_A, ts: TS, d });
+
+  it('rejects markDelivered with no upToSeq — unlike markRead, it is required', () => {
+    const result = validateFrame(markDelivered({}));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.path).toBe('d.upToSeq');
+      expect(result.frameType).toBe('message.markDelivered');
+    }
+  });
+
+  it.each([
+    ['a string', '5'],
+    ['a float', 1.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['null', null],
+  ])('rejects markDelivered whose upToSeq is %s', (_label, upToSeq) => {
+    const result = validateFrame(markDelivered({ upToSeq }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.upToSeq');
+  });
+
+  it('rejects a delivered push missing each required field in turn', () => {
+    const full = { participantId: 'agent_1', deliveredUpToSeq: 3, deliveredAt: ISO };
+
+    for (const key of ['participantId', 'deliveredUpToSeq', 'deliveredAt'] as const) {
+      const { [key]: _omitted, ...rest } = full;
+      const result = validateFrame(delivered(rest));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.path).toBe(`d.${key}`);
+    }
+  });
+
+  it('rejects a delivered push whose deliveredUpToSeq is not an integer', () => {
+    const result = validateFrame(
+      delivered({ participantId: 'agent_1', deliveredUpToSeq: '3', deliveredAt: ISO }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.deliveredUpToSeq');
+  });
+
+  it('rejects a delivered push whose deliveredAt is not ISO-8601', () => {
+    const result = validateFrame(
+      delivered({ participantId: 'agent_1', deliveredUpToSeq: 3, deliveredAt: '2024-01-01' }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.deliveredAt');
+  });
+
+  it('accepts a delivered push carrying an unknown extra field (forward compatible)', () => {
+    expect(
+      validateFrame(
+        delivered({ participantId: 'agent_1', deliveredUpToSeq: 3, deliveredAt: ISO, deliveredBy: 'future' }),
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('accepts message.delivered as a replayed frame inside connection.ack', () => {
+    const result = validateFrame({
+      v: 1,
+      t: 'connection.ack',
+      id: ULID_A,
+      ts: TS,
+      d: {
+        protocolVersion: 1,
+        seq: 10,
+        session: baseSession(),
+        replay: [delivered({ participantId: 'agent_1', deliveredUpToSeq: 3, deliveredAt: ISO })],
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('refuses markDelivered inside a replay array — it is not a server push', () => {
+    const result = validateFrame({
+      v: 1,
+      t: 'connection.ack',
+      id: ULID_A,
+      ts: TS,
+      d: {
+        protocolVersion: 1,
+        seq: 10,
+        session: baseSession(),
+        replay: [markDelivered({ upToSeq: 3 })],
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/server push frame type/);
   });
 });

@@ -95,6 +95,28 @@ export interface MessageMarkReadPayload {
 }
 
 /**
+ * Delivery-receipt watermark, the mirror of {@link MessageMarkReadPayload}
+ * (§9.5's model, D2's ordering key).
+ *
+ * One integer per participant, never a list of message ids: §9.5 already
+ * settled watermarks as the model for read state, and delivery is the same
+ * shape of fact about the same messages. `seq` rather than a message id
+ * because delivery is a *range* claim — "everything up to here" — and only
+ * `seq` totally orders the range (D2). A `upToMessageId` variant would force
+ * every receiver to resolve the id back to a seq before it could compare,
+ * against a list it may not hold.
+ *
+ * Required, unlike `markRead`'s optional `upToMessageId`: there is no
+ * "up to latest" reading of an absent number that the server could evaluate
+ * without knowing what this client has actually received. Core fills it from
+ * the highest `seq` it holds when the caller does not name one.
+ */
+export interface MessageMarkDeliveredPayload {
+  /** Highest seq this client has received and rendered. */
+  upToSeq: number;
+}
+
+/**
  * Same shape in both directions (§7.3: "Server relays the same two frame
  * types it accepts from clients — one concept, one pair of names, in both
  * directions"). Judgment call: `participantId` is optional so ONE payload
@@ -189,6 +211,25 @@ export interface MessageReadPayload {
   readAt: string;
 }
 
+/**
+ * Delivery-watermark push — the server→client half of the pair, exactly
+ * mirroring `message.markRead` → `message.read`.
+ *
+ * `deliveredAt` is carried for display ("delivered 12:04"), never for
+ * ordering: two participants' clocks are not comparable, and D2 already
+ * names `seq` the ordering key. Anything advancing or comparing a watermark
+ * reads `deliveredUpToSeq` and nothing else.
+ */
+export interface MessageDeliveredPayload {
+  participantId: string;
+
+  /** Highest seq this participant has received. */
+  deliveredUpToSeq: number;
+
+  /** ISO-8601. Display only — never an ordering or monotonicity input. */
+  deliveredAt: string;
+}
+
 /** Same shape as a `presence.query` ack's per-participant entry (domain.ts). */
 export type PresenceUpdatePayload = PresenceEntry;
 
@@ -246,6 +287,7 @@ export const CLIENT_TO_SERVER_FRAME_TYPES = [
   'session.requestAgent',
   'message.send',
   'message.markRead',
+  'message.markDelivered',
   'typing.start',
   'typing.stop',
   'presence.set',
@@ -256,7 +298,7 @@ export const CLIENT_TO_SERVER_FRAME_TYPES = [
 export type ClientToServerFrameType = (typeof CLIENT_TO_SERVER_FRAME_TYPES)[number];
 
 /**
- * The 12 plain-`Frame<T>`-shaped server→client push types — excludes `ack`
+ * The 13 plain-`Frame<T>`-shaped server→client push types — excludes `ack`
  * and `error`, which use the `AckFrame`/`ErrorFrame` envelope shapes
  * instead (§7.2).
  */
@@ -270,6 +312,7 @@ export const SERVER_PUSH_FRAME_TYPES = [
   'typing.start',
   'typing.stop',
   'message.read',
+  'message.delivered',
   'presence.update',
   'ticket.linked',
   'system.pong',
@@ -300,6 +343,7 @@ export interface ClientFramePayloadMap {
   'session.requestAgent': SessionRequestAgentPayload;
   'message.send': MessageSendPayload;
   'message.markRead': MessageMarkReadPayload;
+  'message.markDelivered': MessageMarkDeliveredPayload;
   'typing.start': TypingPayload;
   'typing.stop': TypingPayload;
   'presence.set': PresenceSetPayload;
@@ -317,6 +361,7 @@ export interface ServerPushFramePayloadMap {
   'typing.start': TypingPayload;
   'typing.stop': TypingPayload;
   'message.read': MessageReadPayload;
+  'message.delivered': MessageDeliveredPayload;
   'presence.update': PresenceUpdatePayload;
   'ticket.linked': TicketLinkedPayload;
   'system.pong': EmptyPayload;

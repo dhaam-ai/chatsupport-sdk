@@ -146,11 +146,12 @@ describe('PRESENCE_INTENT_TYPES', () => {
     }
   });
 
-  it('covers exactly the five §7.3 frames this module owns', () => {
+  it('covers exactly the six §7.3 frames this module owns', () => {
     expect([...PRESENCE_INTENT_TYPES]).toEqual([
       'typing.start',
       'typing.stop',
       'message.markRead',
+      'message.markDelivered',
       'presence.set',
       'presence.query',
     ]);
