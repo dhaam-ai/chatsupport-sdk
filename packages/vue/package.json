@@ -1,0 +1,48 @@
+{
+  "name": "@dhaam-ccrm/vue",
+  "version": "0.0.0",
+  "description": "Vue 3 composables for @dhaam-ccrm/core \u2014 shallowRef-backed selectors over one ChatClient instance. Zero WS/reconnect/dedup logic of its own.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
+  },
+  "keywords": [
+    "chat",
+    "sdk",
+    "vue",
+    "composables"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@dhaam-ccrm/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "vue": ">=3.3.0 <4"
+  },
+  "devDependencies": {
+    "@dhaam-ccrm/binding-conformance": "workspace:*",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^25.0.0",
+    "vue": "^3.5.0"
+  }
+}
