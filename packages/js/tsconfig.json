@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+
+    // DOM is deliberately absent, exactly as packages/node does it and for the
+    // mirror-image reason. This package is the substrate the browser widget
+    // sits on, but it renders nothing itself — so a `window`, `document`, or
+    // `HTMLElement` reference in src/ is a COMPILE ERROR rather than a review
+    // comment. That is what makes "imports cleanly in Node, safe under SSR"
+    // structural instead of aspirational.
+    "lib": ["ES2020"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["dist", "node_modules"]
+}

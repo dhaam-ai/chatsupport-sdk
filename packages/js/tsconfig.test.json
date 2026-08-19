@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Tests may reference DOM types (Blob, for sendAttachment-shaped assertions)
+    // even though src/ may not — see tsconfig.json's note.
+    "lib": ["ES2020", "DOM"]
+  },
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": ["dist", "node_modules"]
+}

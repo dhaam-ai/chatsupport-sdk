@@ -1,0 +1,46 @@
+{
+  "name": "@dhaam-ccrm/js",
+  "version": "0.0.0",
+  "description": "Framework-free bindings for @dhaam-ccrm/core \u2014 a tiny imperative store (selector subscriptions with pluggable equality, event subscriptions, core-derived ticks, one-call disposal) over one ChatClient. Zero runtime dependencies, zero DOM. The substrate the embeddable widget is built on.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "size": "node scripts/size.mjs"
+  },
+  "keywords": [
+    "chat",
+    "sdk",
+    "vanilla",
+    "javascript",
+    "store",
+    "widget"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@dhaam-ccrm/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@dhaam-ccrm/binding-conformance": "workspace:*",
+    "esbuild": "^0.21.5"
+  }
+}
