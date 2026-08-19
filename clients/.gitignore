@@ -1,0 +1,15 @@
+# Throwaway venv holding the pinned Python code generator, rebuilt by
+# generate.sh whenever scripts/versions.env changes.
+.codegen-venv/
+
+# ruff's cache, dropped into the output directory by the generator's format
+# post-hook. generate.sh removes it; this is belt and braces.
+.ruff_cache/
+
+# Python bytecode and test caches from running clients/python/tests.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local virtualenv for running the Python tests. Not the codegen venv.
+.venv/

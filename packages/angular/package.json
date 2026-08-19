@@ -1,0 +1,48 @@
+{
+  "name": "@dhaam-ccrm/angular",
+  "version": "0.0.0",
+  "description": "Angular bindings for @dhaam-ccrm/core — one injectable store mapping core's observable snapshot store onto Angular signals. Zero WS/reconnect/dedup logic of its own.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json"
+  },
+  "keywords": [
+    "chat",
+    "sdk",
+    "angular",
+    "signals"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@dhaam-ccrm/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@angular/core": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@angular/core": "^20.3.0",
+    "@dhaam-ccrm/binding-conformance": "workspace:*",
+    "rxjs": "^7.8.0",
+    "zone.js": "^0.15.0"
+  }
+}

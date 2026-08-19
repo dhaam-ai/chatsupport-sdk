@@ -1,0 +1,9 @@
+# Mark the generated trees so GitHub collapses them in pull requests and
+# excludes them from language statistics. Committing generated code is a
+# deliberate choice (see README.md); making a reviewer scroll 15k lines of it
+# to find the 20 lines that matter is not.
+go/chatapi/**       linguist-generated=true
+python/dhaam_ccrm_chat/**  linguist-generated=true
+
+# The lockfile is machine-written and only ever read by check-drift.sh.
+generated.lock      linguist-generated=true

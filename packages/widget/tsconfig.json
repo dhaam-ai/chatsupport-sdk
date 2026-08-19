@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    // DOM is present here and nowhere below it in the stack. This is the one
+    // package in the SDK whose job IS the document; `@dhaam-ccrm/js` drops the
+    // DOM lib precisely so that this boundary is a compile error rather than a
+    // convention.
+    "lib": ["ES2020", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["dist", "node_modules"]
+}

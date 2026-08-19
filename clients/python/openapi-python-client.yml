@@ -1,0 +1,19 @@
+# openapi-python-client configuration for the generated Python client.
+#
+# openapi-python-client is used because chat-api.yaml is OpenAPI 3.1 and this
+# generator supports 3.1 natively, in pure Python -- no Java, no Docker. It
+# generates this spec with zero warnings. See clients/README.md for the
+# alternatives that were tried and what they did instead.
+
+# The generator shells out to ruff to format what it emits, so ruff's config
+# is part of the output. Left to its defaults, ruff would discover whatever
+# pyproject.toml happens to sit above the output directory -- which means the
+# committed bytes would depend on a file that has nothing to do with the
+# generator, and `check-drift.sh --full` would start failing for reasons no
+# one could explain. --isolated pins the formatting to ruff's own defaults
+# plus the import sort the generator asks for.
+#
+# These are otherwise the generator's own defaults for --meta none.
+post_hooks:
+  - "ruff check . --fix --extend-select=I --isolated"
+  - "ruff format . --isolated"

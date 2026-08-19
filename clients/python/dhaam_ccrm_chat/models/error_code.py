@@ -1,0 +1,15 @@
+from enum import Enum
+
+
+class ErrorCode(str, Enum):
+    AUTH_EXPIRED = "AUTH_EXPIRED"
+    AUTH_INVALID = "AUTH_INVALID"
+    INTERNAL = "INTERNAL"
+    PROTOCOL_VERSION_UNSUPPORTED = "PROTOCOL_VERSION_UNSUPPORTED"
+    RATE_LIMITED = "RATE_LIMITED"
+    SESSION_CLOSED = "SESSION_CLOSED"
+    SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
+
+    def __str__(self) -> str:
+        return str(self.value)

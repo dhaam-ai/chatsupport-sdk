@@ -1,0 +1,50 @@
+{
+  "name": "@dhaam-ccrm/widget",
+  "version": "0.0.0",
+  "description": "The drop-in embeddable chat widget — one script tag, shadow-DOM isolated, bubble / sidebar / sheet presentations. Built on @dhaam-ccrm/js.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./widget.js": "./dist/widget.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": [
+    "./dist/widget.js"
+  ],
+  "scripts": {
+    "build": "tsup && node scripts/bundle.mjs",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "size": "node scripts/bundle.mjs"
+  },
+  "keywords": [
+    "chat",
+    "sdk",
+    "widget",
+    "embed",
+    "shadow-dom"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@dhaam-ccrm/core": "workspace:*",
+    "@dhaam-ccrm/js": "workspace:*",
+    "@dhaam-ccrm/rest": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.5",
+    "jsdom": "^25.0.0"
+  }
+}

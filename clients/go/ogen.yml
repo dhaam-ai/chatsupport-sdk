@@ -1,0 +1,41 @@
+# ogen configuration for the generated Go client.
+#
+# ogen is used instead of oapi-codegen because chat-api.yaml is OpenAPI 3.1
+# and oapi-codegen is not: it prints
+#   "WARNING: You are using an OpenAPI 3.1.x specification, which is not yet
+#    supported by oapi-codegen ... it is recommended to downgrade your spec"
+# and then dies on ChatMessage.attachment's `oneOf: [$ref, type: "null"]`
+# with "unhandled Schema type: &[null]". Downgrading the spec is not an
+# option -- it is the source of truth and it is not ours to edit.
+generator:
+  features:
+    disable:
+      # This module is a client. A generated server, and generated stub
+      # handlers for it, would be ~9k lines of code nobody in this repo runs,
+      # reviewed by nobody, in a package consumers import.
+      - "paths/server"
+      - "ogen/unimplemented"
+
+      # Webhooks are received, not sent, so a generated webhook *client* is
+      # useless here. A generated webhook *server* is worse than useless: it
+      # would decode X-ChatSDK-Signature as an ordinary header and hand the
+      # body to a handler with no HMAC verification anywhere in the path,
+      # which looks like a complete webhook receiver and is not one.
+      #
+      # The Webhook*Event body schemas are still generated as models -- ogen
+      # emits component schemas regardless -- so decoding a verified webhook
+      # body into a typed struct still works. Verification is the consumer's
+      # (or @dhaam-ccrm/node's).
+      - "webhooks/client"
+      - "webhooks/server"
+
+      # Keeps go.opentelemetry.io out of a backend SDK's dependency graph.
+      # Consumers who want tracing wrap the http.Client instead, via
+      # chatapi.WithClient.
+      - "ogen/otel"
+    enable:
+      # Without this ogen produces `ID string` (from a bare `id`) next to
+      # `ChatSessionId`, `SenderId` and `UserId` in the same struct, because
+      # only exact-match initialisms are applied. Mixed casing in one struct
+      # is worse than either convention, and `UserID` is the Go one.
+      - "naming/camel_initialisms"
