@@ -13,8 +13,7 @@ import 'package:test/test.dart';
 
 import '../fakes.dart';
 
-final PublishableKey testKey =
-    PublishableKey.parse('dhp_${'test'}_abc123XYZ');
+final PublishableKey testKey = PublishableKey.parse('dhp_${'test'}_abc123XYZ');
 
 const String _serverUlid = '01BX5ZZKBKACTAV9WEVGEMMVRZ';
 
@@ -178,13 +177,51 @@ void main() {
       // SPEC GAP: §8.1 never bounds the authenticating wait. A half-open
       // connection through a NAT that dropped state is routine on mobile.
       final Harness harness = Harness();
+      final List<ConnectionState> states = <ConnectionState>[];
+      harness.controller.states.listen(states.add);
+      final List<ReconnectingEvent> events = <ReconnectingEvent>[];
+      harness.controller.reconnecting.listen(events.add);
+
       unawaited(harness.controller.connect().catchError((Object _) {}));
       await flush();
       expect(harness.controller.state, equals(ConnectionState.authenticating));
 
       harness.scheduler.advance(const Duration(seconds: 11));
       await flush();
-      expect(harness.controller.state, equals(ConnectionState.reconnecting));
+
+      // The timeout must hand over to `reconnecting` — §8.1's backoff-pending
+      // state — and not straight back to `authenticating`, or a host cannot
+      // tell "waiting to retry" from "handshaking" and shows a spinner
+      // through a silent backoff.
+      //
+      // Asserted on the TRANSITION HISTORY rather than on the state after the
+      // advance, because the two are not the same question. §8.2's backoff for
+      // attempt 0 is uniform in [0, 500ms], so the retry this schedules always
+      // comes due inside these same 11 seconds: by the time the clock stops
+      // the machine is legitimately in `authenticating` again, on a second
+      // socket that has had its own `connection.hello` written. Pinning the
+      // final state would assert the opposite of §8.1 — that a client sits out
+      // its backoff without retrying.
+      expect(
+        states,
+        containsAllInOrder(<ConnectionState>[
+          ConnectionState.authenticating,
+          ConnectionState.reconnecting,
+          ConnectionState.connecting,
+          ConnectionState.authenticating,
+        ]),
+      );
+
+      // A backoff timer really was pending in between — this event is what a
+      // host renders a "reconnecting in Ns" affordance from (§6.5).
+      expect(events, hasLength(1));
+      expect(events.single.attempt, equals(0));
+
+      // And the retry really happened. A silent server is a transport
+      // failure, which §8.2 retries indefinitely rather than suspending.
+      expect(harness.sockets, hasLength(2));
+      expect(
+          harness.controller.state, isNot(equals(ConnectionState.suspended)));
 
       await harness.controller.dispose();
     });
@@ -192,7 +229,8 @@ void main() {
 
   group('resume', () {
     test('delivers replayed frames in seq order and reports no gap', () async {
-      final Harness harness = Harness(resumeTracker: ResumeTracker()..settleAck(10));
+      final Harness harness =
+          Harness(resumeTracker: ResumeTracker()..settleAck(10));
       final List<ResumeGap> gaps = <ResumeGap>[];
       harness.controller.gaps.listen(gaps.add);
 
@@ -234,7 +272,8 @@ void main() {
       harness.socket.deliver(ackJson(seq: 300));
       await flush();
 
-      expect(gaps, equals(<ResumeGap>[const ResumeGap(fromSeq: 11, toSeq: 300)]));
+      expect(
+          gaps, equals(<ResumeGap>[const ResumeGap(fromSeq: 11, toSeq: 300)]));
 
       await harness.controller.dispose();
     });
@@ -348,7 +387,8 @@ void main() {
 
     test('counts a throwing getToken as an auth failure', () async {
       // §10.6: getToken throwing IS an auth failure, not a transport one.
-      final Harness harness = Harness(getToken: () async => throw StateError('no'));
+      final Harness harness =
+          Harness(getToken: () async => throw StateError('no'));
       unawaited(harness.controller.connect().catchError((Object _) {}));
       await flush();
       harness.scheduler.advance(const Duration(seconds: 60));
@@ -470,11 +510,14 @@ void main() {
       await flush();
 
       harness.socket.deliver('{not json');
-      harness.socket.deliver(jsonEncode(<String, Object?>{'v': 1, 't': 'nope'}));
+      harness.socket
+          .deliver(jsonEncode(<String, Object?>{'v': 1, 't': 'nope'}));
       await flush();
 
       expect(errors, hasLength(2));
-      expect(errors.every((ErrorPayload e) => e.code == ErrorCode.validationFailed),
+      expect(
+          errors
+              .every((ErrorPayload e) => e.code == ErrorCode.validationFailed),
           isTrue);
       // One bad frame from an otherwise healthy server is not a reason to
       // reconnect the whole fleet.
@@ -522,8 +565,8 @@ void main() {
 
     test('send() reports false when not connected', () async {
       final Harness harness = Harness();
-      final ClientFrame frame = harness.controller
-          .buildFrame('typing.start', <String, Object?>{});
+      final ClientFrame frame =
+          harness.controller.buildFrame('typing.start', <String, Object?>{});
       // §8.4 wants unacked frames queued durably; that queue is out of scope,
       // so this reports the drop rather than pretending it went.
       expect(harness.controller.send(frame), isFalse);
