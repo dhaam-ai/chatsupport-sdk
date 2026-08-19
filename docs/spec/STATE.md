@@ -1,6 +1,6 @@
 # Project state — chat SDK v2
 
-**Purpose:** everything needed to resume this work cold. Updated 2026-08-19.
+**Purpose:** everything needed to resume this work cold. Updated 2026-08-19 (late).
 Read this first; it is the index to the rest.
 
 ---
@@ -9,13 +9,18 @@ Read this first; it is the index to the rest.
 
 | | Path | Branch | Verified state |
 |---|---|---|---|
-| SDK | `chatsupport-sdk` | `feat/framework-agnostic-core` | **1434 tests**, typecheck + build clean |
-| Backend | `../chat-service-node` | `sprint1-chat-service-node` | **443 tests**, build clean |
+| SDK | `chatsupport-sdk` | `feat/framework-agnostic-core` | **1434 tests**, typecheck + build clean, **pushed** |
+| Backend | `../chat-service-node` | `sprint1-chat-service-node` | **698 tests**, build clean, **NOT pushed** |
 
-Neither is pushed. The SDK push is **blocked by GitHub secret scanning** on two
-historical commits (`d52f822`, `c1c30fc`) containing synthetic `sk_live_…`
-fixtures. The owner must click the two unblock URLs from the push error; the
-current tree is clean and this will not recur.
+The SDK is pushed. Secret scanning blocked it on two historical commits holding
+synthetic `sk_live_…` fixtures; resolved by squashing 89 commits into one on top
+of `a814e64`, so no reachable commit contains them. The granular history survives
+locally on `backup-before-secret-rewrite` and its subjects in `COMMIT-LOG.md`.
+
+**The backend has never been pushed.** Everything below — six migration defects,
+five auth holes, a self-inflicted per-tenant DoS, D2 replay, cross-instance
+fan-out, all hardening — exists only on this machine. Push it first:
+`git push -u origin sprint1-chat-service-node`.
 
 ## Packages
 
@@ -56,9 +61,40 @@ without a provisioned publishable key.
 Amendments recorded in the PRD: `ChatState.presence` (T12), `ChatMessage.delivery`
 + `sendFailed` event (T10), attachment is **top-level** not under `metadata`.
 
-Key prefixes are `dhpk_`/`dhsk_`, **not** `pk_`/`sk_` — the bare form is
-byte-identical to Stripe's and trips secret scanners. Core still rejects a
-foreign `sk_` in addition to `dhsk_`.
+Key prefixes are **`dhp_`/`dhk_`**. `pk_`/`sk_` is byte-identical to Stripe's; the
+first attempt (`dhpk_`/`dhsk_`) still *contained* `sk_`, so 46.6% of generated keys
+matched Stripe's detector — measured over 2000 samples, not assumed. The retired
+`dhpk_`/`dhsk_` forms are still accepted so already-issued keys and shipped widget
+bundles survive; only the new form is minted. Core rejects a foreign `sk_`
+distinctly, so a pasted Stripe key gets a credential-incident error.
+
+## Verified live (not just unit-tested)
+
+- **End to end**: secret key → token mint → WS handshake → `connection.ack` →
+  `message.send` → server `seq`, against real Postgres.
+- **Cross-instance fan-out (B7)**: two instances on :3100/:3200 over one Redis; a
+  message sent on A reached a client on B. This was the last unproven blocker.
+- **Key backward compatibility**: retired `dhsk_` and new `dhk_` both mint (201).
+- **CORS, rate limits, metrics access**: verified by the review agent on :3100 —
+  allowlist admits the demo and denies unlisted origins, 120/min identity limit
+  fires with correct `Retry-After`, 12 back-to-back reconnects never throttle,
+  metrics 404 when disabled.
+
+## Environment gotchas that cost real time
+
+- **`DATABASE_URL` in the shell points at `dhaam` with no user** and overrides
+  `.env` (dotenv does not overwrite existing vars). `dhaam` is the shared platform
+  DB — OpenFGA, goose, PostGIS. Chat lives in **`chat_service`**. Pass it
+  explicitly: `DATABASE_URL="postgresql://postgres@localhost:5432/chat_service?schema=public"`.
+- **`REDIS_HOST` is `localhost:6379`** — host and port combined, so ioredis tries to
+  resolve a hostname of that name and silently falls back to in-memory, disabling
+  fan-out. Use `REDIS_HOST=localhost REDIS_PORT=6379`.
+- **Rate limiting needs `trustProxy`**, now wired (`9add3c1`). Without it the
+  address-keyed budgets are off by design — they collapse to one bucket per tenant
+  behind a load balancer, which was a remote off-switch before it was caught.
+- **`find -newermt` does not work here.** It returns nothing even for a
+  just-touched file. Reading that as "no activity" caused a four-agent collision.
+  Use `find … -exec stat -f '%m %N' {} + | sort -rn`.
 
 ## Remaining for production
 
