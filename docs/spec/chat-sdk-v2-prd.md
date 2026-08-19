@@ -300,6 +300,31 @@ interface ErrorPayload {
 | `presence.query` | — | `chat.presence.query` |
 | `system.heartbeat` | Client keepalive ping. | `chat.heartbeat` |
 
+> **Payload schemas are NOT in this document.** This table names frames and gives
+> their purpose; it defines no fields. The authoritative payload definitions are the
+> TypeScript interfaces in `packages/core/src/protocol/frames.ts`, and the runtime
+> validator in `validate.ts` is what actually accepts or rejects a frame.
+>
+> This is a known defect against success criterion §1 ("a Swift/Kotlin/Flutter
+> engineer could implement a conformant client purely from §7 and the OpenAPI
+> spec"). **That criterion does not hold today.** A Dart client written against this
+> section had to recover roughly 40 field definitions by reading the server, and
+> hit five blocking ambiguities — the `resumeFrom` type above, the unnamed
+> `connection.ack.d.seq`, `message.send.d.type` being required by the server but
+> optional in §6.3, the ULID character set (`^[0-9A-HJKMNP-TV-Z]{26}$`, Crockford —
+> reach for a UUID and every frame is refused), and the absence of any gap-detection
+> algorithm.
+>
+> Two further things this table omits that the server implements: `message.markDelivered`
+> and `message.delivered` (delivery watermarks), and the fact that **liveness is
+> RFC 6455 ping/pong on a 25s interval, not the `system.heartbeat` frame** — an
+> implementer on a WebSocket library that does not auto-pong will be dropped every
+> 50s while dutifully sending heartbeats.
+>
+> Closing this gap means generating payload schemas from the protocol types, or
+> writing them here and enforcing agreement in CI. Until then, treat
+> `packages/core/src/protocol/` as the contract.
+
 **Server → Client**
 
 | `t` | Purpose | Replaces (v1) |
@@ -375,7 +400,7 @@ delay = random(0, min(cap, base * 2^attempt))
 
 ### 8.3 Resume-on-reconnect semantics
 
-On any transition into `authenticating` (including reconnect, not just first connect), `connection.hello.d` includes `resumeFrom`: the id/seq of the last frame the client fully applied to state. The server's `connection.ack` must, symmetrically to first-connect, always re-establish full session context (§12.3 — this is the fix for v1's asymmetric handshake, where reconnect required the client to proactively re-emit `JOIN_SESSION` to coax a second `CONNECTION_ACK` out of the server). Whether the server can *inline* the missed frames in the ack or must point the client at a REST pagination cursor is Open Question 2 — both are valid designs, but the ack's behavior must be identical in kind for connect and reconnect.
+On any transition into `authenticating` (including reconnect, not just first connect), `connection.hello.d` includes `resumeFrom`: **the integer `seq` of the last frame the client fully applied to state** — never a ULID, never a timestamp. The server validates it as an integer and rejects anything else with `VALIDATION_FAILED`. *(Corrected 2026-08-19: this sentence previously read "the id/seq of the last frame", which predates D2 and reads as though a ULID were acceptable. A Dart client implemented from this section alone failed on every reconnect. D2 is authoritative.)* The server's `connection.ack` must, symmetrically to first-connect, always re-establish full session context (§12.3 — this is the fix for v1's asymmetric handshake, where reconnect required the client to proactively re-emit `JOIN_SESSION` to coax a second `CONNECTION_ACK` out of the server). **Resolved by D2: the server inlines missed frames** in `connection.ack.d.replay`, capped at 200 frames. Over the cap it sends no replay and the true `last_seq` in `connection.ack.d.seq`, which the client reads as one gap spanning everything missed. There is no REST fallback in the happy path. The ack's behavior is identical in kind for connect and reconnect. *(This paragraph described Open Question 2 as undecided long after D2 closed it.)*
 
 ### 8.4 In-flight sends during disconnect
 
