@@ -214,7 +214,8 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
       node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
 
       // `textContent`, never `innerHTML`. This string is another user's input.
-      if (body.textContent !== message.content) body.textContent = message.content;
+      const shown = visibleContent(message);
+      if (body.textContent !== shown) body.textContent = shown;
 
       const created = new Date(message.createdAt);
       const iso = Number.isNaN(created.getTime()) ? '' : created.toISOString();
@@ -328,9 +329,45 @@ function senderLabel(message: ChatMessage, state: ChatState): string {
   return 'You';
 }
 
-/** What the live region says. An attachment has no `content`, so it needs words. */
+/**
+ * The text to show in the bubble and read aloud, with core's wire-shape
+ * quirk subtracted out.
+ *
+ * Per §12.10 (packages/core/src/messages/controller.ts), a plain-attachment
+ * message arrives with `content` SET TO `attachment.url` — a placeholder for
+ * clients that predate attachment rendering, not a caption. Showing or
+ * speaking that URL is the bug; suppressing it is the fix. The comparison is
+ * against `attachment.url` specifically, not "an attachment is present",
+ * because an agent can send a real caption alongside an attachment and that
+ * caption is a distinct string from the url — it must still render and be
+ * announced.
+ *
+ * Both the row's body text and `describeContent` call this so the two can
+ * never diverge — a caption visible in the bubble but unannounced (or vice
+ * versa) is the same bug class this function exists to close.
+ */
+function visibleContent(message: ChatMessage): string {
+  // Optional chaining, not `!== undefined` plus a direct `.url` read: this
+  // record arrives over the socket from another participant's client (see
+  // `renderAttachment`'s comment above), so `attachment` being present is a
+  // compile-time guarantee about our own call sites, not a runtime one about
+  // what the server actually sent. A present-but-null `attachment` would
+  // otherwise throw here, on `render()` — the one path that repaints the
+  // whole scrollback — freezing the UI.
+  if (message.attachment?.url !== undefined && message.content === message.attachment.url) {
+    return '';
+  }
+  return message.content;
+}
+
+/**
+ * What the live region says. Once `visibleContent` has suppressed the
+ * attachment-url placeholder (see above), there are no words left in
+ * `content` for a screen reader to read, so the mime family supplies them.
+ */
 function describeContent(message: ChatMessage): string {
-  if (message.content.trim() !== '') return message.content;
+  const shown = visibleContent(message);
+  if (shown.trim() !== '') return shown;
   if (message.attachment !== undefined) {
     const mime = typeof message.attachment.mimeType === 'string' ? message.attachment.mimeType : '';
     if (mime.startsWith('image/')) return 'sent an image';

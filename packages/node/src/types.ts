@@ -29,7 +29,17 @@ export type ChatMode = 'BOT' | 'HUMAN';
 
 export type SenderType = 'CUSTOMER' | 'AGENT' | 'BOT' | 'SYSTEM';
 
-export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE' | 'VIDEO' | 'AUDIO';
+/**
+ * The full seven-value set, matching the service's `MessageType` enum exactly
+ * (`shared/constants/enums.ts:36-44`) — and `@dhaam-ccrm/core`'s union, which
+ * also carries all seven.
+ *
+ * `TYPING` is in the enum but is never persisted: it exists for the WebSocket's
+ * ephemeral typing frame, and no code path writes it to a message row. It is
+ * listed anyway so this union and the integer table in `wire.ts` mirror the one
+ * upstream file entry-for-entry. A table with a hole in it is how the two drift.
+ */
+export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE' | 'VIDEO' | 'AUDIO' | 'TYPING';
 
 export type MediaType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
 

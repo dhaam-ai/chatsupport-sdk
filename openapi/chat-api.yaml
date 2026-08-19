@@ -26,14 +26,61 @@ info:
     same data for free via the WS `connection.ack` snapshot; that overlap is
     intentional, not a design mistake.
 
+    **Known gap, out of scope for this revision:** chat-service-node also
+    exposes a substantial agent/staff surface (`/agent/...`, ~13 operations)
+    and an admin-only surface (`/admin/...`, ~14 operations) under this same
+    `/chat-services/api/v1` prefix (`src/api/rest/routes/agent.routes.ts`,
+    `admin.routes.ts`). Neither is documented anywhere in this file. This was
+    flagged by the SDK↔backend contract audit that produced the corrections
+    below, and is noted here so it stays a tracked gap rather than a silent
+    one.
+
     ## Response shape
 
-    Successful responses (`2xx`) return the resource **directly** — there is
-    no `{ success, data }` envelope. This is a deliberate simplification over
-    v1, which wrapped every REST response body in `{ success: boolean, data:
-    {...} }`; the HTTP status code alone now carries success/failure, and
-    generated clients (T19) deserialize response bodies straight into typed
-    resources without an unwrapping step.
+    **Corrected.** Every route below that a browser client actually calls
+    wraps its `2xx` body in `{ success: true, data: {...} }` — the v1
+    envelope this document previously claimed v2 had dropped. It has not
+    been dropped: `src/api/rest/routes/chat.routes.ts` builds every success
+    reply as `reply.send({ success: true, data: ... })` (session create at
+    line 215, session list at 238, full session at 256, message history at
+    276, close at 289, reopen at 310), and
+    `src/api/rest/routes/upload.routes.ts` does the same at line 165. A
+    generated client must unwrap `.data`, not deserialize the body directly
+    into the resource type.
+
+    **The one exception is `POST /tokens`.** That route deliberately replies
+    with the resource directly on success (`{accessToken, expiresIn}`, no
+    envelope — `token.routes.ts:260`) and its own header comment says so
+    explicitly (`token.routes.ts:12-16`). This is safe to keep as the one
+    unenveloped route precisely because it is **server-to-server only** —
+    called by the customer's own backend with a secret key, never by a
+    browser (see `securitySchemes.secretKey` below) — so no browser-facing
+    generated client ever has to special-case it.
+
+    Error bodies are a separate question from success envelopes and do
+    **not** all carry `success: false` either — see "Error taxonomy" below
+    for why, and for which layer of chat-service produces which shape.
+
+    ## Path prefixes
+
+    Every path below is relative to the `servers` block's
+    `{apiUrl}/chat-services/api/v1` base, but the customer session/message
+    routes carry an EXTRA literal `/chat` segment that the other two route
+    groups do not:
+
+    - `chat.routes.ts` is registered at the same `/chat-services/api/v1`
+      prefix as everything else (`src/api/rest/server.ts:193`), but every
+      route inside that file is declared with `/chat/...` baked into its
+      own path string — e.g. `server.post('/chat/sessions', ...)` at
+      `chat.routes.ts:190`. A previous revision of this document modeled
+      these routes as `POST /sessions`, `GET /sessions/{sessionId}/full`,
+      etc., omitting that segment entirely; every such request 404s against
+      the real service, because no route without `/chat` exists in this
+      file.
+    - `POST /upload` (see below) and `POST /tokens` carry **no** such
+      segment — their route strings are literally `/upload`
+      (`upload.routes.ts:82`) and `/tokens` (`token.routes.ts:131`),
+      registered at the bare service prefix.
 
     ## Auth model — one consistent scheme, replacing v1's three
 
@@ -54,6 +101,16 @@ info:
       wrong-tenant rejection behavior PRD §10.2 specifies for the WS
       handshake, applied identically here so the two transports share one
       auth story instead of two.
+
+    **One documented exception: `POST /upload`.** It requires only
+    `Authorization: Bearer <accessToken>` — it does **not** check
+    `X-Publishable-Key` at all (`upload.routes.ts:86-92`; the route's own
+    header comment, lines 22-31, explains why: `createCustomerAuth`'s
+    combined check was rejected because the SDK does not send a publishable
+    key on this call, and requiring one here would break every upload).
+    Tenant scoping for the upload still comes entirely from the verified
+    token, never from a header or the caller — see the `/upload` operation
+    below.
 
     Per PRD §10.1, a publishable key **identifies a tenant and grants nothing
     on its own** — it is not a bearer credential and never appears alone in a
@@ -82,18 +139,25 @@ info:
       endpoint below requires it *together with* a valid `accessToken`, never
       in place of one.
 
-    ## Read-state model — REST is read-only here
+    ## Read-state model — REST is read-only here (mostly)
 
-    `GET /sessions/{sessionId}/full` exposes each participant's read
+    `GET /chat/sessions/{sessionId}/full` exposes each participant's read
     watermark (`participants[].lastReadAt`) — the same watermark model PRD
-    §9.5 confirms already exists in v1. **Advancing** that watermark is,
-    by design, a WebSocket-only write path in v2: the `message.markRead`
-    frame (T1) is the single source of truth. v1 fired both a WS event *and*
-    a redundant `POST /sessions/{id}/read` REST call for the same fact (PRD
-    §12.9); §9.5 deliberately collapses that to one write path, so this
-    OpenAPI document intentionally contains no REST endpoint for advancing
-    a read watermark. See Open Questions in the T2 handoff for why this
-    isn't an oversight.
+    §9.5 confirms already exists in v1. **Advancing** that watermark was
+    designed to be a WebSocket-only write path in v2 (`message.markRead`),
+    and an earlier revision of this section claimed the backend
+    "intentionally contains no REST endpoint for advancing a read
+    watermark." **That claim is false as deployed**: `chat.routes.ts` still
+    exposes `POST /chat/sessions/{sessionId}/read` (lines 317-329, validated
+    body `{}` — the reader is always the authenticated caller, never a body
+    field), which does advance the watermark over REST, exactly as v1 did.
+    `@dhaam-ccrm/core` does not call it — it uses the WS `message.markRead`
+    frame as designed — so this is a live, unused-by-the-browser-SDK route
+    rather than a documented one. It is noted here so a backend
+    (non-WebSocket) SDK generated from this spec knows it exists, even
+    though no operation for it is modeled below — formally documenting it is
+    out of scope for this revision (same class of gap as the agent/admin
+    note above).
 
     ## Error taxonomy
 
@@ -109,38 +173,100 @@ info:
     | `AUTH_INVALID` | 401 | No | Missing, malformed, revoked, or wrong-tenant credential (secret key, publishable key, or access token). Mirrors the WS handshake rejection in PRD §10.2. |
     | `AUTH_EXPIRED` | 401 | Yes, after refresh | The `accessToken` has expired. Distinguished from `AUTH_INVALID` so a client can trigger `getToken()` and retry rather than treating it as a hard failure (PRD §10.6, replacing v1's `message.toLowerCase().includes('expired')` string match). |
     | `SESSION_NOT_FOUND` | 404 | No | The session does not exist, or is not visible to the authenticated caller. Returned instead of `403` for sessions the caller doesn't own, to avoid confirming they exist. |
-    | `SESSION_CLOSED` | 409 | No | The action is not permitted because the session is in `CLOSED` status (e.g. uploading an attachment to a closed session). |
+    | `SESSION_CLOSED` | ~~409~~ **400** | No | The action is not permitted because the session is in `CLOSED` status. **Backend deviation**: `SessionClosedError` is constructed with HTTP 400, not the conventional 409 an earlier revision of this table claimed (`shared/utils/error-handler.ts:82-87`, `SessionClosedError extends AppError` with `statusCode: 400`). Documented as it actually behaves. |
     | `RATE_LIMITED` | 429 | Yes, after `Retry-After` | Too many requests for this credential. See rate-limit headers below. |
     | `PROTOCOL_VERSION_UNSUPPORTED` | — | — | WS-only (protocol version negotiation happens on `connection.hello`, not over REST). Included here only so the enum is identical across both transports; no REST endpoint returns it. |
     | `INTERNAL` | 500, 503 | Yes (`retryable` field authoritative) | Unexpected server-side fault or an unavailable downstream dependency. |
 
+    ### Two vocabularies in practice — a real, uncorrected inconsistency
+
+    The table above is the v2 `ErrorCode` enum (`components/schemas/ErrorCode`),
+    and it genuinely is what `customer-auth.middleware.ts` (auth/tenant
+    rejections) and `rate-limit.ts` (429s) emit on the customer surface —
+    both call `errorPayload()` from `api/websocket/v2/protocol/build.ts`,
+    the same function the WebSocket transport uses, so those two failure
+    classes really do share one vocabulary across both transports as
+    designed.
+
+    Everything else a customer-facing request can fail on — `validate()`'s
+    zod rejections and every domain error thrown by the service layer
+    (`chat-session.service.ts`, `message.service.ts`) — is caught by the
+    **global Fastify error handler** (`middleware/error-handler.ts:29-38`)
+    and formatted from a **second, older vocabulary**
+    (`shared/constants/index.ts` `ERROR_CODES`, lines 106-121) that was
+    never reconciled with the table above. Both are real, both are
+    reachable from the exact same `chat.routes.ts` operations, and a client
+    has to handle both:
+
+    | This document's `ErrorCode` | Legacy `ERROR_CODES` actually thrown by `chat.routes.ts`'s validation/service layer | Note |
+    |---|---|---|
+    | `VALIDATION_FAILED` | `VALIDATION_ERROR` | Every `validate()` failure on the customer surface throws `ValidationError` (code `VALIDATION_ERROR`), never `VALIDATION_FAILED` — `validate.ts:16-26`. |
+    | `INTERNAL` | `INTERNAL_ERROR` | Any uncaught service-layer error. |
+    | `SESSION_NOT_FOUND` | `SESSION_NOT_FOUND` | Same string in both vocabularies — no mismatch here. |
+    | `SESSION_CLOSED` | `SESSION_CLOSED` | Same string in both — see the corrected HTTP status above. |
+    | *(no v2 equivalent)* | `UNAUTHORIZED` | Emitted by the **agent** surface's `authenticateAgent` (`auth.middleware.ts`), not the customer surface — listed here as the same class of drift, not because a customer request can receive it. |
+    | *(no v2 equivalent)* | `INVALID_TOKEN`, `INVALID_TENANT_ID`, `MESSAGE_TOO_LONG`, `BOT_SERVICE_ERROR`, `TICKET_SERVICE_ERROR`, `USER_SERVICE_ERROR`, `DATABASE_ERROR`, `NOT_FOUND` | Defined in `ERROR_CODES` and reachable from some service-layer path; not individually traced to a specific customer-facing operation by this audit. |
+
+    The failure *shape* also differs by which layer rejected the request.
+    Auth/rate-limit rejections (v2 vocabulary) reply
+    `{ error: { code, message, retryable } }` with **no** `success` key
+    (`customer-auth.middleware.ts:132-134`, `rate-limit.ts:108`). Everything
+    the global handler formats (legacy vocabulary) replies
+    `{ success: false, error: { code, message, details? } }` — **`retryable`
+    is never present**. `ErrorPayload.retryable` below is therefore
+    documented as optional, not required as an earlier revision of this
+    schema claimed; a consumer must treat its absence as "unknown," not
+    "false."
+
     ## Idempotency
 
-    Every mutating endpoint below documents its idempotency strategy
-    explicitly in its own description. In summary: `POST /sessions`,
-    `POST /sessions/{sessionId}/reopen`, and `POST /sessions/{sessionId}/attachments`
-    accept an optional `Idempotency-Key` header (retry-safe replay of the
-    same result for 24h); `POST /sessions/{sessionId}/close` is naturally
-    idempotent (closing an already-closed session returns its current state,
-    not an error); `POST /tokens` has no persisted side effect to
-    de-duplicate — minting is a pure function of credentials plus claims, so
-    retries are inherently safe.
+    **Not implemented anywhere in the deployed backend**, despite an earlier
+    revision of this document. No route reads or stores an
+    `Idempotency-Key` header: `upload.routes.ts`, `chat.routes.ts`'s
+    create/reopen handlers, and `token.routes.ts` were all read in full for
+    this correction, and none of them contain any such logic. The parameter
+    and every per-operation "supports `Idempotency-Key`" claim have been
+    removed from the operations below rather than left describing behavior
+    that does not exist.
+
+    What genuinely IS idempotent, as an accident of the domain logic rather
+    than a designed idempotency-key mechanism:
+
+    - `POST /chat/sessions` (`createSession`): reuses an existing active
+      session for the (tenant, customer) pair instead of creating a second
+      one (`chat-session.service.ts:42-72`) — session-level, not
+      request-level; two genuinely different create attempts still collapse
+      onto the same session, which is a property of the domain, not a
+      replay-safety mechanism.
+    - `POST /chat/sessions/{sessionId}/close` is naturally idempotent —
+      closing an already-`CLOSED` session re-runs the same status
+      transition and returns `200` with the same shape, not an error.
+    - `POST /chat/sessions/{sessionId}/reopen` also converges rather than
+      erroring, but not for the reason previously documented here — see
+      that operation's own description below.
+    - `POST /tokens` has no persisted side effect to de-duplicate — minting
+      is a pure function of credentials plus claims, so retries are
+      inherently safe (unchanged from the previous revision).
 
     ## Pagination
 
-    `GET /sessions/{sessionId}/messages` uses v1's proven backward-cursor
-    shape (PRD §12.10): `before` is an opaque message id, `limit` bounds the
-    page, and the response carries `hasMore` — there is no forward cursor,
-    because new messages arrive over the WebSocket, not by polling this
-    endpoint.
+    `GET /chat/sessions/{sessionId}/messages` uses v1's proven
+    backward-cursor shape (PRD §12.10): `before` is an opaque message id,
+    `limit` bounds the page, and the response carries `hasMore` — there is
+    no forward cursor, because new messages arrive over the WebSocket, not
+    by polling this endpoint.
 
     ## Rate limiting
 
-    Every response carries `RateLimit-Limit` / `RateLimit-Remaining` /
-    `RateLimit-Reset` headers, scoped per credential (secret key,
-    publishable key, or access token — whichever authenticated the request).
-    Numeric ceilings are not fixed by this document; see the T2 handoff's
-    Open Questions.
+    `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` headers
+    are carried by the customer chat surface (`/chat/sessions/...`,
+    `chat.routes.ts`'s `throttle.limitIdentity` preHandler) and by
+    `POST /tokens` (its own per-key limiter, `token.routes.ts:179-181`).
+    **Not every response carries them**, contrary to an earlier revision of
+    this section: `POST /upload` has no rate limiting wired at all (no
+    throttle hooks are registered in `upload.routes.ts`), and neither do the
+    undocumented agent/admin surfaces noted above. Numeric ceilings are not
+    fixed by this document; see the T2 handoff's Open Questions.
 
     ## Webhook delivery contract
 
@@ -268,38 +394,63 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /sessions:
+  /chat/sessions/customer:
     get:
       operationId: listSessions
       tags: [Sessions]
       summary: List the authenticated customer's recent sessions.
       description: |
-        Hydrates `ChatState.pastSessions` (PRD §6.4), which the PRD
-        specifies as state but never gave a data source — this endpoint
-        closes that gap.
+        **Path corrected**: the real route is `GET /chat/sessions/customer`,
+        registered ahead of `/chat/sessions/:sessionId` so Fastify's static
+        route wins (`chat.routes.ts:229`, comment: "registered before
+        /:sessionId (static wins in Fastify)"). An earlier revision of this
+        document modeled this as `GET /sessions`, which does not exist —
+        `chat.routes.ts` has no bare `GET /chat/sessions` handler at all.
 
-        Replaces v1's `GET /chat/sessions/customer?tenantId=&customerId=`
-        (`src/context.tsx:923`). That shape is not carried forward: taking
-        `customerId` as a query parameter means the endpoint trusts the
-        caller to declare whose sessions to return, so any customer could
-        enumerate another's history by changing one parameter. Here both
-        tenant and customer identity are derived from the validated
-        `accessToken` and publishable key, and are not accepted as inputs.
+        Hydrates `ChatState.pastSessions` (PRD §6.4). **`@dhaam-ccrm/core`
+        does not call this operation today** — `ChatState.pastSessions` is
+        declared and initialized empty but nothing in `packages/core`
+        populates it (confirmed gap, contract audit finding). This schema
+        is documented for backend (non-WebSocket) SDK generation; closing
+        the browser-SDK gap is tracked separately.
 
         Ordered most-recent-first. Includes closed sessions — a customer
         reopening an earlier conversation (PRD §12.5) needs to see them.
+
+        **Response shape corrected** — see `SessionSummaryPageWire` below;
+        it is not the idealized `SessionSummaryPage` shape this operation
+        previously documented.
       security:
         - accessToken: []
           publishableKey: []
       parameters:
-        - $ref: "#/components/parameters/LimitQuery"
+        - name: limit
+          in: query
+          required: false
+          description: >-
+            Maximum number of sessions to return. **Bounds corrected** —
+            `customerSessionsQuerySchema` (`chat.validator.ts:52-56`) caps
+            this at 20 with a default of 6, not the generic 100/20 an
+            earlier revision of this document applied here.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 6
       responses:
         "200":
           description: A page of session summaries, most recent first.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionSummaryPage"
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/SessionSummaryPageWire"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "429":
@@ -307,39 +458,47 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /chat/sessions:
     post:
       operationId: createSession
       tags: [Sessions]
       summary: Create a new chat session for the authenticated customer.
       description: |
+        **Path corrected**: `POST /chat/sessions`, not `POST /sessions`
+        (`chat.routes.ts:190`).
+
         Starts a new session, defaulting to `mode: BOT` and `status: OPEN`
         (PRD §12.5's observed lifecycle). The caller's identity comes
         entirely from the validated `accessToken` — the request body carries
-        only optional client-side context, never customer identity fields,
-        which fixes v1's pattern of re-sending `customerId`/`customerName`/
-        `customerEmail` in the body even though the same values were already
-        embedded in the auth token.
+        only optional client-side context, never customer identity fields.
 
-        **Open Question (not resolved by the PRD):** PRD §12.3 documents
-        that in v1, explicit REST session creation is a **client-orchestrated
-        recovery path** — used only when the socket's `connection.ack`
-        resolves to an already-`CLOSED` session — and PRD §8.3 explicitly
-        leaves open whether v2 keeps this client-side responsibility or
-        moves it server-side inside `connection.ack` itself. This endpoint
-        is included because backend (non-WebSocket) SDKs need an explicit,
-        REST-only way to start a session regardless of how that question is
-        resolved for the browser client; whether `@dhaam-ccrm/core` ever
-        calls it directly is exactly the open question above, not something
-        this document can settle.
+        **Open Question (not resolved by the PRD):** whether
+        `@dhaam-ccrm/core` should ever call this directly, or whether
+        session bootstrap stays entirely WebSocket-driven
+        (`connection.ack`). As of this revision, core does not call it —
+        confirmed by the contract audit that produced this correction.
 
-        Idempotency: supports `Idempotency-Key`. Without it, retrying after
-        a timeout may create two sessions; with it, a replayed request
-        within the key's 24h window returns the original session unchanged.
+        **Response shape corrected**: the actual `201` body is
+        `SessionMutationResult` (`{sessionId, status, mode}`, raw integer
+        enum codes) — **not** the full `ChatSession` this operation
+        previously promised. `chat.routes.ts:215-218` builds the reply from
+        exactly those three fields off `chatSessionService.createSession()`'s
+        return value; no other field is ever included.
+
+        **No `Location` header is set.** An earlier revision of this
+        document documented one on the `201`; the handler never calls
+        `reply.header('Location', ...)`, so it has been removed rather than
+        left describing a response the backend does not send.
+
+        **`Idempotency-Key` is not implemented** — see "Idempotency" above.
+        What IS true: a customer with an already-active session gets that
+        session back unchanged rather than a second one
+        (`chat-session.service.ts:42-72`), which is a property of the
+        domain (one active session per customer), not of a request replay
+        key.
       security:
         - accessToken: []
           publishableKey: []
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKeyHeader"
       requestBody:
         required: false
         content:
@@ -348,17 +507,18 @@ paths:
               $ref: "#/components/schemas/CreateSessionRequest"
       responses:
         "201":
-          description: Session created.
-          headers:
-            Location:
-              description: URL of the new session's full-state resource.
-              schema:
-                type: string
-                format: uri-reference
+          description: Session created (or the caller's existing active session, returned unchanged).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChatSession"
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/SessionMutationResult"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -368,38 +528,67 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /sessions/{sessionId}/full:
+  /chat/sessions/{sessionId}/full:
     get:
       operationId: getSessionFull
       tags: [Sessions]
       summary: Fetch full session state — session, participants (with read watermarks), and the most recent page of messages.
       description: |
-        Generalizes v1's `GET /sessions/{id}/full` (PRD §12.9, §12.10), which
-        this spec confirms is the origin of the read-watermark model: each
+        **Path corrected**: `GET /chat/sessions/{sessionId}/full`
+        (`chat.routes.ts:242`).
+
+        Generalizes v1's `GET /sessions/{id}/full` (PRD §12.9, §12.10): each
         entry in `participants[]` carries `lastReadAt`, and a customer
         widget seeds its "seen" UI from the **maximum** `lastReadAt` across
         all `AGENT` participants (defending against multi-agent sessions).
-        This is a read-only view of that watermark — see this document's
-        top-level description for why there is no corresponding write
-        endpoint here.
 
-        `messages` is the most recent page (see `limit`), returned in
-        ascending chronological order (oldest first). Use
-        `GET /sessions/{sessionId}/messages` with `before` to page further
-        back.
+        `messages` is the most recent page (see `messageLimit`), returned
+        in ascending chronological order (oldest first). Use
+        `GET /chat/sessions/{sessionId}/messages` with `before` to page
+        further back.
+
+        **Message shape corrected**: `messages[]` in the real response is
+        `ChatMessageWire`, not the normalized `ChatMessage` — see that
+        schema for the two concrete deviations (raw integer enum codes,
+        unlifted `metadata.attachment`) and for how `@dhaam-ccrm/rest`
+        normalizes them. `session`'s own `status`/`mode` are also raw
+        integers on this path, and its `assignedAgent`/`customer` profile
+        objects are missing `participantId`
+        (`chat-user.service.ts:189-231`'s enrichment never sets it) — noted
+        here as a known, separately-tracked gap not fully re-modeled in
+        this revision.
       security:
         - accessToken: []
           publishableKey: []
       parameters:
         - $ref: "#/components/parameters/SessionIdPath"
-        - $ref: "#/components/parameters/LimitQuery"
+        - name: messageLimit
+          in: query
+          required: false
+          description: >-
+            **Parameter name and bounds corrected** — the real query
+            parameter is `messageLimit`, not `limit`
+            (`fullSessionQuerySchema`, `chat.validator.ts:44-46`), capped at
+            200 with a default of 50.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
       responses:
         "200":
           description: Full session state.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SessionFull"
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/SessionFullWire"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -409,37 +598,95 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /sessions/{sessionId}/messages:
+  /chat/sessions/{sessionId}/messages:
     get:
       operationId: listSessionMessages
       tags: [Messages]
       summary: Cursor-paginated message history, walking backward from a given message.
       description: |
-        Matches v1's proven pagination shape exactly (PRD §12.10, §6.3):
-        opaque-id backward cursor (`before`), a `limit`, and a `hasMore`
-        boolean in the response. There is no forward cursor — live messages
-        arrive over the WebSocket (`message.new`, T1), not by polling this
-        endpoint. Omit `before` to fetch the most recent page (equivalent to
-        the first page a scroll-up pagination UI would request).
+        **Path corrected**: `GET /chat/sessions/{sessionId}/messages`
+        (`chat.routes.ts:262`). This is the endpoint at the center of the
+        "message history not appearing after reload" defect this
+        correction pass exists to close — see `ChatMessageWire` below for
+        exactly what it returns and why an earlier version of
+        `@dhaam-ccrm/rest` could not render it correctly even once the path
+        itself was fixed.
 
-        Returned in ascending chronological order (oldest first) — the
-        oldest message in the response is the one immediately following the
-        given `before` cursor, so a client can prepend the page to its
-        existing message list without re-sorting.
+        Matches v1's proven pagination shape (PRD §12.10, §6.3): opaque-id
+        backward cursor (`before`), a `limit`, and a `hasMore` boolean in
+        the response — confirmed unchanged from this document's original
+        design (`listMessagesQuerySchema`, `chat.validator.ts:39-42`).
+        There is no forward cursor — live messages arrive over the
+        WebSocket (`message.new`), not by polling this endpoint. Omit
+        `before` to fetch the most recent page.
+
+        Returned in ascending chronological order (oldest first) —
+        confirmed: the repository queries `createdAt desc` and the service
+        reverses the slice before returning it
+        (`message.repository.ts:174-187`, `message.service.ts:290`) — so
+        the oldest message in the response is the one immediately following
+        the given `before` cursor, and a client can prepend the page
+        without re-sorting.
+
+        **Message shape corrected**: the response's `messages[]` is
+        `ChatMessageWire`, not the normalized `ChatMessage`. Two concrete
+        deviations, both confirmed against `message.service.ts:285-296`
+        and `:470-482` (`getMessages`/`getMessagesPaginated`, which return
+        Prisma rows verbatim — neither method touches `metadata` or
+        converts an enum):
+
+        1. `senderType` and `messageType` are raw integer codes
+           (`shared/constants/enums.ts:29-44`), not string enum names. Only
+           the WebSocket path's `projectMessage`
+           (`api/websocket/v2/projection.ts:81-82,205-206`) converts these;
+           this REST path never does.
+        2. `attachment` is never present at the top level. When a message
+           carries one, it is nested at `metadata.attachment`
+           (`api/websocket/v2/projection.ts:213-220`'s own comment: "the
+           database keeps attachments inside the legacy `metadata`
+           column" — that comment describes the persistence layer this
+           REST path reads from directly, unprojected).
+
+        `@dhaam-ccrm/rest`'s `createHistorySource` adapter converts every
+        row of this shape into the normalized `ChatMessage` (int→string
+        lookup, and lifting/stripping `metadata.attachment`) before handing
+        it to `@dhaam-ccrm/core` — this is now implemented (see
+        `packages/rest/src/projection.ts`). This schema exists so that
+        normalization step stays visible and is never "corrected" back out
+        under the assumption that the wire already matches `ChatMessage`.
       security:
         - accessToken: []
           publishableKey: []
       parameters:
         - $ref: "#/components/parameters/SessionIdPath"
         - $ref: "#/components/parameters/BeforeCursorQuery"
-        - $ref: "#/components/parameters/LimitQuery"
+        - name: limit
+          in: query
+          required: false
+          description: >-
+            **Default corrected** — `listMessagesQuerySchema`
+            (`chat.validator.ts:39-42`) defaults to 30, not the generic 20
+            an earlier revision of this document applied here. The 100
+            ceiling was already correct.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
       responses:
         "200":
           description: A page of messages.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessagePage"
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/MessagePageWire"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -449,20 +696,50 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /sessions/{sessionId}/close:
+  /chat/sessions/{sessionId}/close:
     post:
       operationId: closeSession
       tags: [Sessions]
       summary: Close a session.
       description: |
+        **Path corrected**: `POST /chat/sessions/{sessionId}/close`
+        (`chat.routes.ts:282`).
+
         Transitions `status` to `CLOSED`. Backs the core method
         `client.closeSession(): Promise<void>` (PRD §6.2) — there is no
-        WebSocket frame type for this action in the T1 catalog, so it is a
-        REST-only operation in v2, same as v1.
+        WebSocket frame type for this action, so it is REST-only.
 
-        Idempotency: naturally idempotent. Calling this on a session that is
-        already `CLOSED` returns `200` with its current state, not an error
-        — repeats are always safe with no `Idempotency-Key` needed.
+        Naturally idempotent: calling this on a session that is already
+        `CLOSED` returns `200` with its current state, not an error.
+
+        **The request body is accepted but entirely ignored.** The handler
+        never validates or reads it (`chat.routes.ts:282-293` calls no
+        `validate()` on `request.body` at all), and
+        `chatSessionService.closeSession(sessionId)` takes only the session
+        id — no `reason` parameter exists anywhere in its signature
+        (`chat-session.service.ts:227`). `CloseSessionRequest.reason` below
+        is kept in this schema only because sending it is harmless (it is
+        silently dropped), not because the backend does anything with it.
+
+        **Response shape corrected**: the actual `200` body is
+        `SessionCloseResult` (`{sessionId, status, closedAt}`, raw integer
+        `status`) — **not** the full `ChatSession` this operation
+        previously promised (`chat.routes.ts:289-292`).
+
+        **`@dhaam-ccrm/rest` performs a follow-up fetch.** `packages/core`'s
+        `SessionActions.closeSession` contract requires the full
+        `ChatSession` shape (`packages/core/src/client/types.ts:105-108` —
+        "unlike the WebSocket `SessionSnapshot`... carries full `Profile`
+        objects"), which this response cannot satisfy on its own: it has no
+        `createdAt`, `assignedAgent`, `customer`, or `ticket`, and uses
+        `sessionId` where `ChatSession` needs `id`.
+        `@dhaam-ccrm/rest`'s `createSessionActions` adapter calls this
+        endpoint and then immediately issues a follow-up
+        `GET /chat/sessions/{sessionId}/full` to assemble the full
+        `ChatSession` core requires — two HTTP round trips per
+        `closeSession()` call. This is now implemented (see
+        `packages/rest/src/envelope.ts` and the session-actions adapter),
+        not a workaround pending a backend change.
       security:
         - accessToken: []
           publishableKey: []
@@ -480,7 +757,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChatSession"
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/SessionCloseResult"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -490,43 +774,71 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /sessions/{sessionId}/reopen:
+  /chat/sessions/{sessionId}/reopen:
     post:
       operationId: reopenSession
       tags: [Sessions]
       summary: Reopen a closed session, bypassing the bot straight to WAITING_FOR_AGENT.
       description: |
+        **Path corrected**: `POST /chat/sessions/{sessionId}/reopen`
+        (`chat.routes.ts:296`).
+
         Backs `client.reopenSession(sessionId): Promise<ChatSession>` (PRD
         §6.2). Deliberately **bypasses** the AI bot and jumps directly to
-        `status: WAITING_FOR_AGENT`, `mode: HUMAN` — the exact semantics PRD
-        §12.5 confirms for v1's `reopenSession()`. There is no WebSocket
-        frame type for this action in the T1 catalog, so it is REST-only, as
-        in v1.
+        `status: WAITING_FOR_AGENT`, `mode: HUMAN`. There is no WebSocket
+        frame type for this action, so it is REST-only.
 
-        Only a session in `CLOSED` status can be reopened. Reopening a
-        session in any other status returns `400 VALIDATION_FAILED` — this
-        is a request-validity error given current state, not a
-        `SESSION_CLOSED` error (which means the opposite: the session *is*
-        closed and an action requires it not to be).
+        **No status guard exists.** An earlier revision of this document
+        claimed reopening a session that is not `CLOSED` returns
+        `400 VALIDATION_FAILED`. **That is not implemented.**
+        `reopenSession` (`chat-session.service.ts:358-380`) applies no
+        status check at all — it unconditionally applies the
+        `WAITING_FOR_AGENT`/`HUMAN` transition to whatever status the
+        target session is currently in.
 
-        Idempotency: supports `Idempotency-Key`, since reopening has a
-        real side effect (bypassing the bot, notifying agent routing) that
-        should not be duplicated by a naive client retry.
+        **Convergence behavior (real, and worth documenting precisely):** if
+        the caller's (tenantId, customerId) already has a *different* active
+        session, this endpoint does not reopen the requested one at all — it
+        returns that other, already-active session's `{id, status, mode}`
+        unchanged (`chat-session.service.ts:364-371`). This is the actual
+        mechanism behind "reopening a stale session is safe," not a
+        request-level idempotency key.
+
+        **`Idempotency-Key` is not implemented** — see "Idempotency" above;
+        removed from this operation's parameters.
+
+        **Response shape corrected**: the actual `200` body is
+        `SessionMutationResult` (`{sessionId, status, mode}`, raw integer
+        codes) — **not** the full `ChatSession` this operation previously
+        promised (`chat.routes.ts:310-313`).
+
+        **`@dhaam-ccrm/rest` performs a follow-up fetch**, for the same
+        reason and in the same way documented on
+        `POST /chat/sessions/{sessionId}/close` above: `SessionActions
+        .reopenSession` needs the full `ChatSession`, so the adapter calls
+        this endpoint and then `GET /chat/sessions/{sessionId}/full` — using
+        whichever `id` this response actually returns, which per the
+        convergence behavior above may not be the `sessionId` the caller
+        requested. This is now implemented, not a proposal.
       security:
         - accessToken: []
           publishableKey: []
       parameters:
         - $ref: "#/components/parameters/SessionIdPath"
-        - $ref: "#/components/parameters/IdempotencyKeyHeader"
       responses:
         "200":
-          description: Session reopened.
+          description: Session reopened (or the caller's other already-active session, returned unchanged — see Convergence above).
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ChatSession"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/SessionMutationResult"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -536,58 +848,120 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /sessions/{sessionId}/attachments:
+  /upload:
     post:
-      operationId: uploadSessionAttachment
+      operationId: uploadAttachment
       tags: [Attachments]
-      summary: Upload a file attachment for a session (step 1 of the upload-then-announce flow).
+      summary: Upload a file (step 1 of the upload-then-announce flow).
       description: |
-        Step 1 of the two-step flow PRD §6.3 and §12.10 generalize from v1:
-        this endpoint uploads and stores the file and returns its metadata
-        only. It does **not** create a chat message. The caller (core's
-        `client.sendAttachment()`) must follow up by sending a WS
-        `message.send` frame (T1) whose `d.metadata.attachment` carries this
-        response verbatim — exactly as v1's client emits `chat.message.send`
-        with `metadata.attachment` immediately after this REST call
-        succeeds.
+        **This operation replaces `POST /sessions/{sessionId}/attachments`**,
+        which this document previously modeled and which does not exist on
+        the real backend. The actual route is `POST /upload`
+        (`upload.routes.ts:82`), mounted directly at the service prefix with
+        **no session id in the path at all**.
 
-        `attachment` is the message model's **one** canonical location for
-        attachment data (see `Message.attachment`) — v1 read it from either
-        `message.attachment` or `message.metadata.attachment`
-        interchangeably (`raw.attachment ?? raw.metadata?.attachment`),
-        which D4's "one canonical name per concept" rule closes for v2.
+        Step 1 of the two-step flow: this endpoint uploads and stores the
+        file and returns its metadata only. It does **not** create a chat
+        message. The caller (core's `client.sendAttachment()`) must follow
+        up by sending a WS `message.send` frame whose attachment data
+        carries this response's `data`.
 
-        The session is identified by the URL path, not a form field — v1
-        passed `chatSessionId` redundantly inside the multipart body even
-        though the REST call already had nowhere else to route to; this is
-        a deliberate cleanup, not a functional change.
+        **Session identification, and why it's a query parameter, not a
+        path segment or a relied-upon form field.** `chatSessionId` is
+        accepted from either the multipart field `chatSessionId` or the
+        `?chatSessionId=` query parameter (`upload.routes.ts:144-147`,
+        field checked first). Only the query form is safe to rely on: the
+        handler reads it via Fastify-multipart's `request.file()` streaming
+        API (`upload.routes.ts:124`), which per the plugin's own contract
+        only resolves form fields that appear **before** the file part in
+        the multipart body (`upload.routes.ts:33-38`). A client whose form
+        writer places `file` before `chatSessionId` silently loses the
+        field. The query parameter has no such ordering hazard, which is
+        why `@dhaam-ccrm/rest`'s `createAttachmentUploader` sends it as a
+        query parameter.
 
-        **This endpoint models the proxied-upload flow v1 actually uses today
-        (multipart straight to chat-service).** PRD §18 Open Question 7 —
-        whether v2 keeps this proxied shape or moves to direct-to-S3
+        **Tenant is a hint, never authority.** `X-Tenant-ID` header first,
+        then `?tenantId=` query, used only to help verify the presented
+        access token (`upload.routes.ts:94-98`). The tenant actually
+        written to storage is always `verified.tenantId` off the token
+        itself (`upload.routes.ts:142,158-163`) — neither header nor query
+        can steer an upload into a different tenant's storage prefix.
+
+        **Auth is `accessToken` only** — see the top-level Auth model
+        section's documented exception; this route does not check
+        `X-Publishable-Key`.
+
+        **Limits, confirmed from source.** Max file size 50 MB
+        (`VALIDATION.MAX_FILE_SIZE_MB = 50`,
+        `shared/constants/index.ts:129`, enforced by the multipart plugin
+        registration at `server.ts:181-186`); the plugin additionally caps
+        at 5 files per request (`server.ts:184`), though this endpoint only
+        ever reads the first file via `request.file()` — the 5-file
+        ceiling is a plugin-wide setting this single-file endpoint does not
+        exercise. Allowed MIME types, confirmed from
+        `infrastructure/storage/s3-client.ts:13-32` (codec parameters such
+        as `;codecs=opus` are stripped before matching, lines 39, 107):
+
+        - **images**: `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/svg+xml`
+        - **videos**: `video/mp4`, `video/webm`, `video/quicktime`, `video/x-msvideo`
+        - **audio**: `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/webm`, `audio/mp4`
+        - **documents**: `application/pdf`, `application/msword`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/vnd.ms-excel`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `text/plain`, `text/csv`
+
+        **`mediaType` in the response is lowercase-plural** — `images` /
+        `videos` / `audio` / `documents` (`s3-client.ts:38-44`'s
+        `getMediaFolder`, echoed straight through as `result.mediaFolder`
+        at `upload.routes.ts:172`). This is **not** the upper-snake-case
+        `MediaType` enum (`IMAGE`/`VIDEO`/`AUDIO`/`DOCUMENT`) that
+        `Attachment.mediaType` documents and that `@dhaam-ccrm/core`'s
+        `messageTypeFor` switches on
+        (`packages/core/src/messages/controller.ts:87-97`). See
+        `UploadResponse.mediaType` below for the exact wire values and the
+        adapter mapping — implemented in `packages/rest/src/media-type.ts`.
+
+        **This endpoint models the proxied-upload flow v1 actually uses
+        today (multipart straight to chat-service).** PRD §18 Open Question
+        7 — whether v2 keeps this proxied shape or moves to direct-to-S3
         presigned URLs minted via REST — is explicitly **unresolved** and
-        owned by the backend team. A presigned-URL design would replace this
-        single multipart `POST` with a pair of calls (e.g. `POST
-        .../attachments/upload-url` returning a presigned PUT target, then a
+        owned by the backend team. A presigned-URL design would replace
+        this single multipart `POST` with a pair of calls (e.g. `POST
+        /upload/upload-url` returning a presigned PUT target, then a
         client-side `PUT` straight to storage) and would change this
         response shape to include upload-target fields instead of a final
         `url`. **Do not implement against a presigned flow from this spec —
         it is not modeled here, only flagged.**
 
-        Idempotency: supports `Idempotency-Key`. Without it, retrying a
-        timed-out upload may store the file twice.
-
-        File size and MIME-type limits are enforced server-side; the exact
-        ceiling is not fixed by the PRD (tracked as an open question in the
-        T2 handoff, not invented here). Violating either returns
-        `VALIDATION_FAILED` (`413` for size, `415` for an unsupported MIME
-        type).
+        `Idempotency-Key` is not implemented — see "Idempotency" above.
       security:
         - accessToken: []
-          publishableKey: []
       parameters:
-        - $ref: "#/components/parameters/SessionIdPath"
-        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+        - name: X-Tenant-ID
+          in: header
+          required: false
+          description: >-
+            Tenant verification hint, checked before the `tenantId` query
+            parameter. Never authoritative — see description above.
+          schema:
+            type: string
+        - name: tenantId
+          in: query
+          required: false
+          description: >-
+            Tenant verification hint, used only if `X-Tenant-ID` is absent.
+            Never authoritative — see description above.
+          schema:
+            type: string
+        - name: chatSessionId
+          in: query
+          required: false
+          description: >-
+            The session this attachment belongs to. Optional at the HTTP
+            layer (the route does not verify the session exists or that the
+            caller owns it) — the caller is expected to supply it so the
+            value can be echoed back into the follow-up `message.send`
+            frame. See "Session identification" above for why this must be
+            a query parameter, not a multipart field.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -599,44 +973,76 @@ paths:
                 file:
                   type: string
                   contentEncoding: binary
-                  description: >-
-                    The file to upload. Accepted categories map to
-                    `mediaType` in the response: images, video, audio, and
-                    common document formats (pdf, doc/docx, xls/xlsx, csv,
-                    txt, zip). Exact allow-list and max size are
-                    server-enforced and not fixed by this spec.
+                  description: The file to upload. See the allow-list above.
               additionalProperties: false
       responses:
-        "201":
-          description: Attachment stored.
+        "200":
+          description: >-
+            Attachment stored. **Status corrected to 200** — the handler
+            replies `reply.status(200).send(...)` (`upload.routes.ts:165`),
+            not `201` as an earlier revision of this document claimed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Attachment"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/UploadResponse"
         "401":
-          $ref: "#/components/responses/Unauthorized"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "413":
-          description: Attachment exceeds the maximum allowed size.
+          description: Missing/invalid `Authorization` header, token verification failed, or the token carries no tenant.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-        "415":
-          description: Attachment MIME type is not on the allow-list.
+                $ref: "#/components/schemas/UploadError"
+              examples:
+                default:
+                  value:
+                    success: false
+                    error:
+                      code: UNAUTHORIZED
+                      message: "Missing or invalid Authorization header"
+        "400":
+          description: >-
+            No file was present in the multipart body, or the S3 client
+            rejected the file (disallowed MIME type or oversized) —
+            confirmed as a single 400 status covering both cases, not the
+            413/415 split an earlier revision of this document claimed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
-        "429":
-          $ref: "#/components/responses/TooManyRequests"
+                $ref: "#/components/schemas/UploadError"
+              examples:
+                noFile:
+                  summary: NO_FILE
+                  value:
+                    success: false
+                    error:
+                      code: NO_FILE
+                      message: "No file provided in request"
+                validationError:
+                  summary: VALIDATION_ERROR
+                  value:
+                    success: false
+                    error:
+                      code: VALIDATION_ERROR
+                      message: 'File type "application/zip" is not allowed. Supported: images, videos, audio, documents.'
         "500":
-          $ref: "#/components/responses/InternalError"
+          description: The S3 upload itself failed for any other reason (bucket misconfigured, AWS error, etc).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadError"
+              examples:
+                default:
+                  value:
+                    success: false
+                    error:
+                      code: UPLOAD_ERROR
+                      message: "File upload failed"
 
 webhooks:
   messageCreated:
@@ -796,28 +1202,6 @@ components:
       schema:
         type: string
         minLength: 1
-    LimitQuery:
-      name: limit
-      in: query
-      required: false
-      description: Maximum number of items to return.
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 100
-        default: 20
-    IdempotencyKeyHeader:
-      name: Idempotency-Key
-      in: header
-      required: false
-      description: >-
-        Client-generated opaque token (UUID recommended). A replayed request
-        with the same key within 24h returns the original response instead
-        of repeating the side effect.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 255
     WebhookSignatureHeader:
       name: X-ChatSDK-Signature
       in: header
@@ -942,7 +1326,16 @@ components:
                   message: "No session found with the given id."
                   retryable: false
     Conflict:
-      description: The request conflicts with the resource's current state.
+      description: >-
+        The request conflicts with the resource's current state.
+        **Currently unreferenced by any operation in this document** — no
+        REST operation modeled here returns a 409 today. Kept as
+        documentation of a real backend error class in case a future
+        operation is wired to it. **Deviation, if it ever is**: the domain
+        error this response was modeled after, `SessionClosedError`, is
+        constructed with HTTP 400, not 409
+        (`shared/utils/error-handler.ts:82-87`) — see "Error taxonomy"
+        above.
       headers:
         X-Request-Id:
           $ref: "#/components/headers/RequestId"
@@ -955,7 +1348,7 @@ components:
               value:
                 error:
                   code: SESSION_CLOSED
-                  message: "This session is closed and no longer accepts attachments."
+                  message: "This session is closed."
                   retryable: false
     TooManyRequests:
       description: Rate limit exceeded for this credential.
@@ -1024,12 +1417,22 @@ components:
     MediaType:
       type: string
       description: >-
-        Attachment category. Normalized to upper-snake-case for consistency
-        with every other enum in this document (D4) — v1's wire value was
-        lower-case-plural (`images`/`videos`/`audio`/`documents`); this is a
-        deliberate v1→v2 casing fix, not a PRD-mandated rename, and should be
-        reconciled with the backend team alongside the other D4 backend work
-        (plan §2, B4).
+        Attachment category, upper-snake-case, for consistency with every
+        other enum in this document (D4). **Confirmed, not merely
+        proposed**: this is the shape `@dhaam-ccrm/core`'s `messageTypeFor`
+        (`packages/core/src/messages/controller.ts:87-97`) requires, and it
+        is never what the wire actually sends — `POST /upload` always
+        returns lowercase-plural values (see `UploadResponse.mediaType`).
+        `@dhaam-ccrm/rest`'s `createAttachmentUploader` adapter performs
+        this exact mapping (`packages/rest/src/media-type.ts`) before
+        handing an `Attachment` to core:
+
+        | Wire value (`UploadResponse.mediaType`) | This enum |
+        |---|---|
+        | `images` | `IMAGE` |
+        | `videos` | `VIDEO` |
+        | `audio` | `AUDIO` |
+        | `documents` | `DOCUMENT` |
       enum: [IMAGE, VIDEO, AUDIO, DOCUMENT]
     CloseReason:
       type: string
@@ -1042,10 +1445,16 @@ components:
       type: string
       description: >-
         Identical to the WS protocol's canonical `ErrorCode` (PRD §7.4) —
-        one enum shared by both transports. Not every value can occur on
-        every surface (e.g. `PROTOCOL_VERSION_UNSUPPORTED` is WS-only); see
-        this document's top-level Error Taxonomy table for the REST-specific
-        subset and HTTP status mapping.
+        one enum shared by both transports, and genuinely what the customer
+        surface's auth/rate-limit layer emits (`customer-auth.middleware.ts`,
+        `rate-limit.ts`). It is **not** the only vocabulary a customer-facing
+        REST error can carry — see "Error taxonomy" → "Two vocabularies in
+        practice" in the top-level description for the second, legacy
+        vocabulary the business-logic layer actually throws (e.g.
+        `VALIDATION_ERROR` instead of `VALIDATION_FAILED`,
+        `INTERNAL_ERROR` instead of `INTERNAL`). Not every value here can
+        occur on every surface (e.g. `PROTOCOL_VERSION_UNSUPPORTED` is
+        WS-only).
       enum:
         - AUTH_INVALID
         - AUTH_EXPIRED
@@ -1057,8 +1466,16 @@ components:
         - INTERNAL
     ErrorPayload:
       type: object
-      description: Identical shape to the WS protocol's ErrorPayload (PRD §7.2).
-      required: [code, message, retryable]
+      description: >-
+        Identical shape to the WS protocol's ErrorPayload (PRD §7.2) when
+        emitted by the customer surface's auth/rate-limit layer.
+        **`retryable` is optional, not required** — corrected from an
+        earlier revision. Errors formatted by the global Fastify error
+        handler (`middleware/error-handler.ts:29-38`) and by `POST /upload`'s
+        hand-written error bodies never include it; treat its absence as
+        "unknown," not "false." See "Error taxonomy" in the top-level
+        description.
+      required: [code, message]
       properties:
         code:
           $ref: "#/components/schemas/ErrorCode"
@@ -1165,6 +1582,12 @@ components:
 
     ChatMessage:
       type: object
+      description: >-
+        The **normalized** message shape `@dhaam-ccrm/core` consumes.
+        **`GET /chat/sessions/{sessionId}/messages` and
+        `GET /chat/sessions/{sessionId}/full` do NOT return this shape on
+        the wire** — see `ChatMessageWire` for what they actually send and
+        how `@dhaam-ccrm/rest` converts it to this shape.
       required: [id, chatSessionId, senderType, content, messageType, createdAt]
       properties:
         id:
@@ -1213,6 +1636,74 @@ components:
           description: Free-form additional context. Never used for attachment data — see `attachment`.
           additionalProperties: true
 
+    ChatMessageWire:
+      type: object
+      description: >-
+        **Actual wire shape returned by `GET /chat/sessions/{sessionId}/messages`
+        and `GET /chat/sessions/{sessionId}/full`** — NOT the normalized
+        `ChatMessage` shape above. The REST history handlers
+        (`message.service.ts` `getMessages`/`getMessagesPaginated`,
+        `getSessionWithMessages`) return the Prisma row for `ChatMessage`
+        directly, with none of the wire projection the WebSocket path
+        applies (`api/websocket/v2/projection.ts` `projectMessage`). Two
+        concrete deviations from `ChatMessage`:
+
+        1. `senderType` and `messageType` are the backend's internal
+           **integer** codes, not string enum names. See `senderType`/
+           `messageType` below for the exact mapping.
+        2. `attachment` data is **not lifted to top level**. When a message
+           carries an attachment it is nested at `metadata.attachment`
+           (with the same shape as `Attachment` below); `attachment` itself
+           is absent from the row entirely.
+
+        `@dhaam-ccrm/rest`'s `createHistorySource` adapter converts every
+        row of this shape into `ChatMessage` before handing it to
+        `@dhaam-ccrm/core` (int→string enum lookup, and lifting/stripping
+        `metadata.attachment` — implemented in
+        `packages/rest/src/projection.ts`). This is where the "message
+        history not appearing after reload" defect actually lived, and this
+        schema exists so that normalization step is never silently
+        reverted.
+      required: [id, chatSessionId, senderType, content, messageType, createdAt]
+      properties:
+        id:
+          type: string
+        chatSessionId:
+          type: string
+        senderType:
+          type: integer
+          enum: [1, 2, 3, 4]
+          description: "1=CUSTOMER, 2=AGENT, 3=BOT, 4=SYSTEM (`shared/constants/enums.ts:29-34`)."
+        senderId:
+          type: [string, "null"]
+        content:
+          type: string
+        messageType:
+          type: integer
+          enum: [1, 2, 3, 4, 5, 6, 7]
+          description: "1=TEXT, 2=SYSTEM, 3=FILE, 4=IMAGE, 5=VIDEO, 6=AUDIO, 7=TYPING (`shared/constants/enums.ts:36-44`)."
+        metadata:
+          type: object
+          description: >-
+            Free-form context AND, when present, an `attachment` key holding
+            the same shape as `Attachment` — this is the legacy column v1
+            used for both purposes; nothing on this REST path splits them.
+          additionalProperties: true
+        replyToMessageId:
+          type: [string, "null"]
+        replyToMessage:
+          oneOf:
+            - $ref: "#/components/schemas/MessageReplyPreview"
+            - type: "null"
+        createdAt:
+          type: string
+          format: date-time
+        seq:
+          type: [integer, "null"]
+        visibility:
+          type: integer
+          description: "MessageVisibility as persisted; PUBLIC by default. Not present in the normalized `ChatMessage`."
+
     ChatSession:
       type: object
       required: [id, status, mode, createdAt, closedAt, assignedAgent, customer, ticket]
@@ -1243,8 +1734,21 @@ components:
             - $ref: "#/components/schemas/Ticket"
             - type: "null"
 
-    SessionFull:
+    SessionFullWire:
       type: object
+      description: >-
+        Actual wire shape of `GET /chat/sessions/{sessionId}/full`'s `200`
+        body (inside `data`) — replaces the idealized `SessionFull`, which
+        this document previously documented and which is no longer
+        referenced by any operation. Only `messages` differs structurally
+        from what `SessionFull` modeled — see `ChatMessageWire`. `session`'s
+        own `status`/`mode` are also raw integers on this path (reuse
+        `ChatSession`'s `status`/`mode` field names but expect the same
+        integer codes documented on `ChatMessageWire.senderType`'s sibling
+        table, i.e. `ChatStatus`/`ChatMode`'s backend ints), and its
+        `assignedAgent`/`customer` are missing `participantId` — a smaller,
+        separately-tracked accuracy gap not fully re-modeled in this
+        revision.
       required: [session, participants, messages, hasMore]
       properties:
         session:
@@ -1256,65 +1760,82 @@ components:
         messages:
           type: array
           items:
-            $ref: "#/components/schemas/ChatMessage"
+            $ref: "#/components/schemas/ChatMessageWire"
           description: Most recent page, ascending chronological order (oldest first).
         hasMore:
           type: boolean
-          description: Whether older messages exist beyond this page. Page further back with `GET /sessions/{sessionId}/messages`.
+          description: Whether older messages exist beyond this page. Page further back with `GET /chat/sessions/{sessionId}/messages`.
 
-    ChatSessionSummary:
+    ChatSessionSummaryWire:
       type: object
       description: >-
-        Lightweight session projection for history lists. Deliberately
-        smaller than `ChatSession` — a history panel renders a label, a
-        timestamp, and an unread badge, and should not pay for participant
-        or ticket payloads it will not draw.
-      required: [id, status, mode, createdAt, closedAt, lastMessageAt, unreadCount]
+        Actual wire shape of `GET /chat/sessions/customer`'s `sessions[]`
+        items (`chat-session.service.ts:323-344`) — replaces the idealized
+        `ChatSessionSummary`, which this document previously documented and
+        which is no longer referenced by any operation. `status`/`mode` are
+        raw integer codes, there is no `lastMessageAt`, `lastMessagePreview`,
+        or `unreadCount`, and a nested `lastMessage` object replaces all
+        three. Currently unconsumed by `@dhaam-ccrm/core` — see the
+        `listSessions` operation's description.
+      required: [id, status, mode, createdAt, closedAt, lastMessage]
       properties:
         id:
           type: string
           description: Opaque session identifier.
         status:
-          $ref: "#/components/schemas/ChatStatus"
+          type: integer
+          description: "1=OPEN, 2=WAITING_FOR_AGENT, 3=ASSIGNED, 4=CLOSED, 5=RESOLVED, 6=ON_HOLD (`shared/constants/enums.ts:15-22`)."
         mode:
-          $ref: "#/components/schemas/ChatMode"
+          type: integer
+          description: "1=BOT, 2=HUMAN (`shared/constants/enums.ts:24-27`)."
         createdAt:
           type: string
           format: date-time
         closedAt:
           type: [string, "null"]
           format: date-time
-        lastMessageAt:
-          type: [string, "null"]
-          format: date-time
-          description: Timestamp of the most recent message, or null if the session has none.
-        lastMessagePreview:
-          type: string
-          description: Truncated plain-text preview of the most recent message.
-        unreadCount:
-          type: integer
-          minimum: 0
-          description: Messages after this customer's read watermark (PRD §9.5).
+        lastMessage:
+          oneOf:
+            - type: object
+              required: [content, senderType, createdAt]
+              properties:
+                content:
+                  type: string
+                senderType:
+                  type: integer
+                  description: "1=CUSTOMER, 2=AGENT, 3=BOT, 4=SYSTEM."
+                createdAt:
+                  type: string
+                  format: date-time
+            - type: "null"
 
-    SessionSummaryPage:
+    SessionSummaryPageWire:
       type: object
-      required: [sessions, hasMore]
+      description: >-
+        Actual wire shape of `GET /chat/sessions/customer`'s `200` body
+        (inside `data`) — replaces the idealized `SessionSummaryPage`.
+        **No `hasMore` field at all** — `chat.routes.ts:238` replies
+        `{ success: true, data: { sessions } }` and nothing else.
+      required: [sessions]
       properties:
         sessions:
           type: array
           items:
-            $ref: "#/components/schemas/ChatSessionSummary"
-        hasMore:
-          type: boolean
+            $ref: "#/components/schemas/ChatSessionSummaryWire"
 
-    MessagePage:
+    MessagePageWire:
       type: object
+      description: >-
+        Actual wire shape of `GET /chat/sessions/{sessionId}/messages`'s
+        `200` body (inside `data`) — replaces the idealized `MessagePage`,
+        which this document previously documented and which is no longer
+        referenced by any operation. See `ChatMessageWire`.
       required: [messages, hasMore]
       properties:
         messages:
           type: array
           items:
-            $ref: "#/components/schemas/ChatMessage"
+            $ref: "#/components/schemas/ChatMessageWire"
         hasMore:
           type: boolean
 
@@ -1331,10 +1852,112 @@ components:
 
     CloseSessionRequest:
       type: object
+      description: >-
+        Accepted but currently ignored by the backend — see the
+        `POST /chat/sessions/{sessionId}/close` operation description for
+        why `reason` has no effect today (`chatSessionService.closeSession`
+        takes only the session id).
       properties:
         reason:
           $ref: "#/components/schemas/CloseReason"
           default: MANUAL
+
+    UploadResponse:
+      type: object
+      description: >-
+        Actual `data` payload of `POST /upload`'s `200` response
+        (`upload.routes.ts:166-175`). Distinct from the idealized
+        `Attachment` schema above — most notably `mediaType` is
+        lowercase-plural here, not the `IMAGE`/`VIDEO`/`AUDIO`/`DOCUMENT`
+        enum `Attachment.mediaType` documents. See `MediaType`'s
+        description for the adapter's mapping between the two.
+      required: [url, fileName, mimeType, size, mediaType]
+      properties:
+        url:
+          type: string
+          format: uri
+        fileName:
+          type: string
+        mimeType:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+          description: Size in bytes.
+        mediaType:
+          type: string
+          enum: [images, videos, audio, documents]
+          description: >-
+            The S3 storage folder the file was categorized into
+            (`s3-client.ts:38-44`), echoed back verbatim. Lowercase, plural
+            — see this schema's top-level description.
+        chatSessionId:
+          type: [string, "null"]
+          description: Echoes the request's `chatSessionId` query parameter, or absent if none was supplied.
+
+    UploadErrorPayload:
+      type: object
+      description: >-
+        `POST /upload`'s hand-written error shape
+        (`upload.routes.ts:88-91,109-111,118-120,127-130,197-203`) — **not**
+        the shared `ErrorPayload`. Only four codes are ever emitted, and
+        `retryable` is never present.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [UNAUTHORIZED, NO_FILE, VALIDATION_ERROR, UPLOAD_ERROR]
+        message:
+          type: string
+
+    UploadError:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          const: false
+        error:
+          $ref: "#/components/schemas/UploadErrorPayload"
+
+    SessionMutationResult:
+      type: object
+      description: >-
+        Actual `data` payload of `POST /chat/sessions`'s `201` response and
+        `POST /chat/sessions/{sessionId}/reopen`'s `200` response
+        (`chat.routes.ts:217-218,312-313`) — both build their reply from
+        exactly these three fields and nothing else. `status`/`mode` are
+        raw integer codes, and the id field is named `sessionId`, not `id`
+        — unlike `ChatSession`.
+      required: [sessionId, status, mode]
+      properties:
+        sessionId:
+          type: string
+        status:
+          type: integer
+          description: "1=OPEN, 2=WAITING_FOR_AGENT, 3=ASSIGNED, 4=CLOSED, 5=RESOLVED, 6=ON_HOLD (`shared/constants/enums.ts:15-22`)."
+        mode:
+          type: integer
+          description: "1=BOT, 2=HUMAN (`shared/constants/enums.ts:24-27`)."
+
+    SessionCloseResult:
+      type: object
+      description: >-
+        Actual `data` payload of `POST /chat/sessions/{sessionId}/close`'s
+        `200` response (`chat.routes.ts:289-292`).
+      required: [sessionId, status, closedAt]
+      properties:
+        sessionId:
+          type: string
+        status:
+          type: integer
+          description: >-
+            Raw integer `ChatStatus` code — will be 4 (CLOSED) on a fresh
+            close, but reflects whatever the row's current status is on the
+            naturally-idempotent repeat-call path.
+        closedAt:
+          type: [string, "null"]
+          format: date-time
 
     MintTokenRequest:
       type: object

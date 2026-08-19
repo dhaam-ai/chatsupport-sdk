@@ -9,20 +9,34 @@ const API_URL = 'https://chat.example.com';
 const ACCESS_TOKEN = 'eyJhbGciOiJSUzI1NiJ9.body.sig';
 const SESSION = 'sess_1';
 
-function message(id: string): ChatMessage {
+/**
+ * A RAW row, exactly as `chat.routes.ts` sends it.
+ *
+ * Integer enums, the column name `chatSessionId`, no projection. These fixtures
+ * previously carried already-decoded string enums, which is how the package
+ * shipped a page reader that could never have parsed a real response.
+ */
+function row(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
     chatSessionId: SESSION,
-    senderType: 'CUSTOMER',
+    senderType: 1,
+    senderId: 'user_1',
     content: `body ${id}`,
-    messageType: 'TEXT',
+    messageType: 1,
     createdAt: '2026-08-18T10:00:00.000Z',
+    ...overrides,
   };
 }
 
-/** Pages are ASCENDING (oldest first) and walk BACKWARD through history. */
+/**
+ * Pages are ASCENDING (oldest first) and walk BACKWARD through history.
+ *
+ * Wrapped in the `{ success, data }` envelope every `/chat/...` route sends
+ * (`chat.routes.ts:270-276`).
+ */
 function page(ids: readonly string[], hasMore: boolean) {
-  return { body: { messages: ids.map(message), hasMore } };
+  return { body: { success: true, data: { messages: ids.map((id) => row(id)), hasMore } } };
 }
 
 function userClient(fetch: typeof globalThis.fetch) {
@@ -105,15 +119,18 @@ describe('message pagination', () => {
     expect(stub.requests).toHaveLength(1);
   });
 
-  it('terminates when the cursor stops advancing', async () => {
-    // A malformed page whose first item has no usable id would otherwise
-    // re-request the same cursor forever.
+  it('rejects a row with no usable id rather than looping on a stuck cursor', async () => {
+    // A row without an id cannot BE a cursor, so tolerating it used to mean
+    // re-requesting the same page forever; the loop's cursor guard caught that.
+    // Projection now rejects the row outright, one layer earlier and with a
+    // message that names the missing field. The cursor guard is still the
+    // backstop and is exercised directly against `paginate` below.
     const stub = stubFetch([
-      { body: { messages: [{ ...message('m1'), id: undefined }], hasMore: true } },
+      { body: { success: true, data: { messages: [row('m1', { id: undefined })], hasMore: true } } },
     ]);
-    const pages: Array<Page<ChatMessage>> = [];
-    for await (const p of userClient(stub.fetch).messagePages(SESSION)) pages.push(p);
-    expect(pages).toHaveLength(1);
+    await expect(async () => {
+      for await (const _p of userClient(stub.fetch).messagePages(SESSION)) break;
+    }).rejects.toThrow(/missing message\.id/);
     expect(stub.requests).toHaveLength(1);
   });
 
@@ -150,7 +167,7 @@ describe('message pagination', () => {
     const stub = stubFetch([page(['m1'], false)]);
     for await (const _p of userClient(stub.fetch).messagePages('a/../b')) break;
     // Path traversal in an opaque identifier must not escape the route.
-    expect(stub.lastRequest().url).toContain('/sessions/a%2F..%2Fb/messages');
+    expect(stub.lastRequest().url).toContain('/chat/sessions/a%2F..%2Fb/messages');
   });
 
   it('rejects an out-of-range limit locally', () => {
@@ -161,16 +178,63 @@ describe('message pagination', () => {
     expect(() => user.messagePages(SESSION, { limit: 1.5 })).toThrow(/between 1 and 100/);
   });
 
-  it('raises when the page body is not the contract shape', async () => {
-    const stub = stubFetch([{ body: { success: true, data: { messages: [], hasMore: false } } }]);
-    // Guards the envelope drift documented in the README: the service's own
-    // chat routes wrap responses in `{ success, data }`, which is NOT the
-    // MessagePage the spec defines. If that envelope ever reaches this
-    // endpoint, the iterator must say so rather than yield an empty history
-    // and let a caller conclude the session has no messages.
+  it('raises on a BARE page body, the shape no route actually sends', async () => {
+    // The inverse of what this test used to assert. The package was built
+    // against the OpenAPI document's bare `{ messages, hasMore }` and treated
+    // the service's real `{ success, data }` reply as the drift. It is the
+    // other way round: `chat.routes.ts:270-276` envelopes every response, and
+    // a bare body now means something is answering that is not this route.
+    const stub = stubFetch([{ body: { messages: [], hasMore: false } }]);
     await expect(async () => {
       for await (const _p of userClient(stub.fetch).messagePages(SESSION)) break;
-    }).rejects.toThrow(/messages, hasMore/);
+    }).rejects.toThrow(/did not return a \{ success: true, data \} envelope/);
+  });
+
+  it('decodes integer enums and lifts the attachment out of a paged row', async () => {
+    // End-to-end proof that history survives the round trip. Asserted on the
+    // iterator, not just on the projection, because these two were wired up
+    // separately and the wiring is what was missing.
+    const attachment = {
+      url: 'https://s3.example.com/images/cat.png',
+      fileName: 'cat.png',
+      mimeType: 'image/png',
+      size: 2048,
+      mediaType: 'images',
+    };
+    const stub = stubFetch([
+      {
+        body: {
+          success: true,
+          data: {
+            messages: [row('m1', { senderType: 2, messageType: 4, metadata: { attachment } })],
+            hasMore: false,
+          },
+        },
+      },
+    ]);
+
+    const messages: ChatMessage[] = [];
+    for await (const m of userClient(stub.fetch).messages(SESSION)) messages.push(m);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.senderType).toBe('AGENT');
+    expect(messages[0]?.messageType).toBe('IMAGE');
+    // The failure this guards: without the lift the attachment stays nested in
+    // `metadata` and every reloaded image silently loses its file.
+    expect(messages[0]?.attachment?.url).toBe(attachment.url);
+    expect(messages[0]?.attachment?.mediaType).toBe('IMAGE');
+    expect(messages[0]?.metadata).toBeUndefined();
+  });
+
+  it('calls the route the service actually serves', async () => {
+    // Pinned as a literal. The package built `/sessions/{id}/messages` — the
+    // path the OpenAPI document declares and `chat.routes.ts` does not serve —
+    // so history 404'd against every real deployment.
+    const stub = stubFetch([page(['m1'], false)]);
+    for await (const _p of userClient(stub.fetch).messagePages(SESSION)) break;
+    expect(new URL(stub.lastRequest().url).pathname).toBe(
+      '/chat-services/api/v1/chat/sessions/sess_1/messages',
+    );
   });
 });
 

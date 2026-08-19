@@ -9,7 +9,7 @@
 // back. Each would silently reopen the path this package exists to close.
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -53,17 +53,21 @@ describe('package manifest', () => {
 });
 
 describe('source imports', () => {
-  const sources = [
-    'client.ts',
-    'errors.ts',
-    'http.ts',
-    'index.ts',
-    'keys.ts',
-    'pagination.ts',
-    'tokens.ts',
-    'types.ts',
-    'webhooks.ts',
-  ].map((name) => readFileSync(join(packageRoot, 'src', name), 'utf8'));
+  // Read from the directory rather than from a hand-maintained list. A list is
+  // a check that covers the files someone remembered to add to it, and the
+  // failure mode is silent: a new module lands, the list is not updated, and
+  // every rule below simply stops applying to it. `wire.ts` was added under
+  // exactly those conditions.
+  const sourceDir = join(packageRoot, 'src');
+  const sourceNames = readdirSync(sourceDir).filter((name) => name.endsWith('.ts'));
+  const sources = sourceNames.map((name) => readFileSync(join(sourceDir, name), 'utf8'));
+
+  it('found the source files to check', () => {
+    // Guards the guard: a glob that silently matches nothing would make every
+    // assertion below vacuously pass.
+    expect(sourceNames).toContain('index.ts');
+    expect(sourceNames.length).toBeGreaterThan(5);
+  });
 
   it('imports nothing from a sibling SDK package', () => {
     for (const source of sources) {

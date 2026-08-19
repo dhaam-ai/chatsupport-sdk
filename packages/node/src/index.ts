@@ -55,6 +55,12 @@ export type {
   WebhookVerifyOptions,
 } from './webhooks.js';
 
+// The wire seam. Exported for the same reason `HttpClient` and `BASE_PATH` are:
+// a caller reaching a chat route this package does not wrap still needs the
+// envelope taken off and the row decoded, and hand-rolling that is how an
+// attachment gets lost or an integer enum renders as a message type.
+export { normalizeMediaType, toChatMessage, toMessagePage, unwrapEnvelope } from './wire.js';
+
 export { flatten, listMessagePages, listMessages, paginate } from './pagination.js';
 export type {
   CursorOf,

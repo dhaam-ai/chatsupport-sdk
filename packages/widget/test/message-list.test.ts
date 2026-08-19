@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createInitialChatState } from '@dhaam-ccrm/core';
-import type { ChatMessage, ChatState } from '@dhaam-ccrm/core';
+import type { AttachmentMetadata, ChatMessage, ChatState } from '@dhaam-ccrm/core';
 
 import { createMessageList } from '../src/ui/message-list.js';
 
@@ -234,27 +234,111 @@ describe('rendering', () => {
     expect(texts).toEqual(['second', 'first']);
   });
 
-  it('refuses a javascript: attachment URL', () => {
-    const { view } = build();
-    view.render(
-      state({
-        messages: [
-          message({
-            content: '',
-            attachment: {
-              url: 'javascript:alert(1)',
-              fileName: 'receipt.pdf',
-              mimeType: 'application/pdf',
-              mediaType: 'document',
-              size: 10,
-            },
-          }),
-        ],
-      }),
-      ME,
-    );
+  it('refuses an unsafe attachment URL scheme as a link', () => {
+    // The allow-list is `^(https?:|blob:)`, so every one of these must
+    // collapse to the "unsafe, render text only" branch rather than produce
+    // an anchor at all — a mangled-but-present href would still let a click
+    // execute it.
+    const unsafeUrls = [
+      'javascript:alert(1)',
+      'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+      'vbscript:msgbox(1)',
+      '\u0000javascript:alert(1)', // leading-NUL bypass attempt
+    ];
 
-    expect(view.log.querySelector('a[href^="javascript:"]')).toBeNull();
+    for (const url of unsafeUrls) {
+      document.body.innerHTML = '';
+      const { view } = build();
+      view.render(
+        state({
+          messages: [
+            message({
+              content: '',
+              attachment: {
+                url,
+                fileName: 'receipt.pdf',
+                mimeType: 'application/pdf',
+                mediaType: 'document',
+                size: 10,
+              },
+            }),
+          ],
+        }),
+        ME,
+      );
+
+      expect(view.log.querySelector('a[href]')).toBeNull();
+      // Same allow-list gates the image branch; asserted here too so a
+      // regression that moved the check would not slip past this test by
+      // only exercising the link path.
+      expect(view.log.querySelector('img[src]')).toBeNull();
+    }
+  });
+
+  it('refuses an unsafe attachment URL scheme as an inline image', () => {
+    // Same scheme list, but through the image branch specifically: an `img`
+    // src does not require a click to run, so this is the more dangerous of
+    // the two surfaces and gets its own pass with an image mime type.
+    const unsafeUrls = [
+      'javascript:alert(1)',
+      'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+      'vbscript:msgbox(1)',
+      '\u0000javascript:alert(1)',
+    ];
+
+    for (const url of unsafeUrls) {
+      document.body.innerHTML = '';
+      const { view } = build();
+      view.render(
+        state({
+          messages: [
+            message({
+              content: '',
+              attachment: { url, fileName: 'photo.png', mimeType: 'image/png', mediaType: 'image', size: 10 },
+            }),
+          ],
+        }),
+        ME,
+      );
+
+      expect(view.log.querySelector('img[src]')).toBeNull();
+      expect(view.log.querySelector('a[href]')).toBeNull();
+    }
+  });
+
+  it('does not throw when attachment.url is null or absent', () => {
+    // Every other field read in this file's attachment handling is guarded
+    // with a `typeof` check on the stated grounds that the record arrives
+    // over the socket from another participant's client, so the compiler's
+    // guarantee describes our own call sites, not what the server actually
+    // sent. `visibleContent`'s `attachment?.url` comparison is the one
+    // deref that would otherwise skip that guard — and since it runs on
+    // every `render()`, a throw there would freeze the entire scrollback,
+    // not just fail to show one message.
+    const withNullUrl: AttachmentMetadata = {
+      url: null as unknown as string,
+      fileName: 'receipt.pdf',
+      mimeType: 'application/pdf',
+      mediaType: 'document',
+      size: 10,
+    };
+    const withAbsentUrl = {
+      fileName: 'receipt.pdf',
+      mimeType: 'application/pdf',
+      mediaType: 'document',
+      size: 10,
+    } as unknown as AttachmentMetadata;
+
+    for (const attachment of [withNullUrl, withAbsentUrl]) {
+      document.body.innerHTML = '';
+      const { view } = build();
+      expect(() =>
+        view.render(
+          state({ messages: [message({ content: '', attachment })] }),
+          ME,
+        ),
+      ).not.toThrow();
+    }
   });
 
   it('drops a row whose message core removed', () => {
@@ -264,5 +348,137 @@ describe('rendering', () => {
 
     view.render(state({ messages: [message({ id: 'a' })] }), ME);
     expect(view.log.querySelectorAll('.dh-msg')).toHaveLength(1);
+  });
+
+  it('is unaffected by the attachment suppression rule when there is no attachment', () => {
+    // Guard against an over-broad fix: a plain text message must render and
+    // read back exactly as before, whether or not it happens to contain
+    // something that looks like a URL.
+    const { view } = build();
+    view.render(state({ messages: [message({ content: 'where is my order' })] }), ME);
+
+    expect(view.log.querySelector('.dh-msg-body')?.textContent).toBe('where is my order');
+    expect(view.log.querySelector('img')).toBeNull();
+  });
+
+  it('hides the attachment URL from the bubble when content is only the placeholder', () => {
+    // Core's §12.10 wire shape sets `content` to `attachment.url` verbatim on
+    // a plain-attachment message (packages/core/src/messages/controller.ts).
+    // That URL is not caption text, and must not show up as text next to the
+    // rendered image.
+    const { view } = build();
+    const url = 'https://cdn.example.com/receipts/receipt.png';
+    view.render(
+      state({
+        messages: [
+          message({
+            content: url,
+            attachment: {
+              url,
+              fileName: 'receipt.png',
+              mimeType: 'image/png',
+              mediaType: 'image',
+              size: 10,
+            },
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    const img = view.log.querySelector('img.dh-attachment-image');
+    expect(img).not.toBeNull();
+    expect(view.log.querySelector('.dh-msg-body')?.textContent).toBe('');
+    expect(view.log.querySelector('.dh-msg')?.textContent).not.toContain(url);
+  });
+
+  it('still renders a real caption sent alongside an attachment', () => {
+    // The suppression rule keys off `content === attachment.url` specifically,
+    // not "an attachment is present" — an agent can send genuine caption text
+    // together with an image, and that caption must still show up above it.
+    const { view } = build();
+    const url = 'https://cdn.example.com/receipts/receipt.png';
+    view.render(
+      state({
+        messages: [
+          message({
+            content: 'Here is your receipt',
+            attachment: {
+              url,
+              fileName: 'receipt.png',
+              mimeType: 'image/png',
+              mediaType: 'image',
+              size: 10,
+            },
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    expect(view.log.querySelector('.dh-msg-body')?.textContent).toBe('Here is your receipt');
+    expect(view.log.querySelector('img.dh-attachment-image')).not.toBeNull();
+  });
+});
+
+describe('describing an attachment to the live region', () => {
+  // Goes through the actual announcement path (an incoming message from the
+  // agent) rather than reaching into the module, since `describeContent` is
+  // not exported — this is also what proves the live region really would
+  // speak these words rather than the suppressed URL.
+  const cases: Array<[string, string]> = [
+    ['image/png', 'sent an image'],
+    ['audio/webm', 'sent a voice message'],
+    ['application/pdf', 'sent a file'],
+  ];
+
+  for (const [mimeType, expected] of cases) {
+    it(`announces "${expected}" for a ${mimeType} attachment with no caption`, () => {
+      const { view } = build();
+      const url = 'https://cdn.example.com/files/f';
+      view.render(state({ messages: [message({ id: 'a' })] }), ME);
+      view.render(
+        state({
+          messages: [
+            message({ id: 'a' }),
+            message({
+              id: 'b',
+              senderId: AGENT,
+              senderType: 'AGENT',
+              content: url,
+              attachment: { url, fileName: 'f', mimeType, mediaType: 'file', size: 10 },
+            }),
+          ],
+        }),
+        ME,
+      );
+
+      expect(view.liveRegion.textContent).toContain(expected);
+      expect(view.liveRegion.textContent).not.toContain(url);
+    });
+  }
+
+  it('announces a real caption instead of the mime fallback when one is present', () => {
+    const { view } = build();
+    const url = 'https://cdn.example.com/files/f';
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    view.render(
+      state({
+        messages: [
+          message({ id: 'a' }),
+          message({
+            id: 'b',
+            senderId: AGENT,
+            senderType: 'AGENT',
+            content: 'Here is your receipt',
+            attachment: { url, fileName: 'f', mimeType: 'image/png', mediaType: 'file', size: 10 },
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    expect(view.liveRegion.textContent).toContain('Here is your receipt');
+    expect(view.liveRegion.textContent).not.toContain('sent an image');
   });
 });

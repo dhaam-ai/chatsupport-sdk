@@ -88,9 +88,12 @@ export type { LocalSender, AttachmentUploader, MessageHistorySource, SendAttachm
 /**
  * Backs `client.reopenSession()`/`client.closeSession()` (§6.2).
  *
- * Both are REST-only per openapi/chat-api.yaml (`POST /sessions/{id}/reopen`,
- * `POST /sessions/{id}/close`) — "There is no WebSocket frame type for this
- * action in the T1 catalog" per that spec's own description of each route.
+ * Both are REST-only (`POST /chat-services/api/v1/chat/sessions/{id}/reopen`
+ * and `/close`) — "There is no WebSocket frame type for this action in the T1
+ * catalog" per the spec's own description of each route. The unprefixed
+ * `/sessions/{id}/…` paths this comment used to name are served by nothing;
+ * corrected in the spec and in `@dhaam-ccrm/rest`, and noted here only so the
+ * comment stops pointing at dead routes.
  * Core does no HTTP (§4), so — exactly like `MessageHistorySource` and
  * `AttachmentUploader` — this is an interface core calls, never implements.
  *
@@ -101,6 +104,23 @@ export type { LocalSender, AttachmentUploader, MessageHistorySource, SendAttachm
  * `sessionActions` also happens to be the one path that gives
  * `ChatState.session` fully-accurate participant profiles, rather than the
  * best-effort placeholders `session.ts`'s WS-only mapping produces.
+ *
+ * ── Reporting a change the server applied but could not confirm ──
+ *
+ * An implementation may need more than one round trip to produce the full
+ * `ChatSession` (the REST adapter does: a mutating POST, then a read of the
+ * full session). If the mutation lands and the follow-up fails, rejecting
+ * plainly tells core the action did not happen, when in fact it did — and
+ * `ChatState.session` is then quietly wrong.
+ *
+ * An implementation in that position should reject with an error carrying
+ * `sessionMutationApplied: true`. Core checks for that property structurally,
+ * imports nothing to do so, and responds by surfacing a `ChatError` through
+ * `lastError` and the `error` event before re-throwing, so the staleness is at
+ * least visible. Anything without the flag is passed through untouched.
+ *
+ * An implementation that retries such a failure must retry only the read, never
+ * the mutation: `closeSession` is not idempotent on this service.
  */
 export interface SessionActions {
   reopenSession(sessionId: string): Promise<ChatSession>;

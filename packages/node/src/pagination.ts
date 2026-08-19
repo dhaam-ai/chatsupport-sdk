@@ -9,12 +9,17 @@
 // back empty" are different conditions, and they take the cursor from the
 // wrong end of the page. Both produce an infinite loop against a live API.
 //
-// ── The cursor model (OpenAPI `listSessionMessages`) ─────────────────────
+// ── The cursor model (`GET /chat/sessions/{sessionId}/messages`) ─────────
 //
 // Backward-only. `before` is an opaque message id; the response is the page
 // immediately PRECEDING it, in ASCENDING chronological order (oldest first),
 // with a `hasMore` boolean. Omit `before` for the most recent page. There is
 // no forward cursor — live messages arrive over the WebSocket, not by polling.
+//
+// The body itself is `{ success: true, data: { messages, hasMore } }` around
+// RAW Prisma rows, not the bare projected page the OpenAPI document describes.
+// `wire.ts` is where that is unwrapped and projected; this file walks cursors
+// and knows nothing else about the wire.
 //
 // So the next cursor is the id of the OLDEST message in the current page,
 // which — because the page is ascending — is `messages[0]`, not the last
@@ -22,7 +27,8 @@
 // returned and never terminates.
 
 import type { HttpClient } from './http.js';
-import type { ChatMessage, MessagePage } from './types.js';
+import type { ChatMessage } from './types.js';
+import { toMessagePage } from './wire.js';
 
 /** One page of a cursor-paginated collection, normalized across endpoints. */
 export interface Page<T> {
@@ -130,27 +136,27 @@ export function listMessagePages(
     throw new Error('limit must be an integer between 1 and 100');
   }
 
-  const path = `/sessions/${encodeURIComponent(sessionId)}/messages`;
+  // The `/chat` segment is load-bearing. `chat.routes.ts:262` serves
+  // `/chat/sessions/:sessionId/messages`, registered under the
+  // `/chat-services/api/v1` prefix that `HttpClient` prepends
+  // (`server.ts:193`). This package previously built `/sessions/…`, the path
+  // the OpenAPI document declares and no route serves — so every call 404'd.
+  const path = `/chat/sessions/${encodeURIComponent(sessionId)}/messages`;
 
   const fetchPage: PageFetcher<ChatMessage> = async (cursor) => {
-    const wire = await http.request<MessagePage>('GET', path, {
+    const body = await http.request<unknown>('GET', path, {
       query: {
         ...(options.limit === undefined ? {} : { limit: options.limit }),
         ...(cursor === undefined ? {} : { before: cursor }),
       },
     });
 
-    // Narrowed defensively. A proxy returning an error page with a 200, or a
-    // server whose envelope differs from the contract, would otherwise make
-    // `wire.messages` undefined and turn the loop below into a TypeError
-    // several frames away from the cause.
-    if (typeof wire !== 'object' || wire === null || !Array.isArray(wire.messages)) {
-      throw new Error(
-        `the messages endpoint returned a body that is not a { messages, hasMore } page. ` +
-          `Check that apiUrl points at chat-service.`,
-      );
-    }
-    return { items: wire.messages, hasMore: wire.hasMore === true };
+    // Envelope off, integer enums decoded, attachments lifted. Throws a named
+    // `ChatApiError` on anything that is not this route's documented body,
+    // rather than letting an unrecognized shape become an empty page a caller
+    // would read as "this session has no history".
+    const page = toMessagePage(body);
+    return { items: page.messages, hasMore: page.hasMore };
   };
 
   // The cursor is the OLDEST message — `items[0]`, because pages are ascending.

@@ -73,7 +73,13 @@ export interface MessagePage {
 }
 
 /**
- * Reads message history — `GET /sessions/{sessionId}/messages` (T2's OpenAPI).
+ * Reads message history — `GET /chat-services/api/v1/chat/sessions/{sessionId}/messages`.
+ *
+ * The route named here used to be `GET /sessions/{sessionId}/messages`, an
+ * unprefixed path chat-service does not serve. Corrected in the spec and in
+ * `@dhaam-ccrm/rest`; recorded here only so the comment stops pointing at a
+ * dead route. Which URL a history source reads is the adapter's business —
+ * that is the point of the seam.
  *
  * A seam rather than a `fetch` call, for the reason the whole package is built
  * this way: core has zero runtime dependencies and touches no DOM. The binding
@@ -103,8 +109,15 @@ export interface MessageHistorySource {
 export const DEFAULT_PAGE_SIZE = 20;
 
 /**
- * Uploads one file — `POST /sessions/{sessionId}/attachments` (T2's OpenAPI),
- * step 1 of the two-step upload-then-announce flow (§6.3, §12.10).
+ * Uploads one file — `POST /chat-services/api/v1/upload`, step 1 of the
+ * two-step upload-then-announce flow (§6.3, §12.10).
+ *
+ * The route named here used to be `POST /sessions/{sessionId}/attachments`,
+ * which chat-service has never served; the real endpoint is tenant-wide and
+ * takes the session as a query parameter. Corrected in the spec and in
+ * `@dhaam-ccrm/rest`; recorded here only so this comment stops pointing at a
+ * route that does not exist. Nothing in core changes — which route an uploader
+ * calls is entirely the adapter's business, and that is the point of the seam.
  *
  * A seam for the same reason history is: core does no HTTP and touches no
  * DOM. `Blob` appears here only as a type — §6.3 specifies it, and nothing in

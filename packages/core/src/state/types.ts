@@ -157,7 +157,20 @@ export interface ChatParticipantProfile {
   participantId: string;
 
   displayName: string;
+
+  /**
+   * Null on the browser path, by design — do not build a feature on it.
+   *
+   * The WebSocket mapping has never populated this (client/session.ts), and
+   * `@dhaam-ccrm/rest` deliberately writes null even though the REST session
+   * read returns a real address: nothing in the SDK renders it, and the widget
+   * runs inside third-party pages where session-replay tools serialize
+   * application state wholesale. The field stays in the type because the
+   * `Profile` schema defines it and a first-party (non-browser) adapter may
+   * legitimately supply it.
+   */
   email: string | null;
+
   avatarUrl: string | null;
 }
 

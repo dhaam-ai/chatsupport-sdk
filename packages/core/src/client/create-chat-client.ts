@@ -416,6 +416,48 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     presenceCoordinator.reset();
   });
 
+  /**
+   * Reports a `sessionActions` failure that the server nonetheless ACTED on.
+   *
+   * `reopenSession`/`closeSession` return the full `ChatSession` that replaces
+   * `ChatState.session`. An adapter may need more than one round trip to
+   * produce it (the REST one does: a mutating POST, then a read of the full
+   * session), which opens a window where the change has already been applied
+   * but the value describing it never arrived. The promise rejects, so
+   * `setState` below never runs — and `ChatState.session` then describes a
+   * session that no longer exists in that form, with nothing in the state
+   * saying so.
+   *
+   * Core cannot repair that: it does not know the new status, and for a reopen
+   * it does not even know which session the server settled on. What it can do
+   * is refuse to let the staleness be silent, which is what this does.
+   *
+   * The condition is recognized STRUCTURALLY, by a `sessionMutationApplied`
+   * flag on the error, because `SessionActions` is a seam core does not
+   * implement — see its documentation in ./types.ts. Any adapter can raise it;
+   * core imports nothing to check for it.
+   *
+   * The error is re-thrown by the caller regardless. This only adds the
+   * `lastError`/`error` signal, exactly as the queue-restore fault above does.
+   */
+  function reportIfSessionChangedAnyway(error: unknown): void {
+    const applied =
+      typeof error === 'object' &&
+      error !== null &&
+      (error as { sessionMutationApplied?: unknown }).sessionMutationApplied === true;
+    if (!applied) return;
+
+    // Fixed text, never the adapter's: its message can carry a signed URL (§14).
+    const chatError: ChatError = {
+      source: 'transport',
+      code: null,
+      message: 'the session changed, but the updated session could not be read back',
+      retryable: true,
+    };
+    store.setState({ lastError: chatError });
+    store.emit('error', chatError);
+  }
+
   // ---------------------------------------------------------------------
   // 8. The public surface.
   // ---------------------------------------------------------------------
@@ -444,7 +486,13 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
           'reopenSession() requires config.sessionActions to be supplied to createChatClient().',
         );
       }
-      const session = await config.sessionActions.reopenSession(sessionId);
+      let session: ChatSession;
+      try {
+        session = await config.sessionActions.reopenSession(sessionId);
+      } catch (error) {
+        reportIfSessionChangedAnyway(error);
+        throw error;
+      }
       store.setState({ session });
       return session;
     },
@@ -458,7 +506,13 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       if (sessionId === undefined) {
         throw new ChatClientConfigError('closeSession() requires an active session.');
       }
-      const session = await config.sessionActions.closeSession(sessionId);
+      let session: ChatSession;
+      try {
+        session = await config.sessionActions.closeSession(sessionId);
+      } catch (error) {
+        reportIfSessionChangedAnyway(error);
+        throw error;
+      }
       store.setState({ session });
     },
 

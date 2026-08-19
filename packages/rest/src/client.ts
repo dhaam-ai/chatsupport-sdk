@@ -40,8 +40,25 @@ export interface RestClientOptions {
   readonly fetch?: typeof globalThis.fetch;
 }
 
-/** Shape of the API's failure body. Narrowed defensively — this is untrusted input. */
-function readErrorBody(body: unknown): { code: string; message: string; retryable: boolean } | null {
+/**
+ * Shape of the API's failure body. Narrowed defensively — this is untrusted input.
+ *
+ * `retryable` is `boolean | undefined` rather than `boolean` on purpose, and it
+ * is the difference between the caller retrying a 500 and not. Coercing an
+ * absent field to `false` here made `structured?.retryable ?? status >= 500`
+ * (below) unreachable, because `??` only falls through on nullish — so every
+ * 500 from the service's global error handler, which emits no `retryable` at
+ * all, was reported to core as permanent. That silently disabled retry for
+ * exactly the class of failure retry exists for.
+ *
+ * The property is required-but-possibly-undefined, not optional: under
+ * `exactOptionalPropertyTypes` an optional property could not be assigned
+ * `undefined` explicitly, and an absent field has to stay distinguishable from
+ * a server that said `false`.
+ */
+function readErrorBody(
+  body: unknown,
+): { code: string; message: string; retryable: boolean | undefined } | null {
   if (typeof body !== 'object' || body === null) return null;
   const error = (body as { error?: unknown }).error;
   if (typeof error !== 'object' || error === null) return null;
@@ -50,7 +67,9 @@ function readErrorBody(body: unknown): { code: string; message: string; retryabl
   return {
     code,
     message: typeof message === 'string' ? message : code,
-    retryable: retryable === true,
+    // Only the server's own verdict. Anything else leaves the decision to the
+    // status-code fallback at the throw site.
+    retryable: typeof retryable === 'boolean' ? retryable : undefined,
   };
 }
 
@@ -134,11 +153,18 @@ export class RestClient {
       const structured = readErrorBody(parsed);
       throw new RestApiError({
         code: structured?.code ?? `HTTP_${response.status}`,
-        // Falls back to the status, never to the raw body: an error body is
-        // attacker-influencable and may echo request detail (§14).
-        message: structured?.message ?? `request failed with status ${response.status}`,
+        // Built here from the code and the status — never from the body. An
+        // error body is attacker-influencable and may echo request detail
+        // (§14), and this service's upload route returns the raw caught AWS SDK
+        // message on its 500 branch (upload.routes.ts:197-203), which can name
+        // the bucket, key, region, or endpoint. `message` is what host
+        // applications pipe into their error reporter by default, so the
+        // server's own text goes on `serverMessage` instead, documented there
+        // as untrusted.
+        message: `request failed with status ${response.status}`,
         status: response.status,
         retryable: structured?.retryable ?? response.status >= 500,
+        ...(structured?.message === undefined ? {} : { serverMessage: structured.message }),
       });
     }
 
