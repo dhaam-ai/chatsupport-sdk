@@ -307,6 +307,7 @@ class ChatMessage {
     this.replyToMessageId,
     this.attachment,
     this.metadata,
+    this.delivery = MessageDelivery.confirmed,
   });
 
   factory ChatMessage.fromJson(
@@ -373,7 +374,13 @@ class ChatMessage {
 
   /// The ordering key (D2). Order by this. NEVER by [createdAt] and never by
   /// the envelope's `ts`.
-  final int seq;
+  ///
+  /// Null ONLY for an optimistic local echo that has not been acknowledged
+  /// yet — the server allocates `seq`, so a client cannot know it before the
+  /// ack. §6.4's own amendment says the same: "`seq` is absent both for a
+  /// message still in flight and for one the queue has permanently given up
+  /// on". [delivery] is what separates those two.
+  final int? seq;
 
   /// ISO-8601 on the wire. Informational — display it, do not sort on it.
   final DateTime createdAt;
@@ -384,6 +391,63 @@ class ChatMessage {
   final AttachmentMetadata? attachment;
 
   final Map<String, Object?>? metadata;
+
+  /// Whether this message has reached the server (§6.4's amendment).
+  final MessageDelivery delivery;
+
+  /// A copy with [seq] and [delivery] replaced, for the ack path.
+  ///
+  /// The id is NOT a parameter and cannot change: under D1 a message's
+  /// identity is fixed at creation and there is no id-swap path (§9.3).
+  ChatMessage settled({required int seq}) => ChatMessage(
+        id: id,
+        sessionId: sessionId,
+        senderId: senderId,
+        senderType: senderType,
+        type: type,
+        content: content,
+        seq: seq,
+        createdAt: createdAt,
+        replyToMessageId: replyToMessageId,
+        attachment: attachment,
+        metadata: metadata,
+        delivery: MessageDelivery.confirmed,
+      );
+
+  /// A copy marked failed.
+  ChatMessage failed() => ChatMessage(
+        id: id,
+        sessionId: sessionId,
+        senderId: senderId,
+        senderType: senderType,
+        type: type,
+        content: content,
+        seq: seq,
+        createdAt: createdAt,
+        replyToMessageId: replyToMessageId,
+        attachment: attachment,
+        metadata: metadata,
+        delivery: MessageDelivery.failed,
+      );
+}
+
+/// Whether a message has reached the server.
+///
+/// §6.4's amendment made this a union so "a reason cannot exist without a
+/// failure". This pass has one failure reason — the socket was not connected —
+/// because the durable offline queue that would produce the others is out of
+/// scope. When that queue lands, [failed] gains a reason and this becomes the
+/// union the PRD describes.
+enum MessageDelivery {
+  /// Sent optimistically; no `ack` yet. [ChatMessage.seq] is null.
+  pending,
+
+  /// Acknowledged by the server, or received from it. [ChatMessage.seq] is set.
+  confirmed,
+
+  /// Could not be handed to the transport. NOT retried — §8.4 requires a
+  /// durable queue for that and this pass does not have one.
+  failed,
 }
 
 /// A presence entry (`presence.update.d`).
