@@ -1,0 +1,25 @@
+name: dhaam_chat
+description: >-
+  Dart client for the Dhaam chat v2 wire protocol. Implements the §7 frame
+  protocol, the §8 connection state machine and the §10 auth model for Flutter
+  iOS/Android hosts. No Flutter dependency: this package is pure Dart.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+# ONE runtime dependency, deliberately.
+#
+# `web_socket_channel` is the Dart team's own cross-platform WebSocket
+# abstraction: `dart:io`'s WebSocket does not exist on Flutter Web, and
+# `dart:html` does not exist anywhere else. Nothing else here needs a package —
+# ULID generation is ~40 lines (protocol/ulid.dart), JSON is `dart:convert`,
+# and backoff is `dart:math`. A dependency in a mobile SDK is a dependency in
+# every host app's lockfile, so each one has to earn its place.
+dependencies:
+  web_socket_channel: ^3.0.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^4.0.0

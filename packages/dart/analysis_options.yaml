@@ -1,0 +1,20 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # This package parses untrusted wire input. An unawaited future or an
+    # unhandled switch case in the frame decoder is a protocol bug, not style.
+    unawaited_futures: error
+    missing_required_param: error
+    missing_return: error
+
+linter:
+  rules:
+    - avoid_dynamic_calls
+    - prefer_final_locals
+    - unnecessary_lambdas
+    - always_declare_return_types
