@@ -309,6 +309,41 @@ export class SendQueue {
     return [...this.#failed];
   }
 
+  /**
+   * Fails every undelivered entry for one session and drops it from storage.
+   *
+   * For the session-replacement transition (a terminal `session.closed`, then
+   * `startNewSession()`). It exists because `message.send` carries no
+   * `sessionId` on the wire (protocol/frames.ts): the server attributes a
+   * frame to whichever session the socket currently holds, so an entry that
+   * outlived its session would be delivered into the *next* conversation —
+   * the customer's unsent question about a resolved order reappearing, with
+   * no context, in a brand-new ticket.
+   *
+   * Failing rather than deleting is the other half. Each entry goes out
+   * through the ordinary `onFailed` channel with reason `'sessionClosed'`, so
+   * the binding renders it as a dead message the customer can see and re-send
+   * — dropping them silently would be the same data loss in a quieter form.
+   *
+   * Resolves with the entries it failed, in FIFO order.
+   */
+  async abandonSession(sessionId: string): Promise<readonly QueuedSend[]> {
+    const abandoned = await this.#mutate(async () => {
+      const doomed = this.#entries.filter((entry) => entry.sessionId === sessionId);
+      if (doomed.length === 0) return doomed;
+
+      this.#entries = this.#entries.filter((entry) => entry.sessionId !== sessionId);
+      await this.#persistCurrent();
+      return doomed;
+    });
+
+    // The session is gone, so its stall record is meaningless — and leaving it
+    // would survive into a session that happens to reuse the id.
+    this.#stalled.delete(sessionId);
+    this.#reportAll(abandoned, 'sessionClosed');
+    return abandoned;
+  }
+
   /** Forgets a recorded failure, once the app has surfaced or re-sent it. */
   discardFailed(id: string): void {
     const index = this.#failed.findIndex((failure) => failure.entry.id === id);
@@ -396,17 +431,27 @@ export class SendQueue {
     entry: QueuedSend,
     result: { ack: Extract<AckOutcome, { status: 'acked' }> } | { reason: SendFailureReason; code?: string },
   ): Promise<boolean> {
+    let wasQueued = false;
     try {
       await this.#mutate(async () => {
         // The filter happens inside the mutation so that the list it removes
         // from is the same one it writes back — a concurrent enqueue can no
         // longer be clobbered by a snapshot taken before it landed.
+        const before = this.#entries.length;
         this.#entries = this.#entries.filter((candidate) => candidate.id !== entry.id);
+        wasQueued = this.#entries.length !== before;
         await this.#persistCurrent();
       });
     } catch {
       return false;
     }
+
+    // Already settled by someone else while this send sat on the wire — the
+    // one caller that can do that is `abandonSession`, which fails a closed
+    // session's entries out from under an in-flight pump. Reporting again
+    // would emit a second `sendFailed` for one message, or an `ack` for a
+    // message the app has already been told is dead.
+    if (!wasQueued) return true;
 
     if ('ack' in result) {
       this.#onAck?.(entry, ackSeq(result.ack));

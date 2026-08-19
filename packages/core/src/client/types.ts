@@ -256,6 +256,38 @@ export interface ChatClient {
   disconnect(): void;
   joinSession(sessionId: string): void;
   leaveSession(): void;
+
+  /**
+   * Abandons the current session and opens a brand-new one (§12.5).
+   *
+   * The recovery path out of a terminal `session.closed` — the reason a
+   * closed conversation is not a dead end. An agent resolving a chat leaves
+   * the client holding a session it may no longer send into, and there is no
+   * other way back: `disconnect()` + `connect()` re-sends the old session's
+   * `resumeFrom`, which the server refuses non-retryably ("resumeFrom is
+   * ahead of this session"), landing the client in `suspended`.
+   *
+   * Resolves once `connection.ack` for the NEW session has been applied, so
+   * `getState().session` is the new one by the time it settles. On resolution:
+   *
+   *   - `session.id` is new and `messages` is empty — a new conversation must
+   *     not read as a continuation of the old transcript;
+   *   - watermarks, presence, typing and unread are cleared, none of which
+   *     mean anything across a session boundary;
+   *   - any send still queued for the old session has been failed with
+   *     `'sessionClosed'` rather than delivered into this one (see
+   *     {@link SendFailureReason}) — `message.send` has no `sessionId` on the
+   *     wire, so an entry that outlived its session would land here.
+   *
+   * `pastSessions` is left alone; it describes other sessions, not this one.
+   *
+   * Rejects with whatever `connect()` rejects with ({@link
+   * ConnectionSuspendedError}, {@link ConnectionAbortedError}). The old
+   * session is already abandoned if it does — this is not atomic, and a
+   * caller that retries should call it again rather than assume the old
+   * session is still there.
+   */
+  startNewSession(): Promise<void>;
   requestAgent(reason?: string): void;
   /** REST-only (§6.2, §12.5). Throws {@link ChatClientConfigError} if `config.sessionActions` was not supplied. */
   reopenSession(sessionId: string): Promise<ChatSession>;

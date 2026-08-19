@@ -70,6 +70,25 @@ describe('ResumeTracker', () => {
     expect(tracker.lastAppliedSeq).toBe(10);
   });
 
+  it('forgets the anchor on reset, so the next hello reads as a first connect', () => {
+    const tracker = new ResumeTracker();
+    tracker.observe(42);
+    tracker.reset();
+    expect(tracker.lastAppliedSeq).toBeNull();
+  });
+
+  it('does not report a gap on the first seq after a reset', () => {
+    const tracker = new ResumeTracker();
+    tracker.observe(42);
+    tracker.reset();
+    // A new session restarts at seq 0. Without the reset the anchor would
+    // still read 42, every one of the new session's frames would be `<=
+    // previous`, and genuine gaps in it would go unreported forever.
+    expect(tracker.observe(0)).toBeNull();
+    expect(tracker.observe(1)).toBeNull();
+    expect(tracker.lastAppliedSeq).toBe(1);
+  });
+
   it('adopts the ack anchor on a first connect without claiming a gap', () => {
     const tracker = new ResumeTracker();
     expect(tracker.settleAck(400)).toBeNull();
@@ -231,6 +250,23 @@ describe('ConnectionController — resumeFrom (D2, §8.3)', () => {
 
     h.transport.emitFrame(messageFrame(6));
     expect(h.controller.lastAppliedSeq).toBe(6);
+  });
+
+  it('omits resumeFrom after forgetResumeAnchor, so the server opens a new session', async () => {
+    const h = harness();
+    await connectWith(h, { seq: 40 });
+    h.transport.emitFrame(messageFrame(41));
+    expect(h.controller.lastAppliedSeq).toBe(41);
+
+    h.controller.forgetResumeAnchor();
+    expect(h.controller.lastAppliedSeq).toBeNull();
+
+    await reconnect(h);
+    // The whole point: a hello carrying a resumeFrom ahead of the session it
+    // opens is answered with a non-retryable VALIDATION_FAILED by the v2
+    // endpoint, which would strand the client in `suspended` rather than the
+    // new session it asked for.
+    expect(h.transport.lastConnect.hello).not.toHaveProperty('resumeFrom');
   });
 
   it('does not advance the anchor for a frame a downstream handler threw on', async () => {

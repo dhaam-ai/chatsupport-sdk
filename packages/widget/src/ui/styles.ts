@@ -369,6 +369,21 @@ button {
 .dh-icon-button:hover { background: var(--dh-surface-sunken); color: var(--dh-text); }
 .dh-icon-button[disabled] { opacity: 0.45; cursor: not-allowed; }
 
+/* Shown only in a state core has stopped retrying out of, so it reads as the
+   one thing left to do rather than as permanent header furniture. */
+.dh-reconnect {
+  padding: calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 3);
+  border-radius: 999px;
+  border: 1px solid var(--dh-border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dh-text);
+  white-space: nowrap;
+}
+.dh-reconnect:hover { background: var(--dh-surface-sunken); }
+.dh-reconnect[hidden] { display: none; }
+.dh-reconnect[disabled] { opacity: 0.45; cursor: not-allowed; }
+
 /* ── Message list ─────────────────────────────────────────────────────── */
 
 .dh-log {
@@ -468,12 +483,47 @@ button {
   padding: calc(var(--dh-space) * 6);
 }
 
+/* The end-of-conversation line and its way out. Centred and full-width so it
+   reads as chrome about the whole transcript rather than as another message
+   in it — no bubble, no sender, no timestamp. */
+.dh-system {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--dh-space) * 2);
+  align-self: stretch;
+  padding: calc(var(--dh-space) * 3) 0 calc(var(--dh-space) * 1);
+  border-top: 1px solid var(--dh-border);
+  margin-top: calc(var(--dh-space) * 2);
+}
+.dh-system[hidden] { display: none; }
+
+.dh-system-text {
+  margin: 0;
+  text-align: center;
+  color: var(--dh-text-muted);
+  font-size: 13px;
+}
+
+.dh-system-action {
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 4);
+  border-radius: 999px;
+  border: 1px solid var(--dh-border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dh-accent, inherit);
+}
+
 .dh-retry {
   font-size: 12px;
   color: var(--dh-danger);
   text-decoration: underline;
   padding: 0;
 }
+
+/* Retrying into a session that has ended is the dead end this UI removes.
+   The "start a new conversation" button is the way forward instead. */
+.dh-log[data-closed="true"] .dh-retry { display: none; }
 .dh-msg[data-mine="true"] .dh-retry { color: #ffd7d3; }
 
 /* ── Typing indicator ─────────────────────────────────────────────────── */

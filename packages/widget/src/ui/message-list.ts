@@ -24,7 +24,7 @@ import type { ChatMessage, ChatState, MessageTickState } from '@dhaam-ccrm/js';
 // typed as one — so a binding consumer cannot name the type of a field the
 // binding hands them. Reported as a gap in that package; imported from the
 // source here rather than restated locally.
-import type { AttachmentMetadata } from '@dhaam-ccrm/core';
+import type { AttachmentMetadata, CloseReason } from '@dhaam-ccrm/core';
 
 import { ICONS, el, icon } from './dom.js';
 
@@ -36,15 +36,52 @@ const TICK_PRESENTATION: Record<MessageTickState, { glyph: string; label: string
   read: { glyph: '✓✓', label: 'Read' },
 };
 
+/**
+ * What the closing line says, per §12.5 `CloseReason`.
+ *
+ * "Resolved" and "closed" are not interchangeable to a customer: the first
+ * says their problem was dealt with, the second only that the conversation
+ * ended. Reporting the second as the first is the kind of small dishonesty
+ * that makes someone re-open a ticket to check.
+ *
+ * `SWITCHED` has an entry only so this record stays total. It is a *parked*
+ * reason (`isParkedCloseReason`) — the session is not over, and widget.ts
+ * filters it out before it can reach here, so this copy should never render.
+ */
+const CLOSURE_COPY: Record<CloseReason, string> = {
+  RESOLVED: 'This conversation was marked resolved.',
+  MANUAL: 'This conversation was closed.',
+  SWITCHED: 'This conversation was moved.',
+};
+
 export interface MessageListCallbacks {
   readonly onRetry: (message: ChatMessage) => void;
   readonly onLoadOlder: () => void;
+  /** The customer asking for a fresh conversation after this one ended. */
+  readonly onStartNewConversation: () => void;
 }
 
 export interface MessageListView {
   readonly log: HTMLElement;
   readonly liveRegion: HTMLElement;
   render(state: ChatState, localParticipantId: string | null): void;
+
+  /**
+   * Marks the conversation ended, or `null` to clear it for a new one.
+   *
+   * The transcript is deliberately left in place: the history is still valid
+   * and the customer may well want to re-read what the agent told them.
+   */
+  setClosure(reason: CloseReason | null): void;
+
+  /**
+   * Marks the new-conversation request in flight.
+   *
+   * Disabling the control is what stops a second click from minting a second
+   * session — the transition is a socket round trip, which is long enough for
+   * an impatient double-click to land inside.
+   */
+  setStartingNewConversation(busy: boolean): void;
 }
 
 export function createMessageList(callbacks: MessageListCallbacks): MessageListView {
@@ -84,6 +121,29 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     attrs: { class: 'dh-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
   });
 
+  // The closing line and the way out of it. A `<p>` plus a real `<button>`,
+  // matching `dh-empty`/`dh-more` above: same hand-authored chrome, same
+  // keyboard behaviour, and the button's accessible name is its visible text.
+  const closureText = el('p', { attrs: { class: 'dh-system-text' } });
+  const closureAction = el('button', {
+    attrs: { class: 'dh-system-action', type: 'button' },
+    text: 'Start a new conversation',
+    on: { click: () => callbacks.onStartNewConversation() },
+  });
+  const closure = el('div', {
+    attrs: {
+      class: 'dh-system',
+      hidden: true,
+      // Not a live region of its own. There is exactly one announcement
+      // channel in this file (`liveRegion`) and `setClosure` speaks through
+      // it — a second one would race the first and double-announce.
+      role: 'group',
+      'aria-label': 'Conversation ended',
+    },
+    children: [closureText, closureAction],
+  });
+  log.appendChild(closure);
+
   const typing = createTypingIndicator();
   log.appendChild(typing.node);
 
@@ -91,6 +151,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   const rows = new Map<string, MessageRow>();
   let announcedUpTo: string | null = null;
   let seenAnyState = false;
+  let closedReason: CloseReason | null = null;
 
   function render(state: ChatState, localParticipantId: string | null): void {
     // Captured BEFORE mutating: reading `scrollTop` after an append gives the
@@ -137,6 +198,10 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       rows.delete(id);
     }
 
+    // The closing line sits after the transcript it closes, and before the
+    // typing bubble, so the reading order matches the order things happened.
+    log.appendChild(closure);
+
     // Typing bubble stays last so it reads as "someone is composing the next
     // message", not as an interruption in the middle of history.
     log.appendChild(typing.node);
@@ -176,7 +241,38 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     liveRegion.textContent = `${who}: ${describeContent(newest)}`;
   }
 
-  return { log, liveRegion, render };
+  function setClosure(reason: CloseReason | null): void {
+    if (reason === closedReason) return;
+    const previous = closedReason;
+    closedReason = reason;
+
+    closure.hidden = reason === null;
+    // Drives `.dh-log[data-closed="true"] .dh-retry { display: none }`. A
+    // retry button on a closed session is the dead end this whole change
+    // exists to remove: the send would be queued against a session that can
+    // never accept it. The way forward is the button below, not that one.
+    log.setAttribute('data-closed', String(reason !== null));
+
+    if (reason === null) return;
+    closureText.textContent = CLOSURE_COPY[reason];
+
+    // Announced once per closure, through the file's single channel. Guarded
+    // on the previous value rather than fired unconditionally because
+    // `setClosure` is driven from a state subscription that may re-run for
+    // reasons that have nothing to do with the session ending, and a screen
+    // reader repeating "this conversation was marked resolved" every time an
+    // unrelated field changes is worse than not saying it at all.
+    if (previous === null) {
+      liveRegion.textContent = `${CLOSURE_COPY[reason]} You can start a new conversation.`;
+    }
+  }
+
+  function setStartingNewConversation(busy: boolean): void {
+    closureAction.disabled = busy;
+    closureAction.textContent = busy ? 'Starting…' : 'Start a new conversation';
+  }
+
+  return { log, liveRegion, render, setClosure, setStartingNewConversation };
 }
 
 interface MessageRow {

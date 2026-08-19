@@ -97,6 +97,19 @@ export interface ChatError {
 export type SendFailureReason =
   /** The server refused it. A retry would be refused identically (§7.4). */
   | 'rejected'
+  /**
+   * The session it was queued against ended before it reached the wire
+   * (§12.5's terminal `CloseReason`s — `RESOLVED`, `MANUAL`).
+   *
+   * Distinct from `'rejected'` precisely because a retry is NOT futile: this
+   * send was refused by *us*, locally, and the same content sent into a new
+   * session would go through. It must never be delivered as-is, though —
+   * `message.send` carries no `sessionId` (protocol/frames.ts), so the server
+   * attributes a flushed frame to whichever session the socket currently
+   * holds, and a queued send that outlived its session would silently land in
+   * the next one.
+   */
+  | 'sessionClosed'
   /** It outlived the queue's configured max age (§9.6). */
   | 'expired'
   /** Pruned to bring the queue under its configured max entries (§9.6). */

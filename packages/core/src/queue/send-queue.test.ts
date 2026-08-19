@@ -589,3 +589,106 @@ describe('SendQueue concurrent mutation (regression)', () => {
     expect(h.failures).toEqual([]);
   });
 });
+
+describe('SendQueue.abandonSession — a session that ended under its queue (§12.5)', () => {
+  it('fails only the closed session\'s entries and leaves every other session alone', async () => {
+    const offline = new FakeQueueTransport();
+    offline.isOpen = false;
+    const h = harness({ transport: offline });
+    await h.queue.restore();
+
+    await h.queue.enqueue('sess-closed', text('about the resolved order'));
+    await h.queue.enqueue('sess-other', text('a different conversation'));
+    await h.queue.enqueue('sess-closed', text('and one more'));
+
+    const abandoned = await h.queue.abandonSession('sess-closed');
+
+    expect(abandoned.map((entry) => entry.payload.content)).toEqual([
+      'about the resolved order',
+      'and one more',
+    ]);
+    expect(h.queue.pending().map((entry) => entry.sessionId)).toEqual(['sess-other']);
+  });
+
+  it('reports each abandoned send through onFailed as sessionClosed', async () => {
+    const offline = new FakeQueueTransport();
+    offline.isOpen = false;
+    const h = harness({ transport: offline });
+    await h.queue.restore();
+    await h.queue.enqueue('sess-closed', text('never sent'));
+
+    await h.queue.abandonSession('sess-closed');
+
+    // Not silently dropped: the customer's binding gets one failure per dead
+    // send, which is what lets it render them as re-sendable rather than
+    // having them simply vanish.
+    expect(h.failures).toHaveLength(1);
+    expect(h.failures[0]?.reason).toBe('sessionClosed');
+    expect(h.failures[0]?.entry.payload.content).toBe('never sent');
+  });
+
+  it('never delivers an abandoned send once the socket comes back', async () => {
+    const offline = new FakeQueueTransport();
+    offline.isOpen = false;
+    const h = harness({ transport: offline });
+    await h.queue.restore();
+    await h.queue.enqueue('sess-closed', text('must not reappear'));
+
+    await h.queue.abandonSession('sess-closed');
+
+    // The hazard this method exists for: `message.send` carries no sessionId,
+    // so a surviving entry would be attributed to whatever session the socket
+    // holds after the reconnect — i.e. the NEW conversation.
+    offline.isOpen = true;
+    await h.queue.flush();
+
+    expect(offline.sends).toHaveLength(0);
+  });
+
+  it('drops the entries from storage, so a reload does not resurrect them', async () => {
+    const storage = new MemoryStorageAdapter();
+    const offline = new FakeQueueTransport();
+    offline.isOpen = false;
+
+    const first = harness({ storage, transport: offline });
+    await first.queue.restore();
+    await first.queue.enqueue('sess-closed', text('gone for good'));
+    await first.queue.abandonSession('sess-closed');
+
+    const second = harness({ storage, transport: new FakeQueueTransport() });
+    const report = await second.queue.restore();
+
+    expect(report.restored).toBe(0);
+    expect(second.queue.pending()).toHaveLength(0);
+  });
+
+  it('is a no-op for a session with nothing queued', async () => {
+    const h = harness();
+    await h.queue.restore();
+
+    await expect(h.queue.abandonSession('sess-empty')).resolves.toEqual([]);
+    expect(h.failures).toHaveLength(0);
+  });
+
+  it('reports an in-flight send exactly once when it is abandoned mid-wire', async () => {
+    const transport = new FakeQueueTransport();
+    // Answer the send only after the abandon has already removed the entry,
+    // which is the race a naive implementation double-reports.
+    let abandon!: Promise<readonly QueuedSend[]>;
+    const h = harness({ transport });
+    await h.queue.restore();
+
+    transport.onSend = () => {
+      transport.onSend = undefined;
+      abandon = h.queue.abandonSession('sess-closed');
+    };
+    transport.respondWith(rejected('VALIDATION_FAILED'));
+
+    await h.queue.enqueue('sess-closed', text('in flight when it died'));
+    await h.queue.flush();
+    await abandon;
+
+    expect(h.failures).toHaveLength(1);
+    expect(h.queue.pending()).toHaveLength(0);
+  });
+});

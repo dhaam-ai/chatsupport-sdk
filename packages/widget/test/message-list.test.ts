@@ -30,10 +30,11 @@ function state(overrides: Partial<ChatState> = {}): ChatState {
 function build() {
   const onRetry = vi.fn();
   const onLoadOlder = vi.fn();
-  const view = createMessageList({ onRetry, onLoadOlder });
+  const onStartNewConversation = vi.fn();
+  const view = createMessageList({ onRetry, onLoadOlder, onStartNewConversation });
   // Attached so `getComputedStyle` and `scrollHeight` behave.
   document.body.append(view.log, view.liveRegion);
-  return { view, onRetry, onLoadOlder };
+  return { view, onRetry, onLoadOlder, onStartNewConversation };
 }
 
 beforeEach(() => {
@@ -480,5 +481,135 @@ describe('describing an attachment to the live region', () => {
 
     expect(view.liveRegion.textContent).toContain('Here is your receipt');
     expect(view.liveRegion.textContent).not.toContain('sent an image');
+  });
+});
+
+describe('a conversation the agent closed', () => {
+  it('stays hidden while the conversation is live', () => {
+    const { view } = build();
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+
+    const closure = view.log.querySelector('.dh-system') as HTMLElement;
+    expect(closure).not.toBeNull();
+    expect(closure.hidden).toBe(true);
+  });
+
+  it('says "resolved" and "closed" differently, because they mean different things', () => {
+    const resolved = build();
+    resolved.view.setClosure('RESOLVED');
+    expect(resolved.view.log.querySelector('.dh-system-text')?.textContent).toBe(
+      'This conversation was marked resolved.',
+    );
+
+    const closed = build();
+    closed.view.setClosure('MANUAL');
+    expect(closed.view.log.querySelector('.dh-system-text')?.textContent).toBe(
+      'This conversation was closed.',
+    );
+  });
+
+  it('keeps the transcript — the history is still valid and worth re-reading', () => {
+    const { view } = build();
+    view.render(state({ messages: [message({ id: 'a', content: 'where is my order' })] }), ME);
+    view.setClosure('RESOLVED');
+    view.render(state({ messages: [message({ id: 'a', content: 'where is my order' })] }), ME);
+
+    expect(view.log.textContent).toContain('where is my order');
+  });
+
+  it('offers a keyboard-reachable, labelled way to continue', () => {
+    const { view, onStartNewConversation } = build();
+    view.setClosure('RESOLVED');
+
+    const action = view.log.querySelector('.dh-system-action') as HTMLButtonElement;
+    // A real <button>: focusable and activatable by keyboard without any
+    // handler of our own, and named by its visible text.
+    expect(action.tagName).toBe('BUTTON');
+    expect(action.type).toBe('button');
+    expect(action.textContent).toBe('Start a new conversation');
+
+    action.click();
+    expect(onStartNewConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces the close once, through the one live region', () => {
+    const { view } = build();
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+
+    view.setClosure('RESOLVED');
+    expect(view.liveRegion.textContent).toBe(
+      'This conversation was marked resolved. You can start a new conversation.',
+    );
+
+    // Repeated calls are a no-op: this is driven from a subscription that can
+    // re-run for unrelated reasons, and re-announcing on each would talk over
+    // whatever the user is reading.
+    view.liveRegion.textContent = '';
+    view.setClosure('RESOLVED');
+    expect(view.liveRegion.textContent).toBe('');
+  });
+
+  it('hides retry, so a dead session offers one way forward rather than two', () => {
+    const { view } = build();
+    const failed = message({
+      id: 'a',
+      delivery: { state: 'failed', reason: 'sessionClosed' },
+    });
+
+    view.render(state({ messages: [failed] }), ME);
+    expect(view.log.getAttribute('data-closed')).not.toBe('true');
+
+    view.setClosure('RESOLVED');
+    // The CSS rule keyed off this is what removes the retry affordance; the
+    // attribute is the testable half of it.
+    expect(view.log.getAttribute('data-closed')).toBe('true');
+  });
+
+  it('clears completely when a new conversation replaces it', () => {
+    const { view } = build();
+    view.setClosure('RESOLVED');
+    view.setClosure(null);
+
+    const closure = view.log.querySelector('.dh-system') as HTMLElement;
+    expect(closure.hidden).toBe(true);
+    expect(view.log.getAttribute('data-closed')).toBe('false');
+  });
+
+  it('announces again for a genuinely new close after recovering', () => {
+    const { view } = build();
+    view.setClosure('RESOLVED');
+    view.setClosure(null);
+    view.liveRegion.textContent = '';
+
+    view.setClosure('MANUAL');
+    expect(view.liveRegion.textContent).toContain('This conversation was closed.');
+  });
+
+  it('disables the control while the new conversation is being opened', () => {
+    const { view } = build();
+    view.setClosure('RESOLVED');
+    const action = view.log.querySelector('.dh-system-action') as HTMLButtonElement;
+
+    view.setStartingNewConversation(true);
+    expect(action.disabled).toBe(true);
+    expect(action.textContent).toBe('Starting…');
+
+    view.setStartingNewConversation(false);
+    expect(action.disabled).toBe(false);
+    expect(action.textContent).toBe('Start a new conversation');
+  });
+
+  it('keeps the closing line after the transcript and before the typing bubble', () => {
+    const { view } = build();
+    view.setClosure('RESOLVED');
+    view.render(state({ messages: [message({ id: 'a' })], typing: { isTyping: true } }), ME);
+
+    const children = [...view.log.children];
+    const closureIndex = children.findIndex((node) => node.classList.contains('dh-system'));
+    const messageIndex = children.findIndex((node) => node.classList.contains('dh-msg'));
+    const typingIndex = children.findIndex((node) => node.classList.contains('dh-typing'));
+
+    expect(messageIndex).toBeLessThan(closureIndex);
+    expect(closureIndex).toBeLessThan(typingIndex);
   });
 });

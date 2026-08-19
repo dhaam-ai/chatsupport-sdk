@@ -38,6 +38,7 @@ import {
 import { MessageController, upsertMessage } from '../messages/index.js';
 import type { LocalSender } from '../messages/index.js';
 import { PresenceCoordinator } from '../presence/index.js';
+import { isParkedCloseReason } from '../protocol/index.js';
 import type { ErrorPayload, ServerFrame } from '../protocol/index.js';
 import { SendQueue } from '../queue/index.js';
 import type { QueuedSend, QueueTransport } from '../queue/index.js';
@@ -228,6 +229,25 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
           ),
         });
         store.emit('sessionClosed', { closeReason: frame.d.closeReason });
+
+        // A genuinely-ended session can never accept another frame, so its
+        // undelivered sends are dead the moment it closes — and dangerous to
+        // leave queued, since `message.send` carries no `sessionId` and the
+        // next session to open would inherit them. Failing them here reports
+        // each one through `sendFailed` with an accurate `'sessionClosed'`,
+        // rather than leaving the queue to rediscover the same fact one
+        // rejected frame at a time.
+        //
+        // `SWITCHED` is exempt: §12.5 parks that session rather than ending
+        // it (`isParkedCloseReason`), and its queued sends are still live.
+        //
+        // Fire-and-forget with the rejection contained: a storage failure
+        // here leaves the entries queued, where the ordinary pump will still
+        // surface them as failed — never silently dropped — and an escaping
+        // rejection would land on the host app's window.
+        if (!isParkedCloseReason(frame.d.closeReason)) {
+          void queue.abandonSession(frame.d.sessionId).catch(() => undefined);
+        }
         return;
       case 'ticket.linked':
         store.setState({ session: applyTicketLinked(store.getState().session, frame.d) });
@@ -470,6 +490,59 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     disconnect: () => {
       connectionController.disconnect();
       presenceCoordinator.reset();
+    },
+    startNewSession: async (): Promise<void> => {
+      // Order is load-bearing throughout; see each step.
+      const closing = store.getState().session?.id;
+
+      // 1. The old session's undelivered sends, before anything reopens a
+      //    socket. `message.send` carries no `sessionId` (protocol/frames.ts),
+      //    so any entry still queued when the new session opens would be
+      //    attributed to *it* — the customer's unsent question about a
+      //    resolved order landing in a brand-new ticket. They are failed, not
+      //    deleted, so the binding can show them as dead and re-sendable.
+      if (closing !== undefined) await queue.abandonSession(closing);
+
+      // 2. Close the socket before forgetting the anchor, so no in-flight
+      //    frame can advance it again between the reset and the reconnect.
+      connectionController.disconnect();
+      presenceCoordinator.reset();
+
+      // 3. The anchor. Without this the next `connection.hello` carries a
+      //    `resumeFrom` from a history this client no longer holds, and the
+      //    v2 endpoint answers it with a NON-RETRYABLE `VALIDATION_FAILED`
+      //    ("resumeFrom is ahead of this session") — stranding the client in
+      //    `suspended` instead of the new session it asked for. This is the
+      //    single reason `disconnect()` + `connect()` is not already a
+      //    working "start over".
+      connectionController.forgetResumeAnchor();
+
+      // 4. Every per-session projection, in one write so no subscriber ever
+      //    observes the new session's id against the old one's transcript.
+      //    `pastSessions` is deliberately kept — it is a list *about* other
+      //    sessions, not state *of* this one.
+      store.setState({
+        session: null,
+        messages: [],
+        typing: { isTyping: false },
+        unreadCount: 0,
+        pagination: { hasMore: false, loadingMore: false },
+        uploading: false,
+        // Keyed by participantId, not by session, which is exactly why they
+        // have to go explicitly: the same agent picking up the new
+        // conversation would otherwise arrive with a read watermark earned in
+        // the old one, marking messages read that they have never seen.
+        readWatermarks: {},
+        deliveredWatermarks: {},
+        presence: {},
+        lastError: null,
+      });
+
+      // 5. A hello with no `resumeFrom` reads as a first connection, which is
+      //    what makes the server mint a new session (WAITING_FOR_AGENT, seq
+      //    0) rather than resume the closed one. Resolves on `connection.ack`,
+      //    so awaiting this means the new session is in state.
+      await connectionController.connect();
     },
     joinSession: (sessionId) => {
       realTransport.send('session.join', { sessionId });

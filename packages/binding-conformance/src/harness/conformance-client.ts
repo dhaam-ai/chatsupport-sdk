@@ -213,6 +213,7 @@ export function createConformanceChatClient(initial?: Partial<ChatState>): Confo
     disconnect: () => {},
     joinSession: (_sessionId: string) => {},
     leaveSession: () => {},
+    startNewSession: async (): Promise<void> => {},
     requestAgent: (_reason?: string) => {},
     reopenSession: notConfigured('reopenSession') as unknown as (sessionId: string) => Promise<ChatSession>,
     closeSession: async () => {},

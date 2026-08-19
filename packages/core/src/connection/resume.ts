@@ -44,10 +44,20 @@ export function frameSeq(frame: ServerFrame): number | null {
 /**
  * Tracks the last `seq` applied to state and reports the holes.
  *
- * Deliberately has no `reset()`. The anchor is the client's position in a
- * per-session history; it must survive a reconnect — that is the entire point
- * of D2 — and there is no event in §8 after which forgetting it would be
- * correct.
+ * The anchor must survive a *reconnect* — that is the entire point of D2, and
+ * there is no event in §8 after which forgetting it would be correct. {@link
+ * reset} is therefore deliberately NOT reachable from any connection-lifecycle
+ * path, and `ConnectionController` never calls it while reconnecting.
+ *
+ * It exists for the one event on the *other* axis: the anchor is a position in
+ * a **per-session** history (§12.5), so when the session itself is replaced —
+ * `startNewSession()`, after a terminal `session.closed` — the old position
+ * refers to a history this client no longer holds. Carrying it across is not
+ * merely stale, it is unsendable: the server answers a `connection.hello`
+ * whose `resumeFrom` is ahead of the session it opens with a non-retryable
+ * `VALIDATION_FAILED` ("resumeFrom is ahead of this session — discard the
+ * cursor and refetch"), which would strand the client in `suspended` instead
+ * of the new session it asked for. Verified against the v2 endpoint.
  */
 export class ResumeTracker {
   #lastApplied: number | null = null;
@@ -112,5 +122,16 @@ export class ResumeTracker {
 
     this.#lastApplied = ackSeq;
     return { expectedSeq: previous + 1, receivedSeq: ackSeq };
+  }
+
+  /**
+   * Forgets the anchor, so the next `connection.hello` omits `resumeFrom`
+   * entirely and reads as a first connection.
+   *
+   * Session-scoped, never connection-scoped — see the class doc. The only
+   * caller is the new-session transition; a reconnect must not reach this.
+   */
+  reset(): void {
+    this.#lastApplied = null;
   }
 }

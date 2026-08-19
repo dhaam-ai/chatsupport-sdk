@@ -107,6 +107,7 @@ export function createFakeChatClient(initial?: Partial<ChatState>): FakeChatClie
     disconnect: vi.fn(() => {}),
     joinSession: vi.fn((_sessionId: string) => {}),
     leaveSession: vi.fn(() => {}),
+    startNewSession: vi.fn(async () => {}),
     requestAgent: vi.fn((_reason?: string) => {}),
     reopenSession: vi.fn(async (_sessionId: string): Promise<ChatSession> => {
       throw new Error('createFakeChatClient: reopenSession has no default — override it for this test.');

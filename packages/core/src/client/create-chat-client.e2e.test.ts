@@ -380,3 +380,209 @@ describe('createChatClient — end-to-end through the public API', () => {
     await expect(client.sendAttachment(new Blob(['x']))).rejects.toThrow(/uploader/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The closed-session dead end (§12.5)
+// ---------------------------------------------------------------------------
+//
+// An agent closes the chat; the customer must still have a way forward. These
+// go through the public surface only, like everything above.
+
+function sessionClosedJson(
+  sessionId: string,
+  closeReason: 'RESOLVED' | 'MANUAL' | 'SWITCHED',
+  idNum: number,
+): unknown {
+  return {
+    v: 1,
+    t: 'session.closed',
+    id: ulid(idNum),
+    ts: 0,
+    d: { sessionId, closeReason },
+  };
+}
+
+/** Connects a fresh client and drives it to `connected` on `session_1`. */
+async function connected(h: Harness): Promise<ReturnType<typeof createChatClient>> {
+  const client = createChatClient(h.config);
+  const promise = client.connect();
+  await tick();
+  h.sockets.last.open();
+  h.sockets.last.emitJson(ackJson(0, sessionSnapshot(), 1));
+  await promise;
+  await tick();
+  return client;
+}
+
+/** Answers the hello on the newest socket with `snapshot`. */
+function ackNewSocket(h: Harness, snapshot: SessionSnapshot, seq = 0, idNum = 30): void {
+  h.sockets.last.open();
+  h.sockets.last.emitJson(ackJson(seq, snapshot, idNum));
+}
+
+describe('createChatClient — recovering from a closed session', () => {
+  it('emits sessionClosed with the reason and stamps closedAt', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    const closures: { closeReason: string }[] = [];
+    client.on('sessionClosed', (payload) => closures.push(payload));
+
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'RESOLVED', 20));
+    await tick();
+
+    expect(closures).toEqual([{ closeReason: 'RESOLVED' }]);
+    // The transcript is deliberately still there — the history is valid and
+    // the customer may want to read it.
+    expect(client.getState().session?.id).toBe('session_1');
+    expect(client.getState().session?.closedAt).not.toBeNull();
+  });
+
+  it('startNewSession opens a NEW session with a fresh, non-merged transcript', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    // A message from the first conversation, so a merge would be visible.
+    h.sockets.last.emitJson(messageNewJson(11, 1, { content: 'first conversation' }));
+    await tick();
+    expect(client.getState().messages).toHaveLength(1);
+
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'RESOLVED', 20));
+    await tick();
+
+    const restart = client.startNewSession();
+    await tick();
+    ackNewSocket(h, sessionSnapshot({ sessionId: 'session_2', status: 'WAITING_FOR_AGENT' }));
+    await restart;
+    await tick();
+
+    expect(client.getState().session?.id).toBe('session_2');
+    expect(client.getState().session?.status).toBe('WAITING_FOR_AGENT');
+    // The whole point of item 3: two conversations, two transcripts.
+    expect(client.getState().messages).toEqual([]);
+    expect(client.getState().session?.closedAt).toBeNull();
+  });
+
+  it('omits resumeFrom on the new hello, which is what makes the session new', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    h.sockets.last.emitJson(messageNewJson(12, 7));
+    await tick();
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'RESOLVED', 20));
+    await tick();
+
+    const restart = client.startNewSession();
+    await tick();
+    // The hello is written from the socket's `open`, so it does not exist
+    // until the new socket opens.
+    h.sockets.last.open();
+
+    const hello = h.sockets.last.sentFrames()[0] as { t: string; d: Record<string, unknown> };
+    expect(hello.t).toBe('connection.hello');
+    // With `resumeFrom: 7` the v2 endpoint answers a non-retryable
+    // VALIDATION_FAILED ("resumeFrom is ahead of this session") and the client
+    // lands in `suspended` instead of a new conversation.
+    expect(hello.d).not.toHaveProperty('resumeFrom');
+
+    h.sockets.last.emitJson(ackJson(0, sessionSnapshot({ sessionId: 'session_2' }), 30));
+    await restart;
+  });
+
+  it('leaves no watermark, presence, typing or unread state from the old session', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    h.sockets.last.emitJson({
+      v: 1,
+      t: 'typing.start',
+      id: ulid(13),
+      ts: 0,
+      d: { participantId: AGENT_ID },
+    });
+    h.sockets.last.emitJson({
+      v: 1,
+      t: 'presence.update',
+      id: ulid(14),
+      ts: 0,
+      d: { participantId: AGENT_ID, status: 'ONLINE' },
+    });
+    h.sockets.last.emitJson({
+      v: 1,
+      t: 'message.read',
+      id: ulid(15),
+      ts: 0,
+      d: { participantId: AGENT_ID, readAt: '2026-08-18T10:05:00.000Z' },
+    });
+    await tick();
+
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'MANUAL', 20));
+    await tick();
+
+    const restart = client.startNewSession();
+    await tick();
+    ackNewSocket(h, sessionSnapshot({ sessionId: 'session_2' }));
+    await restart;
+    await tick();
+
+    const state = client.getState();
+    // A watermark is keyed by participant, not by session — the same agent
+    // picking up the new chat must not arrive already "having read" it.
+    expect(state.readWatermarks).toEqual({});
+    expect(state.deliveredWatermarks).toEqual({});
+    expect(state.presence).toEqual({});
+    expect(state.typing.isTyping).toBe(false);
+    expect(state.unreadCount).toBe(0);
+    expect(state.pagination).toEqual({ hasMore: false, loadingMore: false });
+  });
+
+  it('fails a send queued against the closed session instead of delivering it into the new one', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    const failures: { id: string; reason: string }[] = [];
+    client.on('sendFailed', (payload) => failures.push(payload));
+
+    // Never acked, so the entry stays in the queue — an entry leaves only on
+    // an ack or a permanent failure (queue/send-queue.ts's first invariant).
+    await client.sendMessage('about my resolved order');
+    await tick();
+
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'RESOLVED', 22));
+    await tick();
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.reason).toBe('sessionClosed');
+
+    const restart = client.startNewSession();
+    await tick();
+    ackNewSocket(h, sessionSnapshot({ sessionId: 'session_2' }));
+    await restart;
+    await tick();
+
+    // `message.send` carries no sessionId, so a surviving entry would have
+    // been attributed to session_2. Nothing was sent on the new socket.
+    const sentOnNewSocket = h.sockets.last
+      .sentFrames()
+      .filter((frame) => (frame as { t: string }).t === 'message.send');
+    expect(sentOnNewSocket).toEqual([]);
+  });
+
+  it('leaves a SWITCHED session\'s queued sends alone — it is parked, not ended', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    const failures: { reason: string }[] = [];
+    client.on('sendFailed', (payload) => failures.push(payload));
+
+    await client.sendMessage('still relevant');
+    await tick();
+
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'SWITCHED', 24));
+    await tick();
+
+    // §12.5: SWITCHED parks the session rather than ending it, so its
+    // undelivered sends are still live.
+    expect(failures).toEqual([]);
+  });
+});

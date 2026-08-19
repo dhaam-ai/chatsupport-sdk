@@ -231,6 +231,20 @@ export class ConnectionController {
   }
 
   /**
+   * Drops the resume anchor so the next `connection.hello` omits `resumeFrom`
+   * and the server opens a *new* session rather than resuming the old one.
+   *
+   * Exposed for the session-replacement transition only (`startNewSession()`),
+   * never for a reconnect — see `ResumeTracker`'s own doc for why the two
+   * axes must not be confused. This does not touch the socket: the caller
+   * sequences the disconnect/connect around it.
+   */
+  forgetResumeAnchor(): void {
+    this.#resume.reset();
+    this.#connectionResumeFrom = null;
+  }
+
+  /**
    * Opens the connection and drives it to `connected` (§6.2).
    *
    * Resolves once `connection.ack` is received; rejects with
