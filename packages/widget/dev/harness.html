@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>widget harness — deliberately hostile host page</title>
+<style>
+  /* This page is adversarial ON PURPOSE. Every rule below is something a real
+     host page does that broke v1's inline-styled, z-index-999999 widget. If the
+     widget still looks and behaves correctly here, the shadow root and the top
+     layer are doing their jobs. */
+  * { font-family: "Comic Sans MS", cursive !important; }
+  body { font-size: 22px; line-height: 3; background: #0b1020; color: #eee; margin: 0; padding: 24px; }
+  button { background: hotpink !important; border: 6px dashed lime !important;
+           border-radius: 0 !important; padding: 30px !important; color: #000 !important;
+           text-transform: uppercase !important; }
+  div, span, p, h2 { border: 2px solid red !important; }
+  textarea, input { background: yellow !important; color: red !important; font-size: 30px !important; }
+  img { filter: invert(1) !important; }
+  /* The z-index arms race v1 lost. */
+  .host-banner { position: fixed; inset: auto 0 0 0; z-index: 2147483647;
+                 background: crimson; color: #fff; padding: 18px; text-align: center;
+                 font-size: 18px; border-top: 4px solid #fff; }
+  .tall { height: 240vh; }
+</style>
+</head>
+<body>
+  <h1>Host page</h1>
+  <p>Ordinary host content. The chat widget must not restyle any of it.</p>
+  <button id="host-button" onclick="document.getElementById('host-log').textContent='host button still works'">Host button</button>
+  <p id="host-log"></p>
+  <label>Host input <input id="host-input" value="host field"></label>
+  <div class="tall">A tall block, so the page scrolls behind the panel.</div>
+  <div class="host-banner">Host cookie banner at z-index 2147483647 — the widget must sit ABOVE this.</div>
+
+<script
+  src="/widget.js"
+  data-publishable-key="__PUBLISHABLE_KEY__"
+  data-token-endpoint="/api/chat-token"
+  data-user-id="__USER_ID__"
+  data-api-url="__API_URL__"
+  data-ws-url="__WS_URL__"
+  data-mode="__MODE__"
+  data-title="Order support"
+  data-accent="#0f766e"></script>
+</body>
+</html>

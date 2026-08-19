@@ -1,0 +1,81 @@
+# Drift gate for the generated backend clients.
+#
+# NOT YET ACTIVE. Copy this file to .github/workflows/clients.yml. It lives
+# here because .github/ was outside the ownership of the change that added
+# clients/ — see ci/README.md.
+#
+# Separate workflow rather than a job inside ci.yml on purpose: this is the
+# only thing in the repo that needs Go and Python, and folding it into the
+# Node matrix would install both three times over for no reason.
+
+name: clients
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: clients-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: generated clients match the spec
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # DELIBERATELY NOT PATH-FILTERED.
+      #
+      # `on.pull_request.paths: [openapi/**, clients/**]` looks right and is a
+      # trap: a required status check that never runs never reports, and the
+      # PR sits unmergeable forever. The fast check below costs seconds, so
+      # running it on everything is cheaper than the workaround.
+
+      # Step 1: the check that needs no toolchain at all. It runs before the
+      # setup steps so the common failure (spec edited, clients not
+      # regenerated) reports in ~15 seconds instead of ~90.
+      - name: Fast drift check
+        run: clients/scripts/check-drift.sh
+
+      # Version floor comes from ogen's own go directive, via clients/go/go.mod.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: clients/go/go.mod
+          cache-dependency-path: clients/go/go.sum
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Step 2: the gate that actually proves the committed code is what the
+      # pinned generators emit. Fast mode can be defeated by editing a
+      # generated file and rerunning write-lock.sh; this cannot.
+      - name: Regenerate and diff
+        run: clients/scripts/check-drift.sh --full
+
+      - name: Go client tests
+        run: go test ./...
+        working-directory: clients/go
+
+      # These assert the thing no generator checks: that requests leave for
+      # /chat-services/api/v1/... The spec used to say {apiUrl}/v1, which no
+      # route serves.
+      - name: Python client tests
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -e 'python[test]'
+          .venv/bin/python -m pytest python/tests scripts/test_emit_base_path.py -q
+        working-directory: clients
+
+      # The generated code is committed. If a generator run ever starts
+      # producing output that differs from the committed tree in a way the
+      # diff above missed — a mode bit, a stray cache directory — catch it
+      # here rather than in a reviewer's diff.
+      - name: Working tree unchanged
+        run: git diff --exit-code

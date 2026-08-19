@@ -151,3 +151,42 @@ func TestResolveBaseURL(t *testing.T) {
 		})
 	}
 }
+
+// TestDocumentedErrorStatusesDecode covers the response arm a caller is most
+// likely to get wrong. ogen models each documented error status as its own
+// type in the result sum, so a switch with no default arm falls through and
+// treats a refusal as a success. This asserts the type a 401 actually
+// produces, and that the spec's ErrorCode survives decoding.
+func TestDocumentedErrorStatusesDecode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", "req_5f9a2c")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"AUTH_EXPIRED","message":"The access token has expired.","retryable":true}}`))
+	}))
+	defer srv.Close()
+
+	client, err := chatapi.NewClient(chatapi.ResolveBaseURL(srv.URL), staticCredentials{})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	res, err := client.MintToken(context.Background(), &chatapi.MintTokenRequest{UserID: "u_1"})
+	if err != nil {
+		t.Fatalf("MintToken returned a transport error for a documented 401: %v", err)
+	}
+
+	refused, ok := res.(*chatapi.UnauthorizedHeaders)
+	if !ok {
+		t.Fatalf("401 decoded as %T, want *chatapi.UnauthorizedHeaders", res)
+	}
+	if got := refused.Response.Error.Code; got != chatapi.ErrorCodeAUTHEXPIRED {
+		t.Errorf("error code = %q, want AUTH_EXPIRED", got)
+	}
+	if !refused.Response.Error.Retryable {
+		t.Error("retryable = false; the spec marks AUTH_EXPIRED retryable after refresh")
+	}
+	if id, ok := refused.XRequestID.Get(); !ok || id != "req_5f9a2c" {
+		t.Errorf("X-Request-Id = %q (set=%v), want req_5f9a2c", id, ok)
+	}
+}

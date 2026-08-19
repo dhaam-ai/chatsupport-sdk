@@ -40,20 +40,22 @@ import type { ResolvedConfig } from '../config.js';
  * stays a module-scope constant that the engine parses once.
  */
 export function themeCss(config: ResolvedConfig): string {
+  // CUSTOM PROPERTIES ONLY. Not `font-family` itself — see the header: a host
+  // rule that matches the shadow HOST element beats a `:host` rule, and an
+  // `!important` one beats it unconditionally. A custom property is immune,
+  // because no host page sets `--dh-font` by accident.
+  //
+  // `inherit` is expressible in the same mechanism: the value flows into
+  // `font-family: var(--dh-font)` on the subtree roots below, and
+  // `font-family: inherit` there means "adopt the host element's font", which
+  // is exactly what a host asking for brand continuity wants.
   const font =
     config.font === 'inherit'
-      ? 'font: inherit; font-family: inherit;'
-      : "font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;";
+      ? 'inherit'
+      : "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
   return `:host{
-    ${font}
-    font-size: 15px;
-    line-height: 1.45;
-    letter-spacing: normal;
-    font-weight: 400;
-    font-style: normal;
-    text-align: start;
-    text-transform: none;
+    --dh-font: ${font};
     --dh-accent: ${cssColor(config.accent)};
   }`;
 }
@@ -93,6 +95,37 @@ export const STYLES = `
 
   all: revert;
   display: block;
+}
+
+/* The typographic reset, applied to the two SHADOW-TREE roots rather than to
+   ':host'.
+
+   This placement is the whole point and it was arrived at empirically: with the
+   reset on ':host', a host page carrying '* { font-family: X !important }'
+   rendered the entire widget in its own display face. ':host' rules lose to any
+   outer-document rule that matches the host element, and '*' matches it — the
+   host element is an ordinary light-DOM node. Everything NOT inherited
+   (background, border, radius, text-transform) was correctly blocked by the
+   shadow boundary the whole time; only inherited properties ever got through,
+   and they got through by inheritance rather than by selector.
+
+   No host selector can reach '.dh-launcher' or '.dh-panel', so declarations
+   here are final. */
+.dh-launcher, .dh-panel {
+  font-family: var(--dh-font);
+  font-size: 15px;
+  font-weight: 400;
+  font-style: normal;
+  font-variant: normal;
+  line-height: 1.45;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-transform: none;
+  text-indent: 0;
+  text-align: start;
+  text-shadow: none;
+  white-space: normal;
+  color: var(--dh-text);
 }
 
 /* Follows the host page's scheme rather than imposing one — a dark-mode food
@@ -230,9 +263,19 @@ button {
 .dh-panel[data-open="true"] {
   opacity: 1;
   visibility: visible;
-  translate: none;
   transition-delay: 0s;
 }
+
+/* The off-screen offsets belong to the CLOSED state, never to the open one.
+
+   Written the other way round first — a per-presentation 'translate' plus a
+   ':host(...) .dh-panel' selector — and every presentation stayed off screen.
+   ':host([data-presentation="sidebar"]) .dh-panel' scores (0,2,1) against
+   '.dh-panel[data-open="true"]'s (0,2,0), so the open rule's 'translate: none'
+   silently lost and the sidebar rendered at left:1280 on a 1280px viewport.
+   Putting each offset behind '[data-open="false"]' removes the competing
+   declaration instead of trying to out-specify it, which is the version that
+   cannot regress when a fourth presentation is added. */
 
 /* bubble: a floating card anchored above the launcher. */
 :host([data-presentation="bubble"]) .dh-panel {
@@ -241,19 +284,24 @@ button {
   width: min(384px, calc(100vw - var(--dh-space) * 8));
   height: min(560px, calc(100dvh - 140px));
   border-radius: var(--dh-radius);
-  translate: 0 8px;
 }
+:host([data-presentation="bubble"]) .dh-panel[data-open="false"] { translate: 0 8px; }
 
 /* sidebar: full-height, edge-anchored, slides in horizontally. */
 :host([data-presentation="sidebar"]) .dh-panel {
   top: 0; bottom: 0;
   inset-inline-end: 0;
+  /* Pinned rather than inherited: 'inset-inline-end' and the translate above
+     both resolve against 'direction', which crosses the shadow boundary, so an
+     RTL host page would otherwise slide the panel in from the side opposite
+     the one 'data-side' names. */
+  direction: ltr;
   width: min(420px, 100vw);
   border-radius: 0;
   border-block: 0;
-  translate: 100% 0;
 }
-:host([data-presentation="sidebar"][data-side="left"]) .dh-panel { translate: -100% 0; }
+:host([data-presentation="sidebar"]) .dh-panel[data-open="false"] { translate: 100% 0; }
+:host([data-presentation="sidebar"][data-side="left"]) .dh-panel[data-open="false"] { translate: -100% 0; }
 
 /* sheet: bottom-anchored, full width. 'dvh' is the whole reason this mode
    exists — with 'vh', iOS Safari's URL bar makes the composer sit under the
@@ -265,8 +313,8 @@ button {
   max-height: 100dvh;
   border-radius: var(--dh-radius) var(--dh-radius) 0 0;
   border-bottom: 0;
-  translate: 0 100%;
 }
+:host([data-presentation="sheet"]) .dh-panel[data-open="false"] { translate: 0 100%; }
 
 /* A grab handle, on the sheet only — it is the affordance that says "this
    panel came from the bottom edge and goes back there". */

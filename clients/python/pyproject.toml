@@ -1,0 +1,38 @@
+# Hand-written, deliberately. `openapi-python-client generate --meta none`
+# emits only the package, so the packaging metadata is ours and does not churn
+# every time the generator's project template changes.
+#
+# The package itself (dhaam_ccrm_chat/) IS generated -- see clients/README.md.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dhaam-ccrm-chat"
+version = "0.0.0"
+description = "Generated Python client for the chat-service REST API. Generated from openapi/chat-api.yaml; do not edit by hand."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+# Exactly what the generated code imports, nothing else. Lower bounds match
+# openapi-python-client's own floors for the runtime it emits against.
+dependencies = [
+  "httpx>=0.23.0,<0.29.0",
+  "attrs>=22.2.0",
+  "python-dateutil>=2.8.0,<3.0.0",
+]
+
+[project.optional-dependencies]
+# `pip install -e '.[test]'` to run clients/python/tests. pytest is the only
+# addition -- the tests use nothing but the standard library and the client.
+# ruamel.yaml is for clients/scripts/test_emit_base_path.py, which parses the
+# real spec. It is not a runtime dependency of the generated client.
+test = ["pytest>=8.0", "ruamel.yaml>=0.18,<0.19"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["dhaam_ccrm_chat"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

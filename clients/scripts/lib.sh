@@ -33,7 +33,14 @@ tree_sha256() {
   # exec it, hand the digest an empty stream, and produce the same "valid"
   # hash for every tree. That is a gate that can never fail, so the manifest
   # is built in-shell instead.
-  ( cd "$root" && find "$rel" -type f ! -name '.DS_Store' -print \
+  #
+  # The prune list mirrors clients/.gitignore. Running the Python tests drops
+  # __pycache__/ inside the generated package, and hashing that would make the
+  # digest depend on whether anyone had run the tests -- a gate that fails for
+  # a reason nobody can act on gets disabled, which is worse than no gate.
+  ( cd "$root" && find "$rel" \
+        \( -name '__pycache__' -o -name '.ruff_cache' -o -name '.pytest_cache' \) -prune \
+        -o -type f ! -name '.DS_Store' ! -name '*.py[cod]' -print \
       | LC_ALL=C sort \
       | while IFS= read -r f; do
           printf '%s  %s\n' "$(sha256_file "$f")" "$f"

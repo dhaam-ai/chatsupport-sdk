@@ -13,7 +13,7 @@
 // host-supplied string is swept with the same predicate (auth.ts). That is
 // §14, and it is the reason this package can be served from a CDN at all.
 
-import { resolveConfig } from './config.js';
+import { defaultOnError, resolveConfig } from './config.js';
 import { clearWidget, describeExisting, getMountedWidget, registerWidget } from './singleton.js';
 import { createWidget } from './widget.js';
 import type { ChatWidget } from './widget.js';
@@ -32,7 +32,7 @@ export function mount(config: WidgetConfig): ChatWidget {
     // Not an exception: the second script tag is usually not the one anybody
     // is debugging, and throwing from it would take out whatever else that
     // bundle was doing. Loud enough to find, quiet enough not to break a page.
-    config.onError?.(new Error(`chat widget mount() ignored${describeExisting()}`));
+    (config.onError ?? defaultOnError)(new Error(`chat widget mount() ignored${describeExisting()}`));
     return existing;
   }
 

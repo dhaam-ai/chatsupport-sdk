@@ -92,9 +92,14 @@ trap 'rm -rf "$tmp"' EXIT
   fail "regeneration failed. The spec may use something the generators reject."
 }
 
+# Same exclusions as tree_sha256's prune list in lib.sh: running the tests
+# leaves __pycache__ inside the generated package, and a freshly generated
+# comparison tree never has one.
+excludes=(-x '__pycache__' -x '*.py[cod]' -x '.ruff_cache' -x '.pytest_cache' -x '.DS_Store')
+
 status=0
 for tree in go/chatapi python/dhaam_ccrm_chat; do
-  if ! diff -ru "$clients_dir/$tree" "$tmp/$tree" > "$tmp/.diff.$$" 2>&1; then
+  if ! diff -ru "${excludes[@]}" "$clients_dir/$tree" "$tmp/$tree" > "$tmp/.diff.$$" 2>&1; then
     echo
     echo "--- clients/$tree differs from what the pinned generators emit:" >&2
     head -100 "$tmp/.diff.$$" >&2

@@ -1,7 +1,7 @@
 {
   "name": "@dhaam-ccrm/widget",
   "version": "0.0.0",
-  "description": "The drop-in embeddable chat widget — one script tag, shadow-DOM isolated, bubble / sidebar / sheet presentations. Built on @dhaam-ccrm/js.",
+  "description": "The drop-in embeddable chat widget \u2014 one script tag, shadow-DOM isolated, bubble / sidebar / sheet presentations. Built on @dhaam-ccrm/js.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -25,7 +25,9 @@
     "build": "tsup && node scripts/bundle.mjs",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "size": "node scripts/bundle.mjs"
+    "size": "node scripts/bundle.mjs",
+    "dev:harness": "node scripts/dev-server.mjs",
+    "verify:browser": "node scripts/verify-browser.mjs"
   },
   "keywords": [
     "chat",

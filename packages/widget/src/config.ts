@@ -149,7 +149,16 @@ export function parseMode(raw: string | null | undefined): PresentationMode | un
   );
 }
 
-function defaultOnError(error: unknown): void {
+/**
+ * Where a widget-internal failure goes when the host named no sink.
+ *
+ * Exported because `mount()` needs it before a `ResolvedConfig` exists: the
+ * duplicate-mount path reports and returns without ever resolving a config,
+ * and reaching for `config.onError` alone made a duplicate SCRIPT TAG — the
+ * exact case the guard exists for — completely silent, because an
+ * attribute-built config has no `onError` to reach.
+ */
+export function defaultOnError(error: unknown): void {
   if (typeof console !== 'undefined' && typeof console.warn === 'function') {
     console.warn('[@dhaam-ccrm/widget]', error);
   }

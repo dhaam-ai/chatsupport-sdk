@@ -39,20 +39,41 @@ export interface FocusTrap {
 /**
  * Every tabbable element inside `container`, in DOM order.
  *
- * Filters on rendered-ness rather than on a `hidden` attribute: the panel keeps
- * its send button in the tree while disabled and its "load older" button
- * hidden, and a trap that cycles onto an invisible control strands the user on
- * a stop they cannot see. `offsetParent === null` catches `display: none` at
- * any ancestor; the explicit `visibility` read catches the panel's own closed
- * state, which uses `visibility: hidden` so it can transition.
+ * Hidden-ness is decided SEMANTICALLY — the `hidden` attribute, `aria-hidden`,
+ * and computed `display`/`visibility` up the ancestor chain — rather than from
+ * layout. The layout test everyone reaches for first, `offsetParent === null`,
+ * is wrong here twice over: it reports `null` for any `position: fixed`
+ * element, which is what this widget's panel is, so the obvious version needs
+ * a `position === 'fixed'` exemption bolted on; and it is unimplemented in
+ * jsdom, where it returns `null` for every node, so the exemption cannot be
+ * tested and the trap silently degrades to "no stops at all".
+ *
+ * The bias when a check is inconclusive is toward INCLUDING an element. A
+ * false include costs one dead tab stop; a false exclude lets a user tab out
+ * of a panel that has just told their screen reader it is modal.
  */
 export function tabbableWithin(container: HTMLElement): HTMLElement[] {
-  return [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((element) => {
-    if (element.hasAttribute('hidden')) return false;
-    if (element.getAttribute('aria-hidden') === 'true') return false;
-    if (element.offsetParent === null && getComputedStyle(element).position !== 'fixed') return false;
-    return getComputedStyle(element).visibility !== 'hidden';
-  });
+  return [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (element) => !isHidden(element, container),
+  );
+}
+
+function isHidden(element: HTMLElement, container: HTMLElement): boolean {
+  let node: HTMLElement | null = element;
+  while (node !== null) {
+    if (node.hasAttribute('hidden')) return true;
+    if (node.getAttribute('aria-hidden') === 'true') return true;
+
+    const style = getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden') return true;
+
+    // Stops at the trap's own container: everything above it belongs to the
+    // host page, whose styles are none of our business and whose ancestors we
+    // would otherwise walk all the way to `<html>` on every Tab keypress.
+    if (node === container) return false;
+    node = node.parentElement;
+  }
+  return false;
 }
 
 /**

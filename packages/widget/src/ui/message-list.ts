@@ -19,6 +19,12 @@
 
 import { deriveTickState } from '@dhaam-ccrm/js';
 import type { ChatMessage, ChatState, MessageTickState } from '@dhaam-ccrm/js';
+// Straight from core: `@dhaam-ccrm/js` re-exports the whole of `ChatState`'s
+// shape EXCEPT `AttachmentMetadata`, even though `ChatMessage.attachment` is
+// typed as one — so a binding consumer cannot name the type of a field the
+// binding hands them. Reported as a gap in that package; imported from the
+// source here rather than restated locally.
+import type { AttachmentMetadata } from '@dhaam-ccrm/core';
 
 import { ICONS, el, icon } from './dom.js';
 
@@ -229,7 +235,7 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
       tickGlyph.setAttribute('data-state', tick ?? '');
       // The tick's meaning as words. Colour distinguishes `read` from
       // `delivered` visually; this is what distinguishes them otherwise.
-      tickLabel.textContent = presentation === null ? '' : ` ${presentation.label}`;
+      tickLabel.textContent = presentation === null ? '' : ` ${presentation.label}`;
 
       const failed = message.delivery?.state === 'failed';
       retry.hidden = !failed;
@@ -249,7 +255,10 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
  * and the referrer would otherwise leak the host page's URL (which on a
  * food-ordering site contains an order id) to it.
  */
-function renderAttachment(attachment: { url?: string; fileName?: string; mimeType?: string; sizeBytes?: number }): HTMLElement {
+function renderAttachment(attachment: AttachmentMetadata): HTMLElement {
+  // Typed as core's shape but read defensively: this record arrives over the
+  // socket from another participant's client, so the compiler's guarantee is
+  // about our own call sites, not about what the server actually sent.
   const url = typeof attachment.url === 'string' ? attachment.url : '';
   const name = typeof attachment.fileName === 'string' && attachment.fileName !== ''
     ? attachment.fileName
