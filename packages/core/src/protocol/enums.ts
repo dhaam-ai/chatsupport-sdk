@@ -88,14 +88,29 @@ export const isPresenceStatus = enumGuard(PRESENCE_STATUS_VALUES);
 // ---------------------------------------------------------------------------
 
 /**
- * Not currently referenced by any §7.3 frame payload. This PRD scopes the
- * customer/end-user-facing chat client only — agent-internal notes
- * (`INTERNAL` visibility) are an agent-console concern, explicitly out of
- * scope except where they define a wire event this SDK must consume (§2
- * Non-Goals). Modeled here because it is a real, confirmed backend enum
- * (§12.1); wiring it into a message payload would require a spec update
- * establishing that the customer-facing socket ever receives
- * `INTERNAL`-visibility messages at all.
+ * Still not referenced by any §7.3 frame payload, and now deliberately so.
+ *
+ * ── Status: INTERNAL notes are EXPLICITLY DEFERRED, not merely unbuilt ────
+ * v2 now labels a sender from the connection's verified identity, so a staff
+ * member CAN send on this endpoint. Internal notes were considered as part of
+ * that and left out on purpose. The reasoning, so nobody has to re-derive it:
+ *
+ *   • Every message v2 writes is PUBLIC. The server passes no `visibility` to
+ *     `sendMessage`, which defaults to PUBLIC, and no client→server frame
+ *     carries the field — so there is no way to author an INTERNAL note here.
+ *   • The live fan-out is the reason that matters. `message.new` is broadcast
+ *     to every connection joined to the session, with no visibility filter of
+ *     any kind. Replay is filtered (`findSince` is PUBLIC-only by default,
+ *     which is B2's fix), but the live path is not — so the moment an
+ *     INTERNAL note could be authored on this endpoint, it would be pushed
+ *     straight to the customer sitting in the same session. The filter has to
+ *     exist on the fan-out BEFORE the field is writable, not after.
+ *
+ * So: wiring `visibility` into `MessageSendPayload` or `MessagePayload` is a
+ * two-part change — a per-recipient visibility filter in the server's session
+ * fan-out first, then this enum on the wire. Adding the field alone turns a
+ * deferred feature into a data leak. That is the spec update this comment
+ * previously asked for, now stated as the actual precondition.
  */
 export const MESSAGE_VISIBILITY_VALUES = ['PUBLIC', 'INTERNAL'] as const;
 export type MessageVisibility = (typeof MESSAGE_VISIBILITY_VALUES)[number];

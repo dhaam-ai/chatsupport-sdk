@@ -254,6 +254,35 @@ export interface TicketLinkedPayload {
 export interface MessageSendAckData {
   /** The `seq` the server assigned this message (D2). */
   seq: number;
+
+  /**
+   * The sender label the server actually recorded, derived from the verified
+   * identity on the connection.
+   *
+   * ── Why the ack carries this at all ────────────────────────────────────
+   * The server excludes the sender from its own `message.new` fan-out (the
+   * ack already told it, and D1 means there is no id to reconcile), so this
+   * ack is the ONLY frame that can tell a client how its message was
+   * labelled. `LocalSender` (messages/types.ts) is configured by the embedding app for
+   * the optimistic echo, and an app that configures `'AGENT'` while holding a
+   * customer token would otherwise keep a wrong local label indefinitely,
+   * with nothing to correct it against.
+   *
+   * ── Read this before adding a role to a client→server frame ────────────
+   * The direction is one-way on purpose. The server REPORTS the role it
+   * derived from the token's claims; it never ACCEPTS one. There is no role
+   * field on `connection.hello`, on {@link MessageSendPayload}, or anywhere
+   * else in the client→server half of this catalog, and adding one would
+   * rebuild v1's `?role=AGENT` query-parameter hole — where any client that
+   * typed the word AGENT was served as an agent. A staff sender is
+   * expressible on this protocol precisely because the wire does not carry
+   * the claim.
+   *
+   * Optional so that a client built against this version still works against
+   * a server that predates the field; treat `undefined` as "no correction
+   * available", never as CUSTOMER.
+   */
+  senderType?: SenderType;
 }
 
 /** Extra data on a successful ack of `presence.query`. */

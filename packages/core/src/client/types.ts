@@ -176,6 +176,21 @@ export interface ChatClientConfig {
    * at construction, to seed presence/typing/watermark identity as well as
    * message labeling. See the T13 report for what happens if the thunk needs
    * data that is only available after `connect()`.
+   *
+   * ── Staff (agent / merchant) clients ───────────────────────────────────
+   * `LocalSender.senderType` is a full `SenderType` (protocol/enums.ts), so `'AGENT'` is
+   * already expressible here and an agent or merchant app needs no new field
+   * to say who it is. What this value is NOT is a claim the server honours:
+   * the server derives the recorded `senderType` from the connection's
+   * verified token claims alone, and there is no role field on any
+   * client→server frame for it to read instead. Configuring `'AGENT'` while
+   * holding a customer token therefore does not make this client an agent —
+   * it only mislabels the local optimistic echo, which the server corrects
+   * via `senderType` on the `message.send` ack (`MessageSendAckData` in
+   * protocol/frames.ts).
+   *
+   * So: set this to match the token the host will hand to `getToken`. It is a
+   * rendering hint for the local echo, never an authorization input.
    */
   readonly localSender: LocalSender | (() => LocalSender);
 

@@ -356,6 +356,27 @@ describe('validateFrame — tolerates unknown extra fields (forward compatible)'
     const result = validateFrame({ v: 1, t: 'session.join', id: ULID_A, ts: TS, d: { sessionId: 'sess_1', futureHint: 42 } });
     expect(result.ok).toBe(true);
   });
+
+  // Accepting an extra field and PRESERVING it are different guarantees, and
+  // only the second one is usable. `MessageSendAckData.senderType` is the
+  // concrete case: the server excludes a sender from its own `message.new`
+  // fan-out, so this ack is the only frame that tells a client how its message
+  // was actually labelled — a validator that rebuilt `d` as a bare
+  // `{ ok: true }` would accept the frame and silently drop the answer.
+  it("preserves the send-ack's extra data, so senderType survives validation", () => {
+    const result = validateFrame({
+      v: 1,
+      t: 'ack',
+      id: ULID_B,
+      ref: ULID_A,
+      ts: TS,
+      d: { ok: true, seq: 5, senderType: 'AGENT' },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.frame.d).toEqual({ ok: true, seq: 5, senderType: 'AGENT' });
+  });
 });
 
 // -----------------------------------------------------------------------------
