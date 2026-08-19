@@ -137,8 +137,22 @@ class ResumeTracker {
 /// — so this is deliberately nullable rather than throwing. In practice every
 /// frame in a `connection.ack.d.replay` array is a `message.new`, because the
 /// server builds that list from message rows alone.
+///
+/// ── Why this switches on `t` and never probes for a `seq` key ─────────────
+///
+/// `connection.ack.d.seq` is ALSO an integer named `seq`, and it is not this
+/// frame's position in the stream — it is the resume ANCHOR, the seq the ack
+/// is current as of, which by definition equals the last message replayed
+/// alongside it. A structural `d['seq']` probe therefore reads every
+/// `connection.ack` as a sequenced frame carrying the seq of the message
+/// immediately before it, so a host that filters this stream with [seqOf]
+/// renders that message a second time on every single reconnect — the exact
+/// duplicate D1's permanent-ULID dedup exists to make impossible. Nothing
+/// else on the server→client half declares a `seq`: `message.delivered`
+/// carries `deliveredUpToSeq` and `message.read` carries only `readAt`,
+/// both watermarks rather than positions.
 int? seqOf(ServerFrame frame) {
-  if (frame is! PushFrame) return null;
+  if (frame is! PushFrame || frame.type != 'message.new') return null;
   final Object? seq = frame.d['seq'];
   if (seq is int) return seq;
   // Every Dart number is a double on Flutter Web.

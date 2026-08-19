@@ -83,7 +83,8 @@ void main() {
     test('a hole in the middle of a replay is caught by observe', () {
       final ResumeTracker tracker = ResumeTracker()..settleAck(10);
       expect(tracker.observe(11), isNull);
-      expect(tracker.observe(14), equals(const ResumeGap(fromSeq: 12, toSeq: 13)));
+      expect(
+          tracker.observe(14), equals(const ResumeGap(fromSeq: 12, toSeq: 13)));
       expect(tracker.settleAck(14), isNull);
     });
 
@@ -121,7 +122,8 @@ void main() {
 
   group('seqOf', () {
     test('reads seq from a sequenced push frame', () {
-      expect(seqOf(push('message.new', <String, Object?>{'seq': 9})), equals(9));
+      expect(
+          seqOf(push('message.new', <String, Object?>{'seq': 9})), equals(9));
     });
 
     test('accepts the double form Flutter Web produces', () {
@@ -134,6 +136,32 @@ void main() {
     test('returns null for an unsequenced frame rather than throwing', () {
       // typing.start carries no seq. Only some payloads are sequenced.
       expect(seqOf(push('typing.start', <String, Object?>{})), isNull);
+    });
+
+    test('never reads connection.ack.d.seq, which is an anchor not a position',
+        () {
+      // `connection.ack.d.seq` is the resume ANCHOR, and it equals the seq of
+      // the last message replayed alongside it. Read structurally it makes the
+      // ack look like a second copy of that message, so a host filtering the
+      // frames stream on seqOf renders it twice on every reconnect.
+      expect(
+        seqOf(push('connection.ack', <String, Object?>{'seq': 12})),
+        isNull,
+      );
+    });
+
+    test('never reads the message.delivered watermark as a position', () {
+      // deliveredUpToSeq is a watermark; message.delivered has no position of
+      // its own, and treating one as the other would advance the anchor past
+      // frames that were never delivered.
+      expect(
+        seqOf(push('message.delivered', <String, Object?>{
+          'participantId': 'u1',
+          'deliveredUpToSeq': 40,
+          'deliveredAt': '2026-08-19T12:00:00.000Z',
+        })),
+        isNull,
+      );
     });
 
     test('returns null for a non-push frame', () {
