@@ -33,6 +33,40 @@ export type { UseUnreadCountResult } from './use-unread-count.js';
 export { useChatError } from './use-chat-error.js';
 
 // ---------------------------------------------------------------------------
+// DOM-side hooks. Unlike everything above, these are not selectors over
+// `ChatState` — they are the browser-facing half a chat UI needs and core
+// deliberately does not own (§4: core has "ZERO framework, UI, and DOM-document
+// dependencies"). `WatermarkTracker` states the split for the read/delivery
+// pair directly: "core decides WHAT to report; the caller decides WHEN",
+// because "whether a row is on screen is a DOM question core cannot answer
+// from a state snapshot."
+//
+// All three are SSR-safe: no `window`/`navigator`/`IntersectionObserver`/
+// `MediaRecorder`/`AudioContext` is touched at module scope or during a render
+// pass — only inside effects and event handlers, which never run on a server.
+// ---------------------------------------------------------------------------
+
+export { DEFAULT_READ_DEBOUNCE_MS, DEFAULT_READ_THRESHOLD, useReadTracker } from './use-read-tracker.js';
+export type { UseReadTrackerOptions, UseReadTrackerResult } from './use-read-tracker.js';
+
+export { DEFAULT_AMPLITUDE_INTERVAL_MS, DEFAULT_VOICE_MIME_TYPES, useVoiceRecorder } from './use-voice-recorder.js';
+export type {
+  UseVoiceRecorderOptions,
+  UseVoiceRecorderResult,
+  VoiceRecorderError,
+  VoiceRecorderErrorCode,
+  VoiceRecording,
+} from './use-voice-recorder.js';
+
+export { computeWaveformPeaks, DEFAULT_WAVEFORM_BUCKETS, useAudioWaveform } from './use-audio-waveform.js';
+export type {
+  AudioWaveformErrorCode,
+  AudioWaveformStatus,
+  UseAudioWaveformOptions,
+  UseAudioWaveformResult,
+} from './use-audio-waveform.js';
+
+// ---------------------------------------------------------------------------
 // Re-exported from @dhaam-ccrm/core so a consumer never needs a second
 // `dependencies` entry (or a deep import) just to type a prop as
 // `ChatState`/`ChatMessage`/etc. — the same shapes this package's own hooks
