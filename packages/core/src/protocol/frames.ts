@@ -23,9 +23,19 @@ export type EmptyPayload = Record<string, never>;
  * First frame after WS open (§7.3, §10.2, §10.4). `resumeFrom` carries the
  * last applied `seq` per D2 (§0.5) — omit on a genuinely first connection,
  * where there is no prior applied frame to resume from.
+ *
+ * `token` / `guestId` — exactly one must be present (T9's Gap A amendment to
+ * the original PRD, which only specified `token` and had no guest/anonymous
+ * path at all — see `PLAN-v2-core-adoption.md`). `token` is an authenticated
+ * connection's access token (§10.3/§10.4). `guestId` is a client-generated,
+ * client-persisted id for an anonymous connection — never a server-issued
+ * credential. A connection started with `guestId` upgrades to authenticated
+ * later via `connection.reauth` carrying a real `token` on the same open
+ * socket, not by sending a second `connection.hello`.
  */
 export interface ConnectionHelloPayload {
-  token: string;
+  token?: string;
+  guestId?: string;
   publishableKey: string;
 
   /** Highest protocol version this client supports (§7.5). */

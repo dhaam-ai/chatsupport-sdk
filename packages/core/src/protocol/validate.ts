@@ -279,8 +279,18 @@ function validatePresenceEntry(value: unknown, path: string, frameType: string):
 
 function validateConnectionHello(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+
+  // Exactly one of token/guestId — an authenticated connection or a guest
+  // one, never both and never neither (Gap A amendment, see frames.ts).
+  const hasToken = isNonEmptyString(d['token']);
+  const hasGuestId = isNonEmptyString(d['guestId']);
+  if (hasToken === hasGuestId) {
+    return fail(path, 'exactly one of token or guestId must be a non-empty string', frameType);
+  }
+
   return (
-    requireField(d, 'token', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    optionalField(d, 'token', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    optionalField(d, 'guestId', isNonEmptyString, path, 'a non-empty string', frameType) ??
     requireField(d, 'publishableKey', isNonEmptyString, path, 'a non-empty string', frameType) ??
     requireField(d, 'protocolVersion', isInteger, path, 'an integer', frameType) ??
     optionalField(d, 'resumeFrom', isInteger, path, 'an integer', frameType)

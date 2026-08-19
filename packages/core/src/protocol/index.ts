@@ -11,6 +11,8 @@
 
 export type { AckFrame, ErrorFrame, ErrorPayload, Frame } from './envelope.js';
 
+export { CORE_PROTOCOL_VERSION } from './version.js';
+
 export { ERROR_CODE_VALUES, isErrorCode } from './errors.js';
 export type { ErrorCode } from './errors.js';
 

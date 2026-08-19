@@ -1,11 +1,12 @@
 {
-  "name": "@dhaam-ccrm/core",
+  "name": "@dhaam-ccrm/js",
   "version": "0.0.0",
-  "description": "Framework-agnostic chat SDK core — transport, auth, observable state, offline queue. Zero UI dependencies.",
+  "description": "Vanilla-JS binding for @dhaam-ccrm/core — adds a browser <script>-tag build (global `ChatSDK`) on top of core's ESM/CJS-only output. No new logic: same createChatClient, packaged for environments without a bundler.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "unpkg": "./dist/chat-sdk.global.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -25,16 +26,14 @@
   "keywords": [
     "chat",
     "sdk",
-    "websocket",
-    "framework-agnostic"
+    "vanilla-js",
+    "browser"
   ],
   "license": "MIT",
   "publishConfig": {
     "access": "public"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@types/ws": "^8.5.13",
-    "ws": "^8.18.0"
+    "@dhaam-ccrm/core": "workspace:*"
   }
 }

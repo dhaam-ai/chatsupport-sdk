@@ -31,6 +31,10 @@ describe('validateFrame — valid frames of every type pass', () => {
       'connection.hello with resumeFrom',
       { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { token: 'tok', publishableKey: 'pk_test_1', protocolVersion: 1, resumeFrom: 41 } },
     ],
+    [
+      'connection.hello as a guest (guestId, no token)',
+      { v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d: { guestId: 'guest_abc123', publishableKey: 'pk_test_1', protocolVersion: 1 } },
+    ],
     ['connection.reauth', { v: 1, t: 'connection.reauth', id: ULID_A, ts: TS, d: { token: 'tok2' } }],
     ['session.join', { v: 1, t: 'session.join', id: ULID_A, ts: TS, d: { sessionId: 'sess_1' } }],
     ['session.leave', { v: 1, t: 'session.leave', id: ULID_A, ts: TS, d: {} }],
@@ -209,6 +213,30 @@ describe('validateFrame — malformed frames rejected with a useful reason', () 
     const result = validateFrame({ v: 1, t: 'message.send', id: ULID_A, ts: TS, d: {} });
     expect(result.ok).toBe(false);
     expect((result as Record<string, unknown>)['frame']).toBeUndefined();
+  });
+
+  it('rejects a connection.hello with neither token nor guestId', () => {
+    const result = validateFrame({
+      v: 1,
+      t: 'connection.hello',
+      id: ULID_A,
+      ts: TS,
+      d: { publishableKey: 'pk_test_1', protocolVersion: 1 },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/exactly one of token or guestId/);
+  });
+
+  it('rejects a connection.hello with both token and guestId', () => {
+    const result = validateFrame({
+      v: 1,
+      t: 'connection.hello',
+      id: ULID_A,
+      ts: TS,
+      d: { token: 'tok', guestId: 'guest_abc', publishableKey: 'pk_test_1', protocolVersion: 1 },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/exactly one of token or guestId/);
   });
 
   it('rejects an ack frame with a missing ref', () => {

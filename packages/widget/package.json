@@ -1,0 +1,30 @@
+{
+  "name": "@dhaam-ccrm/widget",
+  "version": "0.0.0",
+  "description": "Framework-agnostic, vanilla-DOM chat widget (launcher + window + messages + composer) built on @dhaam-ccrm/core. No React, no dependency on any UI framework — works via a plain <script> tag or as an ESM/CJS import in any app.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "unpkg": "./dist/chat-widget.global.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["chat", "sdk", "widget", "vanilla-js", "browser"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "devDependencies": {
+    "@dhaam-ccrm/core": "workspace:*"
+  }
+}
