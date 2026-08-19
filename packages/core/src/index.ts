@@ -133,6 +133,14 @@ export type { MessageDelivery } from './state/types.js';
 export { compareBySeq, prependPage, sortMessages, upsertMessage } from './messages/index.js';
 export { DEFAULT_PAGE_SIZE, NoActiveSessionError } from './messages/index.js';
 
+// The canonical tick derivation. Every binding renders ticks from THIS — a
+// binding computing its own is the divergence the conformance suite exists to
+// catch, and v1's version conflated presence with delivery. It was exported
+// from messages/index.ts but never promoted here, and core's single "." exports
+// entry blocks any subpath workaround, so no binding could reach it at all.
+export { MESSAGE_TICK_STATES, deriveTickState, deriveTickStateFromState } from './messages/index.js';
+export type { MessageTickState } from './messages/index.js';
+
 // ---------------------------------------------------------------------------
 // queue/ — SendFailureReason only; see the module header above.
 // ---------------------------------------------------------------------------

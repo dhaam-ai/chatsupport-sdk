@@ -98,6 +98,14 @@ const PUBLIC_SURFACE: readonly string[] = [
   'prependPage',
   'sortMessages',
   'upsertMessage',
+  // The canonical tick derivation. Deliberately public: every binding renders
+  // ticks from these, and a binding computing its own is the divergence the
+  // conformance suite exists to catch. They were exported from messages/index.ts
+  // but never promoted here, and core's single "." exports entry blocks any
+  // subpath workaround — so no binding could reach them at all.
+  'MESSAGE_TICK_STATES',
+  'deriveTickState',
+  'deriveTickStateFromState',
 ];
 
 describe('§15 guard: the public barrel exports exactly the reviewed surface', () => {
