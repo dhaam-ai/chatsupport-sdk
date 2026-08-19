@@ -246,7 +246,8 @@ void main() {
       }
       await flush();
 
-      expect(events.map((TypingEvent e) => e.isTyping), equals(<bool>[true, false]));
+      expect(events.map((TypingEvent e) => e.isTyping),
+          equals(<bool>[true, false]));
       expect(events.first.participantId, equals('p1'));
 
       await harness.client.dispose();

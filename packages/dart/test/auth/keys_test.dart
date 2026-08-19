@@ -140,7 +140,8 @@ void main() {
 
   group('never leaks the value', () {
     test('toString names the environment and redacts the key', () {
-      final PublishableKey parsed = PublishableKey.parse(key(live, 'SECRETBODY'));
+      final PublishableKey parsed =
+          PublishableKey.parse(key(live, 'SECRETBODY'));
       final String text = parsed.toString();
       expect(text, contains('redacted'));
       expect(text, contains('live'));

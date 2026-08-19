@@ -100,7 +100,11 @@ void main() {
       // Routine on a phone: NTP correction, or the user changing the device
       // time. Ordering is lost — `seq` is the wire ordering key (D2), not this
       // — but ids must stay well-formed and distinct.
-      final List<int> clock = <int>[1700000000000, 1699999999000, 1700000000001];
+      final List<int> clock = <int>[
+        1700000000000,
+        1699999999000,
+        1700000000001
+      ];
       int index = 0;
       final UlidGenerator generator = UlidGenerator(
         now: () => clock[index++],

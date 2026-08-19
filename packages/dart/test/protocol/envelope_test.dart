@@ -71,10 +71,12 @@ void main() {
       expect(frame, isA<PushFrame>());
       final PushFrame push = frame as PushFrame;
       expect(push.type, equals('message.new'));
-      expect(push.ts, equals(DateTime.fromMillisecondsSinceEpoch(
-        1700000000000,
-        isUtc: true,
-      )));
+      expect(
+          push.ts,
+          equals(DateTime.fromMillisecondsSinceEpoch(
+            1700000000000,
+            isUtc: true,
+          )));
     });
 
     test('rejects an ISO-8601 string in the envelope ts', () {
@@ -231,7 +233,8 @@ void main() {
         ),
       );
       expect(frame, isA<AckFailureFrame>());
-      expect((frame as AckFailureFrame).error.code, equals(ErrorCode.rateLimited));
+      expect(
+          (frame as AckFailureFrame).error.code, equals(ErrorCode.rateLimited));
       expect(frame.error.retryable, isTrue);
     });
 

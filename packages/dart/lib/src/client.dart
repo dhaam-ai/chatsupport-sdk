@@ -263,7 +263,8 @@ class ChatClient {
   /// Sets presence (§6.5).
   void setPresence(PresenceStatus status) {
     _connection.send(
-      _connection.buildFrame('presence.set', presenceSetPayload(status: status)),
+      _connection.buildFrame(
+          'presence.set', presenceSetPayload(status: status)),
     );
   }
 

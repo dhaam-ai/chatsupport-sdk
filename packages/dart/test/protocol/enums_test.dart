@@ -22,7 +22,8 @@ void main() {
     });
 
     test('round-trips every value of every enum', () {
-      void check<T extends WireEnum>(List<T> values, T? Function(String) parse) {
+      void check<T extends WireEnum>(
+          List<T> values, T? Function(String) parse) {
         for (final T value in values) {
           expect(parse(value.wire), same(value));
         }

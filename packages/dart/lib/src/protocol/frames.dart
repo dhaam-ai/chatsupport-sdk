@@ -207,8 +207,8 @@ class ParticipantSnapshot {
           'ParticipantType',
           frameType: frameType,
         ),
-        lastReadAt:
-            optionalIsoTimestamp(json, 'lastReadAt', path, frameType: frameType),
+        lastReadAt: optionalIsoTimestamp(json, 'lastReadAt', path,
+            frameType: frameType),
       );
 
   final String participantId;
@@ -596,8 +596,7 @@ class AgentEvent {
 
   factory AgentEvent.fromJson(Map<String, Object?> d, String frameType) =>
       AgentEvent(
-        agentId:
-            requireNonEmptyString(d, 'agentId', 'd', frameType: frameType),
+        agentId: requireNonEmptyString(d, 'agentId', 'd', frameType: frameType),
         agentName: optionalString(d, 'agentName', 'd', frameType: frameType),
       );
 

@@ -73,7 +73,8 @@ void main() {
       expect(d['content'], equals('hi'));
     });
 
-    test('message.send puts an attachment at the top level, not in metadata', () {
+    test('message.send puts an attachment at the top level, not in metadata',
+        () {
       final Map<String, Object?> d = messageSendPayload(
         content: '',
         type: MessageType.image,
@@ -87,7 +88,8 @@ void main() {
         metadata: const <String, Object?>{'caption': 'x'},
       );
       expect(d.containsKey('attachment'), isTrue);
-      final Map<String, Object?> metadata = d['metadata']! as Map<String, Object?>;
+      final Map<String, Object?> metadata =
+          d['metadata']! as Map<String, Object?>;
       expect(metadata.containsKey('attachment'), isFalse);
     });
 
@@ -101,7 +103,8 @@ void main() {
 
   group('ChatMessage', () {
     test('decodes and exposes seq as the ordering key', () {
-      final ChatMessage message = ChatMessage.fromJson(messageJson(seq: 7), 'd');
+      final ChatMessage message =
+          ChatMessage.fromJson(messageJson(seq: 7), 'd');
       expect(message.seq, equals(7));
       expect(message.senderType, equals(SenderType.customer));
       expect(message.createdAt.isUtc, isTrue);
@@ -199,7 +202,8 @@ void main() {
     });
 
     test('rejects a session status v1 could not model', () {
-      final Map<String, Object?> session = sessionJson()..['status'] = 'ESCALATED';
+      final Map<String, Object?> session = sessionJson()
+        ..['status'] = 'ESCALATED';
       expect(
         () => ConnectionAck.fromJson(<String, Object?>{
           'protocolVersion': 1,
