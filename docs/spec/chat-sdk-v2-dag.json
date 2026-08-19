@@ -212,7 +212,8 @@
       ],
       "skills_needed": [
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T18",
@@ -236,7 +237,8 @@
       ],
       "skills_needed": [
         "incremental-implementation"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T20",
@@ -247,7 +249,8 @@
       ],
       "skills_needed": [
         "frontend-ui-engineering"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T21",
@@ -258,7 +261,8 @@
       ],
       "skills_needed": [
         "frontend-ui-engineering"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T22",
@@ -269,7 +273,8 @@
       ],
       "skills_needed": [
         "frontend-ui-engineering"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T24",
@@ -281,7 +286,9 @@
       ],
       "skills_needed": [
         "documentation-and-adrs"
-      ]
+      ],
+      "status": "partial",
+      "resolution": "ADRs for D1-D4 and the v1 migration guide are written. Deleting src/ and dist/ is deliberately deferred: the owner keeps v1 as the visual reference for checking the new UI against what v1 actually rendered."
     },
     {
       "id": "B1",
@@ -445,5 +452,5 @@
     "branch": "sprint1-chat-service-node",
     "note": "Separate git repo. B-nodes land there, not in the SDK repo."
   },
-  "status_note": "status:done reflects what is merged and verified. Remaining: T17 conformance suite gating T20/T21/T22 (Vue, Angular, vanilla), T19 generated Python/Go clients, T24 v1 removal plus ADRs. Rich messaging (delivery ticks, voice notes, file preview) is in flight and not represented as DAG nodes."
+  "status_note": "All 35 nodes are built. T24 is partial by choice -- v1 is kept as a UI reference. Work NOT represented as DAG nodes and still open: the embeddable widget is built but never exercised in a browser; the Dart client for Flutter; delivery ticks, voice notes and file preview; and no agent/staff UI exists, so customers can chat but staff have nowhere to reply."
 }
