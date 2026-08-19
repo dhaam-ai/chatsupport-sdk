@@ -16,6 +16,20 @@ Section 12 ("Grounded in v1 Reality") is load-bearing: every wire-protocol and l
 
 ---
 
+## 0.4 Open-question status (2026-08-19)
+
+| # | Question | Status |
+|---|---|---|
+| 1 | Is the client ULID the permanent message id? | **Closed — D1.** It is. No id-swap path exists. |
+| 2 | Inline replay or REST cursor on resume? | **Closed — D2.** Inline, capped at 200 frames; over-cap sends no replay plus the true `last_seq`, which the client reads as one gap. |
+| 3 | Is in-place `connection.reauth` feasible? | **Closed — D3.** Implemented and tested; transparent reconnect remains the fallback. |
+| 4 | Can the backend emit string enums? | **Closed — D4.** It does, on the v2 path. Core ships zero coercion. |
+| 5 | What is `NEW_MESSAGE_NOTIFICATION` for? | **Open.** Still no v2 frame; its purpose is not recoverable from v1 alone. |
+| 6 | Should `/tokens` absorb `mapCustomer()`? | **Open.** Would make identity one network call instead of two. |
+| 7 | Proxied upload or presigned URLs? | **Open.** The OpenAPI models the proxied flow v1 uses; presigned is noted, not modelled. |
+| 8 | Per-message receipts or watermarks only? | **Closing now.** Delivery adopts the watermark model — `message.markDelivered`/`message.delivered` keyed on `seq`, mirroring read. The `message_receipts` table finally carries data. |
+| 9 | Offline-queue retention bounds | **Closed.** 24h / 200 entries, both overridable, documented at the config. |
+
 ## 0.5 Decisions Log
 
 Resolved 2026-08-17 by the product owner. These close Open Questions 1–4 (§18) and are **binding constraints** on the plan and implementation, not proposals. Backend implementation work is required for all four and must be tracked as backend-side tasks.

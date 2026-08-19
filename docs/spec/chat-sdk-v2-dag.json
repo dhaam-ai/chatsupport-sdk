@@ -9,7 +9,8 @@
       "needs": [],
       "skills_needed": [
         "api-and-interface-design"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T2",
@@ -18,7 +19,8 @@
       "needs": [],
       "skills_needed": [
         "api-and-interface-design"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T4",
@@ -27,7 +29,8 @@
       "needs": [],
       "skills_needed": [
         "incremental-implementation"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T5",
@@ -36,7 +39,8 @@
       "needs": [],
       "skills_needed": [
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T3",
@@ -48,7 +52,8 @@
       "skills_needed": [
         "incremental-implementation",
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T7",
@@ -61,7 +66,8 @@
       "skills_needed": [
         "incremental-implementation",
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T8",
@@ -74,7 +80,8 @@
       "skills_needed": [
         "incremental-implementation",
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T12",
@@ -85,7 +92,8 @@
       ],
       "skills_needed": [
         "incremental-implementation"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T9",
@@ -97,7 +105,8 @@
       "skills_needed": [
         "incremental-implementation",
         "security-and-hardening"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T10",
@@ -110,7 +119,8 @@
       "skills_needed": [
         "incremental-implementation",
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T11",
@@ -123,7 +133,8 @@
       "skills_needed": [
         "incremental-implementation",
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T16",
@@ -136,7 +147,8 @@
       "skills_needed": [
         "incremental-implementation",
         "security-and-hardening"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T13",
@@ -150,7 +162,8 @@
       "skills_needed": [
         "api-and-interface-design",
         "incremental-implementation"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T14",
@@ -162,7 +175,8 @@
       "skills_needed": [
         "security-and-hardening",
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T15",
@@ -174,7 +188,8 @@
       "skills_needed": [
         "frontend-ui-engineering",
         "incremental-implementation"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T23",
@@ -185,7 +200,8 @@
       ],
       "skills_needed": [
         "ci-cd-and-automation"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T17",
@@ -207,7 +223,8 @@
       ],
       "skills_needed": [
         "frontend-ui-engineering"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "T19",
@@ -274,7 +291,8 @@
       "skills_needed": [
         "incremental-implementation",
         "api-and-interface-design"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "B2",
@@ -286,7 +304,8 @@
       "skills_needed": [
         "incremental-implementation",
         "test-driven-development"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "B3",
@@ -323,7 +342,8 @@
       "skills_needed": [
         "security-and-hardening",
         "incremental-implementation"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "B6",
@@ -350,7 +370,8 @@
         "incremental-implementation",
         "test-driven-development"
       ],
-      "blocker": "v2 cannot serve production on more than one replica until this lands. socket.io v1 already has this via @socket.io/redis-adapter ^8.3.0."
+      "blocker": "v2 cannot serve production on more than one replica until this lands. socket.io v1 already has this via @socket.io/redis-adapter ^8.3.0.",
+      "status": "done"
     },
     {
       "id": "B8",
@@ -362,7 +383,8 @@
       "skills_needed": [
         "security-and-hardening"
       ],
-      "blocker": "chat.routes.ts mounts 8 routes with no auth and reads tenantId/customerId from the request body. Not yet live, so this is fixed outright rather than behind a compatibility flag."
+      "blocker": "chat.routes.ts mounts 8 routes with no auth and reads tenantId/customerId from the request body. Not yet live, so this is fixed outright rather than behind a compatibility flag.",
+      "status": "done"
     },
     {
       "id": "B9",
@@ -374,7 +396,8 @@
       "skills_needed": [
         "security-and-hardening"
       ],
-      "blocker": "socket.io handshake grants roles:['agent'] on any tenant with no token when role=AGENT is passed in the query. v2 session.join checks customerId but not tenantId."
+      "blocker": "socket.io handshake grants roles:['agent'] on any tenant with no token when role=AGENT is passed in the query. v2 session.join checks customerId but not tenantId.",
+      "status": "done"
     },
     {
       "id": "B10",
@@ -386,7 +409,8 @@
       "skills_needed": [
         "security-and-hardening"
       ],
-      "blocker": "B9 narrowed the handshake to authenticated callers, but v1 agent JOIN_SESSION/AGENT_JOIN still has no tenant or ownership check, so any authenticated agent reaches any tenant's session."
+      "blocker": "B9 narrowed the handshake to authenticated callers, but v1 agent JOIN_SESSION/AGENT_JOIN still has no tenant or ownership check, so any authenticated agent reaches any tenant's session.",
+      "status": "done"
     },
     {
       "id": "B11",
@@ -398,7 +422,8 @@
       "skills_needed": [
         "incremental-implementation"
       ],
-      "blocker": "chat_messages has @@index([chatSessionId, seq]) but no @@unique. Correctness currently rests entirely on Postgres row-lock discipline. Migration against live data, so it needs its own task."
+      "blocker": "chat_messages has @@index([chatSessionId, seq]) but no @@unique. Correctness currently rests entirely on Postgres row-lock discipline. Migration against live data, so it needs its own task.",
+      "status": "done"
     },
     {
       "id": "B12",
@@ -411,12 +436,14 @@
         "security-and-hardening",
         "incremental-implementation"
       ],
-      "blocker": "sk_live_/pk_live_ is byte-identical to Stripe's format. GitHub push protection blocked a push on synthetic test fixtures; customers' scanners will misattribute real keys, and a genuine leak would be triaged to the wrong vendor."
+      "blocker": "sk_live_/pk_live_ is byte-identical to Stripe's format. GitHub push protection blocked a push on synthetic test fixtures; customers' scanners will misattribute real keys, and a genuine leak would be triaged to the wrong vendor.",
+      "status": "done"
     }
   ],
   "backend_repo": {
     "path": "../chat-service-node",
     "branch": "sprint1-chat-service-node",
     "note": "Separate git repo. B-nodes land there, not in the SDK repo."
-  }
+  },
+  "status_note": "status:done reflects what is merged and verified. Remaining: T17 conformance suite gating T20/T21/T22 (Vue, Angular, vanilla), T19 generated Python/Go clients, T24 v1 removal plus ADRs. Rich messaging (delivery ticks, voice notes, file preview) is in flight and not represented as DAG nodes."
 }
