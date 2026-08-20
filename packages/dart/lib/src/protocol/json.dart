@@ -80,6 +80,35 @@ String? optionalString(
   return value;
 }
 
+/// Reads a string that may be ABSENT, but which must be a non-empty string
+/// whenever the key is present at all.
+///
+/// Deliberately stricter than [optionalString], which folds an explicit `null`
+/// into the same answer as a missing key. For the identity fields added by the
+/// v2 wire contract — `ParticipantSnapshot.displayName` — absent and null are
+/// different claims and the server only ever makes the first: absent means "no
+/// display name was resolved for this participant, render your own label",
+/// while `null` or `""` is a name-shaped hole that a binding will happily
+/// render as an empty header and nobody will notice until a customer does.
+/// Refusing them here is the only place that decision can be made once.
+String? optionalNonEmptyString(
+  Map<String, Object?> object,
+  String key,
+  String path, {
+  String? frameType,
+}) {
+  if (!object.containsKey(key)) return null;
+  final Object? value = object[key];
+  if (value is! String || value.isEmpty) {
+    throw FrameDecodeException(
+      '$path.$key',
+      'must be a non-empty string when present',
+      frameType: frameType,
+    );
+  }
+  return value;
+}
+
 /// Requires `object[key]` to be an integer.
 ///
 /// Accepts a JSON number that happens to be integral (`3.0`) as well as a Dart

@@ -168,7 +168,7 @@ void main() {
 
       await harness.socket.drop();
       await flush();
-      harness.scheduler.advance(const Duration(seconds: 60));
+      await harness.scheduler.advance(const Duration(seconds: 60));
       await flush();
 
       final Map<String, Object?> d =
@@ -193,7 +193,7 @@ void main() {
       await flush();
       expect(harness.controller.state, equals(ConnectionState.authenticating));
 
-      harness.scheduler.advance(const Duration(seconds: 11));
+      await harness.scheduler.advance(const Duration(seconds: 11));
       await flush();
 
       // The timeout must hand over to `reconnecting` — §8.1's backoff-pending
@@ -319,7 +319,11 @@ void main() {
         await harness.socket.drop();
         await flush();
         expect(harness.controller.state, equals(ConnectionState.reconnecting));
-        harness.scheduler.advance(const Duration(seconds: 60));
+        // Exactly the retry, not "a minute of whatever else is armed": each
+        // attempt now carries a connect deadline and a handshake deadline, and
+        // a generous advance would run those too and re-fail the attempt this
+        // line is trying to let succeed.
+        await harness.scheduler.advanceToNextTimer();
         await flush();
         harness.socket.deliver(ackJson());
         await flush();
@@ -364,7 +368,7 @@ void main() {
       await flush();
       expect(harness.controller.state, equals(ConnectionState.closed));
 
-      harness.scheduler.advance(const Duration(minutes: 5));
+      await harness.scheduler.advance(const Duration(minutes: 5));
       await flush();
       expect(harness.sockets.length, equals(1));
       expect(harness.controller.state, equals(ConnectionState.closed));
@@ -382,7 +386,11 @@ void main() {
       for (int i = 0; i < 3; i++) {
         harness.socket.deliver(errorJson('AUTH_INVALID'));
         await flush();
-        harness.scheduler.advance(const Duration(seconds: 60));
+        // The retry and nothing after it — see the note in the reconnect
+        // group. Running the fresh attempt's handshake deadline as well would
+        // turn the next AUTH_INVALID into a transport reconnect and the auth
+        // counter would never reach its cap.
+        await harness.scheduler.advanceToNextTimer();
         await flush();
       }
 
@@ -398,9 +406,9 @@ void main() {
           Harness(getToken: () async => throw StateError('no'));
       unawaited(harness.controller.connect().catchError((Object _) {}));
       await flush();
-      harness.scheduler.advance(const Duration(seconds: 60));
+      await harness.scheduler.advance(const Duration(seconds: 60));
       await flush();
-      harness.scheduler.advance(const Duration(seconds: 60));
+      await harness.scheduler.advance(const Duration(seconds: 60));
       await flush();
 
       expect(harness.controller.state, equals(ConnectionState.suspended));
@@ -413,9 +421,9 @@ void main() {
       final Harness harness = Harness(getToken: () async => '');
       unawaited(harness.controller.connect().catchError((Object _) {}));
       await flush();
-      harness.scheduler.advance(const Duration(seconds: 60));
+      await harness.scheduler.advance(const Duration(seconds: 60));
       await flush();
-      harness.scheduler.advance(const Duration(seconds: 60));
+      await harness.scheduler.advance(const Duration(seconds: 60));
       await flush();
 
       expect(harness.controller.state, equals(ConnectionState.suspended));
@@ -433,7 +441,11 @@ void main() {
       for (int i = 0; i < 3; i++) {
         harness.socket.deliver(errorJson('AUTH_INVALID'));
         await flush();
-        harness.scheduler.advance(const Duration(seconds: 60));
+        // The retry and nothing after it — see the note in the reconnect
+        // group. Running the fresh attempt's handshake deadline as well would
+        // turn the next AUTH_INVALID into a transport reconnect and the auth
+        // counter would never reach its cap.
+        await harness.scheduler.advanceToNextTimer();
         await flush();
       }
       expect(harness.controller.state, equals(ConnectionState.suspended));
@@ -455,7 +467,7 @@ void main() {
       await flush();
       harness.socket.deliver(errorJson('AUTH_EXPIRED', retryable: true));
       await flush();
-      harness.scheduler.advance(const Duration(seconds: 60));
+      await harness.scheduler.advance(const Duration(seconds: 60));
       await flush();
 
       harness.socket.deliver(ackJson());
@@ -483,7 +495,7 @@ void main() {
         equals(SuspendReason.protocolUnsupported),
       );
 
-      harness.scheduler.advance(const Duration(minutes: 10));
+      await harness.scheduler.advance(const Duration(minutes: 10));
       await flush();
       expect(harness.sockets.length, equals(1));
 
@@ -559,7 +571,7 @@ void main() {
       await flush();
 
       final int before = harness.socket.sent.length;
-      harness.scheduler.advance(const Duration(seconds: 26));
+      await harness.scheduler.advance(const Duration(seconds: 26));
       await flush();
 
       final Map<String, Object?> beat =

@@ -147,7 +147,7 @@ describe('deriveTickState — the four no-tick cases', () => {
   });
 
   it('a permanently failed send has no tick — §6.4’s delivery.reason is the affordance', () => {
-    expect(tick(mine({ delivery: { state: 'failed', reason: 'expired' } }))).toBeNull();
+    expect(tick(mine({ delivery: { state: 'failed', reason: 'expired', retryable: true } }))).toBeNull();
   });
 
   it('an acked message that never got a seq has no tick — no key to compare against', () => {

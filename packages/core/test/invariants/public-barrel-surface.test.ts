@@ -106,6 +106,12 @@ const PUBLIC_SURFACE: readonly string[] = [
   'MESSAGE_TICK_STATES',
   'deriveTickState',
   'deriveTickStateFromState',
+  // The one canonical `handledBy`-staleness derivation (T10), same reasoning
+  // as the tick derivations above: `ChatSession.handledBy` can legitimately
+  // lag `status` right after a server-side reactivation, and every binding
+  // must gate "connected to <name>" copy on this rather than re-deriving the
+  // WAITING_FOR_AGENT rule ad hoc.
+  'isHandledByCurrent',
 ];
 
 describe('§15 guard: the public barrel exports exactly the reviewed surface', () => {

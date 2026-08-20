@@ -73,9 +73,13 @@ describe('ChatEventMap payload typing', () => {
   });
 
   it('reuses the protocol payload shapes rather than redefining them', () => {
-    // agentJoined/agentLeft are two events sharing one shape.
+    // agentJoined/agentLeft are two events sharing one shape — HandledBy
+    // (protocol/domain.ts) as of the v2 wire contract, not the old
+    // `{ agentId; agentName? }`.
     expectTypeOf<ChatEventMap['agentJoined']>().toEqualTypeOf<ChatEventMap['agentLeft']>();
-    expectTypeOf<ChatEventMap['agentJoined']>().toHaveProperty('agentId');
+    expectTypeOf<ChatEventMap['agentJoined']>().toHaveProperty('kind');
+    expectTypeOf<ChatEventMap['agentJoined']>().toHaveProperty('id');
+    expectTypeOf<ChatEventMap['agentJoined']>().toHaveProperty('displayName');
     expectTypeOf<ChatEventMap['presenceUpdate']>().toHaveProperty('participantId');
     expectTypeOf<ChatEventMap['presenceUpdate']>().toHaveProperty('status');
     expectTypeOf<ChatEventMap['ticketLinked']>().toHaveProperty('ticketId');
@@ -98,6 +102,30 @@ describe('ChatEventMap payload typing', () => {
     expectTypeOf<ChatEventMap['error']>().toHaveProperty('source');
     expectTypeOf<ChatEventMap['error']>().toHaveProperty('code');
     expectTypeOf<ChatEventMap['error']>().toHaveProperty('retryable');
+  });
+
+  it('gives sendFailed an optional code and a required retryable, alongside reason', () => {
+    // Additive over the pre-fix shape: `reason` alone is still a valid
+    // sendFailed payload as long as `retryable` — required — is present.
+    expectTypeOf<ChatEventMap['sendFailed']>().toHaveProperty('reason');
+    expectTypeOf<ChatEventMap['sendFailed']>().toHaveProperty('code');
+    expectTypeOf<ChatEventMap['sendFailed']>().toHaveProperty('retryable');
+
+    const noCode: ChatEventMap['sendFailed'] = {
+      id: 'msg-1',
+      sessionId: 'sess-1',
+      reason: 'expired',
+      retryable: true,
+    };
+    expect(noCode.code).toBeUndefined();
+
+    // @ts-expect-error — retryable is required, not optional.
+    const missingRetryable: ChatEventMap['sendFailed'] = {
+      id: 'msg-1',
+      sessionId: 'sess-1',
+      reason: 'expired',
+    };
+    expect(missingRetryable).toBeDefined();
   });
 
   it('rejects an event name outside the catalog', () => {

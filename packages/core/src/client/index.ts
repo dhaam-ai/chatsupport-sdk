@@ -9,6 +9,7 @@ export {
   applyAgentLeft,
   applySessionClosed,
   applyTicketLinked,
+  isHandledByCurrent,
   sessionSnapshotToChatSession,
   statusOrModeChanged,
 } from './session.js';
@@ -23,5 +24,6 @@ export type {
   SendAttachmentOptions,
   SendMessageOptions,
   SessionActions,
+  SessionSummarySource,
   TokenProvider,
 } from './types.js';

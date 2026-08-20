@@ -103,6 +103,55 @@ export interface RestChatSession {
   ticket: RestChatTicket | null;
 }
 
+/**
+ * `handledBy` on `ChatSessionSummaryWire` (openapi/chat-api.yaml) — who is/was
+ * handling a session in the picker. Absent, never `null`, when nobody has
+ * picked it up yet (still on the bot, or escalated and unassigned).
+ *
+ * No corresponding field on core's `ChatSessionSummary`
+ * (packages/core/src/state/types.ts:223-240) as of this revision — see the
+ * doc comment on `RestChatSessionSummary` for why it is kept anyway.
+ */
+export interface RestSessionHandledBy {
+  kind: 'AGENT' | 'BOT';
+  id: string;
+  displayName: string;
+}
+
+/**
+ * Mirrors core's `ChatSessionSummary` — field for field, `id` through
+ * `unreadCount` — plus `handledBy`, which core's type does not have.
+ *
+ * ── Why `handledBy` survives even though core has no field for it ──
+ *
+ * `ChatSessionSummaryWire` documents `handledBy` as an *additive* field (the
+ * schema's own description), and it carries information nothing else in the
+ * summary does — unlike `replyToMessage` on a message row (dropped in
+ * `toChatMessage`), which duplicates `replyToMessageId` and adds nothing.
+ * Dropping `handledBy` here would silently discard it before the caller ever
+ * sees it exists. Keeping it costs nothing: `TSessionSummary` in
+ * `createSessionSummarySource` is core's `ChatSessionSummary` structurally,
+ * assigned via a type assertion rather than an object literal, so an extra
+ * property on the assigned value is not a type error and a consumer that only
+ * reads the seven core fields is unaffected.
+ */
+export interface RestChatSessionSummary {
+  id: string;
+  status: RestChatStatus;
+  mode: RestChatMode;
+  /** ISO-8601. */
+  createdAt: string;
+  /** ISO-8601, or `null` while still open. */
+  closedAt: string | null;
+  /** ISO-8601 of the most recent PUBLIC message, or `null` if none yet. */
+  lastMessageAt: string | null;
+  /** Absent — never `""` — when the session has no public message yet. */
+  lastMessagePreview?: string;
+  unreadCount: number;
+  /** Absent — never `null` — when nobody has picked the session up yet. */
+  handledBy?: RestSessionHandledBy;
+}
+
 // ── Integer enums ───────────────────────────────────────────────────────────
 //
 // Mirrored EXACTLY from chat-service-node/src/shared/constants/enums.ts, which
@@ -173,6 +222,38 @@ function decode<T extends string>(
   return name;
 }
 
+/**
+ * `ChatStatus` and `ChatMode`, as valid string values — the vocabulary
+ * `GET /chat/sessions/customer` sends. Unlike the raw-row enums above, this
+ * route already returns v2's canonical STRING enums (D4; openapi's
+ * `ChatSessionSummaryWire` description), so there is no int → string table
+ * here, only membership.
+ */
+const CHAT_STATUS_VALUES: ReadonlySet<string> = new Set<RestChatStatus>([
+  'OPEN',
+  'WAITING_FOR_AGENT',
+  'ASSIGNED',
+  'CLOSED',
+  'RESOLVED',
+  'ON_HOLD',
+]);
+
+const CHAT_MODE_VALUES: ReadonlySet<string> = new Set<RestChatMode>(['BOT', 'HUMAN']);
+
+/**
+ * Decodes one string enum, or throws. The string-enum sibling of `decode`
+ * above — same refusal to guess, for the same reason (§ that function's doc
+ * comment): an unrecognized value means this package is behind the service.
+ */
+function decodeStringEnum<T extends string>(
+  values: ReadonlySet<string>,
+  value: unknown,
+  field: string,
+): T {
+  if (typeof value === 'string' && values.has(value)) return value as T;
+  throw malformed(`unmappable ${field} on a session summary row`);
+}
+
 /** The one failure this module raises. Mirrors `unwrapEnvelope`'s taxonomy. */
 function malformed(detail: string): RestApiError {
   return new RestApiError({
@@ -226,6 +307,19 @@ function requireIso(value: unknown, field: string): string {
   const iso = toIso(value);
   if (iso === null) throw malformed(`missing or unparseable ${field}`);
   return iso;
+}
+
+/**
+ * `unreadCount` is documented `minimum: 0`, "`0`, never absent, when nothing
+ * is unread" — so, like the enum fields, a value outside that contract is
+ * refused rather than clamped or defaulted. A negative or missing count would
+ * make the picker's unread badge lie in a direction a caller cannot detect.
+ */
+function requireNonNegativeInt(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw malformed(`missing or invalid ${field}`);
+  }
+  return value;
 }
 
 // ── Attachment safety ───────────────────────────────────────────────────────
@@ -522,4 +616,86 @@ export function toChatSession(row: unknown): RestChatSession {
     customer: toProfile(source['customer'], source['customerId']),
     ticket: ticketId === null ? null : { id: ticketId, url: null },
   };
+}
+
+// ── Session summary ─────────────────────────────────────────────────────────
+
+/**
+ * One `handledBy` object → `RestSessionHandledBy`, or `undefined`.
+ *
+ * Malformed rather than absent is treated as absent: `handledBy` is additive
+ * information core's contract does not depend on (see the doc comment on
+ * `RestChatSessionSummary`), so a row carrying a bad one should not lose the
+ * rest of the session summary over it — unlike `status`/`mode`, which the
+ * picker's own render logic depends on and which do throw.
+ */
+function toHandledBy(value: unknown): RestSessionHandledBy | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const kind = source['kind'];
+  if (kind !== 'AGENT' && kind !== 'BOT') return undefined;
+  const id = source['id'];
+  const displayName = source['displayName'];
+  if (typeof id !== 'string' || id === '') return undefined;
+  if (typeof displayName !== 'string' || displayName === '') return undefined;
+  return { kind, id, displayName };
+}
+
+/**
+ * One item from `GET /chat/sessions/customer`'s `sessions[]` →
+ * `RestChatSessionSummary`.
+ *
+ * Unlike `toChatSession`'s raw Prisma row, this route already returns v2's
+ * projected shape — string enums, no `chatSessionId`/`messageType` renames
+ * needed — so this function mainly validates rather than reshapes. See
+ * `decodeStringEnum` for why `status`/`mode` are still refused rather than
+ * passed through when unrecognized.
+ */
+export function toChatSessionSummary(row: unknown): RestChatSessionSummary {
+  const source = asRecord(row, 'a session summary row');
+
+  const summary: RestChatSessionSummary = {
+    id: requireString(source['id'], 'summary.id'),
+    status: decodeStringEnum<RestChatStatus>(CHAT_STATUS_VALUES, source['status'], 'summary.status'),
+    mode: decodeStringEnum<RestChatMode>(CHAT_MODE_VALUES, source['mode'], 'summary.mode'),
+    createdAt: requireIso(source['createdAt'], 'summary.createdAt'),
+    // Absent while the session is still open — not an error.
+    closedAt: toIso(source['closedAt']),
+    // `null` is a valid, documented value ("no public message yet"), not a
+    // parse failure — same as `closedAt`.
+    lastMessageAt: toIso(source['lastMessageAt']),
+    unreadCount: requireNonNegativeInt(source['unreadCount'], 'summary.unreadCount'),
+  };
+
+  // Absent — never `""` — mirrors the wire contract: an empty string is
+  // treated the same as the field never having been sent, exactly as
+  // `toChatMessage` does for `replyToMessageId`.
+  const preview = optionalString(source['lastMessagePreview']);
+  if (preview !== null) summary.lastMessagePreview = preview;
+
+  const handledBy = toHandledBy(source['handledBy']);
+  if (handledBy !== undefined) summary.handledBy = handledBy;
+
+  return summary;
+}
+
+/**
+ * One session-summary row → a summary, or nothing.
+ *
+ * Mirrors `projectHistoryRow`'s reasoning: `toChatSessionSummary` throws on
+ * an unrecognized `status`/`mode`, and letting `sessions.map(toChatSessionSummary)`
+ * propagate that would turn one forward-incompatible row into an empty picker
+ * for the whole customer — the same class of silent-emptiness bug the history
+ * adapter already had to fix once. Unlike a message, a session summary has no
+ * sensible placeholder to show in its place (there is no "unsupported
+ * session" notice a picker could render), so a bad row is simply omitted
+ * rather than replaced.
+ */
+export function projectSessionSummaryRow(row: unknown): RestChatSessionSummary | null {
+  try {
+    return toChatSessionSummary(row);
+  } catch (error) {
+    if (!(error instanceof RestApiError) || error.code !== 'MALFORMED_RESPONSE') throw error;
+    return null;
+  }
 }

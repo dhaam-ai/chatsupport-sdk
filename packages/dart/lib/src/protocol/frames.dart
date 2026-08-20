@@ -179,12 +179,93 @@ class AttachmentMetadata {
       };
 }
 
+/// Who is currently handling a session for the customer — a human agent or
+/// the bot.
+///
+/// Resolved server-side through the same lookup chain that produces the
+/// "<name> has joined the chat" system message, so a session header built from
+/// [SessionSnapshot.handledBy] and a toast built from an `agent.joined` frame
+/// can never disagree about the name. That is why there is ONE class here and
+/// not two near-duplicates: `agent.joined.d` and `agent.left.d` carry exactly
+/// this shape, and [AgentEvent] is an alias for it rather than a copy.
+///
+/// ── Absence, which is the part that gets misread ───────────────────────────
+///
+/// [SessionSnapshot.handledBy] is ABSENT — never null, never a placeholder —
+/// when nobody is assigned yet or when no display name could be resolved. That
+/// absence is presentation-only: it means "render your own configured title",
+/// NOT "nobody is handling this chat". `status` and `mode` already carry that
+/// signal, and a host that reads absence as unhandled will show "no agent" for
+/// every queued session on the platform.
+class HandledBy {
+  const HandledBy({
+    required this.kind,
+    required this.id,
+    required this.displayName,
+  });
+
+  factory HandledBy.fromJson(
+    Map<String, Object?> json,
+    String path, {
+    String? frameType,
+  }) =>
+      HandledBy(
+        kind: requireEnum(
+          json,
+          'kind',
+          path,
+          HandledByKind.fromWire,
+          'HandledByKind',
+          frameType: frameType,
+        ),
+        id: requireNonEmptyString(json, 'id', path, frameType: frameType),
+        // REQUIRED here, unlike the `agentName?` this shape replaced and
+        // unlike [ParticipantSnapshot.displayName]. A HandledBy exists to be
+        // rendered; one without a name is not a degraded HandledBy, it is a
+        // frame the server should not have sent. requireNonEmptyString already
+        // refuses `null` and `""` along with every other non-string.
+        displayName: requireNonEmptyString(
+          json,
+          'displayName',
+          path,
+          frameType: frameType,
+        ),
+      );
+
+  /// `'AGENT'` or `'BOT'` on the wire — always the string, never the
+  /// backend's integer (D4). [HandledByKind] is a string-valued enum for
+  /// exactly that reason; nothing reads its `index`.
+  ///
+  /// [HandledByKind.bot] is not an edge case: the bot resuming a session after
+  /// a human agent leaves arrives as an `agent.joined` with `kind: 'BOT'`.
+  final HandledByKind kind;
+
+  /// Same id space as [ParticipantSnapshot.participantId].
+  final String id;
+
+  final String displayName;
+}
+
+/// `agent.joined.d` / `agent.left.d` (§7.3).
+///
+/// ── BREAKING, v2 wire contract ────────────────────────────────────────────
+///
+/// This was `{ agentId: String, agentName: String? }` and is now [HandledBy]
+/// outright — a replacement, not an extension. Two things make that safe and
+/// make leniency wrong: these frames were declared in the catalog but were
+/// never actually emitted on the wire until now, so there is no live traffic
+/// in the old shape to protect; and coercing an `agentId` into an `id` would
+/// be §12.2's normalize-and-guess mistake rebuilt in a new place. The old
+/// payload is refused like any other malformed frame.
+typedef AgentEvent = HandledBy;
+
 /// One participant in a session snapshot (§9.5).
 class ParticipantSnapshot {
   const ParticipantSnapshot({
     required this.participantId,
     required this.type,
     this.lastReadAt,
+    this.displayName,
   });
 
   factory ParticipantSnapshot.fromJson(
@@ -209,6 +290,12 @@ class ParticipantSnapshot {
         ),
         lastReadAt: optionalIsoTimestamp(json, 'lastReadAt', path,
             frameType: frameType),
+        displayName: optionalNonEmptyString(
+          json,
+          'displayName',
+          path,
+          frameType: frameType,
+        ),
       );
 
   final String participantId;
@@ -217,6 +304,18 @@ class ParticipantSnapshot {
   /// The read watermark (§9.5). Absent means this participant has read
   /// nothing yet — which is NOT the same as having read at the epoch.
   final DateTime? lastReadAt;
+
+  /// Resolved through the SAME chain as [SessionSnapshot.handledBy] — an
+  /// agent-name lookup for an AGENT row, the tenant bot-name resolver for a
+  /// BOT row.
+  ///
+  /// Absent — never `null`, never `""` — when no display name has been
+  /// resolved, which is the common case for CUSTOMER rows today. Optional
+  /// here and required on [HandledBy]: a participant row is a membership
+  /// record that happens to sometimes carry a name, whereas a HandledBy is
+  /// nothing BUT a name and an identity. [optionalNonEmptyString] is what
+  /// keeps `null` and `""` from reaching a UI as a name.
+  final String? displayName;
 }
 
 /// The authoritative session snapshot (§9.4).
@@ -231,6 +330,7 @@ class SessionSnapshot {
     required this.participants,
     required this.createdAt,
     this.ticketId,
+    this.handledBy,
   });
 
   factory SessionSnapshot.fromJson(
@@ -280,6 +380,22 @@ class SessionSnapshot {
       createdAt:
           requireIsoTimestamp(json, 'createdAt', path, frameType: frameType),
       ticketId: optionalString(json, 'ticketId', path, frameType: frameType),
+      // Additive: a server that predates the identity contract sends no
+      // `handledBy` at all and still produces a valid snapshot, so an old
+      // server cannot break a new client's handshake. `containsKey` rather
+      // than a null check, because an explicit null is a claim the server
+      // never makes and is refused by requireObject below.
+      handledBy: json.containsKey('handledBy')
+          ? HandledBy.fromJson(
+              requireObject(
+                json['handledBy'],
+                '$path.handledBy',
+                frameType: frameType,
+              ),
+              '$path.handledBy',
+              frameType: frameType,
+            )
+          : null,
     );
   }
 
@@ -291,6 +407,11 @@ class SessionSnapshot {
   /// ISO-8601 on the wire (§7.2's payload rules), unlike the envelope's `ts`.
   final DateTime createdAt;
   final String? ticketId;
+
+  /// Who the customer is currently talking to. See [HandledBy] — in
+  /// particular, absence here is a presentation signal ("render your own
+  /// title"), never evidence that the session is unhandled.
+  final HandledBy? handledBy;
 }
 
 /// A message (`message.new.d`, and every entry of a replay array).
@@ -588,20 +709,6 @@ class SessionClosed {
   /// [CloseReason.switched] means "parked because the customer moved to
   /// another chat", not "ended" (§12.5).
   final CloseReason closeReason;
-}
-
-/// `agent.joined.d` / `agent.left.d` (§7.3).
-class AgentEvent {
-  const AgentEvent({required this.agentId, this.agentName});
-
-  factory AgentEvent.fromJson(Map<String, Object?> d, String frameType) =>
-      AgentEvent(
-        agentId: requireNonEmptyString(d, 'agentId', 'd', frameType: frameType),
-        agentName: optionalString(d, 'agentName', 'd', frameType: frameType),
-      );
-
-  final String agentId;
-  final String? agentName;
 }
 
 /// `message.read.d` (§7.3, §9.5).

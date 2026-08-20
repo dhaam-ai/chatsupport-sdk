@@ -8,162 +8,17 @@ import React, {
 import type { ChatSDKConfig, ChatSDKState, ChatSDKActions, ChatMessage, ChatSessionSummary, MessageType } from './types';
 import { SenderType, toSenderType } from './shared/enums';
 import { ChatWebSocketClient } from './client';
+import { chatReducer, initialState } from './reducer';
+import {
+  ACK_TIMEOUT_MS, LOCAL_CODES, attributeServerError, classifySendError, toSendFailure,
+} from './sendState';
+import { SESSION_PICKER_LIMIT, normalizeSessionSummary } from './sessionHistory';
+import type { ChatAction } from './reducer';
 
 const _SDK_BUILD = '2026-06-26-enum-fix';
 console.log(`%c[ChatSDK] Build: ${_SDK_BUILD}`, 'background:#7c3aed;color:#fff;padding:2px 8px;border-radius:4px;font-weight:700;font-family:monospace;');
 
 type EventCallback = (...args: unknown[]) => void;
-
-type ChatAction =
-  | { type: 'INIT_START' }
-  | { type: 'INIT_SUCCESS'; session: ChatSDKState['session'] }
-  | { type: 'INIT_ERROR'; error: Error }
-  | { type: 'SET_CONNECTED'; connected: boolean }
-  | { type: 'ADD_MESSAGE'; message: ChatMessage }
-  | { type: 'SET_MESSAGES'; messages: ChatMessage[]; hasMore?: boolean }
-  | { type: 'PREPEND_MESSAGES'; messages: ChatMessage[]; hasMore: boolean }
-  | { type: 'SET_LOADING_MORE'; loading: boolean }
-  | { type: 'REPLACE_TEMP'; tempId: string; message: ChatMessage }
-  | { type: 'SET_TYPING'; isTyping: boolean; typingUser?: string }
-  | { type: 'UPDATE_SESSION'; session: Partial<ChatSDKState['session']> }
-  | { type: 'SET_ERROR'; error: Error | null }
-  | { type: 'TOKEN_EXPIRED' }
-  | { type: 'SET_WIDGET_OPEN'; open: boolean }
-  | { type: 'SET_UPLOADING'; uploading: boolean }
-  | { type: 'SET_PAST_SESSIONS'; sessions: ChatSessionSummary[] }
-  | { type: 'UPDATE_PAST_SESSION'; sessionId: string; updates: Partial<ChatSessionSummary> }
-  | { type: 'SET_AGENT_READ_AT'; readAt: Date }
-  | { type: 'SET_CLOSE_REASON'; reason: string | null };
-
-const initialState: ChatSDKState = {
-  initialized:  false,
-  connected:    false,
-  loading:      true,
-  session:      null,
-  messages:     [],
-  isTyping:     false,
-  typingUser:   undefined,
-  error:        null,
-  tokenExpired: false,
-  isWidgetOpen: false,
-  unreadCount:  0,
-  hasMore:      true,
-  loadingMore:  false,
-  uploading:    false,
-  pastSessions: [],
-  agentReadAt:  null,
-  closeReason:  null,
-};
-
-function chatReducer(state: ChatSDKState, action: ChatAction): ChatSDKState {
-  switch (action.type) {
-    case 'INIT_START':
-      return { ...state, loading: true, error: null };
-
-    case 'INIT_SUCCESS':
-      return { ...state, initialized: true, connected: true, loading: false, session: action.session };
-
-    case 'INIT_ERROR':
-      return { ...state, loading: false, error: action.error };
-
-    case 'SET_CONNECTED':
-      return { ...state, connected: action.connected };
-
-    case 'ADD_MESSAGE': {
-      if (state.messages.some(m => m.id === action.message.id)) return state;
-      const isFromAgentOrBot = action.message.senderType === 'AGENT' || action.message.senderType === 'BOT';
-      const shouldIncrement  = !state.isWidgetOpen && isFromAgentOrBot;
-      return {
-        ...state,
-        messages:    [...state.messages, action.message],
-        unreadCount: shouldIncrement ? state.unreadCount + 1 : state.unreadCount,
-      };
-    }
-
-    case 'SET_MESSAGES': {
-      const seen = new Set<string>();
-      const deduped = action.messages.filter(m => (seen.has(m.id) ? false : (seen.add(m.id), true)));
-      return { ...state, messages: deduped, hasMore: action.hasMore ?? true };
-    }
-
-    case 'PREPEND_MESSAGES': {
-      if (!action.messages.length) return { ...state, hasMore: action.hasMore, loadingMore: false };
-      const existingIds = new Set(state.messages.map(m => m.id));
-      const newMsgs = action.messages.filter(m => !existingIds.has(m.id));
-      if (!newMsgs.length) return { ...state, hasMore: action.hasMore, loadingMore: false };
-      return {
-        ...state,
-        messages:    [...newMsgs, ...state.messages],
-        hasMore:     action.hasMore,
-        loadingMore: false,
-      };
-    }
-
-    case 'SET_LOADING_MORE':
-      return { ...state, loadingMore: action.loading };
-
-    case 'REPLACE_TEMP': {
-      const idx = state.messages.findIndex(m => m.id === action.tempId);
-      if (idx === -1) {
-        if (state.messages.some(m => m.id === action.message.id)) return state;
-        return { ...state, messages: [...state.messages, action.message] };
-      }
-      const updated = [...state.messages];
-      // Preserve the temp message's identity as the React list key so the
-      // message subtree (and any in-progress media playback) isn't remounted
-      // just because the server-confirmed `id` differs from the temp id.
-      updated[idx]  = { ...action.message, clientKey: state.messages[idx].clientKey ?? action.tempId };
-      return { ...state, messages: updated };
-    }
-
-    case 'SET_TYPING':
-      return { ...state, isTyping: action.isTyping, typingUser: action.typingUser };
-
-    case 'UPDATE_SESSION':
-      return { ...state, session: state.session ? { ...state.session, ...action.session } : null };
-
-    case 'SET_ERROR':
-      return { ...state, error: action.error };
-
-    case 'TOKEN_EXPIRED':
-      return { ...state, tokenExpired: true, connected: false, error: new Error('Your session has expired. Please refresh to continue.') };
-
-    case 'SET_WIDGET_OPEN':
-      return {
-        ...state,
-        isWidgetOpen: action.open,
-        unreadCount:  action.open ? 0 : state.unreadCount,
-      };
-
-    case 'SET_UPLOADING':
-      return { ...state, uploading: action.uploading };
-
-    case 'SET_PAST_SESSIONS':
-      return { ...state, pastSessions: action.sessions };
-
-    case 'UPDATE_PAST_SESSION':
-      return {
-        ...state,
-        pastSessions: state.pastSessions.map(s =>
-          s.id === action.sessionId ? { ...s, ...action.updates } : s
-        ),
-      };
-
-    // ── SET_AGENT_READ_AT ─────────────────────────────────────────────────
-    // No forward-only guard here. The participants restore on load gives us
-    // the real backend timestamp. Real-time WS events will naturally be newer.
-    // Removing the guard prevents the "seed to NOW" race from blocking the
-    // accurate participants timestamp.
-    case 'SET_AGENT_READ_AT':
-      return { ...state, agentReadAt: action.readAt };
-
-    case 'SET_CLOSE_REASON':
-      return { ...state, closeReason: action.reason };
-
-    default:
-      return state;
-  }
-}
 
 // ── Helper: parse a timestamp safely ────────────────────────────────────────
 function safeDate(v: Date | string | null | undefined): Date | null {
@@ -294,6 +149,10 @@ export function ChatProvider({ config, children }: {
   const pendingAttachTempIds = useRef<Set<string>>(new Set());
   // clientMessageId → tempId (for MESSAGE_ACK reconciliation)
   const clientMsgMap         = useRef<Map<string, string>>(new Map());
+  // tempId → the send still awaiting chat.message.ack. Insertion-ordered, so
+  // [...keys()] is oldest-first — which is what attributeServerError needs to
+  // decide whether a chat.error can be blamed on a specific bubble.
+  const inFlightSends        = useRef<Map<string, { clientMessageId: string; timer: ReturnType<typeof setTimeout> }>>(new Map());
 
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
@@ -428,13 +287,45 @@ export function ChatProvider({ config, children }: {
         }) as EventCallback);
 
         client.on('statusChange', ((data: any) => {
-          dispatch({ type: 'UPDATE_SESSION', session: { status: normStatus(data.status) as any, mode: normMode(data.mode) as any } });
-          dispatch({
-            type:      'UPDATE_PAST_SESSION',
-            sessionId: data.chatSessionId,
-            updates:   { status: data.status, mode: data.mode, closedAt: null },
-          });
-          if (data.status === 'CLOSED' && data.closeReason) {
+          const status = normStatus(data.status);
+          // Only the CURRENT session's status may move the current session.
+          // Reactivating a past session can close the customer's other active
+          // session (closeReason SWITCHED) — that arrives as a status change
+          // for a DIFFERENT chatSessionId, and applying it here would mark the
+          // session the customer is actually looking at as closed.
+          const isCurrent = !data.chatSessionId || data.chatSessionId === stateRef.current.session?.id;
+          if (isCurrent) {
+            dispatch({ type: 'UPDATE_SESSION', session: { status: status as any, mode: normMode(data.mode) as any } });
+
+            // Back to the queue means the assigned agent is gone. v1 never
+            // emits chat.agent.left (declared in the backend's constants, but
+            // no emit site exists — see notes on the agentLeft handler below),
+            // so this status transition is the only signal v1 gives us that the
+            // header must stop naming an agent who has left. Deliberately NOT
+            // done for CLOSED/RESOLVED: naming whoever handled a finished
+            // conversation is still correct.
+            if (status === 'WAITING_FOR_AGENT' && stateRef.current.session?.assignedAgentId) {
+              dispatch({
+                type:    'UPDATE_SESSION',
+                session: { assignedAgentId: undefined, assignedAgentName: undefined, assignedAgent: null },
+              });
+            }
+          }
+          // Normalised, not raw: the summary list is string-compared by the
+          // picker, and the wire may carry integer enums. `closedAt: null` is
+          // only correct for a session that is no longer terminal.
+          if (data.chatSessionId) {
+            dispatch({
+              type:      'UPDATE_PAST_SESSION',
+              sessionId: data.chatSessionId,
+              updates:   {
+                status: status as any,
+                mode:   normMode(data.mode) as any,
+                ...(status === 'CLOSED' || status === 'RESOLVED' ? {} : { closedAt: null }),
+              },
+            });
+          }
+          if (isCurrent && status === 'CLOSED' && data.closeReason) {
             dispatch({ type: 'SET_CLOSE_REASON', reason: data.closeReason });
           }
           // Clear bot typing indicator when session changes status (escalation, assigned, etc.)
@@ -480,7 +371,41 @@ export function ChatProvider({ config, children }: {
           }
         }) as EventCallback);
 
+        // ── agentLeft ────────────────────────────────────────────────────────
+        // NOTE ON v1: this never fires today. `chat.agent.left` is declared in
+        // the backend's WS_EVENTS constants, but websocket-server.ts has no
+        // emit site for it — `escalationService.agentLeave` nulls
+        // assignedAgentId and sets WAITING_FOR_AGENT in the DB and broadcasts
+        // nothing. Wired anyway because the handler is free and correct the
+        // moment the backend emits it; until then the header stops naming a
+        // departed agent via the WAITING_FOR_AGENT transition in statusChange
+        // above, or on the next /full refetch.
+        client.on('agentLeft', ((data: any) => {
+          const current = stateRef.current.session;
+          if (!current) return;
+          if (data?.chatSessionId && data.chatSessionId !== current.id) return;
+          if (data?.agentId && current.assignedAgentId && data.agentId !== current.assignedAgentId) return;
+          dispatch({
+            type:    'UPDATE_SESSION',
+            session: { assignedAgentId: undefined, assignedAgentName: undefined, assignedAgent: null },
+          });
+        }) as EventCallback);
+
         client.on('sessionClosed', ((data: any) => {
+          // Reactivating a past session can close the customer's OTHER active
+          // session with closeReason SWITCHED, so this fires for a session that
+          // is not the one on screen. Keep the history row accurate either way…
+          if (data?.chatSessionId) {
+            dispatch({
+              type:      'UPDATE_PAST_SESSION',
+              sessionId: data.chatSessionId,
+              updates:   { status: 'CLOSED' },
+            });
+          }
+          // …but only park the CURRENT session. Without this guard the other
+          // session's close would show the customer a "Chat Ended" panel over
+          // the conversation they just switched into.
+          if (data?.chatSessionId && data.chatSessionId !== stateRef.current.session?.id) return;
           if (data?.closeReason) {
             dispatch({ type: 'SET_CLOSE_REASON', reason: data.closeReason });
           }
@@ -509,11 +434,32 @@ export function ChatProvider({ config, children }: {
           }
         }) as EventCallback);
 
-        client.on('error', (error: unknown) => dispatch({ type: 'SET_ERROR', error: error as Error }));
+        client.on('error', (error: unknown) => {
+          dispatch({ type: 'SET_ERROR', error: error as Error });
+
+          // v1's chat.error carries no clientMessageId, so it can only be
+          // pinned on a bubble when exactly one send is in flight. With two or
+          // more, guessing would fail the wrong message — each one's own ack
+          // timeout is the safer answer. (Correlating errors to sends is a
+          // backend follow-up: add clientMessageId to the v1 error frame.)
+          const blamed = attributeServerError([...inFlightSends.current.keys()]);
+          if (!blamed) return;
+          const flight = inFlightSends.current.get(blamed);
+          if (flight) { clearTimeout(flight.timer); inFlightSends.current.delete(blamed); }
+          dispatch({ type: 'MARK_SEND_FAILED', tempId: blamed, failure: classifySendError(error) });
+        });
 
         client.on('tokenExpired', () => {
           console.warn('[Chat] Token expired — blocking further messages');
           dispatch({ type: 'TOKEN_EXPIRED' });
+          // Nothing in flight can land now, and no retry can fix it without a
+          // refresh — so fail them with NO retry affordance rather than leaving
+          // them on "sending" forever.
+          for (const [tempId, flight] of inFlightSends.current) {
+            clearTimeout(flight.timer);
+            dispatch({ type: 'MARK_SEND_FAILED', tempId, failure: toSendFailure(LOCAL_CODES.TOKEN_EXPIRED) });
+          }
+          inFlightSends.current.clear();
         });
 
         // ── messageRead: handles explicit server read receipts ────────────────
@@ -588,6 +534,10 @@ client.on('messageRead', ((data: any) => {
 client.on('messageAck', ((data: any) => {
   const tempId = clientMsgMap.current.get(data?.clientMessageId);
   if (!tempId || !data?.messageId) return;
+  // The send is settled — disarm the ack timeout so it cannot later mark a
+  // message that did arrive as failed.
+  const flight = inFlightSends.current.get(tempId);
+  if (flight) { clearTimeout(flight.timer); inFlightSends.current.delete(tempId); }
   clientMsgMap.current.delete(data.clientMessageId);
   pendingReplaces.current.delete(stateRef.current.messages.find(m => m.id === tempId)?.content ?? '');
   const existing = stateRef.current.messages.find(m => m.id === tempId);
@@ -703,6 +653,8 @@ client.on('ticketLinked', ((data: any) => {
       _activeConnections.delete(connectionKey);
       pendingReplaces.current.clear();
       clientMsgMap.current.clear();
+      for (const flight of inFlightSends.current.values()) clearTimeout(flight.timer);
+      inFlightSends.current.clear();
       if (typingTimerRef.current) {
         clearTimeout(typingTimerRef.current);
         typingTimerRef.current = null;
@@ -720,6 +672,50 @@ client.on('ticketLinked', ((data: any) => {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
+  // ── beginSend ─────────────────────────────────────────────────────────────
+  // The ONE place a customer message is put on the wire. Both the first attempt
+  // and every retry go through here, so the two cannot drift — and crucially a
+  // retry passes the SAME clientMessageId, which the backend dedupes on
+  // (prisma: @@unique([chatSessionId, clientMessageId]); message.service.ts:78
+  // returns the existing message for a repeat). Minting a fresh id on retry is
+  // what made each click create another message instead of retrying the first.
+  //
+  // Every send either gets acked or is marked failed by the ack timeout — there
+  // is no third outcome, which is what stops a bubble sitting on "sending"
+  // forever.
+  const beginSend = useCallback((args: {
+    tempId: string;
+    clientMessageId: string;
+    content: string;
+    type: MessageType;
+    replyToMessageId?: string;
+  }) => {
+    const { tempId, clientMessageId, content, type, replyToMessageId } = args;
+
+    clientMsgMap.current.set(clientMessageId, tempId);
+    const prev = inFlightSends.current.get(tempId);
+    if (prev) clearTimeout(prev.timer);
+
+    const timer = setTimeout(() => {
+      inFlightSends.current.delete(tempId);
+      dispatch({ type: 'MARK_SEND_FAILED', tempId, failure: toSendFailure(LOCAL_CODES.ACK_TIMEOUT) });
+    }, ACK_TIMEOUT_MS);
+    inFlightSends.current.set(tempId, { clientMessageId, timer });
+
+    dispatch({ type: 'MARK_SENDING', tempId });
+
+    try {
+      clientRef.current!.sendMessage(content, type, replyToMessageId, clientMessageId);
+    } catch (err) {
+      // Synchronous refusal (not connected / token expired). Fail it NOW rather
+      // than letting the caller's floating promise reject unobserved and the
+      // bubble hang on "sending" until the timeout.
+      clearTimeout(timer);
+      inFlightSends.current.delete(tempId);
+      dispatch({ type: 'MARK_SEND_FAILED', tempId, failure: classifySendError(err) });
+    }
+  }, []);
+
   const sendMessage = useCallback(async (content: string, type: MessageType = 'TEXT', replyToMessageId?: string) => {
     const s = stateRef.current;
     if (!clientRef.current || !s.session) throw new Error('Chat not initialized');
@@ -727,7 +723,6 @@ client.on('ticketLinked', ((data: any) => {
 
     const clientMessageId = crypto.randomUUID();
     const tempId          = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    clientMsgMap.current.set(clientMessageId, tempId);
 
     const optimistic: ChatMessage = {
       id:            tempId,
@@ -738,12 +733,15 @@ client.on('ticketLinked', ((data: any) => {
       content,
       messageType:   type,
       timestamp:     new Date(),
+      clientKey:     tempId,
+      clientMessageId,
+      sendStatus:    'sending',
       ...(replyToMessageId ? { replyToMessageId } : {}),
     };
 
     pendingReplaces.current.set(content, tempId);
     dispatch({ type: 'ADD_MESSAGE', message: optimistic });
-    clientRef.current.sendMessage(content, type, replyToMessageId, clientMessageId);
+    beginSend({ tempId, clientMessageId, content, type, replyToMessageId });
 
     // ── Show bot typing indicator while AI processes the message ─────────────
     // Only in BOT mode sessions — if an agent is assigned, they have their
@@ -777,6 +775,33 @@ client.on('ticketLinked', ((data: any) => {
       pendingReplaces.current.delete(content);
     }, 10_000);
   }, []);
+
+  // ── retryMessage ──────────────────────────────────────────────────────────
+  // Replays the ORIGINAL clientMessageId. That is the whole fix for "retry
+  // creates a duplicate": the server dedupes on (chatSessionId,
+  // clientMessageId), so replaying reconciles onto the same row, while minting
+  // a new id writes a second message every click.
+  const retryMessage = useCallback(async (messageId: string) => {
+    const s      = stateRef.current;
+    const target = s.messages.find(m => m.id === messageId);
+    if (!target) return;
+    if (target.sendStatus !== 'failed') return;
+    // Defence in depth: the UI does not render a retry control for these, but
+    // a programmatic caller must not be able to hammer a refusal either.
+    if (target.sendFailure && !target.sendFailure.retryable) return;
+    if (!target.clientMessageId) return;   // nothing to replay onto
+    if (!clientRef.current || !s.session) return;
+    if (clientRef.current.tokenExpired || s.tokenExpired) return;
+
+    pendingReplaces.current.set(target.content, messageId);
+    beginSend({
+      tempId:           messageId,
+      clientMessageId:  target.clientMessageId,
+      content:          target.content,
+      type:             target.messageType,
+      replyToMessageId: target.replyToMessageId ?? undefined,
+    });
+  }, [beginSend]);
 
   const startTyping = useCallback(() => { clientRef.current?.startTyping?.(); }, []);
   const stopTyping  = useCallback(() => { clientRef.current?.stopTyping?.();  }, []);
@@ -883,6 +908,8 @@ client.on('ticketLinked', ((data: any) => {
       content:       file.name,
       messageType:   optType,
       timestamp:     new Date(),
+      clientKey:     tempId,
+      sendStatus:    'sending',
     };
 
     dispatch({ type: 'SET_UPLOADING', uploading: true });
@@ -912,29 +939,90 @@ client.on('ticketLinked', ((data: any) => {
     } catch (err) {
       console.error('[Chat] Attachment upload failed:', err);
       dispatch({ type: 'SET_ERROR', error: err as Error });
+      // The optimistic attachment bubble used to sit here forever with no tick
+      // and no error. Mark it failed — non-retryable, because the File is gone
+      // by now and a "Retry" that has nothing to resend is a lie.
+      pendingAttachTempIds.current.delete(tempId);
+      dispatch({ type: 'MARK_SEND_FAILED', tempId, failure: toSendFailure(LOCAL_CODES.UPLOAD_FAILED) });
     } finally {
       dispatch({ type: 'SET_UPLOADING', uploading: false });
     }
   }, []);
 
+  // ── fetchPastSessions ─────────────────────────────────────────────────────
+  // GET /chat/sessions/customer?limit=5. Identity comes entirely from the
+  // token — the tenantId/customerId query params this used to send are not
+  // parameters of this operation (customerSessionsQuerySchema accepts `limit`
+  // only) and were ignored. The limit was 6; the endpoint's own default is 5.
+  //
+  // The backend decides guest-vs-logged-in and returns [] for a guest, so
+  // there is no client-side guest check here or anywhere else — an empty list
+  // is the whole signal (see sessionHistory.shouldShowSessionPicker).
   const fetchPastSessions = useCallback(async () => {
     const cfg = configRef.current;
     try {
-      const url = `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/customer?tenantId=${encodeURIComponent(cfg.tenantId)}&customerId=${encodeURIComponent(cfg.user.id)}&limit=6`;
+      const url = `${cfg.serviceUrl}/chat-services/api/v1/chat/sessions/customer?limit=${SESSION_PICKER_LIMIT}`;
       const res = await fetch(url, {
         headers: { 'Authorization': `Bearer ${cfg.token}`, 'X-Tenant-ID': cfg.tenantId },
       });
       if (!res.ok) return;
       const json = await res.json();
-      const sessions: ChatSessionSummary[] = (json.data?.sessions ?? []).map((s: any) => ({
-        ...s,
-        status: normStatus(s.status) as any,
-        mode:   normMode(s.mode) as any,
-      }));
+      const sessions: ChatSessionSummary[] = (json.data?.sessions ?? []).map((s: any) =>
+        normalizeSessionSummary(s, normStatus(s.status), normMode(s.mode)));
       dispatch({ type: 'SET_PAST_SESSIONS', sessions });
     } catch (e) {
       console.warn('[Chat] fetchPastSessions failed:', e);
     }
+  }, []);
+
+  // ── selectSession ─────────────────────────────────────────────────────────
+  // Switch the widget to an existing session and show its transcript. Purely
+  // client-side: it joins the room and refetches, and mutates nothing.
+  //
+  // WHY NOT POST /chat/sessions/{id}/reopen HERE — this is the load-bearing
+  // decision for the picker. That endpoint converges rather than switching: if
+  // the customer already has a *different* active session it ignores the id you
+  // asked for and returns that other session instead
+  // (chat-session.service.ts:364-371, documented in openapi/chat-api.yaml under
+  // "Convergence behavior"). For a picker whose entire contract is "put me in
+  // THIS conversation", silently landing the customer in a different one is the
+  // one failure it cannot have. /reopen stays available as `reopenSession` for
+  // callers that genuinely want converge-onto-my-active-session semantics.
+  //
+  // A terminal session picked this way comes back when the customer TYPES:
+  // the backend reactivates a CLOSED/RESOLVED session on a CUSTOMER message
+  // (behind FEATURE_SESSION_REACTIVATE_ON_CUSTOMER_MESSAGE). We do not
+  // pre-emptively transition it here — we let the server decide and observe the
+  // resulting chat.status.changed, so the widget never shows a session as
+  // reopened that the server did not in fact reopen.
+  const selectSession = useCallback(async (sessionId: string) => {
+    const cfg = configRef.current;
+    if (!sessionId) return;
+    if (stateRef.current.session?.id === sessionId) return;
+
+    const picked = stateRef.current.pastSessions.find(s => s.id === sessionId);
+    clientRef.current?.joinSession(sessionId, picked?.status);
+    dispatch({ type: 'SET_CLOSE_REASON', reason: null });
+    dispatch({ type: 'SET_MESSAGES', messages: [], hasMore: false });
+
+    // Carry over what the summary already told us, so the header names the
+    // right handler before /full comes back. Status stays whatever the summary
+    // said — including terminal: terminal is not final, and claiming otherwise
+    // before the server has reactivated anything would be a lie.
+    const summary = picked;
+    dispatch({
+      type: 'INIT_SUCCESS',
+      session: {
+        id:     sessionId,
+        mode:   (summary?.mode   ?? 'BOT')  as any,
+        status: (summary?.status ?? 'OPEN') as any,
+        ...(summary?.handledBy?.kind === 'AGENT'
+          ? { assignedAgentId: summary.handledBy.id, assignedAgentName: summary.handledBy.displayName }
+          : {}),
+      },
+    });
+
+    await fetchMessages(cfg, sessionId, dispatch, false);
   }, []);
 
   const reopenSession = useCallback(async (sessionId: string) => {
@@ -1027,7 +1115,7 @@ client.on('ticketLinked', ((data: any) => {
   const actions: ChatSDKActions = {
     sendMessage, sendAttachment, startTyping, stopTyping,
     closeSession, requestAgent, reconnect, setWidgetOpen, loadOlderMessages,
-    fetchPastSessions, reopenSession, markMessagesRead,
+    fetchPastSessions, reopenSession, selectSession, markMessagesRead, retryMessage,
   };
 
   return (

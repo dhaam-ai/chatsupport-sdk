@@ -50,6 +50,7 @@ export type {
 
 export type {
   AttachmentMetadata,
+  HandledBy,
   MessageMetadata,
   ParticipantSnapshot,
   SessionSnapshot,

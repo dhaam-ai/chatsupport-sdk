@@ -16,6 +16,7 @@ import type {
   ChatMode,
   ChatStatus,
   ErrorCode,
+  HandledBy,
   MessageMetadata,
   MessageType,
   PresenceEntry,
@@ -131,7 +132,38 @@ export type SendFailureReason =
  */
 export type MessageDelivery =
   | { readonly state: 'queued' }
-  | { readonly state: 'failed'; readonly reason: SendFailureReason };
+  | {
+      readonly state: 'failed';
+      readonly reason: SendFailureReason;
+
+      /**
+       * The server's §7.4 code, present only when this failure came from a
+       * rejected `message.send` (`reason === 'rejected'`) — `ErrorPayload.code`
+       * (protocol/envelope.ts), copied through unchanged. Every other
+       * `SendFailureReason` is the SDK's own local determination (queue
+       * retention, a session abandoned before its send reached the wire), which
+       * never produced a wire `ErrorPayload` to read a code from, so this stays
+       * absent for those.
+       */
+      readonly code?: ErrorCode;
+
+      /**
+       * Whether retrying this exact send is worth attempting.
+       *
+       * Mirrors the server's `ErrorPayload.retryable` one-for-one when the
+       * queue had it to report — the server already computes this once per
+       * code (§7.4), so the SDK never re-derives it from a second,
+       * hand-maintained copy of that table. When there is nothing to mirror
+       * (an older server that predates this field, or a `reason` with no wire
+       * `ErrorPayload` behind it at all), this falls back to
+       * `DEFAULT_RETRYABLE_FALLBACK` in messages/controller.ts — `true` — so
+       * see that constant's doc comment for the justification. This field is
+       * always present, even in the fallback case, precisely so a binding
+       * never has to ask "was retryable reported, or defaulted?" — it only
+       * ever has one boolean to branch on.
+       */
+      readonly retryable: boolean;
+    };
 
 export interface ChatMessage {
   id: string;
@@ -213,6 +245,44 @@ export interface ChatSession {
   assignedAgent: ChatParticipantProfile | null;
   customer: ChatParticipantProfile | null;
   ticket: ChatTicket | null;
+
+  /**
+   * Who the customer is currently talking to — the binding-facing mirror of
+   * the wire `SessionSnapshot.handledBy` (protocol/domain.ts), kept in sync
+   * from `session.updated`/`connection.ack` snapshots and from
+   * `agent.joined`/`agent.left` (client/session.ts). Read this to render a
+   * session header ("chatting with Ada" / "chatting with the bot"); it is
+   * strictly presentation, never a status signal.
+   *
+   * **Absence does NOT mean "nobody is handling this chat."** `status`/
+   * `mode` are the only fields that carry that signal — this field is absent
+   * exactly when the wire had nothing presentable to say (queued with no
+   * assignee yet, or a display name that has not resolved), and a binding
+   * MUST fall back to its own configured title in that case, never to "this
+   * chat is unhandled."
+   *
+   * `assignedAgent` above is deliberately narrower: it is populated only for
+   * an AGENT (never a BOT) and only from the session snapshot's participant
+   * list, so it stays a stable "who is the human of record" fact.
+   * `handledBy` is the broader field — it also reflects a BOT actively
+   * handling (e.g. resuming right after an agent leaves), which
+   * `assignedAgent` structurally cannot express. Do not treat one as a
+   * duplicate of the other.
+   *
+   * **Known staleness after a reactivation (T6, backend):** a session
+   * reactivated server-side from `CLOSED`/`RESOLVED` by a new customer
+   * message (behind `FEATURE_SESSION_REACTIVATE_ON_CUSTOMER_MESSAGE`) keeps
+   * its previous `assignedAgentId` — so immediately after reactivation
+   * `handledBy` can still name the agent who closed it, while `status` has
+   * already gone back to `WAITING_FOR_AGENT` (queued, nobody actively
+   * engaged). This SDK deliberately does NOT clear or second-guess
+   * `handledBy` for this — the wire value is wholesale-authoritative (§9.4)
+   * and core never invents a fresher answer than the server sent. A binding
+   * that renders "connected to <name>"-style copy MUST gate it on
+   * `isHandledByCurrent` (client/session.ts) rather than on this field's
+   * mere presence — see that function's doc for the exact rule.
+   */
+  handledBy?: HandledBy;
 }
 
 /**
@@ -237,6 +307,29 @@ export interface ChatSessionSummary {
   lastMessagePreview?: string;
 
   unreadCount: number;
+
+  /**
+   * Who is/was handling this past session — the same {@link HandledBy} shape
+   * as {@link ChatSession.handledBy}, populated one-for-one from the REST
+   * `ChatSessionSummaryWire.handledBy` (openapi's `listSessions` operation).
+   *
+   * ── Why this exists on the summary at all ──
+   *
+   * The REST row (`@dhaam-ccrm/rest`'s `RestChatSessionSummary`) is a
+   * structural superset of this type — it always carried an extra
+   * `handledBy` core had no field for, smuggled through only via a type
+   * assertion at the seam boundary (`createSessionSummarySource`). That is
+   * genuinely useful information for a session picker (which agent/bot
+   * handled *this* past conversation), not noise to drop, so it is promoted
+   * to a real, typed field here rather than left riding through untyped.
+   *
+   * Absent — never `null` — when nobody had picked the session up yet at
+   * the time it was summarized (still on the bot with no name resolved, or
+   * escalated and unassigned). Same absence rule as
+   * {@link ChatSession.handledBy}: this is presentation-only, never a
+   * status signal — read `status`/`mode` for that.
+   */
+  handledBy?: HandledBy;
 }
 
 /**

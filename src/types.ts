@@ -3,7 +3,10 @@
 // ==========================================
 
 export type ChatMode = 'BOT' | 'HUMAN';
-export type ChatStatus = 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED';
+// RESOLVED and ON_HOLD were missing here while both client.ts's
+// normalizeChatStatus and context.tsx's normStatus have always been able to
+// produce them — every call site cast through `as any` to paper over it.
+export type ChatStatus = 'OPEN' | 'WAITING_FOR_AGENT' | 'ASSIGNED' | 'CLOSED' | 'RESOLVED' | 'ON_HOLD';
 export type SenderType = 'CUSTOMER' | 'AGENT' | 'BOT' | 'SYSTEM';
 export type MessageType = 'TEXT' | 'SYSTEM' | 'FILE' | 'IMAGE' | 'VIDEO' | 'AUDIO';
 
@@ -35,7 +38,11 @@ export interface ChatSDKConfig {
     name: string;
     email?: string;
   };
-  
+
+  /** Optional: the widget's title. Shown in the header only when neither an
+   *  assigned agent nor the bot is handling the chat. Defaults to 'Chat Support'. */
+  title?: string;
+
   /** Optional: Custom theme */
   theme?: ChatTheme;
   
@@ -76,6 +83,15 @@ export interface ChatFeatures {
   showHeader?: boolean;
   /** Auto-expand widget on load */
   autoExpand?: boolean;
+  /** Show the "your last N conversations" picker when the widget opens.
+   *  Only ever renders when the backend actually returns sessions, so it is
+   *  inert for guests regardless. Default: true. */
+  sessionPicker?: boolean;
+  /** Let a customer bring a CLOSED/RESOLVED session back by typing into it.
+   *  Requires the backend's FEATURE_SESSION_REACTIVATE_ON_CUSTOMER_MESSAGE to
+   *  be on as well — with only this side enabled the message is stored but the
+   *  session stays terminal. Default: false, matching the server default. */
+  sessionReactivateOnMessage?: boolean;
 }
 
 /**
@@ -110,6 +126,27 @@ export interface FileAttachment {
 }
 
 /**
+ * How an outbound (customer) message is doing.
+ *   'sending' — optimistic, no chat.message.ack yet
+ *   'sent'    — the server acked it and gave it a real id
+ *   'failed'  — it did not get out; see sendFailure
+ * Absent on inbound messages, which are by definition already delivered.
+ */
+export type SendStatus = 'sending' | 'sent' | 'failed';
+
+/**
+ * Why an outbound message did not make it.
+ * `retryable: false` means the UI must show NO retry affordance — the same
+ * payload is refused identically every time.
+ */
+export interface SendFailure {
+  /** Server code from chat.error, or one of sendState.ts's LOCAL_CODES. */
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+/**
  * Chat message
  */
 export interface ChatMessage {
@@ -118,6 +155,16 @@ export interface ChatMessage {
    * across the optimistic→server-confirmed swap so the message subtree (and any
    * in-progress media playback) isn't remounted when `id` changes to the real one. */
   clientKey?: string;
+  /** The idempotency key this message was sent with. The backend dedupes on
+   * (chatSessionId, clientMessageId) — see prisma/schema.prisma's
+   * `@@unique([chatSessionId, clientMessageId])` and message.service.ts:78 —
+   * so a RETRY MUST replay this exact value. Minting a fresh one is what makes
+   * a retry create a second message instead of retrying the first. */
+  clientMessageId?: string;
+  /** Set on outbound (CUSTOMER) messages only. */
+  sendStatus?: SendStatus;
+  /** Set only when sendStatus === 'failed'. */
+  sendFailure?: SendFailure;
   chatSessionId: string;
   senderType: SenderType;
   senderId?: string;
@@ -139,19 +186,38 @@ export interface ChatMessage {
 }
 
 /**
- * A past session summary used in the session history screen.
+ * Who is/was handling a session. Absent — never null, never a placeholder —
+ * when nobody has picked it up yet.
+ */
+export interface HandledBy {
+  kind: 'AGENT' | 'BOT';
+  /** The agent's external id, or the fixed sentinel "bot". */
+  id: string;
+  displayName: string;
+}
+
+/**
+ * A past session summary used in the session picker / history screen.
+ *
+ * Shape of GET /chat/sessions/customer's `data.sessions[]` items — see
+ * ChatSessionSummaryWire in openapi/chat-api.yaml. The nested `lastMessage`
+ * object this used to declare no longer exists on the wire; it was replaced by
+ * the flat lastMessageAt / lastMessagePreview / unreadCount trio.
  */
 export interface ChatSessionSummary {
   id: string;
   status: ChatStatus;
   mode: ChatMode;
-  createdAt: string | Date;
+  createdAt: string | Date | null;
   closedAt?: string | Date | null;
-  lastMessage?: {
-    content: string;
-    senderType: SenderType;
-    createdAt: string | Date;
-  } | null;
+  /** Timestamp of the most recent PUBLIC message, or null if there is none. */
+  lastMessageAt?: string | Date | null;
+  /** Verbatim content of the most recent PUBLIC message. Absent, never '', when
+   *  the session has no public message yet. */
+  lastMessagePreview?: string;
+  /** PUBLIC messages not sent by the customer since their read watermark. */
+  unreadCount: number;
+  handledBy?: HandledBy;
 }
 
 /**
@@ -243,10 +309,24 @@ export interface ChatSDKActions {
   loadOlderMessages: () => Promise<void>;
   /** Fetch the last N sessions for the current customer (session history) */
   fetchPastSessions: () => Promise<void>;
-  /** Reopen a closed session — goes directly to WAITING_FOR_AGENT (bypasses AI bot) */
+  /** Reopen a closed session via POST /reopen — goes directly to
+   *  WAITING_FOR_AGENT (bypasses AI bot). NOTE its convergence semantics: if
+   *  the customer already has a different active session, the backend returns
+   *  THAT session instead of reopening the requested one. Kept for callers that
+   *  want exactly that; the session picker deliberately does not use it —
+   *  see selectSession. */
   reopenSession: (sessionId: string) => Promise<{ sessionId: string; status: string; mode: string }>;
+  /** Switch the widget to an existing session and load its transcript, without
+   *  mutating it server-side. A terminal session picked this way comes back
+   *  when the customer types (server-side reactivation), which is why this
+   *  does not converge onto some other session the way /reopen does. */
+  selectSession: (sessionId: string) => Promise<void>;
   /** Mark all current session messages as read by the customer */
   markMessagesRead: () => Promise<void>;
+  /** Retry a failed outbound message by REPLAYING its original clientMessageId.
+   *  No-op when the message is not failed, or when its failure is not
+   *  retryable — retrying a permanently-refused send is refused identically. */
+  retryMessage: (messageId: string) => Promise<void>;
 }
 
 /**

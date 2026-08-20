@@ -41,10 +41,13 @@ const PAYLOADS: { [E in ChatEventName]: ChatEventMap[E] } = {
     createdAt: '2026-01-01T00:00:01.000Z',
   },
   messageAck: { id: 'msg-1', seq: 7 },
-  sendFailed: { id: 'msg-1', sessionId: 'sess-1', reason: 'expired' },
+  sendFailed: { id: 'msg-1', sessionId: 'sess-1', reason: 'expired', retryable: true },
   typing: { isTyping: true, participantId: 'agent-1' },
-  agentJoined: { agentId: 'agent-1', agentName: 'Ada' },
-  agentLeft: { agentId: 'agent-1' },
+  // HandledBy (protocol/domain.ts) as of the v2 wire contract — see the T7
+  // report. Mechanical fixture update only: this file's own event-round-trip
+  // logic is untouched.
+  agentJoined: { kind: 'AGENT', id: 'agent-1', displayName: 'Ada' },
+  agentLeft: { kind: 'AGENT', id: 'agent-1', displayName: 'Ada' },
   statusChange: { status: 'RESOLVED', mode: 'HUMAN' },
   sessionClosed: { closeReason: 'SWITCHED' },
   presenceUpdate: { participantId: 'agent-1', status: 'AWAY', lastSeen: '2026-01-01T00:00:02.000Z' },

@@ -170,8 +170,8 @@ describe('decodeFrame', () => {
     it('accepts every server push frame type it is given a valid payload for', () => {
       const cases: Array<[string, unknown]> = [
         ['session.closed', { sessionId: 's1', closeReason: 'RESOLVED' }],
-        ['agent.joined', { agentId: 'a1' }],
-        ['agent.left', { agentId: 'a1' }],
+        ['agent.joined', { kind: 'AGENT', id: 'a1', displayName: 'Ada' }],
+        ['agent.left', { kind: 'AGENT', id: 'a1', displayName: 'Ada' }],
         ['message.read', { participantId: 'u1', readAt: '2026-08-18T00:00:00Z' }],
         ['ticket.linked', { ticketId: 'tk1' }],
         ['system.pong', {}],

@@ -23,6 +23,93 @@ class TypingEvent {
   final String? participantId;
 }
 
+/// Whether a send whose failure carried no server verdict may be retried.
+///
+/// Mirrors the TypeScript core's `DEFAULT_RETRYABLE_FALLBACK`. It applies only
+/// where there is nothing to mirror — a send this client could not hand to the
+/// transport at all never produced a wire [ErrorPayload] to read `retryable`
+/// off. Defaulting to `true` rather than `false` is deliberate: the flag gates
+/// a UI affordance, so guessing `false` silently removes a Retry button that
+/// would have worked, while guessing `true` costs one refused round trip that
+/// the server answers with a real verdict.
+const bool kDefaultRetryable = true;
+
+/// How [ChatClient.retry] resolved.
+///
+/// A result type rather than a thrown error or a bare bool, because refusal is
+/// an expected outcome a caller branches on — and because the reasons are not
+/// interchangeable: [RetryRefusalReason.notRetryable] means retrying this send
+/// will never get anywhere, while the other two mean it did not happen now.
+sealed class RetryOutcome {
+  const RetryOutcome();
+}
+
+/// The original envelope went back onto the wire.
+final class RetryRetried extends RetryOutcome {
+  const RetryRetried(this.message);
+
+  /// The same message, under the same id, back to
+  /// [MessageDelivery.pending]. Also pushed onto [ChatClient.messages].
+  final ChatMessage message;
+}
+
+/// Nothing was sent.
+final class RetryRefused extends RetryOutcome {
+  const RetryRefused(this.reason);
+
+  final RetryRefusalReason reason;
+}
+
+/// Why [ChatClient.retry] declined.
+enum RetryRefusalReason {
+  /// No failed send under this id: never sent, already succeeded, still in
+  /// flight, or already retried by an earlier call. None of those are
+  /// distinguished, because a caller can do nothing different about them.
+  notFound,
+
+  /// The server said retrying is futile — its own `retryable` flag, not a
+  /// second copy of §7.4's code table maintained here.
+  notRetryable,
+
+  /// The transport could not take the frame, so there is nowhere for it to go
+  /// right now.
+  ///
+  /// ── A reason the TypeScript core does not have ────────────────────────
+  ///
+  /// There, a retry is accepted into the durable offline queue (§9.1) and
+  /// drains when the socket returns, so "disconnected" is not a refusal. This
+  /// package has no such queue — see the class doc's out-of-scope list — and
+  /// reporting `retried` for a frame that reached nothing would be a promise
+  /// with nothing behind it. The failure record survives the refusal, so the
+  /// identical call succeeds once the connection is back. When the durable
+  /// queue lands, this value goes away rather than changing meaning.
+  disconnected,
+}
+
+/// A send that has been handed to the transport and is awaiting its `ack`.
+class _InFlightSend {
+  const _InFlightSend(this.frame, this.message);
+
+  /// The frame AS SENT. Kept rather than rebuilt, because a retry must replay
+  /// this exact envelope — see [ChatClient.retry].
+  final ClientFrame frame;
+
+  /// The optimistic echo, still [MessageDelivery.pending].
+  final ChatMessage message;
+}
+
+/// A send that failed and that a host may offer a Retry affordance for.
+class _FailedSend {
+  const _FailedSend(this.frame, this.message, this.retryable);
+
+  final ClientFrame frame;
+  final ChatMessage message;
+
+  /// The server's verdict, or null when the failure never reached a server to
+  /// produce one. Null resolves through [kDefaultRetryable].
+  final bool? retryable;
+}
+
 /// The chat client.
 ///
 /// ── Shape ─────────────────────────────────────────────────────────────────
@@ -37,7 +124,10 @@ class TypingEvent {
 ///
 ///  * The durable offline queue (§9.1). [sendMessage] marks a send it cannot
 ///    hand to the transport as [MessageDelivery.failed] rather than queueing
-///    it. The seam is [ConnectionController.send] returning a bool.
+///    it. The seam is [ConnectionController.send] returning a bool. [retry]
+///    is the in-memory half of what that queue would do — it replays a failed
+///    send under its original id — but it is not durable, not ordered, and
+///    does not survive a restart.
 ///  * Delivery ticks (`message.markDelivered`/`message.delivered`). The frames
 ///    decode; nothing acts on them.
 ///  * Voice and attachments. [AttachmentMetadata] decodes so an inbound
@@ -90,7 +180,11 @@ class ChatClient {
   /// Under D1 that key IS the permanent message id, so this map never has to
   /// translate one id into another — the entire optimistic-id-swap machinery
   /// v1 needed (§12.9) does not exist here.
-  final Map<String, ChatMessage> _pending = <String, ChatMessage>{};
+  final Map<String, _InFlightSend> _pending = <String, _InFlightSend>{};
+
+  /// Failed sends, keyed by the same permanent id, each holding the frame AS
+  /// SENT so [retry] can replay it rather than rebuild it.
+  final Map<String, _FailedSend> _failed = <String, _FailedSend>{};
 
   String? _sessionId;
 
@@ -345,7 +439,10 @@ class ChatClient {
         break;
       case 'agent.joined':
       case 'agent.left':
-        _emit(_agentJoined, AgentEvent.fromJson(d, type));
+        // One decoder for the one canonical identity shape: the same
+        // HandledBy that arrives nested on a session snapshot arrives bare
+        // here, so a host cannot see two different names for one participant.
+        _emit(_agentJoined, HandledBy.fromJson(d, 'd', frameType: type));
         break;
       case 'presence.update':
         _emit(_presence, PresenceEntry.fromJson(d, 'd', frameType: type));

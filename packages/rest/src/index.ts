@@ -14,6 +14,7 @@ export {
   createHistorySource,
   createAttachmentUploader,
   createSessionActions,
+  createSessionSummarySource,
 } from './adapters.js';
 
 // The pieces the adapters are built from, exported because writing a fourth
@@ -29,8 +30,10 @@ export {
   UNSUPPORTED_MESSAGE_MARKER,
   isAttachmentMetadata,
   projectHistoryRow,
+  projectSessionSummaryRow,
   toChatMessage,
   toChatSession,
+  toChatSessionSummary,
 } from './projection.js';
 export type {
   RestAttachmentMetadata,
@@ -38,8 +41,10 @@ export type {
   RestChatMode,
   RestChatParticipantProfile,
   RestChatSession,
+  RestChatSessionSummary,
   RestChatStatus,
   RestChatTicket,
   RestMessageType,
   RestSenderType,
+  RestSessionHandledBy,
 } from './projection.js';

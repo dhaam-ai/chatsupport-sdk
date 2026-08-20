@@ -16,6 +16,7 @@ import type {
   ChatStatus,
   CloseReason,
   EmptyPayload,
+  ErrorCode,
   PresenceEntry,
   TicketLinkedPayload,
 } from '../protocol/index.js';
@@ -65,8 +66,20 @@ export interface ChatEventMap {
    * a binding can stop showing a spinner and offer a retry. `id` is the
    * message's permanent ULID (D1), so it addresses the same message the app
    * already rendered optimistically.
+   *
+   * `code` and `retryable` mirror `ChatMessage.delivery`'s `failed` variant
+   * (state/types.ts) field-for-field — see that type for what each means and
+   * why `retryable` is always present even when the server had nothing to
+   * report. Both are additive: `reason` alone is still enough for a consumer
+   * that has not adopted the new fields.
    */
-  sendFailed: { id: string; sessionId: string; reason: SendFailureReason };
+  sendFailed: {
+    id: string;
+    sessionId: string;
+    reason: SendFailureReason;
+    code?: ErrorCode;
+    retryable: boolean;
+  };
 
   /**
    * Remote typing state changed. Unlike `ChatState.typing`, `participantId`
@@ -75,6 +88,12 @@ export interface ChatEventMap {
    */
   typing: { isTyping: boolean; participantId: string };
 
+  /**
+   * `AgentEventPayload` is `HandledBy` (protocol/domain.ts) as of the v2
+   * wire contract: `{ kind: 'AGENT' | 'BOT'; id: string; displayName:
+   * string }`. `kind` covers the bot resuming a session too, not only a
+   * human agent — see `HandledBy`'s doc comment.
+   */
   agentJoined: AgentEventPayload;
   agentLeft: AgentEventPayload;
 

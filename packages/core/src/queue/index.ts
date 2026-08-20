@@ -38,7 +38,7 @@ export {
   SendQueue,
   StorageQueueError,
 } from './send-queue.js';
-export type { QueueTransport, RestoreReport, SendQueueOptions } from './send-queue.js';
+export type { QueueTransport, RestoreReport, RetryOutcome, SendQueueOptions } from './send-queue.js';
 
 export {
   DEFAULT_MAX_AGE_MS,

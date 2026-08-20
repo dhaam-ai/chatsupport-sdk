@@ -15,10 +15,12 @@ import { unwrapEnvelope } from './envelope.js';
 import { normalizeMediaType } from './media-type.js';
 import {
   projectHistoryRow,
+  projectSessionSummaryRow,
   toChatSession,
   type RestAttachmentMetadata,
   type RestChatMessage,
   type RestChatSession,
+  type RestChatSessionSummary,
 } from './projection.js';
 
 /**
@@ -300,6 +302,87 @@ export function createSessionActions<TSession>(client: RestClient): {
     },
     closeSession(sessionId) {
       return mutate('close', sessionId, 'POST /chat/sessions/{sessionId}/close');
+    },
+  };
+}
+
+/**
+ * `limit`'s valid range on `GET /chat/sessions/customer` (openapi's
+ * `listSessions`, `chat.validator.ts:52-58` — server default 5, cap 20).
+ */
+const SESSION_SUMMARY_LIMIT_MIN = 1;
+const SESSION_SUMMARY_LIMIT_MAX = 20;
+
+/**
+ * Validates `limit` before any request is made — the route itself would 400
+ * on an out-of-range value, but a caller bug (e.g. a widget passing a page
+ * size where a picker size belongs) should surface right here, not as a round
+ * trip's worth of latency plus a generic `VALIDATION_FAILED` from the server.
+ *
+ * `status: 0` on the thrown error documents that no HTTP request happened for
+ * it — every other `RestApiError` in this package carries a real response
+ * status, and this is the one exception, by design.
+ */
+function validateSessionSummaryLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined;
+  if (
+    !Number.isInteger(limit) ||
+    limit < SESSION_SUMMARY_LIMIT_MIN ||
+    limit > SESSION_SUMMARY_LIMIT_MAX
+  ) {
+    throw new RestApiError({
+      code: 'VALIDATION_FAILED',
+      message: `limit must be an integer between ${SESSION_SUMMARY_LIMIT_MIN} and ${SESSION_SUMMARY_LIMIT_MAX}, got ${JSON.stringify(limit)}`,
+      status: 0,
+      retryable: false,
+    });
+  }
+  return limit;
+}
+
+/**
+ * `GET /chat/sessions/customer` — the authenticated customer's own recent
+ * sessions, most recent first, for the SDK's session-picker (openapi's
+ * `listSessions` operation; hydrates core's `ChatState.pastSessions`, PRD
+ * §6.4).
+ *
+ * **A guest gets `200 { sessions: [] }`, never a 403/404** (see the
+ * `listSessions` operation description) — the widget uses an empty array to
+ * decide not to render a picker at all, so an empty page must reach the
+ * caller exactly like any other successful page. Nothing here treats
+ * emptiness as a failure, or distinguishes "no sessions yet" from "not
+ * identified" — the wire does not either.
+ */
+export function createSessionSummarySource<TSessionSummary>(client: RestClient): {
+  listSessions(query?: { readonly limit?: number }): Promise<readonly TSessionSummary[]>;
+} {
+  return {
+    async listSessions(query = {}) {
+      const limit = validateSessionSummaryLimit(query.limit);
+
+      const body = await client.request<unknown>('GET', '/chat/sessions/customer', {
+        query: { limit },
+      });
+
+      const page = unwrapEnvelope<{ sessions?: unknown }>(body, 'GET /chat/sessions/customer');
+
+      // Defended rather than trusted, same reasoning as listMessages: an
+      // absent `sessions` should surface as an empty picker, not a crash deep
+      // inside core's state layer.
+      const rows = Array.isArray(page.sessions) ? page.sessions : [];
+
+      // Per row, not per page — one session summary this SDK cannot decode
+      // must cost that one row, not the customer's whole picker. See
+      // projectSessionSummaryRow.
+      const sessions: readonly RestChatSessionSummary[] = rows
+        .map(projectSessionSummaryRow)
+        .filter((summary): summary is RestChatSessionSummary => summary !== null);
+
+      // The type parameter is the caller's own summary type, structurally
+      // this shape (core's `ChatSessionSummary`, plus the additive
+      // `handledBy` — see projection.ts's `RestChatSessionSummary`); the
+      // assertion is what lets this package stay free of a dependency on core.
+      return sessions as unknown as readonly TSessionSummary[];
     },
   };
 }

@@ -104,6 +104,8 @@ export class ChatWebSocketClient {
   private maxReconnectAttempts = 5;
   private reconnectDelay       = 1000;
   private heartbeatTimer:       ReturnType<typeof setInterval> | null = null;
+  private onBrowserOffline:     (() => void) | null = null;
+  private onBrowserOnline:      (() => void) | null = null;
 
   public session:       ChatSession | null = null;
   public connected      = false;
@@ -173,8 +175,18 @@ export class ChatWebSocketClient {
           withCredentials: false,
           forceNew: true,
           reconnection: true,
-          reconnectionAttempts: this.maxReconnectAttempts,
+          // Deliberately NOT maxReconnectAttempts (5). That capped the manager
+          // at five tries and then emitted reconnect_failed and stopped
+          // FOREVER — so a backend that was down for a minute left the widget
+          // permanently dead even after it came back. maxReconnectAttempts
+          // still bounds the FIRST connect (see connect_error below), which is
+          // where giving up and showing an error screen is the right answer.
+          // Infinity is socket.io's own default (manager.js:53).
+          reconnectionAttempts: Infinity,
           reconnectionDelay:    this.reconnectDelay,
+          // Bound the exponential backoff so a long outage does not end up
+          // waiting minutes between attempts.
+          reconnectionDelayMax: 10_000,
         });
 
         // ── DEBUG: log every raw Socket.IO event ──────────────────────────
@@ -195,17 +207,36 @@ export class ChatWebSocketClient {
           this.connected         = true;
           this.reconnectAttempts = 0;
 
-          const sessionId = data.chatSessionId ?? data.sessionIds?.[0];
+          const ackSessionId = data.chatSessionId ?? data.sessionIds?.[0];
           console.log(
             '%c[ChatClient] ✅ CONNECTION_ACK',
             'color:#16a34a;font-weight:bold',
-            { sessionId, mode: data.mode, status: data.status }
+            { ackSessionId, mode: data.mode, status: data.status }
           );
 
+          // CONNECTION_ACK names the server's PRIMARY session for this
+          // customer, which is not necessarily the one they are looking at —
+          // after picking an older conversation from the history, a reconnect
+          // would otherwise silently yank them back into the primary one.
+          // Once we have a session, it wins; we just re-join its room.
+          const sessionId = this.session?.id ?? ackSessionId;
+
           if (sessionId) {
-            const mode   = normalizeChatMode(data.mode)    as ChatMode;
-            const status = normalizeChatStatus(data.status) as ChatStatus;
-            this.session = { id: sessionId, mode, status };
+            const isAckForOurSession = sessionId === ackSessionId;
+            // Only trust the ack's mode/status when it is describing OUR
+            // session; otherwise keep what we already know.
+            const mode   = isAckForOurSession
+              ? normalizeChatMode(data.mode) as ChatMode
+              : (this.session?.mode ?? 'BOT');
+            const status = isAckForOurSession
+              ? normalizeChatStatus(data.status) as ChatStatus
+              : (this.session?.status ?? 'OPEN');
+            // Merge, do not replace. CONNECTION_ACK carries only {id, mode,
+            // status} — a plain replace on every reconnect wiped the assigned
+            // agent's identity off the session, so the header silently fell
+            // back to the generic title after any transport blip.
+            const prev = this.session?.id === sessionId ? this.session : null;
+            this.session = { ...(prev ?? {}), id: sessionId, mode, status };
             this.socket?.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
 
             // ── FIX: Emit 'connectionAck' on internal emitter ──────────────
@@ -292,9 +323,16 @@ export class ChatWebSocketClient {
           this.config.callbacks?.onStatusChange?.(status, mode);
         });
 
-        this.socket.on(WS_EVENTS.SESSION_CLOSED, () => {
-          if (this.session) this.session.status = 'CLOSED';
-          this.emit('sessionClosed', {});
+        this.socket.on(WS_EVENTS.SESSION_CLOSED, (data: any) => {
+          // Pass the payload through instead of swallowing it: the room this
+          // arrives on may be the customer's OTHER session (a reactivation
+          // closes it with closeReason SWITCHED), and the consumer needs
+          // chatSessionId + closeReason to tell the two apart.
+          const closedId = data?.chatSessionId ?? data?.sessionId ?? null;
+          if (this.session && (!closedId || closedId === this.session.id)) {
+            this.session.status = 'CLOSED';
+          }
+          this.emit('sessionClosed', data ?? {});
           this.config.callbacks?.onSessionClosed?.();
         });
 
@@ -355,7 +393,14 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
 
         // ── ERRORS ─────────────────────────────────────────────────────────
         this.socket.on(WS_EVENTS.ERROR, (error: any) => {
-          const err = new Error(error.message ?? String(error));
+          const err = new Error(error?.message ?? String(error));
+          // Carry the server's code through. This used to be dropped on the
+          // floor, which made every failure indistinguishable — a validation
+          // refusal and a transient write error looked identical, so the UI
+          // could not know whether a retry was even possible.
+          // chat-service emits { code, message }: NOT_IN_SESSION, RATE_LIMITED,
+          // MESSAGE_ERROR, VALIDATION_ERROR, UNAUTHORIZED, SESSION_ERROR.
+          if (error?.code) (err as any).code = error.code;
           this.emit('error', err);
           this.config.callbacks?.onError?.(err);
         });
@@ -392,14 +437,24 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
           this.emit('disconnect', { reason });
         });
 
-        // ── FIX: On socket.io reconnect, re-join the session room ─────────
-        // socket.io fires 'reconnect' after the transport re-connects but
-        // BEFORE the server sends a new CONNECTION_ACK. We re-emit JOIN_SESSION
-        // so the server adds this socket back to the room. The server will then
-        // send a new CONNECTION_ACK which triggers handleConnectionAck above,
-        // which in turn emits our internal 'connectionAck' event so context.ts
-        // can re-enable the input.
-        this.socket.on('reconnect', (attemptNumber: number) => {
+        // ── On socket.io reconnect, re-join the session room ──────────────
+        // BUG THIS FIXES: this was `this.socket.on('reconnect', ...)`, which
+        // never fired. In socket.io-client v4 'reconnect' is emitted by the
+        // MANAGER, not the Socket — verified in socket.io-client@4.8.3:
+        // manager.js:413 `this.emitReserved("reconnect", attempt)` inside
+        // Manager.onreconnect, while the Socket's RESERVED_EVENTS
+        // (socket.js:16) are only connect / connect_error / disconnect /
+        // disconnecting / newListener / removeListener. Registering it on the
+        // socket made it an ordinary user-event listener for a name the server
+        // never sends, so after every auto-reconnect `this.connected` stayed
+        // false, JOIN_SESSION was never re-emitted from here, and context.tsx
+        // never re-enabled the input or refetched the missed messages.
+        //
+        // socket.io fires this after the transport re-connects but BEFORE the
+        // server sends a new CONNECTION_ACK, so we re-emit JOIN_SESSION to get
+        // put back in the room; the CONNECTION_ACK that follows drives
+        // handleConnectionAck above.
+        this.socket.io.on('reconnect', (attemptNumber: number) => {
           console.log(`%c[ChatClient] 🔄 Reconnected after ${attemptNumber} attempt(s)`,
             'color:#10b981;font-weight:bold');
           this.connected         = true;
@@ -415,6 +470,17 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
           // (CONNECTION_ACK will follow shortly and update session state)
           this.emit('reconnect', {});
         });
+
+        this.socket.io.on('reconnect_attempt', (attempt: number) => {
+          console.log(`[ChatClient] 🔄 Reconnect attempt ${attempt}`);
+          this.emit('reconnectAttempt', { attempt });
+        });
+
+        this.socket.io.on('reconnect_error', (err: any) => {
+          console.warn('[ChatClient] 🔄 Reconnect attempt failed:', err?.message ?? err);
+        });
+
+        this._bindConnectivityListeners();
 
       } catch (error) {
         reject(error);
@@ -448,6 +514,49 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
   setPresence(status: number): void {
     if (!this.socket || !this.connected) return;
     this.socket.emit(WS_EVENTS.SET_PRESENCE, { status });
+  }
+
+  // ── Browser connectivity ──────────────────────────────────────────────────
+  // socket.io only notices a dropped network when a transport read fails or
+  // the heartbeat times out, which can take tens of seconds — during which the
+  // widget still looks connected and messages silently vanish into the send
+  // buffer. The browser knows immediately, so listen to it.
+  //
+  // MDN: navigator.onLine / the window 'online' and 'offline' events —
+  // https://developer.mozilla.org/en-US/docs/Web/API/Navigator/onLine
+  // Note the documented caveat: `onLine === true` only means *some* network
+  // interface is up, not that the server is reachable. That is why 'online'
+  // triggers a reconnect ATTEMPT rather than declaring us connected — only a
+  // CONNECTION_ACK does that.
+  private _bindConnectivityListeners(): void {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+    this._unbindConnectivityListeners();
+
+    this.onBrowserOffline = () => {
+      console.warn('[ChatClient] 📴 Browser went offline');
+      this.connected = false;
+      // Tell the UI now instead of after the heartbeat eventually times out.
+      this.emit('disconnect', { reason: 'browser-offline' });
+    };
+
+    this.onBrowserOnline = () => {
+      console.log('[ChatClient] 📶 Browser back online — forcing a reconnect attempt');
+      // socket.io may be mid-backoff (up to reconnectionDelayMax). The network
+      // just came back, so try immediately rather than waiting out the delay.
+      if (this.tokenExpired) return;
+      if (this.socket && !this.socket.connected) this.socket.connect();
+    };
+
+    window.addEventListener('offline', this.onBrowserOffline);
+    window.addEventListener('online',  this.onBrowserOnline);
+  }
+
+  private _unbindConnectivityListeners(): void {
+    if (typeof window === 'undefined' || typeof window.removeEventListener !== 'function') return;
+    if (this.onBrowserOffline) window.removeEventListener('offline', this.onBrowserOffline);
+    if (this.onBrowserOnline)  window.removeEventListener('online',  this.onBrowserOnline);
+    this.onBrowserOffline = null;
+    this.onBrowserOnline  = null;
   }
 
   private _startHeartbeat(): void {
@@ -545,19 +654,26 @@ this.socket.on('NEW_MESSAGE_NOTIFICATION',      handleNewMsgNotif);
     }
   }
 
-  joinSession(sessionId: string): void {
+  /**
+   * @param status the status the caller already knows this session to be in.
+   *   Pass it when switching to a session picked from history: the old default
+   *   of 'OPEN' fabricated a status for a session that may well be CLOSED or
+   *   RESOLVED, and terminal is not something the client may quietly overwrite.
+   */
+  joinSession(sessionId: string, status?: ChatStatus): void {
     if (!this.socket || !this.connected) return;
     if (this.session?.id && this.session.id !== sessionId) {
       this.socket.emit(WS_EVENTS.LEAVE_SESSION, { chatSessionId: this.session.id });
     }
     this.socket.emit(WS_EVENTS.JOIN_SESSION, { chatSessionId: sessionId });
     if (this.session) {
-      this.session = { ...this.session, id: sessionId, status: 'OPEN' };
+      this.session = { ...this.session, id: sessionId, status: status ?? 'OPEN' };
     }
   }
 
   disconnect(): void {
     this._stopHeartbeat();
+    this._unbindConnectivityListeners();
     if (this.socket) { this.socket.disconnect(); this.socket = null; }
     this.connected = false;
     this.session   = null;

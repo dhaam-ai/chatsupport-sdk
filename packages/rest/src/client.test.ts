@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createAttachmentUploader, createHistorySource, createSessionActions } from './adapters.js';
+import {
+  createAttachmentUploader,
+  createHistorySource,
+  createSessionActions,
+  createSessionSummarySource,
+} from './adapters.js';
 import { BASE_PATH, RestClient } from './client.js';
 import { RestApiError, RestSessionReadBackError, RestTransportError } from './errors.js';
 
@@ -779,5 +784,190 @@ describe('upload -> history round trip', () => {
     expect((page.messages[0] as { content: string }).content).toBe(
       (uploaded as { url: string }).url,
     );
+  });
+});
+
+/** What GET /chat/sessions/customer actually replies (chat.routes.ts:238, openapi's SessionSummaryPageWire). */
+function sessionSummaryPageResponse(sessions: unknown[] = []) {
+  return { success: true, data: { sessions } };
+}
+
+/** One `sessions[]` item, exactly as the wire sends it — v2 string enums, no row renames needed. */
+function sessionSummaryRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'sum-1',
+    status: 'ASSIGNED',
+    mode: 'HUMAN',
+    createdAt: '2026-08-19T09:00:00.000Z',
+    closedAt: null,
+    lastMessageAt: '2026-08-19T09:05:00.000Z',
+    lastMessagePreview: 'here you go',
+    unreadCount: 3,
+    handledBy: { kind: 'AGENT', id: 'agent-9', displayName: 'Ada' },
+    ...overrides,
+  };
+}
+
+describe('session summaries (listSessions)', () => {
+  it('requests GET /chat/sessions/customer under the correct base path', async () => {
+    const h = harness(() => jsonResponse(sessionSummaryPageResponse()));
+
+    await createSessionSummarySource(h.client).listSessions();
+
+    expect(`${h.calls[0]?.init.method} ${h.calls[0]?.url.pathname}`).toBe(
+      'GET /chat-services/api/v1/chat/sessions/customer',
+    );
+  });
+
+  it('sends both credentials, same as every other adapter', async () => {
+    const h = harness(() => jsonResponse(sessionSummaryPageResponse()));
+
+    await createSessionSummarySource(h.client).listSessions();
+
+    const headers = h.calls[0]?.init.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer tok_abc');
+    expect(headers['X-Publishable-Key']).toBe(KEY);
+  });
+
+  it('parses a full session summary, including handledBy', async () => {
+    const h = harness(() => jsonResponse(sessionSummaryPageResponse([sessionSummaryRow()])));
+
+    const sessions = await createSessionSummarySource(h.client).listSessions();
+
+    expect(sessions).toEqual([
+      {
+        id: 'sum-1',
+        status: 'ASSIGNED',
+        mode: 'HUMAN',
+        createdAt: '2026-08-19T09:00:00.000Z',
+        closedAt: null,
+        lastMessageAt: '2026-08-19T09:05:00.000Z',
+        lastMessagePreview: 'here you go',
+        unreadCount: 3,
+        handledBy: { kind: 'AGENT', id: 'agent-9', displayName: 'Ada' },
+      },
+    ]);
+  });
+
+  it('leaves absent optional fields absent, not undefined-valued keys or null', async () => {
+    const row = sessionSummaryRow();
+    delete (row as Record<string, unknown>)['lastMessagePreview'];
+    delete (row as Record<string, unknown>)['handledBy'];
+    const h = harness(() => jsonResponse(sessionSummaryPageResponse([row])));
+
+    const sessions = await createSessionSummarySource(h.client).listSessions();
+    const summary = sessions[0] as Record<string, unknown>;
+
+    expect('lastMessagePreview' in summary).toBe(false);
+    expect('handledBy' in summary).toBe(false);
+    expect(Object.keys(summary).sort()).toEqual([
+      'closedAt',
+      'createdAt',
+      'id',
+      'lastMessageAt',
+      'mode',
+      'status',
+      'unreadCount',
+    ]);
+  });
+
+  it('treats a guest 200-with-empty-array as a normal success, not an error', async () => {
+    const h = harness(() => jsonResponse(sessionSummaryPageResponse([])));
+
+    await expect(createSessionSummarySource(h.client).listSessions()).resolves.toEqual([]);
+  });
+
+  it('passes limit through as a query param when supplied', async () => {
+    const h = harness(() => jsonResponse(sessionSummaryPageResponse()));
+
+    await createSessionSummarySource(h.client).listSessions({ limit: 10 });
+
+    expect(h.calls[0]?.url.searchParams.get('limit')).toBe('10');
+  });
+
+  it('omits limit entirely when not supplied, deferring to the server default of 5', async () => {
+    const h = harness(() => jsonResponse(sessionSummaryPageResponse()));
+
+    await createSessionSummarySource(h.client).listSessions();
+
+    expect(h.calls[0]?.url.searchParams.has('limit')).toBe(false);
+  });
+
+  it.each([0, 21, 1.5, -1, NaN])(
+    'rejects an out-of-range limit (%s) locally, without making a request',
+    async (limit) => {
+      const h = harness(() => jsonResponse(sessionSummaryPageResponse()));
+
+      await expect(
+        createSessionSummarySource(h.client).listSessions({ limit }),
+      ).rejects.toMatchObject({ name: 'RestApiError', code: 'VALIDATION_FAILED' });
+      expect(h.calls).toHaveLength(0);
+    },
+  );
+
+  it.each([1, 20, 5])('accepts the boundary values 1 and 20, and the default 5', async (limit) => {
+    const h = harness(() => jsonResponse(sessionSummaryPageResponse()));
+
+    await createSessionSummarySource(h.client).listSessions({ limit });
+
+    expect(h.calls[0]?.url.searchParams.get('limit')).toBe(String(limit));
+  });
+
+  it('rejects an unenveloped 200 instead of returning an empty picker', async () => {
+    const h = harness(() => jsonResponse({ sessions: [sessionSummaryRow()] }));
+
+    await expect(createSessionSummarySource(h.client).listSessions()).rejects.toMatchObject({
+      name: 'RestApiError',
+      code: 'MALFORMED_RESPONSE',
+    });
+  });
+
+  it('keeps every good session when one cannot be decoded', async () => {
+    const h = harness(() =>
+      jsonResponse(
+        sessionSummaryPageResponse([
+          sessionSummaryRow({ id: 's1' }),
+          sessionSummaryRow({ id: 's2', status: 'NOT_A_REAL_STATUS' }),
+          sessionSummaryRow({ id: 's3' }),
+        ]),
+      ),
+    );
+
+    const sessions = await createSessionSummarySource(h.client).listSessions();
+
+    expect(sessions.map((s) => (s as { id: string }).id)).toEqual(['s1', 's3']);
+  });
+
+  it('maps a structured API error the same way every other adapter does', async () => {
+    const h = harness(() =>
+      jsonResponse({ error: { code: 'AUTH_EXPIRED', message: 'token expired', retryable: true } }, 401),
+    );
+
+    await expect(createSessionSummarySource(h.client).listSessions()).rejects.toMatchObject({
+      name: 'RestApiError',
+      code: 'AUTH_EXPIRED',
+      status: 401,
+      retryable: true,
+      serverMessage: 'token expired',
+    });
+  });
+
+  it('distinguishes a transport failure from a server verdict', async () => {
+    const h = harness(() => {
+      throw new TypeError('fetch failed');
+    });
+
+    await expect(createSessionSummarySource(h.client).listSessions()).rejects.toBeInstanceOf(
+      RestTransportError,
+    );
+  });
+
+  it('treats a 5xx without a structured body as retryable, same status fallback as history', async () => {
+    const h = harness(() => new Response('gateway exploded', { status: 502 }));
+
+    await expect(createSessionSummarySource(h.client).listSessions()).rejects.toMatchObject({
+      retryable: true,
+      status: 502,
+    });
   });
 });

@@ -77,6 +77,22 @@ export interface FailedSend {
   /** Present when `reason` is `'rejected'` — the server's §7.4 code. */
   readonly code?: string;
 
+  /**
+   * Whether retrying this exact send is worth attempting — the server's
+   * `ErrorPayload.retryable` (§7.4), copied through unchanged. Present only
+   * when `reason` is `'rejected'`: every other `SendFailureReason` is this
+   * SDK's own local determination (queue retention, a session abandoned
+   * before its send reached the wire), with no wire `ErrorPayload` behind it
+   * to mirror.
+   *
+   * Absent does NOT mean "not retryable" — it means "no server signal to
+   * trust". `messages/controller.ts`'s `DEFAULT_RETRYABLE_FALLBACK` (`true`)
+   * is what fills that gap for rendering, and `SendQueue.retry()` (T9)
+   * applies the identical fallback, so a caller can never see a Retry
+   * affordance the retry primitive itself would then refuse.
+   */
+  readonly retryable?: boolean;
+
   /** Present when the failure originated in storage. */
   readonly storageCode?: StorageErrorCode;
 }

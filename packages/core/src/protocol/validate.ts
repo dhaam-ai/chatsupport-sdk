@@ -250,7 +250,32 @@ function validateParticipantSnapshot(value: unknown, path: string, frameType: st
   return (
     requireField(value, 'participantId', isNonEmptyString, path, 'a non-empty string', frameType) ??
     requireField(value, 'type', isParticipantType, path, 'a valid ParticipantType', frameType) ??
-    optionalField(value, 'lastReadAt', isIsoTimestamp, path, 'an ISO-8601 timestamp string', frameType)
+    optionalField(value, 'lastReadAt', isIsoTimestamp, path, 'an ISO-8601 timestamp string', frameType) ??
+    // Absent is fine (unresolved); present-but-`null`/`""` is not — a
+    // validator that let either through would hand a binding a name with
+    // nothing to render.
+    optionalField(value, 'displayName', isNonEmptyString, path, 'a non-empty string', frameType)
+  );
+}
+
+/**
+ * `HandledBy` (domain.ts) — shared by `SessionSnapshot.handledBy` and, as
+ * {@link AgentEventPayload}, the `agent.joined`/`agent.left` push payload
+ * itself. One validator for the one canonical shape (D4).
+ */
+function isHandledByKind(value: unknown): value is 'AGENT' | 'BOT' {
+  return value === 'AGENT' || value === 'BOT';
+}
+
+function validateHandledBy(value: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(value)) return fail(path, 'must be an object', frameType);
+  return (
+    requireField(value, 'kind', isHandledByKind, path, "'AGENT' or 'BOT'", frameType) ??
+    requireField(value, 'id', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    // Required on this shape (unlike ParticipantSnapshot.displayName) — see
+    // HandledBy's doc comment. isNonEmptyString already rejects `null` and
+    // `""` alongside every other non-string.
+    requireField(value, 'displayName', isNonEmptyString, path, 'a non-empty string', frameType)
   );
 }
 
@@ -262,7 +287,11 @@ function validateSessionSnapshot(value: unknown, path: string, frameType: string
     requireField(value, 'mode', isChatMode, path, 'a valid ChatMode', frameType) ??
     requireArray(value, 'participants', path, validateParticipantSnapshot, frameType) ??
     requireField(value, 'createdAt', isIsoTimestamp, path, 'an ISO-8601 timestamp string', frameType) ??
-    optionalField(value, 'ticketId', isNonEmptyString, path, 'a non-empty string', frameType)
+    optionalField(value, 'ticketId', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    // Additive: an older server that sends neither `handledBy` nor a
+    // participant `displayName` still produces a valid snapshot (see the
+    // "old-server payload" test in validate.test.ts).
+    optionalObject(value, 'handledBy', path, validateHandledBy, frameType)
   );
 }
 
@@ -389,14 +418,6 @@ function validateSessionClosed(d: unknown, path: string, frameType: string): Fra
   );
 }
 
-function validateAgentEvent(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
-  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
-  return (
-    requireField(d, 'agentId', isNonEmptyString, path, 'a non-empty string', frameType) ??
-    optionalField(d, 'agentName', isString, path, 'a string', frameType)
-  );
-}
-
 function validateMessageNew(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
   return (
@@ -473,8 +494,10 @@ const PAYLOAD_VALIDATORS: Record<PlainFrameType, PayloadValidator> = {
   'connection.ack': validateConnectionAck,
   'session.updated': validateSessionUpdated,
   'session.closed': validateSessionClosed,
-  'agent.joined': validateAgentEvent,
-  'agent.left': validateAgentEvent,
+  // AgentEventPayload = HandledBy (frames.ts) — same validator as the
+  // nested `SessionSnapshot.handledBy` field, not a near-duplicate.
+  'agent.joined': validateHandledBy,
+  'agent.left': validateHandledBy,
   'message.new': validateMessageNew,
   'message.read': validateMessageRead,
   'message.delivered': validateMessageDelivered,

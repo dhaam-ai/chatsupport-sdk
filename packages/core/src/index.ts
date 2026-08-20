@@ -51,8 +51,11 @@
 //   client/      createChatClient, ChatClient, ChatClientConfig, and every
 //                seam a consumer must implement to supply one
 //                (MessageHistorySource, AttachmentUploader, SessionActions,
-//                LocalSender) or may want to catch (ChatClientConfigError,
-//                ConnectionAbortedError, ConnectionSuspendedError).
+//                SessionSummarySource, LocalSender) or may want to catch
+//                (ChatClientConfigError, ConnectionAbortedError,
+//                ConnectionSuspendedError) — plus isHandledByCurrent (T10),
+//                the one canonical "is handledBy safe to narrate as active"
+//                derivation, same spirit as messages/'s deriveTickState.
 //   state/       ChatState and everything it is built from (§6.4) — the
 //                observable surface — plus the §6.5 event catalog types.
 //   protocol/    The domain enums and shapes that appear inside ChatState/
@@ -83,6 +86,11 @@ export {
   ChatClientConfigError,
   ConnectionAbortedError,
   ConnectionSuspendedError,
+  // The one canonical `handledBy`-staleness derivation (T10) — every binding
+  // gates "connected to <name>" copy on this rather than re-deriving the
+  // WAITING_FOR_AGENT-after-reactivation rule ad hoc. Same reasoning as
+  // deriveTickState above.
+  isHandledByCurrent,
 } from './client/index.js';
 export type {
   AttachmentUploader,
@@ -94,6 +102,7 @@ export type {
   SendAttachmentOptions,
   SendMessageOptions,
   SessionActions,
+  SessionSummarySource,
   TokenProvider,
 } from './client/index.js';
 
@@ -142,10 +151,19 @@ export { MESSAGE_TICK_STATES, deriveTickState, deriveTickStateFromState } from '
 export type { MessageTickState } from './messages/index.js';
 
 // ---------------------------------------------------------------------------
-// queue/ — SendFailureReason only; see the module header above.
+// queue/ — SendFailureReason, plus QueuedSend/RetryOutcome (T10). See the
+// module header above for why queue/ is otherwise fully internal.
+//
+// `QueuedSend`/`RetryOutcome` are the one further exception, and for the
+// same reason `MESSAGE_TICK_STATES` above already is: `ChatClient.retryMessage`
+// (client/) returns `Promise<RetryOutcome>`, whose 'retried' branch embeds a
+// `QueuedSend` — so both are now genuinely part of the public return type of
+// a public method, not merely of SendQueue's internal one, and core's single
+// "." exports entry means a consumer cannot otherwise name either type at
+// all to accept `retryMessage`'s result.
 // ---------------------------------------------------------------------------
 
-export type { SendFailureReason } from './queue/index.js';
+export type { QueuedSend, RetryOutcome, SendFailureReason } from './queue/index.js';
 
 // ---------------------------------------------------------------------------
 // protocol/ — domain enums and shapes reachable from ChatState/ChatMessage/
@@ -179,6 +197,7 @@ export type {
   ChatStatus,
   CloseReason,
   ErrorCode,
+  HandledBy,
   MessageMetadata,
   MessageType,
   ParticipantType,

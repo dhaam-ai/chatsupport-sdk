@@ -31,10 +31,32 @@
 //
 // Every one of those fires at most once per event, and `onClose` fires exactly
 // once per connection that opened a socket.
+//
+// `onClose` is also T8's *only* signal to retry (`#handleClose` ->
+// `#scheduleTransportRetry`, connection/controller.ts) — nothing else in this
+// codebase schedules a reconnect. That makes it this module's job to guarantee
+// `onClose` eventually fires for every `connect()` call, not just the ones
+// that happen to succeed or that the peer happens to close cleanly. Two gaps
+// used to violate that:
+//
+//   - A socket that never calls back at all — no `onopen`, no `onerror`, no
+//     `onclose` — which is exactly what "server down" or "no route to host"
+//     looks like on many platforms until the OS's own TCP timeout gives up,
+//     tens of seconds to minutes later. `connect()` now arms a deadline
+//     (`connectTimeoutMs`) that synthesizes a retryable close if nothing else
+//     resolves the attempt first.
+//   - `onerror`, which carries no diagnostic detail by design and, across the
+//     `WebSocketLike` seam, is not guaranteed to be followed by `onclose` the
+//     way a real browser follows it. `onerror` now finishes the attempt
+//     itself rather than trusting a close that may never come.
+//
+// Both routes end at `#finish`, the same funnel every other close goes
+// through, so `onClose` still fires exactly once no matter which of these
+// fires first or whether a genuine close follows.
 
 import type { ConnectionHelloPayload, ClientFramePayloadMap, ClientToServerFrameType, ServerFrame } from '../protocol/frames.js';
 import type { ErrorPayload, Frame } from '../protocol/envelope.js';
-import type { Clock, ScheduleTimer } from '../presence/time.js';
+import type { CancelTimer, Clock, ScheduleTimer } from '../presence/time.js';
 import { systemClock, systemTimers } from '../presence/time.js';
 import { buildCloseInfo } from './close.js';
 import type { TransportCloseCause, TransportCloseInfo } from './close.js';
@@ -117,6 +139,15 @@ export interface WebSocketTransportOptions {
   /** How long a client frame waits for its `ack`. Defaults to {@link DEFAULT_ACK_TIMEOUT_MS}. */
   readonly ackTimeoutMs?: number;
 
+  /**
+   * Deadline from `connect()` to the socket reporting open. Defaults to
+   * {@link DEFAULT_CONNECT_TIMEOUT_MS}.
+   *
+   * Covers the one gap `onOpen`/`onError`/`onClose` cannot: a socket that
+   * simply never calls back. See the file header.
+   */
+  readonly connectTimeoutMs?: number;
+
   /** Idle time between heartbeats. */
   readonly heartbeatIntervalMs?: number;
 
@@ -141,6 +172,19 @@ export interface WebSocketTransportOptions {
  */
 export const DEFAULT_ACK_TIMEOUT_MS = 10_000;
 
+/**
+ * Default connect deadline. Matches the other 10s deadlines in this module
+ * ({@link DEFAULT_ACK_TIMEOUT_MS}, heartbeat's `DEFAULT_HEARTBEAT_TIMEOUT_MS`
+ * in heartbeat.ts): comfortably longer than a slow mobile round trip, and
+ * short enough that a genuinely unreachable server — down, or a network with
+ * no route to it — surfaces as a visible retry (the state machine moves to
+ * `reconnecting` and backs off per §8.2) rather than leaving the state
+ * machine parked in `connecting` for however long the OS's own TCP timeout
+ * happens to be, which on some platforms is tens of seconds to several
+ * minutes with zero WebSocket-level events in the meantime.
+ */
+export const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+
 /** The protocol version this client implements (§7.5). */
 export const DEFAULT_PROTOCOL_VERSION = 1;
 
@@ -149,9 +193,11 @@ type WriteResult = 'written' | 'notSerializable' | 'writeFailed';
 
 export class WebSocketTransport {
   readonly #createSocket: WebSocketFactory;
+  readonly #schedule: ScheduleTimer;
   readonly #now: Clock;
   readonly #logger: TransportLogger;
   readonly #protocolVersion: number;
+  readonly #connectTimeoutMs: number;
   readonly #nextUlid: UlidGenerator;
   readonly #pending: PendingAckRegistry;
   readonly #heartbeat: HeartbeatMonitor;
@@ -167,13 +213,18 @@ export class WebSocketTransport {
   #protocolError: ErrorPayload | null = null;
   #negotiatedProtocolVersion: number | null = null;
 
+  /** Cancels the deadline armed by `connect()`. `null` once resolved (open, error, or close). */
+  #cancelConnectDeadline: CancelTimer | null = null;
+
   constructor(options: WebSocketTransportOptions = {}) {
     const schedule = options.schedule ?? systemTimers;
 
     this.#createSocket = options.webSocket ?? createPlatformWebSocketFactory();
+    this.#schedule = schedule;
     this.#now = options.now ?? systemClock;
     this.#logger = options.logger ?? consoleLogger;
     this.#protocolVersion = options.protocolVersion ?? DEFAULT_PROTOCOL_VERSION;
+    this.#connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.#onOpen = options.onOpen;
     this.#onFrame = options.onFrame;
     this.#onClose = options.onClose;
@@ -271,9 +322,23 @@ export class WebSocketTransport {
     socket.onopen = () => this.#handleOpen(options.hello);
     socket.onmessage = (event) => this.#handleMessage(event.data);
     socket.onerror = () => {
-      // Carries no diagnostic detail by design in every browser, and is
-      // always followed by a close — which is the event that matters.
+      // Carries no diagnostic detail by design in every browser. In a real
+      // browser this is reliably followed by `onclose`, but `WebSocketLike`
+      // (socket.ts) is a seam meant for non-browser adapters too, and nothing
+      // guarantees one of those delivers a close after an error. Finishing
+      // right here — rather than trusting a close that may never come — is
+      // what keeps an error from stranding the connection: `onClose` is T8's
+      // only route to a retry (see the file header), so an error that never
+      // reaches it would leave `connecting` parked forever.
       this.#logger.warn('transport: socket error');
+      this.#cause = 'peer';
+      this.#tryClose(socket, CLOSE_CODE.ABNORMAL, 'socket error');
+      this.#finish({
+        code: CLOSE_CODE.ABNORMAL,
+        reason: 'socket error',
+        wasClean: false,
+        cause: 'peer',
+      });
     };
     socket.onclose = (event) => {
       this.#finish({
@@ -283,6 +348,16 @@ export class WebSocketTransport {
         cause: this.#cause,
       });
     };
+
+    // The backstop for a socket that never calls back at all — see the file
+    // header. Cancelled the moment anything else resolves the attempt:
+    // `#handleOpen` cancels it on success, `#finish` cancels it on every close
+    // path (including the two above), so by the time this fires the attempt
+    // is guaranteed still unresolved.
+    this.#cancelConnectDeadline = this.#schedule(() => {
+      this.#cancelConnectDeadline = null;
+      this.#handleConnectTimeout();
+    }, this.#connectTimeoutMs);
   }
 
   /**
@@ -359,6 +434,8 @@ export class WebSocketTransport {
   // -------------------------------------------------------------------------
 
   #handleOpen(hello: Omit<ConnectionHelloPayload, 'protocolVersion'>): void {
+    this.#cancelConnectDeadlineTimer();
+
     const socket = this.#socket;
     if (socket === null) return;
 
@@ -487,6 +564,31 @@ export class WebSocketTransport {
     });
   }
 
+  /**
+   * `connectTimeoutMs` elapsed with nothing else having resolved the attempt
+   * — the "server down" / "no route to host" shape described in the file
+   * header, where a socket calls back nothing at all.
+   *
+   * Mirrors `#handleDeadPeer`: attempt a clean close of the socket this
+   * transport is abandoning, then synthesize the retryable close that
+   * `#finish` guarantees fires exactly once. `cause: 'peer'` — from T8's
+   * point of view this is indistinguishable from the network simply not
+   * answering, which is exactly what it is.
+   */
+  #handleConnectTimeout(): void {
+    const socket = this.#socket;
+    if (socket === null) return;
+
+    this.#cause = 'peer';
+    this.#tryClose(socket, CLOSE_CODE.ABNORMAL, 'connect timed out');
+    this.#finish({
+      code: CLOSE_CODE.ABNORMAL,
+      reason: `socket did not open within ${String(this.#connectTimeoutMs)}ms`,
+      wasClean: false,
+      cause: 'peer',
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
@@ -539,6 +641,12 @@ export class WebSocketTransport {
     socket.onclose = null;
   }
 
+  /** No leaked timer: safe to call whether or not one is currently armed. */
+  #cancelConnectDeadlineTimer(): void {
+    this.#cancelConnectDeadline?.();
+    this.#cancelConnectDeadline = null;
+  }
+
   /** A dying socket may throw from `close()`; that must not mask the real failure. */
   #tryClose(socket: WebSocketLike, code: number, reason: string): void {
     try {
@@ -563,6 +671,7 @@ export class WebSocketTransport {
     const socket = this.#socket;
     if (socket === null || this.#closeEmitted) return;
 
+    this.#cancelConnectDeadlineTimer();
     this.#closeEmitted = true;
     this.#open = false;
     this.#socket = null;

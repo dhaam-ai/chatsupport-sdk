@@ -44,6 +44,35 @@ export interface ParticipantSnapshot {
 
   /** ISO-8601. Absent if this participant has not read anything yet. */
   lastReadAt?: string;
+
+  /**
+   * Resolved through the SAME chain as {@link SessionSnapshot.handledBy} —
+   * an agent-name resolution for an AGENT row, the tenant bot-name resolver
+   * for a BOT row. Absent — never `null` or `""` — when no display name has
+   * been resolved for this participant, which is the common case for
+   * CUSTOMER rows today. `validate.ts` rejects `null` and `""` rather than
+   * letting either reach a binding as a name.
+   */
+  displayName?: string;
+}
+
+/**
+ * Who is currently handling a session for the customer — a human agent or
+ * the bot. Resolved through the same lookup chain that produces the
+ * "<name> has joined the chat" system message, so a session header built
+ * from this and that message can never disagree about the name.
+ *
+ * Identical shape to `AgentEventPayload` (frames.ts; pushed on `agent.joined`
+ * / `agent.left`) on purpose — one canonical identity shape, not two
+ * near-duplicates that can drift apart.
+ */
+export interface HandledBy {
+  kind: 'AGENT' | 'BOT';
+
+  /** Same id space as `ParticipantSnapshot.participantId`. */
+  id: string;
+
+  displayName: string;
 }
 
 /**
@@ -72,6 +101,19 @@ export interface SessionSnapshot {
   createdAt: string;
 
   ticketId?: string;
+
+  /**
+   * Who the customer is currently talking to. ABSENT — never `null` — when
+   * nobody is assigned yet (queued) or a display name could not be
+   * resolved.
+   *
+   * IMPORTANT, read before consuming this field: absence does NOT mean
+   * "nobody is handling this chat" — `status`/`mode` already carry that
+   * signal. This field is presentation-only. Treat an absent `handledBy` as
+   * "render your own configured title instead", never as evidence the
+   * session is unhandled.
+   */
+  handledBy?: HandledBy;
 }
 
 /**

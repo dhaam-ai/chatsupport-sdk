@@ -64,10 +64,13 @@ interface MessageBubbleProps {
   replyToResolved?: ChatMessage | null;
   tickStatus: TickStatus;
   primaryColor: string;
+  /** Replays the message's original clientMessageId. Only wired up when the
+   *  failure is retryable — see the footer below. */
+  onRetry?: (messageId: string) => void;
 }
 
 export const MessageBubble = React.memo(function MessageBubble({
-  message, styles, onImageClick, onReply, replyToResolved, tickStatus, primaryColor,
+  message, styles, onImageClick, onReply, replyToResolved, tickStatus, primaryColor, onRetry,
 }: MessageBubbleProps) {
   const isCustomer = message.senderType === 'CUSTOMER';
   const isSystem   = message.senderType === 'SYSTEM';
@@ -156,8 +159,23 @@ export const MessageBubble = React.memo(function MessageBubble({
     ? { ...(isCustomer ? { background: styles.bubbleCustomer.background ?? '#5b4fcf', borderRadius: '18px 18px 4px 18px' } : { background: '#ffffff', border: '1px solid #ede9fe', borderRadius: '18px 18px 18px 4px' }), padding: '8px 10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: '2px' }
     : (isCustomer ? styles.bubbleCustomer : styles.bubbleAgent);
 
+  const isSending = isCustomer && message.sendStatus === 'sending';
+  const isFailed  = isCustomer && message.sendStatus === 'failed';
+  // A permanently-refused send gets NO retry control at all: the same payload
+  // is refused identically every time, so the button could only ever fail.
+  const canRetry  = isFailed && message.sendFailure?.retryable === true && !!onRetry;
+
   const Timestamps = () => isCustomer
-    ? <div style={{ ...styles.timestamp, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3 }}><span>{time}</span><CustomerTick status={tickStatus} /></div>
+    ? (
+      <div style={{ ...styles.timestamp, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3 }}>
+        <span>{time}</span>
+        {isSending
+          ? <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(255,255,255,0.7)', lineHeight: 1 }}>Sending…</span>
+          : isFailed
+            ? <span style={{ fontSize: 11, lineHeight: 1 }} title={message.sendFailure?.message}>⚠️</span>
+            : <CustomerTick status={tickStatus} />}
+      </div>
+    )
     : <div style={{ ...styles.timestamp, textAlign: 'left' }}>{time}</div>;
 
   return (
@@ -173,7 +191,7 @@ export const MessageBubble = React.memo(function MessageBubble({
           {isAttachment ? renderAttachment() : message.content}
           <Timestamps />
         </div>
-        {onReply && (
+        {onReply && !isFailed && (
           <button
             onClick={() => onReply(message)}
             title="Reply"
@@ -185,6 +203,21 @@ export const MessageBubble = React.memo(function MessageBubble({
           </button>
         )}
       </div>
+      {isFailed && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginTop: 2, maxWidth: '82%' }}>
+          <span style={{ fontSize: 11, color: '#dc2626', lineHeight: 1.3, textAlign: 'right' }}>
+            {message.sendFailure?.message ?? "This message wasn't sent."}
+          </span>
+          {canRetry && (
+            <button
+              onClick={() => onRetry!(message.id)}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11, fontWeight: 700, color: primaryColor, fontFamily: 'inherit', textDecoration: 'underline', flexShrink: 0 }}
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 });

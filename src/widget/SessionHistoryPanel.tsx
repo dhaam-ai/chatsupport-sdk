@@ -1,75 +1,89 @@
 import React, { useState } from 'react';
 import type { ChatSessionSummary } from '../types';
+import { partitionSessions, isTerminalStatus, handledByLabel } from '../sessionHistory';
+import { formatRelative } from './helpers';
+
+// The in-chat switcher — the second of the picker's two surfaces (the other is
+// SessionPickerScreen, shown before the chat starts). It exists so a customer
+// is never stuck inside one conversation.
+//
+// GUEST HANDLING: none here. The backend returns [] for a guest, so the list is
+// simply empty — see sessionHistory.shouldShowSessionPicker.
+
 interface SessionHistoryPanelProps {
   primaryColor: string;
   sessions: ChatSessionSummary[];
   currentSessionId?: string | null;
-  onSelectActive: () => void;
-  onReopen: (id: string) => Promise<void>;
+  /** Whether typing into a terminal session can bring it back. */
+  canReactivate: boolean;
+  /** Switch the widget to this session. Never mutates it server-side. */
+  onSelect: (id: string) => Promise<void>;
   onBack: () => void;
 }
 
-export function SessionHistoryPanel({ primaryColor, sessions, currentSessionId, onSelectActive, onReopen }: SessionHistoryPanelProps) {
-  const [reopening, setReopening] = useState<string | null>(null);
+export function SessionHistoryPanel({
+  primaryColor, sessions, currentSessionId, canReactivate, onSelect,
+}: SessionHistoryPanelProps) {
+  const [switching, setSwitching] = useState<string | null>(null);
 
-  const active = sessions.filter(s => s.status !== 'CLOSED');
-  const closed = sessions.filter(s => s.status === 'CLOSED').slice(0, 5);
+  const { active, terminal } = partitionSessions(sessions);
 
-  const formatDate = (d: string | Date | null | undefined) => {
-    if (!d) return '';
-    const date = new Date(d);
-    if (isNaN(date.getTime())) return '';
-    const diff = Date.now() - date.getTime();
-    if (diff < 60000) return 'Just now';
-    if (diff < 3600000) return `${Math.round(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.round(diff / 3600000)}h ago`;
-    if (diff < 7 * 86400000) return `${Math.round(diff / 86400000)}d ago`;
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  };
-
-  const handleReopen = async (id: string) => {
-    setReopening(id);
-    try { await onReopen(id); } finally { setReopening(null); }
+  const handleSelect = async (id: string) => {
+    setSwitching(id);
+    try { await onSelect(id); } finally { setSwitching(null); }
   };
 
   const badge = (status: string) => {
-    const map: Record<string, { label: string; bg: string; color: string }> = {
-      OPEN:              { label: 'Open',    bg: '#dcfce7', color: '#166534' },
-      WAITING_FOR_AGENT: { label: 'Waiting', bg: '#fef9c3', color: '#854d0e' },
-      ASSIGNED:          { label: 'Active',  bg: '#dbeafe', color: '#1e40af' },
-      CLOSED:            { label: 'Closed',  bg: '#f3f4f6', color: '#6b7280' },
-    };
-    const s = map[status] ?? { label: status, bg: '#f3f4f6', color: '#6b7280' };
-    return <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 700, background: s.bg, color: s.color, letterSpacing: '0.03em' }}>{s.label}</span>;
+    // Explicit if-chain over a lookup, matching this stack's enum idiom — and
+    // RESOLVED / ON_HOLD are real statuses the normalisers produce, which the
+    // previous CLOSED-only map rendered as a raw enum name.
+    let label = status;
+    let bg = '#f3f4f6';
+    let color = '#6b7280';
+    if (status === 'OPEN')              { label = 'Open';     bg = '#dcfce7'; color = '#166534'; }
+    if (status === 'WAITING_FOR_AGENT') { label = 'Waiting';  bg = '#fef9c3'; color = '#854d0e'; }
+    if (status === 'ASSIGNED')          { label = 'Active';   bg = '#dbeafe'; color = '#1e40af'; }
+    if (status === 'ON_HOLD')           { label = 'On hold';  bg = '#ede9fe'; color = '#5b21b6'; }
+    if (status === 'CLOSED')            { label = 'Closed';   bg = '#f3f4f6'; color = '#6b7280'; }
+    if (status === 'RESOLVED')          { label = 'Resolved'; bg = '#f3f4f6'; color = '#6b7280'; }
+    return <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '10px', fontSize: '10px', fontWeight: 700, background: bg, color, letterSpacing: '0.03em' }}>{label}</span>;
   };
 
-  const renderRow = (s: ChatSessionSummary, isAct: boolean) => {
-    const preview = s.lastMessage?.content?.trim();
+  const renderRow = (s: ChatSessionSummary) => {
+    const preview     = s.lastMessagePreview?.trim();
     const previewText = preview ? (preview.length > 55 ? preview.slice(0, 55) + '…' : preview) : '(no messages yet)';
-    const isCurrent = s.id === currentSessionId;
+    const isCurrent   = s.id === currentSessionId;
+    const isTerminal  = isTerminalStatus(s.status);
+    const handler     = handledByLabel(s);
+    const busy        = switching === s.id;
+
     return (
       <div key={s.id} style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f5', display: 'flex', flexDirection: 'column', gap: '6px', backgroundColor: isCurrent ? '#f9f7ff' : '#ffffff' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
             {badge(s.status)}
-            <span style={{ fontSize: '11px', color: '#9ca3af' }}>{formatDate(s.closedAt ?? s.createdAt)}</span>
+            {handler && <span style={{ fontSize: '11px', fontWeight: 600, color: '#4b5563' }}>{handler}</span>}
+            <span style={{ fontSize: '11px', color: '#9ca3af' }}>{formatRelative(s.lastMessageAt ?? s.closedAt ?? s.createdAt)}</span>
+            {s.unreadCount > 0 && (
+              <span style={{ minWidth: 16, padding: '1px 5px', borderRadius: 8, background: '#ef4444', color: '#fff', fontSize: 9, fontWeight: 700, lineHeight: '14px', textAlign: 'center' }}>
+                {s.unreadCount > 99 ? '99+' : s.unreadCount}
+              </span>
+            )}
           </div>
-          {isAct ? (
-            <button
-              onClick={onSelectActive}
-              style={{ padding: '5px 12px', borderRadius: '14px', border: `1.5px solid ${primaryColor}`, background: isCurrent ? primaryColor : 'transparent', color: isCurrent ? '#ffffff' : primaryColor, fontSize: '11px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
-              {isCurrent ? 'Current ✓' : 'Continue'}
-            </button>
-          ) : (
-            <button
-              onClick={() => handleReopen(s.id)}
-              disabled={reopening === s.id}
-              style={{ padding: '5px 12px', borderRadius: '14px', border: `1.5px solid ${primaryColor}`, background: 'transparent', color: primaryColor, fontSize: '11px', fontWeight: 700, cursor: reopening === s.id ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: reopening === s.id ? 0.6 : 1, whiteSpace: 'nowrap' }}>
-              {reopening === s.id ? '…' : 'Reopen'}
-            </button>
-          )}
+          <button
+            onClick={() => { if (!isCurrent) void handleSelect(s.id); }}
+            disabled={busy || isCurrent}
+            style={{ padding: '5px 12px', borderRadius: '14px', border: `1.5px solid ${primaryColor}`, background: isCurrent ? primaryColor : 'transparent', color: isCurrent ? '#ffffff' : primaryColor, fontSize: '11px', fontWeight: 700, cursor: (busy || isCurrent) ? 'default' : 'pointer', fontFamily: 'inherit', opacity: busy ? 0.6 : 1, whiteSpace: 'nowrap' }}
+          >
+            {busy ? '…' : isCurrent ? 'Current ✓' : isTerminal ? 'Open' : 'Continue'}
+          </button>
         </div>
         <div style={{ fontSize: '12px', color: '#6b7280', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{previewText}</div>
+        {isTerminal && !isCurrent && (
+          <div style={{ fontSize: '10px', color: '#9ca3af' }}>
+            {canReactivate ? 'Send a message to reopen this conversation' : 'View only'}
+          </div>
+        )}
       </div>
     );
   };
@@ -78,11 +92,11 @@ export function SessionHistoryPanel({ primaryColor, sessions, currentSessionId, 
     <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', backgroundColor: '#fafafa' }}>
       <div style={{ padding: '12px 16px 4px', fontSize: '11px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', backgroundColor: '#fafafa' }}>Active</div>
       {active.length === 0 && <div style={{ padding: '12px 16px', fontSize: '13px', color: '#c4b5fd', textAlign: 'center' }}>No active sessions</div>}
-      {active.map(s => renderRow(s, true))}
-      <div style={{ padding: '12px 16px 4px', fontSize: '11px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', backgroundColor: '#fafafa', borderTop: '1px solid #f0f0f5', marginTop: '4px' }}>Closed</div>
+      {active.map(renderRow)}
+      <div style={{ padding: '12px 16px 4px', fontSize: '11px', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', backgroundColor: '#fafafa', borderTop: '1px solid #f0f0f5', marginTop: '4px' }}>Recent</div>
       <div style={{ flex: 1, overflowY: 'auto' as const }}>
-        {closed.length === 0 && <div style={{ padding: '16px', fontSize: '13px', color: '#c4b5fd', textAlign: 'center' }}>No closed sessions yet</div>}
-        {closed.map(s => renderRow(s, false))}
+        {terminal.length === 0 && <div style={{ padding: '16px', fontSize: '13px', color: '#c4b5fd', textAlign: 'center' }}>No past conversations yet</div>}
+        {terminal.map(renderRow)}
       </div>
     </div>
   );

@@ -38,6 +38,14 @@ import type { AckOutcome } from '../transport/index.js';
 import { createUlidGenerator, type UlidGenerator } from '../transport/index.js';
 import type { StorageAdapter } from '../storage/index.js';
 import type { MessageSendPayload } from '../protocol/index.js';
+// Only the fallback constant, a plain `true` with no dependency on anything
+// else in messages/ — never re-derived locally, so this module and
+// `MessageController.onFailed` can never disagree about what an absent
+// `retryable` means (D4). `messages/controller.ts`'s only reference back to
+// this module is `import type { FailedSend, QueuedSend }`, which
+// `verbatimModuleSyntax` erases at build time, so this does not create a
+// runtime import cycle.
+import { DEFAULT_RETRYABLE_FALLBACK } from '../messages/index.js';
 import { QueuePersistence } from './persistence.js';
 import { type ResolvedRetention, applyRetention, resolveRetention } from './retention.js';
 import {
@@ -90,6 +98,21 @@ export interface RestoreReport {
   /** Entries that aged out while nothing was running. Also passed to `onFailed`. */
   readonly expired: number;
 }
+
+/**
+ * How {@link SendQueue.retry} resolved.
+ *
+ * A dedicated result type rather than a thrown error or a bare boolean,
+ * because "refused" is a real, expected outcome a caller must be able to
+ * branch on without a `try`/`catch` — and because "refused" itself has two
+ * reasons a caller needs to tell apart. `'not-retryable'` means the app is
+ * (correctly) never going to get anywhere retrying this id; `'not-found'`
+ * means there was nothing eligible under this id at all (already retried by
+ * a concurrent call, already discarded, or never failed).
+ */
+export type RetryOutcome =
+  | { readonly status: 'retried'; readonly entry: QueuedSend }
+  | { readonly status: 'refused'; readonly reason: 'not-found' | 'not-retryable' };
 
 export interface SendQueueOptions {
   /** Where the queue is persisted (§9.1). */
@@ -350,6 +373,96 @@ export class SendQueue {
     if (index >= 0) this.#failed.splice(index, 1);
   }
 
+  /**
+   * Re-queues a permanently-failed send under its ORIGINAL envelope `id`.
+   *
+   * This is the one correct way to retry (§9.3, D1) — `enqueue()` is
+   * deliberately not it. `enqueue()` mints a fresh ULID on every call, so
+   * calling it again with the same content puts a *second* id on the wire
+   * for what the user experiences as one message: it fails independently,
+   * grows its own Retry affordance, and the user is now looking at two dead
+   * messages instead of one retried message. That is the widget bug this
+   * method exists to make impossible to reintroduce — see the T9 report.
+   *
+   * Only an entry `onFailed` has already reported — i.e. currently in
+   * {@link failed} — is eligible. A send still `'queued'` has not failed and
+   * is already draining on its own; an id that was never queued, already
+   * succeeded, or was already retried/discarded has nothing here to
+   * re-queue, and both read as `'not-found'` — this method does not
+   * distinguish "never existed" from "already handled" because neither is
+   * something a caller can do anything different about.
+   *
+   * Refuses with `'not-retryable'` rather than retrying when the failure
+   * says retrying is futile — using the exact same test
+   * `MessageController.onFailed` uses to decide `delivery.retryable`
+   * (`failure.retryable ?? DEFAULT_RETRYABLE_FALLBACK`, D4). Sharing the test
+   * is what guarantees this can never refuse a send the app is still
+   * rendering a Retry button for, or silently honor a retry the app told the
+   * user was pointless.
+   *
+   * Atomic against a concurrent call for the same `id`: the failure record
+   * is claimed — removed from {@link failed} — synchronously inside the same
+   * `#mutate` chain every other mutation in this class serializes through
+   * (see `#mutate`'s doc), before the durable write is awaited. A second
+   * `retry(id)` racing the first is queued behind it on that chain and, by
+   * the time it runs, finds nothing left to claim — `'not-found'` — rather
+   * than re-queueing the send a second time. No new locking primitive; this
+   * reuses the one the class already has.
+   *
+   * `enqueuedAt` is reset to now rather than carried over from the original
+   * enqueue. Keeping the old timestamp would let `#pump`'s retention check
+   * (`this.#now() - head.enqueuedAt > maxAgeMs`) immediately re-fail an entry
+   * that was already close to `maxAgeMs` when it first failed — turning a
+   * user-initiated retry into a second, unexplained failure with no attempt
+   * ever reaching the wire. A retry is fresh evidence the user is still here
+   * for this message right now, which is exactly what `enqueuedAt` measures
+   * (see `SendQueueRetention.maxAgeMs`'s doc) — `attempts` is left as-is,
+   * since it is a cumulative diagnostic counter, not an age.
+   *
+   * Delivery is not awaited, matching `enqueue()`: this resolves once the
+   * retry is durably queued, and draining starts in the background.
+   */
+  async retry(id: string): Promise<RetryOutcome> {
+    if (!this.#restored) throw new QueueNotRestoredError();
+
+    const outcome = await this.#mutate(async () => this.#retryLocked(id));
+    if (outcome.status === 'retried') void this.#drain();
+    return outcome;
+  }
+
+  /** The body of `retry()`. Must run only from inside `#mutate` — see there. */
+  async #retryLocked(id: string): Promise<RetryOutcome> {
+    const index = this.#failed.findIndex((failure) => failure.entry.id === id);
+    if (index < 0) return { status: 'refused', reason: 'not-found' };
+
+    const failure = this.#failed[index] as FailedSend;
+    const retryable = failure.retryable ?? DEFAULT_RETRYABLE_FALLBACK;
+    if (!retryable) return { status: 'refused', reason: 'not-retryable' };
+
+    // Claimed before the durable write is awaited, so a concurrent retry(id)
+    // — chained behind this one on `#mutate` — finds nothing left to claim.
+    this.#failed.splice(index, 1);
+
+    const candidate: QueuedSend = { ...failure.entry, enqueuedAt: this.#now() };
+    const split = applyRetention([...this.#entries, candidate], this.#now(), this.#retention);
+    const saved = await this.#persistence.save(split.kept);
+
+    this.#entries = saved.persisted;
+    this.#reportAll(split.expired, 'expired');
+    this.#reportAll([...split.evicted, ...saved.evicted], 'evicted');
+
+    // Same shed hazard `enqueue()` guards against: retention or quota can
+    // drop the very candidate just added. The failure is not gone — put the
+    // record back rather than lose the only trace the app has of it, so
+    // `failed()` still shows it as dead instead of silently vanishing.
+    if (!this.#entries.some((stored) => stored.id === candidate.id)) {
+      this.#failed.push(failure);
+      throw new StorageQueueError(candidate);
+    }
+
+    return { status: 'retried', entry: candidate };
+  }
+
   async #drain(): Promise<void> {
     for (;;) {
       if (!this.#transport.isOpen) return;
@@ -404,9 +517,12 @@ export class SendQueue {
       }
 
       if (outcome.status === 'rejected') {
-        if (!(await this.#settle(head, { reason: 'rejected', code: outcome.error.code }))) {
-          return 'stalled';
-        }
+        const settled = await this.#settle(head, {
+          reason: 'rejected',
+          code: outcome.error.code,
+          retryable: outcome.error.retryable,
+        });
+        if (!settled) return 'stalled';
         continue;
       }
 
@@ -429,7 +545,9 @@ export class SendQueue {
    */
   async #settle(
     entry: QueuedSend,
-    result: { ack: Extract<AckOutcome, { status: 'acked' }> } | { reason: SendFailureReason; code?: string },
+    result:
+      | { ack: Extract<AckOutcome, { status: 'acked' }> }
+      | { reason: SendFailureReason; code?: string; retryable?: boolean },
   ): Promise<boolean> {
     let wasQueued = false;
     try {
@@ -455,12 +573,15 @@ export class SendQueue {
 
     if ('ack' in result) {
       this.#onAck?.(entry, ackSeq(result.ack));
-    } else if (result.code === undefined) {
-      // `exactOptionalPropertyTypes` is on, so an absent code is an absent
-      // property rather than one explicitly set to undefined.
-      this.#report({ entry, reason: result.reason });
     } else {
-      this.#report({ entry, reason: result.reason, code: result.code });
+      this.#report({
+        entry,
+        reason: result.reason,
+        // `exactOptionalPropertyTypes` is on, so an absent code/retryable is
+        // an absent property rather than one explicitly set to undefined.
+        ...(result.code === undefined ? {} : { code: result.code }),
+        ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
+      });
     }
 
     return true;

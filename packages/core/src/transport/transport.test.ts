@@ -8,7 +8,7 @@ import type { AckOutcome } from './pending-acks.js';
 import { CLOSE_CODE } from './socket.js';
 import { StubSocketFactory } from './stub-socket.js';
 import type { TransportLogger } from './logger.js';
-import { WebSocketTransport } from './transport.js';
+import { DEFAULT_CONNECT_TIMEOUT_MS, WebSocketTransport } from './transport.js';
 import type { WebSocketTransportOptions } from './transport.js';
 
 const URL = 'wss://example.test/chat-services/v2/ws';
@@ -1002,15 +1002,133 @@ describe('WebSocketTransport', () => {
       expect(closes).toHaveLength(1);
     });
 
-    it('logs a socket error without ending the connection itself', () => {
+    // The bug this test used to enshrine: an `onerror` with no close to
+    // follow left T8 with no way back to `#handleClose` -> retry, so
+    // `connecting` never healed. `onerror` must finish the attempt itself.
+    it('finishes the connection as a retryable failure on a socket error, with no close needed', () => {
       const { transport, handshake, factory, warnings, closes } = harness();
       handshake();
 
       factory.last.emitError();
 
       expect(warnings.some((w) => w.message.includes('socket error'))).toBe(true);
+      expect(closes).toHaveLength(1);
+      expect(closes[0]).toMatchObject({ cause: 'peer', retryable: true, wasClean: false });
+      expect(transport.isOpen).toBe(false);
+    });
+
+    it('does not double-finish when a genuine close follows the error', () => {
+      const { transport, handshake, factory, closes } = harness();
+      handshake();
+
+      factory.last.emitError();
+      factory.last.emitClose({ code: CLOSE_CODE.ABNORMAL, reason: 'peer gone', wasClean: false });
+
+      // The error already finished the attempt; the close that follows it —
+      // exactly what a real browser does — lands on a detached socket.
+      expect(closes).toHaveLength(1);
+      expect(closes[0]).toMatchObject({ reason: 'socket error' });
+      expect(transport.pendingAckCount).toBe(0);
+    });
+  });
+
+  describe('connect deadline', () => {
+    it('does not fire before the deadline elapses', () => {
+      const { transport, closes, timers } = harness();
+
+      transport.connect({ url: URL, hello: HELLO });
+      timers.advance(DEFAULT_CONNECT_TIMEOUT_MS - 1);
+
       expect(closes).toHaveLength(0);
-      expect(transport.isOpen).toBe(true);
+    });
+
+    // The actual user-visible bug: server down / no route to host. Real
+    // sockets deliver *nothing* — no open, no error, no close — until the
+    // OS's own TCP timeout gives up, which can be tens of seconds to minutes.
+    it('synthesizes a retryable close when the socket never calls back at all', () => {
+      const { transport, closes, timers } = harness();
+
+      transport.connect({ url: URL, hello: HELLO });
+      timers.advance(DEFAULT_CONNECT_TIMEOUT_MS);
+
+      expect(closes).toHaveLength(1);
+      expect(closes[0]).toMatchObject({ cause: 'peer', retryable: true, wasClean: false });
+      expect(transport.isOpen).toBe(false);
+    });
+
+    it('is cancelled by a successful open and never fires afterwards', () => {
+      const { transport, factory, closes, timers } = harness();
+
+      transport.connect({ url: URL, hello: HELLO });
+      factory.last.open();
+
+      // Nothing else is pending yet: hello is not ack-tracked and the
+      // heartbeat has not started (it starts on connection.ack).
+      expect(timers.pendingCount).toBe(0);
+
+      timers.advance(DEFAULT_CONNECT_TIMEOUT_MS * 10);
+      expect(closes).toHaveLength(0);
+    });
+
+    it('is cancelled by any close and leaves no timer to fire later', () => {
+      const { transport, factory, closes, timers } = harness();
+
+      transport.connect({ url: URL, hello: HELLO });
+      factory.last.emitClose({ code: CLOSE_CODE.ABNORMAL, wasClean: false });
+
+      expect(closes).toHaveLength(1);
+      expect(timers.pendingCount).toBe(0);
+
+      timers.advance(DEFAULT_CONNECT_TIMEOUT_MS * 10);
+      expect(closes).toHaveLength(1);
+    });
+
+    it('leaves no timer armed after it fires itself — no leak', () => {
+      const { transport, timers } = harness();
+
+      transport.connect({ url: URL, hello: HELLO });
+      timers.advance(DEFAULT_CONNECT_TIMEOUT_MS);
+
+      expect(timers.pendingCount).toBe(0);
+    });
+
+    it('honours a configured connectTimeoutMs instead of the default', () => {
+      const factory = new StubSocketFactory();
+      const timers = new ManualTimers();
+      const closes: TransportCloseInfo[] = [];
+      const transport = new WebSocketTransport({
+        webSocket: factory.create,
+        schedule: timers.schedule,
+        connectTimeoutMs: 3_000,
+        onClose: (info) => closes.push(info),
+      });
+
+      transport.connect({ url: URL, hello: HELLO });
+      timers.advance(2_999);
+      expect(closes).toHaveLength(0);
+
+      timers.advance(1);
+      expect(closes).toHaveLength(1);
+    });
+
+    // Idempotency: a socket this transport has already abandoned to the
+    // deadline must not be able to resurrect the connection or double-fire
+    // `onClose`, no matter what it does afterwards.
+    it('ignores open, error, and close from the socket it abandoned to the deadline', () => {
+      const { transport, factory, closes, opens, timers } = harness();
+
+      transport.connect({ url: URL, hello: HELLO });
+      const hung = factory.last;
+      timers.advance(DEFAULT_CONNECT_TIMEOUT_MS);
+      expect(closes).toHaveLength(1);
+
+      hung.open();
+      hung.emitError();
+      hung.emitClose({ code: CLOSE_CODE.NORMAL });
+
+      expect(opens).toHaveLength(0);
+      expect(closes).toHaveLength(1);
+      expect(transport.isOpen).toBe(false);
     });
   });
 
@@ -1129,9 +1247,10 @@ describe('WebSocketTransport', () => {
       void transport.send('message.send', { content: 'hi', type: 'TEXT' });
       factory.last.emitJson(connectionAck());
 
-      // One ack deadline plus one heartbeat interval — nothing reached for a
-      // global timer.
-      expect(schedule).toHaveBeenCalledTimes(2);
+      // One connect deadline (armed by `connect()`, cancelled on open), one
+      // ack deadline, one heartbeat interval — nothing reached for a global
+      // timer.
+      expect(schedule).toHaveBeenCalledTimes(3);
     });
 
     it('defaults the logger without one being supplied', () => {

@@ -692,3 +692,189 @@ describe('SendQueue.abandonSession — a session that ended under its queue (§1
     expect(h.queue.pending()).toHaveLength(0);
   });
 });
+
+// T9: the queue-side primitive that makes a correct client-level
+// `retryMessage(id)` possible (T10). The widget's pre-fix "retry" called
+// `sendMessage(message.content)` again, which mints a brand-new ULID
+// (`enqueue()`) — every retry therefore created a second, independently
+// failing message instead of re-attempting the first one. `retry()` is the
+// fix's queue-level half: it replays the SAME id and nothing else.
+describe('SendQueue.retry — correct retry of a permanently-failed send (§9.3, D1)', () => {
+  it('replays the original id on retry, minting no new ULID', async () => {
+    const h = harness({ nextId: idGenerator('ulid') });
+    await h.queue.restore();
+
+    h.transport.respondWith(rejected('RATE_LIMITED', true));
+    const entry = await h.queue.enqueue('sess-1', text('will fail then retry'));
+    await h.queue.flush();
+
+    expect(h.failures).toHaveLength(1);
+    expect(h.queue.pending()).toEqual([]);
+
+    h.transport.respondWith(acked(9));
+    const outcome = await h.queue.retry(entry.id);
+    expect(outcome.status).toBe('retried');
+    if (outcome.status === 'retried') expect(outcome.entry.id).toBe(entry.id);
+
+    await h.queue.flush();
+
+    // Same id both times on the wire — no fresh ULID for the retry.
+    expect(h.transport.sends.map((s) => s.id)).toEqual([entry.id, entry.id]);
+
+    // And the generator itself was only ever asked once: the next genuinely
+    // new send gets the next id in sequence, proving retry() never called it.
+    const next = await h.queue.enqueue('sess-1', text('a different message'));
+    expect(next.id).toBe('ulid-2');
+  });
+
+  it('refuses to retry a non-retryable failure, leaving it failed and enqueuing nothing', async () => {
+    const h = harness();
+    await h.queue.restore();
+
+    h.transport.respondWith(rejected('VALIDATION_FAILED')); // retryable: false (default)
+    const entry = await h.queue.enqueue('sess-1', text('permanently wrong'));
+    await h.queue.flush();
+    expect(h.transport.sends).toHaveLength(1);
+
+    const outcome = await h.queue.retry(entry.id);
+
+    expect(outcome).toEqual({ status: 'refused', reason: 'not-retryable' });
+    // Not silently dropped — still there for the app to keep showing as dead.
+    expect(h.queue.failed().map((f) => f.entry.id)).toEqual([entry.id]);
+    // And nothing new was ever written to the wire or the durable queue.
+    expect(h.transport.sends).toHaveLength(1);
+    expect(h.queue.pending()).toEqual([]);
+  });
+
+  it('refuses retry of an id with nothing eligible under it', async () => {
+    const h = harness();
+    await h.queue.restore();
+
+    await expect(h.queue.retry('never-existed')).resolves.toEqual({
+      status: 'refused',
+      reason: 'not-found',
+    });
+  });
+
+  it('refuses a second retry of an id already claimed by the first (not a no-op, not a double send)', async () => {
+    const h = harness();
+    await h.queue.restore();
+
+    h.transport.respondWith(rejected('RATE_LIMITED', true));
+    const entry = await h.queue.enqueue('sess-1', text('flaky'));
+    await h.queue.flush();
+    expect(h.queue.failed()).toHaveLength(1);
+
+    // Isolate the claim/idempotency logic from delivery timing — both
+    // `retry()` calls only need to durably re-queue, not be answered.
+    h.transport.isOpen = false;
+
+    const outcomes = await Promise.all([h.queue.retry(entry.id), h.queue.retry(entry.id)]);
+
+    expect(outcomes.filter((o) => o.status === 'retried')).toHaveLength(1);
+    expect(outcomes.filter((o) => o.status === 'refused')).toEqual([
+      { status: 'refused', reason: 'not-found' },
+    ]);
+
+    // Exactly one copy re-queued, not two, and the failure record is consumed
+    // by whichever call won — this is the `#mutate` chain doing its job.
+    expect(h.queue.pending().filter((e) => e.id === entry.id)).toHaveLength(1);
+    expect(h.queue.failed()).toEqual([]);
+  });
+
+  it('throws QueueNotRestoredError if called before restore()', async () => {
+    const h = harness();
+    await expect(h.queue.retry('whatever')).rejects.toThrow(QueueNotRestoredError);
+  });
+});
+
+// T5 left a required follow-up here: `FailedSend` needed `retryable?:
+// boolean`, populated in `#settle`'s 'rejected' branch from
+// `outcome.error.retryable`, so `MessageController.onFailed` (which already
+// reads `failure.retryable ?? DEFAULT_RETRYABLE_FALLBACK`) stops always
+// taking the fallback path. These prove the queue's half of that wiring;
+// `messages/controller.test.ts` proves the controller reads it correctly —
+// unchanged by this, since those tests call `controller.onFailed` directly
+// with hand-built `FailedSend`-shaped objects rather than through a real
+// `SendQueue`.
+describe('SendQueue — retryable flows from the server signal into FailedSend (§7.4)', () => {
+  it('records retryable: true on a rejection the server marked retryable', async () => {
+    const h = harness();
+    await h.queue.restore();
+
+    h.transport.respondWith(rejected('RATE_LIMITED', true));
+    await h.queue.enqueue('sess-1', text('try again later'));
+    await h.queue.flush();
+
+    expect(h.failures[0]?.retryable).toBe(true);
+    expect(h.queue.failed()[0]?.retryable).toBe(true);
+  });
+
+  it('records retryable: false on a rejection the server marked non-retryable', async () => {
+    const h = harness();
+    await h.queue.restore();
+
+    h.transport.respondWith(rejected('VALIDATION_FAILED', false));
+    await h.queue.enqueue('sess-1', text('malformed'));
+    await h.queue.flush();
+
+    expect(h.failures[0]?.retryable).toBe(false);
+  });
+
+  it('leaves retryable absent for a locally-decided reason with no wire ErrorPayload to mirror', async () => {
+    const offline = new FakeQueueTransport();
+    offline.isOpen = false;
+    const h = harness({ transport: offline });
+    await h.queue.restore();
+    await h.queue.enqueue('sess-closed', text('never sent'));
+
+    await h.queue.abandonSession('sess-closed');
+
+    expect(h.failures[0]?.reason).toBe('sessionClosed');
+    expect(h.failures[0]?.retryable).toBeUndefined();
+  });
+});
+
+// T4 asked T9 to audit the queue for its own version of the unbounded-wait
+// gap T4 closed at the connection layer, and flagged one specific,
+// previously-filed defect to decide on: an ack `timeout` on a still-OPEN
+// socket leaves the entry `'queued'` (renders as the pending tick) until an
+// explicit `flush()` — which today fires only on the `connected` transition.
+// If the peer goes quiet for exactly one message's ack while the socket
+// otherwise looks healthy, nothing re-triggers `flush()` and the message
+// spins forever. This suite documents that behavior as a spec — a guard
+// against a "fix" that reintroduces the busy-loop `#stalled` exists to
+// prevent — rather than papering over it with queue-level polling. See the
+// T9 report for why the real fix belongs at the transport/connection layer
+// (treat a send ack-timeout as a liveness signal, same as a missed
+// heartbeat), not here.
+describe('SendQueue stall on ack timeout — documented gap, not fixed in this module', () => {
+  it('does not resume a timed-out session on its own; only an explicit flush() does', async () => {
+    const h = harness();
+    await h.queue.restore();
+
+    h.transport.respondWith(TIMEOUT);
+    await h.queue.enqueue('sess-1', text('no answer'));
+    await h.queue.flush();
+
+    expect(h.transport.sends).toHaveLength(1);
+    // Still 'queued', not 'failed' — a silent spinner, not a Retry button.
+    expect(h.queue.pending()).toHaveLength(1);
+    expect(h.failures).toEqual([]);
+
+    // The socket is still reported open — this is the "connected but acking
+    // nothing" half, distinct from the disconnect T4 already covers — yet a
+    // brand-new send to the SAME session gets no attempt at all: `#stalled`
+    // gates the whole session per `#drain`'s doc, and background drains
+    // (the one `enqueue()` starts) deliberately do not clear it.
+    h.transport.respondWith(acked(1));
+    await h.queue.enqueue('sess-1', text('a second message, same session'));
+    expect(h.transport.sends).toHaveLength(1);
+
+    // The one existing recovery path: an explicit flush(), as fired by the
+    // `connected` transition. Both entries go out once it does.
+    await h.queue.flush();
+    expect(h.transport.sends).toHaveLength(3);
+    expect(h.queue.pending()).toEqual([]);
+  });
+});

@@ -64,6 +64,7 @@ export 'src/protocol/frames.dart'
         AttachmentMetadata,
         ChatMessage,
         ConnectionAck,
+        HandledBy,
         MessageDelivery,
         ParticipantSnapshot,
         PresenceEntry,

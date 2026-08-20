@@ -35,7 +35,7 @@
 // echo suppressor. Under D1 a message's ULID is its permanent id from the
 // moment it is queued, so dedup is structural and there is no id to swap.
 
-export { MessageController } from './controller.js';
+export { DEFAULT_RETRYABLE_FALLBACK, MessageController } from './controller.js';
 export type { MessageControllerOptions } from './controller.js';
 
 export { compareBySeq, prependPage, sortMessages, upsertMessage } from './list.js';

@@ -5,8 +5,10 @@ import {
   UNSUPPORTED_MESSAGE_MARKER,
   isAttachmentMetadata,
   projectHistoryRow,
+  projectSessionSummaryRow,
   toChatMessage,
   toChatSession,
+  toChatSessionSummary,
 } from './projection.js';
 
 /** A raw row as the REST path actually returns it — Prisma output, unprojected. */
@@ -495,5 +497,149 @@ describe('toChatSession', () => {
       'status',
       'ticket',
     ]);
+  });
+});
+
+/** A `sessions[]` item as `GET /chat/sessions/customer` actually returns it (v2 string enums). */
+function sessionSummaryRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'sum-1',
+    status: 'ASSIGNED',
+    mode: 'HUMAN',
+    createdAt: '2026-08-19T09:00:00.000Z',
+    closedAt: null,
+    lastMessageAt: '2026-08-19T09:05:00.000Z',
+    lastMessagePreview: 'here you go',
+    unreadCount: 3,
+    handledBy: { kind: 'AGENT', id: 'agent-9', displayName: 'Ada' },
+    ...overrides,
+  };
+}
+
+describe('toChatSessionSummary — string enums (already v2-projected)', () => {
+  it.each([
+    'OPEN',
+    'WAITING_FOR_AGENT',
+    'ASSIGNED',
+    'CLOSED',
+    'RESOLVED',
+    'ON_HOLD',
+  ] as const)('accepts status %s verbatim', (status) => {
+    expect(toChatSessionSummary(sessionSummaryRow({ status })).status).toBe(status);
+  });
+
+  it.each(['BOT', 'HUMAN'] as const)('accepts mode %s verbatim', (mode) => {
+    expect(toChatSessionSummary(sessionSummaryRow({ mode })).mode).toBe(mode);
+  });
+
+  it('rejects an unmappable status or mode rather than guessing', () => {
+    expect(() => toChatSessionSummary(sessionSummaryRow({ status: 'BOGUS' }))).toThrow(RestApiError);
+    expect(() => toChatSessionSummary(sessionSummaryRow({ mode: 'BOGUS' }))).toThrow(RestApiError);
+    // The raw-row integer form must not sneak through either — this route
+    // already sends v2 strings, so a stray integer is exactly as unmappable.
+    expect(() => toChatSessionSummary(sessionSummaryRow({ status: 3 }))).toThrow(RestApiError);
+  });
+});
+
+describe('toChatSessionSummary — full mapping', () => {
+  it('parses every field, including handledBy', () => {
+    expect(toChatSessionSummary(sessionSummaryRow())).toEqual({
+      id: 'sum-1',
+      status: 'ASSIGNED',
+      mode: 'HUMAN',
+      createdAt: '2026-08-19T09:00:00.000Z',
+      closedAt: null,
+      lastMessageAt: '2026-08-19T09:05:00.000Z',
+      lastMessagePreview: 'here you go',
+      unreadCount: 3,
+      handledBy: { kind: 'AGENT', id: 'agent-9', displayName: 'Ada' },
+    });
+  });
+
+  it('parses a BOT handledBy the same way as an AGENT one', () => {
+    const summary = toChatSessionSummary(
+      sessionSummaryRow({ handledBy: { kind: 'BOT', id: 'bot', displayName: 'Assistant' } }),
+    );
+    expect(summary.handledBy).toEqual({ kind: 'BOT', id: 'bot', displayName: 'Assistant' });
+  });
+
+  it('keeps optional fields absent, not undefined-valued or null, when the wire omits them', () => {
+    const row = sessionSummaryRow();
+    delete row['lastMessagePreview'];
+    delete row['handledBy'];
+
+    const summary = toChatSessionSummary(row);
+
+    expect('lastMessagePreview' in summary).toBe(false);
+    expect('handledBy' in summary).toBe(false);
+    expect(Object.keys(summary).sort()).toEqual([
+      'closedAt',
+      'createdAt',
+      'id',
+      'lastMessageAt',
+      'mode',
+      'status',
+      'unreadCount',
+    ]);
+  });
+
+  it('treats an empty-string lastMessagePreview as absent, same as replyToMessageId', () => {
+    expect(toChatSessionSummary(sessionSummaryRow({ lastMessagePreview: '' })).lastMessagePreview).toBeUndefined();
+  });
+
+  it('keeps closedAt and lastMessageAt null rather than treating null as a parse failure', () => {
+    const summary = toChatSessionSummary(sessionSummaryRow({ closedAt: null, lastMessageAt: null }));
+    expect(summary.closedAt).toBeNull();
+    expect(summary.lastMessageAt).toBeNull();
+  });
+
+  it('requires unreadCount as a non-negative number', () => {
+    expect(() => toChatSessionSummary(sessionSummaryRow({ unreadCount: -1 }))).toThrow(RestApiError);
+    expect(() => toChatSessionSummary(sessionSummaryRow({ unreadCount: '3' }))).toThrow(RestApiError);
+    expect(() => toChatSessionSummary({ ...sessionSummaryRow(), unreadCount: undefined })).toThrow(
+      RestApiError,
+    );
+  });
+
+  it('accepts unreadCount: 0 as a normal, present value', () => {
+    expect(toChatSessionSummary(sessionSummaryRow({ unreadCount: 0 })).unreadCount).toBe(0);
+  });
+
+  it('drops a malformed handledBy rather than failing the whole summary', () => {
+    // handledBy is additive information the picker does not depend on — a bad
+    // one should not cost the rest of an otherwise-good row.
+    const summary = toChatSessionSummary(sessionSummaryRow({ handledBy: { kind: 'AGENT' } }));
+    expect(summary.handledBy).toBeUndefined();
+    expect(summary.id).toBe('sum-1');
+  });
+
+  it('rejects a handledBy with an unrecognized kind the same way', () => {
+    const summary = toChatSessionSummary(
+      sessionSummaryRow({ handledBy: { kind: 'CUSTOMER', id: 'x', displayName: 'x' } }),
+    );
+    expect(summary.handledBy).toBeUndefined();
+  });
+});
+
+describe('projectSessionSummaryRow', () => {
+  it('keeps every good row when one row cannot be decoded', () => {
+    // Mirrors projectHistoryRow's contract: one forward-incompatible status
+    // must cost that one session, not the customer's entire picker.
+    const rows = [
+      sessionSummaryRow({ id: 's1' }),
+      sessionSummaryRow({ id: 's2', status: 'BOGUS' }),
+      sessionSummaryRow({ id: 's3' }),
+    ];
+
+    const projected = rows.map(projectSessionSummaryRow);
+
+    expect(projected.map((s) => s?.id)).toEqual(['s1', undefined, 's3']);
+    expect(projected[1]).toBeNull();
+  });
+
+  it('returns the same value as toChatSessionSummary for a good row', () => {
+    expect(projectSessionSummaryRow(sessionSummaryRow())).toEqual(
+      toChatSessionSummary(sessionSummaryRow()),
+    );
   });
 });

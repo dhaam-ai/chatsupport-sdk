@@ -41,9 +41,9 @@ import { PresenceCoordinator } from '../presence/index.js';
 import { isParkedCloseReason } from '../protocol/index.js';
 import type { ErrorPayload, ServerFrame } from '../protocol/index.js';
 import { SendQueue } from '../queue/index.js';
-import type { QueuedSend, QueueTransport } from '../queue/index.js';
+import type { QueuedSend, QueueTransport, RetryOutcome } from '../queue/index.js';
 import { ChatStore } from '../state/index.js';
-import type { ChatError, ChatMessage, ChatSession } from '../state/index.js';
+import type { ChatError, ChatMessage, ChatSession, ChatSessionSummary } from '../state/index.js';
 import { MemoryStorageAdapter, namespaced } from '../storage/index.js';
 import { WebSocketTransport } from '../transport/index.js';
 import type { TransportLogger } from '../transport/index.js';
@@ -217,18 +217,33 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
         store.emit('agentJoined', frame.d);
         return;
       case 'agent.left':
-        store.setState({ session: applyAgentLeft(store.getState().session, frame.d.agentId) });
+        // frame.d.id (HandledBy) — the v2 wire contract renamed this from
+        // `agentId`. See client/session.ts's applyAgentLeft and the T7 report.
+        store.setState({ session: applyAgentLeft(store.getState().session, frame.d.id) });
         store.emit('agentLeft', frame.d);
         return;
-      case 'session.closed':
+      case 'session.closed': {
+        // Read once, before setState: switchSession's reactivation flow can
+        // pair THIS close (for the session just left) with a session.updated
+        // for a DIFFERENT, already-current session (the one just switched
+        // into) — see ChatClient.switchSession's doc, "The SWITCHED-close
+        // pairing". `sessionClosed` (§6.5, state/events.ts) is documented to
+        // describe "the session the client is already in", so it must fire
+        // only when the closed session actually IS the one still current —
+        // otherwise a customer who has already switched away would be told
+        // their NEW chat just closed, when it was the abandoned old one,
+        // elsewhere, that did. `applySessionClosed` already no-ops the STATE
+        // write for a non-matching id (session.ts); this is the same guard
+        // applied to the EVENT, which previously had none.
+        const current = store.getState().session;
+        const isCurrentSession = current !== null && current.id === frame.d.sessionId;
+
         store.setState({
-          session: applySessionClosed(
-            store.getState().session,
-            frame.d.sessionId,
-            new Date((now ?? Date.now)()).toISOString(),
-          ),
+          session: applySessionClosed(current, frame.d.sessionId, new Date((now ?? Date.now)()).toISOString()),
         });
-        store.emit('sessionClosed', { closeReason: frame.d.closeReason });
+        if (isCurrentSession) {
+          store.emit('sessionClosed', { closeReason: frame.d.closeReason });
+        }
 
         // A genuinely-ended session can never accept another frame, so its
         // undelivered sends are dead the moment it closes — and dangerous to
@@ -249,6 +264,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
           void queue.abandonSession(frame.d.sessionId).catch(() => undefined);
         }
         return;
+      }
       case 'ticket.linked':
         store.setState({ session: applyTicketLinked(store.getState().session, frame.d) });
         store.emit('ticketLinked', frame.d);
@@ -478,6 +494,33 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     store.emit('error', chatError);
   }
 
+  /**
+   * Sends `session.join` and reports a REJECTED ack through
+   * `lastError`/`error` (§6.4) — the one path both `ChatClient.joinSession`
+   * and `ChatClient.switchSession` go through, so the two public names can
+   * never behave differently by accident. See `switchSession`'s doc
+   * (client/types.ts) for why they are one operation under two names rather
+   * than two independent ones.
+   *
+   * A successful join is deliberately NOT awaited or reported here — it is
+   * observed the normal way, through the `session.updated`/`connection.ack`
+   * snapshot `dispatchFrame` above already applies to `ChatState.session`.
+   * Previously (pre-T10) `joinSession` discarded `realTransport.send`'s
+   * returned ack outright, so a join the server's ownership check refused
+   * (v2/handlers.ts) vanished with no signal at all — this is what closes
+   * that gap, using the exact same `toChatError` conversion every other
+   * protocol-level failure in this file already goes through.
+   */
+  function joinSessionFrame(sessionId: string): void {
+    const { ack } = realTransport.send('session.join', { sessionId });
+    void ack.then((outcome) => {
+      if (outcome.status !== 'rejected') return;
+      const chatError = toChatError(outcome.error);
+      store.setState({ lastError: chatError });
+      store.emit('error', chatError);
+    });
+  }
+
   // ---------------------------------------------------------------------
   // 8. The public surface.
   // ---------------------------------------------------------------------
@@ -545,7 +588,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       await connectionController.connect();
     },
     joinSession: (sessionId) => {
-      realTransport.send('session.join', { sessionId });
+      joinSessionFrame(sessionId);
+    },
+    switchSession: (sessionId) => {
+      joinSessionFrame(sessionId);
     },
     leaveSession: () => {
       realTransport.send('session.leave', {});
@@ -588,6 +634,19 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       }
       store.setState({ session });
     },
+    listSessions: async (query): Promise<readonly ChatSessionSummary[]> => {
+      if (config.sessionSummarySource === undefined) {
+        throw new ChatClientConfigError(
+          'listSessions() requires config.sessionSummarySource to be supplied to createChatClient().',
+        );
+      }
+      const sessions = await config.sessionSummarySource.listSessions(query);
+      // Wholesale replace (§9.4-style), not a merge — this IS the whole
+      // customer's recent-session list as of this call, same as a
+      // session.updated snapshot replaces ChatState.session outright.
+      store.setState({ pastSessions: [...sessions] });
+      return sessions;
+    },
 
     sendMessage: (content, opts) => messageController.sendMessage(content, opts),
     sendAttachment: (file, opts) => {
@@ -607,6 +666,51 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
         );
       }
       return messageController.sendAttachment(file, opts);
+    },
+    retryMessage: async (id): Promise<RetryOutcome> => {
+      // A send attempted before restore has been read would race
+      // SendQueue.retry()'s own restored-guard (QueueNotRestoredError) —
+      // same reasoning as #send's `await queueRestored` above.
+      await queueRestored;
+
+      // The one hazard SendQueue.retry() (T9) cannot see, because it has no
+      // notion of "the current session": `message.send` carries no
+      // `sessionId` on the wire, so replaying a failed entry's ORIGINAL
+      // payload while a DIFFERENT session is now joined would silently
+      // attribute it to whatever session IS current — the exact
+      // misattribution `abandonSession` already guards against on the
+      // reconnect/switch path (see SendFailureReason.sessionClosed's doc:
+      // "a retry is NOT futile ... [but] must never be delivered as-is").
+      // Checked for every failure reason, not only `sessionClosed`: the
+      // wire-level hazard is the same regardless of why the send originally
+      // died, and "retry" only ever means "try the same thing again, into
+      // the same conversation" — a caller that wants this content in a NEW
+      // session should send it fresh, not retry a dead entry into one.
+      const failure = queue.failed().find((candidate) => candidate.entry.id === id);
+      if (failure !== undefined && failure.entry.sessionId !== store.getState().session?.id) {
+        return { status: 'refused', reason: 'not-retryable' };
+      }
+
+      const outcome = await queue.retry(id);
+
+      if (outcome.status === 'retried') {
+        // Back to `queued` immediately, so the UI drops the dead bubble's
+        // Retry affordance the instant the retry is durably re-queued,
+        // rather than waiting on the eventual ack/failure to patch it —
+        // mirrors rehydrateQueuedMessages' reasoning above. The eventual
+        // outcome still arrives the normal way: this `queue` is the same
+        // instance wired to messageController.onAck/onFailed, so nothing
+        // extra needs wiring here for that half.
+        const messages = store.getState().messages;
+        const existing = messages.find((message) => message.id === id);
+        if (existing !== undefined) {
+          store.setState({
+            messages: upsertMessage(messages, { ...existing, delivery: { state: 'queued' } }),
+          });
+        }
+      }
+
+      return outcome;
     },
     markRead: () => {
       presenceCoordinator.watermarks.markRead();

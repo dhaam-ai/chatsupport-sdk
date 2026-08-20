@@ -102,13 +102,30 @@ class _TimerHandle implements Cancellable {
 class WebSocketChatSocket implements ChatSocket {
   WebSocketChatSocket(this._channel);
 
-  /// Connects to [url].
+  /// Connects to [url], completing when the socket is actually open.
   ///
-  /// `WebSocketChannel.connect` returns immediately and connects in the
-  /// background; failures surface on the stream rather than from this call,
-  /// which is why the controller treats a stream error identically to a close.
-  static Future<ChatSocket> connect(Uri url) async =>
-      WebSocketChatSocket(WebSocketChannel.connect(url));
+  /// ── Why this awaits `ready` ───────────────────────────────────────────
+  ///
+  /// `WebSocketChannel.connect` returns before the handshake completes.
+  /// `ready` is the package's documented "the connection is established"
+  /// signal, and the documentation is explicit that it is a precondition for
+  /// writing: "This future must be complete before data can be sent using
+  /// [WebSocketChannel.sink]" — so returning the channel unawaited and letting
+  /// the controller write `connection.hello` into the sink is a contract
+  /// violation, not merely an early write.
+  /// https://pub.dev/documentation/web_socket_channel/latest/web_socket_channel/WebSocketChannel/ready.html
+  ///
+  /// It also gives the controller the open/error/hang taxonomy it needs and
+  /// this seam otherwise lacks: this future completing IS `onopen`, its error
+  /// IS `onerror` (the controller retries a factory that throws), and a
+  /// connect that produces neither — server down, no route to host — is the
+  /// hang that `ConnectionController.connectTimeout` exists to bound. Before
+  /// this, all three looked identical from up there.
+  static Future<ChatSocket> connect(Uri url) async {
+    final WebSocketChannel channel = WebSocketChannel.connect(url);
+    await channel.ready;
+    return WebSocketChatSocket(channel);
+  }
 
   final WebSocketChannel _channel;
 

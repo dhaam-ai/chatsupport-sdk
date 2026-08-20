@@ -155,3 +155,21 @@ T? _lookup<T extends WireEnum>(List<T> values, String wire) {
   }
   return null;
 }
+
+/// Who is handling a session, on `HandledBy.kind` (T7's v2 identity contract).
+///
+/// A strict subset of [ParticipantType]: a CUSTOMER is who the session is FOR,
+/// never who handles it, so `'CUSTOMER'` is not a value here and [fromWire]
+/// returns null for it. Reusing [ParticipantType] would have made that
+/// impossible state representable for the sake of saving one enum.
+enum HandledByKind implements WireEnum {
+  agent('AGENT'),
+  bot('BOT');
+
+  const HandledByKind(this.wire);
+
+  @override
+  final String wire;
+
+  static HandledByKind? fromWire(String value) => _lookup(values, value);
+}

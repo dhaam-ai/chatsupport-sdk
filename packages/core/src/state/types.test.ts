@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CONNECTION_STATE_VALUES, createInitialChatState } from './types.js';
-import type { ChatState, ConnectionState } from './types.js';
+import type { ChatState, ConnectionState, MessageDelivery } from './types.js';
 
 describe('CONNECTION_STATE_VALUES', () => {
   it('models exactly the seven states of §8.1', () => {
@@ -94,5 +94,35 @@ describe('createInitialChatState', () => {
     // not a partial of it.
     const state: ChatState = createInitialChatState();
     expect(state.connectionState).toBe('idle');
+  });
+});
+
+describe('MessageDelivery — failed variant carries code and retryable', () => {
+  it('requires retryable but not code, mirroring ErrorPayload.retryable (§7.4)', () => {
+    // Compile-time: `retryable` is mandatory even with no `code` — the
+    // variant this SDK produces for every `SendFailureReason` that never had
+    // a wire `ErrorPayload` behind it (`sessionClosed`, `expired`, `evicted`,
+    // `storage`).
+    const noCode: MessageDelivery = { state: 'failed', reason: 'evicted', retryable: true };
+    expect(noCode.state).toBe('failed');
+
+    // @ts-expect-error — retryable is required, not optional.
+    const missingRetryable: MessageDelivery = { state: 'failed', reason: 'evicted' };
+    expect(missingRetryable).toBeDefined();
+  });
+
+  it('accepts the server-mirrored SESSION_CLOSED / retryable: false shape (§7.4)', () => {
+    const delivery: MessageDelivery = {
+      state: 'failed',
+      reason: 'rejected',
+      code: 'SESSION_CLOSED',
+      retryable: false,
+    };
+    expect(delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      code: 'SESSION_CLOSED',
+      retryable: false,
+    });
   });
 });

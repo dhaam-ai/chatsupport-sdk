@@ -10,10 +10,11 @@ import { getStyles } from './theme';
 import { SpinnerIcon, ChevronDownIcon, SendIcon } from './icons';
 import { TypingIndicator, MessageBubble } from './MessageBubble';
 import { QuickReplies, FAQScreen } from './QuickReplies';
-import { EscalatingScreen, FeedbackModal, EndChatConfirmModal } from './Screens';
+import { EscalatingScreen, FeedbackModal, EndChatConfirmModal, SessionPickerScreen } from './Screens';
 import { WidgetHeader } from './WidgetHeader';
 import { SessionHistoryPanel } from './SessionHistoryPanel';
-import { looksLikeRawId } from './helpers';
+import { resolveHandlerIdentity } from './handlerIdentity';
+import { shouldShowSessionPicker, isTerminalStatus } from '../sessionHistory';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,18 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
   const [showFeedback, setShowFeedback] = useState(false);
   const [endingChat, setEndingChat] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  // The pre-chat picker. Dismissed once the customer chooses a session or
+  // starts a new one; never shown again for this mount.
+  const [pickerDismissed, setPickerDismissed] = useState(false);
+  // The picker can only appear once fetchPastSessions resolves, which is a beat
+  // after the widget opens. Without this, a customer who started typing in that
+  // beat would have the picker land on top of them.
+  const [userInteracted, setUserInteracted] = useState(false);
+  // True once the customer explicitly opened a TERMINAL session from either
+  // picker surface. That is what turns the composer back on for it: a session
+  // that ended naturally in-place still gets the "Chat Ended" panel, while one
+  // the customer deliberately went back to is one they mean to continue.
+  const [reopenedTerminal, setReopenedTerminal] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -170,6 +183,15 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
   useEffect(() => {
     if (showHistory) actionsRef.current.fetchPastSessions?.().catch(() => {});
   }, [showHistory]);
+
+  // Load the customer's recent sessions as soon as the widget opens, so the
+  // pre-chat picker can decide whether it has anything to show. The backend
+  // returns [] for a guest, which is exactly the "render nothing" signal.
+  useEffect(() => {
+    if (!state.isWidgetOpen) return;
+    if (config.features?.sessionPicker === false) return;
+    actionsRef.current.fetchPastSessions?.().catch(() => {});
+  }, [state.isWidgetOpen, config.features?.sessionPicker]);
 
   // ── Session ready promise ─────────────────────────────────────────────────────
   const waitForSession = useCallback((): Promise<string> => {
@@ -317,6 +339,13 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
 
   const scrollToBottom = useCallback(() => scrollToBottomNow('smooth'), [scrollToBottomNow]);
 
+  // Retry replays the failed message's original clientMessageId — see
+  // context.retryMessage. Nothing is appended here; the existing bubble goes
+  // back to "sending".
+  const handleRetry = useCallback((messageId: string) => {
+    void actionsRef.current.retryMessage?.(messageId);
+  }, []);
+
   // ── Message send ──────────────────────────────────────────────────────────────
   const sendRealMessage = useCallback((content: string) => {
     if (!stateRef.current.connected || stateRef.current.tokenExpired) return;
@@ -332,6 +361,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
 
   // ── Main menu handler ─────────────────────────────────────────────────────────
   const handleQuickReply = useCallback(async (reply: { id: string; label: string }) => {
+    setUserInteracted(true);
     setShowQuickReplies(false);
     setEscalationError(null);
 
@@ -375,6 +405,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
   }, [sendRealMessage]);
 
   const handleSend = useCallback(() => {
+    setUserInteracted(true);
     const content = inputValue.trim();
     if (!content || !stateRef.current.connected || stateRef.current.tokenExpired) return;
     try {
@@ -437,6 +468,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
 
   // Typing dedup — only fire startTyping on leading edge
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setUserInteracted(true);
     setInputValue(e.target.value);
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
@@ -449,25 +481,88 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     }, 2000);
   }, []);
 
+  // ── Session picker ────────────────────────────────────────────────────────────
+  const canReactivate = config.features?.sessionReactivateOnMessage === true;
+
+  const handleSelectSession = useCallback(async (sessionId: string) => {
+    const picked = stateRef.current.pastSessions.find(s => s.id === sessionId);
+    setReopenedTerminal(isTerminalStatus(picked?.status));
+    await actionsRef.current.selectSession?.(sessionId);
+    setPickerDismissed(true);
+    setShowHistory(false);
+    setFlowStep('free');
+    setShowQuickReplies(false);
+  }, []);
+
+  const handleStartNewFromPicker = useCallback(() => {
+    setPickerDismissed(true);
+    setReopenedTerminal(false);
+  }, []);
+
+  // Only when the backend actually returned sessions — that single check covers
+  // both "is a guest" and "has no history", because the backend already decided
+  // the first one and both produce the same UI.
+  const showSessionPicker =
+    config.features?.sessionPicker !== false &&
+    !pickerDismissed &&
+    !userInteracted &&
+    !showHistory &&
+    !state.loading &&
+    shouldShowSessionPicker(state.pastSessions);
+
   // ── Computed values ───────────────────────────────────────────────────────────
+  // Who is on the other end. Recomputed on every render, so an assignment that
+  // changes mid-session (chat.agent.joined / chat.agent.left → UPDATE_SESSION)
+  // moves the header title live, without any extra wiring.
+  const handler = resolveHandlerIdentity({
+    assignedAgentDisplayName: state.session?.assignedAgent?.displayName,
+    assignedAgentName:        state.session?.assignedAgentName,
+    assignedAgentId:          state.session?.assignedAgentId,
+    mode:                     state.session?.mode,
+    status:                   state.session?.status,
+    configuredTitle:          config.title,
+  });
+
+  // The title now carries the identity, so the subtitle carries the status —
+  // it no longer repeats the name back at the user.
   const subtitle = (() => {
     if (state.tokenExpired) return 'Session Expired';
     if (state.loading) return 'Connecting...';
     if (flowStep === 'escalating') return 'Connecting to agent...';
-    const agentDisplayName = state.session?.assignedAgent?.displayName ?? state.session?.assignedAgentName;
-    if (agentDisplayName && !looksLikeRawId(agentDisplayName)) return `Chatting with ${agentDisplayName}`;
-    if (state.session?.mode === 'HUMAN') return 'Connected to agent';
-    return 'AI Support · Online';
+    if (handler.kind === 'AGENT') {
+      return state.session?.assignedAgent?.isOnline === false ? 'Away' : 'Online';
+    }
+    if (handler.kind === 'BOT') return 'AI Support · Online';
+    if (state.session?.status === 'WAITING_FOR_AGENT') return 'Connecting to agent...';
+    return 'Online';
   })();
 
-  const isClosed = state.session?.status === 'CLOSED';
+  // Says WHY the input is disabled instead of an indefinite 'Connecting...'.
+  // navigator.onLine is only a hint (it means an interface is up, not that the
+  // server is reachable) — good enough to tell "your wifi died" apart from
+  // "we're re-establishing the socket".
+  const disconnectedPlaceholder = (() => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      return "You're offline — reconnecting when you're back...";
+    }
+    return state.initialized ? 'Reconnecting...' : 'Connecting...';
+  })();
+
+  // Terminal is NOT final: a CUSTOMER message reactivates a CLOSED/RESOLVED
+  // session server-side. So this no longer means "the conversation is over",
+  // only "it is over unless the customer says otherwise".
+  const isTerminal = isTerminalStatus(state.session?.status);
+  // Keep the composer for a terminal session the customer deliberately reopened
+  // from the picker (and only when both this flag and the backend's
+  // FEATURE_SESSION_REACTIVATE_ON_CUSTOMER_MESSAGE are on).
+  const isClosed = isTerminal && !(reopenedTerminal && canReactivate);
   const canType = !isClosed && !state.tokenExpired && state.connected && flowStep !== 'escalating';
   const isActive = !!inputValue.trim() && canType;
 
   // ── Loading / error states ────────────────────────────────────────────────────
   if (state.loading) return (
     <div style={styles.widget}>
-      <WidgetHeader onClose={onClose} styles={styles} subtitle="Connecting..." theme={theme} />
+      <WidgetHeader onClose={onClose} styles={styles} subtitle="Connecting..." theme={theme} title={config.title} />
       <div style={styles.centeredBox}>
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
           <circle cx="12" cy="12" r="10" stroke="#e5e7eb" strokeWidth="3" />
@@ -482,7 +577,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
 
   if (state.tokenExpired) return (
     <div style={styles.widget}>
-      <WidgetHeader onClose={onClose} styles={styles} subtitle="Session Expired" theme={theme} />
+      <WidgetHeader onClose={onClose} styles={styles} subtitle="Session Expired" theme={theme} title={config.title} />
       <div style={styles.centeredBox}>
         <div style={{ fontSize: 40 }}>⏳</div>
         <div>
@@ -496,7 +591,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
 
   if (state.error && !state.connected) return (
     <div style={styles.widget}>
-      <WidgetHeader onClose={onClose} styles={styles} subtitle="Disconnected" theme={theme} />
+      <WidgetHeader onClose={onClose} styles={styles} subtitle="Disconnected" theme={theme} title={config.title} />
       <div style={styles.centeredBox}>
         <div style={{ fontSize: 40 }}>⚠️</div>
         <div>
@@ -513,7 +608,8 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
     <div style={{ ...styles.widget, position: 'relative' as const }}>
       <WidgetHeader
         onClose={onClose} styles={styles}
-        subtitle={showHistory ? 'Chat History' : (endingChat ? 'Ending session…' : subtitle)} theme={theme}
+        subtitle={showHistory ? 'Chat History' : showSessionPicker ? 'Your conversations' : (endingChat ? 'Ending session…' : subtitle)} theme={theme}
+        title={(showHistory || showSessionPicker) ? (config.title || undefined) : handler.name}
         showEndChat={!showHistory && !isClosed && !showFeedback && state.connected && flowStep !== 'escalating'}
         onEndChat={() => setShowEndConfirm(true)}
         onHistory={() => setShowHistory(p => !p)} showHistory={showHistory}
@@ -522,13 +618,23 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
       {showHistory && (
         <SessionHistoryPanel
           primaryColor={theme.primaryColor} sessions={state.pastSessions} currentSessionId={state.session?.id}
-          onSelectActive={() => setShowHistory(false)}
-          onReopen={async (sessionId) => { await actionsRef.current.reopenSession?.(sessionId); setShowHistory(false); }}
+          canReactivate={canReactivate}
+          onSelect={handleSelectSession}
           onBack={() => setShowHistory(false)}
         />
       )}
 
-      {!showHistory && (
+      {!showHistory && showSessionPicker && (
+        <SessionPickerScreen
+          primaryColor={theme.primaryColor}
+          sessions={state.pastSessions}
+          canReactivate={canReactivate}
+          onSelect={(id) => { void handleSelectSession(id); }}
+          onStartNew={handleStartNewFromPicker}
+        />
+      )}
+
+      {!showHistory && !showSessionPicker && (
         <>
           {showEndConfirm && <EndChatConfirmModal primaryColor={theme.primaryColor} onConfirm={handleEndChat} onCancel={() => setShowEndConfirm(false)} />}
 
@@ -563,6 +669,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
                         onImageClick={handleImageClick} onReply={handleReply}
                         replyToResolved={msg.replyToMessageId ? msgByIdMap.get(msg.replyToMessageId) ?? null : null}
                         tickStatus={tickMap.get(msg.id) ?? 'none'} primaryColor={theme.primaryColor}
+                        onRetry={handleRetry}
                       />
                     </div>
                   );
@@ -628,6 +735,11 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
                 )
               ) : (
                 <div style={{ flexShrink: 0 }}>
+                  {isTerminal && (
+                    <div style={{ padding: '8px 14px', backgroundColor: '#fffbeb', borderTop: '1px solid #fde68a', fontSize: 11, color: '#92400e', lineHeight: 1.4 }}>
+                      This conversation was closed — sending a message reopens it.
+                    </div>
+                  )}
                   {state.uploading && (
                     <div style={{ padding: '8px 14px', backgroundColor: theme.primaryColor + '10', borderTop: `1px solid ${theme.primaryColor}30`, display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
@@ -668,7 +780,7 @@ export function ChatContentInner({ onClose, styles, config, theme, onStartNewCha
                         : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="1" width="6" height="11" rx="3" /><path d="M19 10v1a7 7 0 01-14 0v-1" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></svg>}
                     </button>
                     <input ref={inputRef} type="text"
-                      placeholder={state.uploading ? '⏳ Uploading file, please wait...' : canType ? (isRecording ? '🔴 Recording audio...' : 'Type a message...') : 'Connecting...'}
+                      placeholder={state.uploading ? '⏳ Uploading file, please wait...' : canType ? (isRecording ? '🔴 Recording audio...' : 'Type a message...') : disconnectedPlaceholder}
                       value={inputValue} onChange={handleInputChange} onKeyDown={handleKeyDown} disabled={!canType}
                       style={{ ...styles.input, borderColor: inputValue ? theme.primaryColor + '88' : '#e5e7eb', opacity: canType ? 1 : 0.6 }}
                     />

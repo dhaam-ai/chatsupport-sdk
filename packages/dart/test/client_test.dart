@@ -316,4 +316,85 @@ void main() {
       await harness.client.dispose();
     });
   });
+
+  group('identity routing', () {
+    test('agent.joined reaches agentEvents as a HandledBy', () async {
+      // The frames were declared long before they were emitted; this is the
+      // first release where a host actually receives one, so the routing is
+      // worth an end-to-end assertion rather than only a decoder unit test.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<AgentEvent> seen = <AgentEvent>[];
+      harness.client.agentEvents.listen(seen.add);
+
+      harness.socket.deliver(
+        jsonEncode(<String, Object?>{
+          'v': 1,
+          't': 'agent.joined',
+          'id': _serverUlid,
+          'ts': 1787228815136,
+          'd': <String, Object?>{
+            'kind': 'AGENT',
+            'id': 'agent-1',
+            'displayName': 'Priya S.',
+          },
+        }),
+      );
+      await flush();
+
+      expect(seen, hasLength(1));
+      expect(seen.single.kind, equals(HandledByKind.agent));
+      expect(seen.single.id, equals('agent-1'));
+      expect(seen.single.displayName, equals('Priya S.'));
+
+      await harness.client.dispose();
+    });
+
+    test('a session snapshot carries handledBy through to sessions', () async {
+      final Harness harness = Harness();
+      final List<SessionSnapshot> seen = <SessionSnapshot>[];
+      harness.client.sessions.listen(seen.add);
+
+      unawaited(harness.client.connect());
+      await flush();
+      harness.socket.deliver(
+        jsonEncode(<String, Object?>{
+          'v': 1,
+          't': 'connection.ack',
+          'id': _serverUlid,
+          'ts': 1700000000000,
+          'd': <String, Object?>{
+            'protocolVersion': 1,
+            'seq': 5,
+            'session': <String, Object?>{
+              'sessionId': 's1',
+              'status': 'ASSIGNED',
+              'mode': 'HUMAN',
+              'participants': <Object?>[
+                <String, Object?>{
+                  'participantId': 'agent-1',
+                  'type': 'AGENT',
+                  'displayName': 'Priya S.',
+                },
+              ],
+              'createdAt': '2026-08-19T10:00:00.000Z',
+              'handledBy': <String, Object?>{
+                'kind': 'AGENT',
+                'id': 'agent-1',
+                'displayName': 'Priya S.',
+              },
+            },
+          },
+        }),
+      );
+      await flush();
+
+      expect(seen, hasLength(1));
+      expect(seen.single.handledBy?.displayName, equals('Priya S.'));
+      expect(seen.single.participants.single.displayName, equals('Priya S.'));
+
+      await harness.client.dispose();
+    });
+  });
 }

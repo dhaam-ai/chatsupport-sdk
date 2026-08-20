@@ -59,6 +59,10 @@ describe('the public barrel (packages/core/src/index.ts)', () => {
     expect(typeof core.NoActiveSessionError).toBe('function');
   });
 
+  it('exports the canonical handledBy-staleness derivation (T10)', () => {
+    expect(typeof core.isHandledByCurrent).toBe('function');
+  });
+
   it('exports the protocol enum runtime guards ChatState/ChatMessage/ChatSession reference', () => {
     expect(typeof core.isChatStatus).toBe('function');
     expect(typeof core.isChatMode).toBe('function');

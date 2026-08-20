@@ -1,24 +1,28 @@
 import React from 'react';
 import type { FullTheme } from './constants';
 import { CloseIcon, PhoneDownIcon } from './icons';
+import { DEFAULT_WIDGET_TITLE } from './handlerIdentity';
 
 interface WidgetHeaderProps {
   onClose: () => void;
   styles: Record<string, React.CSSProperties>;
   subtitle: string;
   theme: FullTheme;
+  /** Who is talking to the customer — see resolveHandlerIdentity. Falls back
+   *  to the generic title so an unwired caller still renders something sane. */
+  title?: string;
   onEndChat?: () => void;
   showEndChat?: boolean;
   onHistory?: () => void;
   showHistory?: boolean;
 }
 
-export function WidgetHeader({ onClose, styles, subtitle, theme, onEndChat, showEndChat, onHistory, showHistory }: WidgetHeaderProps) {
+export function WidgetHeader({ onClose, styles, subtitle, theme, title, onEndChat, showEndChat, onHistory, showHistory }: WidgetHeaderProps) {
   return (
     <div style={styles.header}>
       <div style={styles.headerAvatar}>💬</div>
       <div style={styles.headerInfo}>
-        <h3 style={styles.headerTitle}>Chat Support</h3>
+        <h3 style={styles.headerTitle}>{title || DEFAULT_WIDGET_TITLE}</h3>
         <div style={styles.headerSub}><span style={styles.onlineDot} />{subtitle}</div>
       </div>
       {onHistory && (

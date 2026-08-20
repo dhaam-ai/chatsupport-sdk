@@ -109,9 +109,9 @@ function describeFrame(frame: AnyFrame): string {
     case 'session.closed':
       return `sessionClosed:${frame.d.closeReason}`;
     case 'agent.joined':
-      return `agentJoined:${frame.d.agentId}`;
+      return `agentJoined:${frame.d.kind}:${frame.d.id}:${frame.d.displayName}`;
     case 'agent.left':
-      return `agentLeft:${frame.d.agentId}`;
+      return `agentLeft:${frame.d.kind}:${frame.d.id}:${frame.d.displayName}`;
     case 'message.new':
       return `messageNew:${frame.d.id}:${frame.d.seq}`;
     case 'message.read':

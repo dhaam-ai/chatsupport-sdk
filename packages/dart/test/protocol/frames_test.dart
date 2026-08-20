@@ -253,13 +253,10 @@ void main() {
       expect(entry.lastSeen, isNull);
     });
 
-    test('agent.joined tolerates a missing agentName', () {
-      final AgentEvent event = AgentEvent.fromJson(
-        <String, Object?>{'agentId': 'a1'},
-        'agent.joined',
-      );
-      expect(event.agentId, equals('a1'));
-      expect(event.agentName, isNull);
-    });
+    // `agent.joined`/`agent.left` used to be tested here as
+    // `{agentId, agentName?}`. That payload is gone — the v2 wire contract
+    // replaced it with HandledBy, where displayName is REQUIRED and the old
+    // shape is refused rather than coerced. The replacement coverage lives in
+    // handled_by_test.dart alongside the rest of the identity contract.
   });
 }

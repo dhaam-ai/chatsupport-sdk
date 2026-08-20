@@ -407,19 +407,29 @@ paths:
         document modeled this as `GET /sessions`, which does not exist —
         `chat.routes.ts` has no bare `GET /chat/sessions` handler at all.
 
-        Hydrates `ChatState.pastSessions` (PRD §6.4). **`@dhaam-ccrm/core`
-        does not call this operation today** — `ChatState.pastSessions` is
+        Hydrates `ChatState.pastSessions` (PRD §6.4) — the SDK's "your last
+        N conversations" picker. **`@dhaam-ccrm/core` does not call this
+        operation as of this revision** — `ChatState.pastSessions` is
         declared and initialized empty but nothing in `packages/core`
-        populates it (confirmed gap, contract audit finding). This schema
-        is documented for backend (non-WebSocket) SDK generation; closing
-        the browser-SDK gap is tracked separately.
+        populates it (confirmed gap, contract audit finding; unchanged by
+        this revision, which corrects the backend response shape this
+        operation will be consumed against, not the SDK wiring).
 
-        Ordered most-recent-first. Includes closed sessions — a customer
-        reopening an earlier conversation (PRD §12.5) needs to see them.
+        Ordered most-recent-first (by last activity, not `createdAt`).
+        Includes closed sessions — a customer reopening an earlier
+        conversation (PRD §12.5) needs to see them.
 
-        **Response shape corrected** — see `SessionSummaryPageWire` below;
-        it is not the idealized `SessionSummaryPage` shape this operation
-        previously documented.
+        **Guests get `[]`, not an error.** A session is returned only for a
+        caller the backend has identified — see `handledBy`'s sibling note
+        on `ChatSessionSummaryWire` for what "identified" means here and its
+        documented failure mode. This is a 200 in every case; there is no
+        403/404 branch on this operation for an anonymous caller.
+
+        **Response shape corrected as of this revision** — see
+        `ChatSessionSummaryWire` / `SessionSummaryPageWire` below. The
+        `sessions[]` item shape is now field-for-field the SDK's
+        `ChatSessionSummary` (`packages/core/src/state/types.ts:223-240`),
+        plus `handledBy`.
       security:
         - accessToken: []
           publishableKey: []
@@ -428,15 +438,17 @@ paths:
           in: query
           required: false
           description: >-
-            Maximum number of sessions to return. **Bounds corrected** —
-            `customerSessionsQuerySchema` (`chat.validator.ts:52-56`) caps
-            this at 20 with a default of 6, not the generic 100/20 an
-            earlier revision of this document applied here.
+            Maximum number of sessions to return. **Default corrected to 5**
+            (was 6) as of this revision — `customerSessionsQuerySchema`
+            (`chat.validator.ts:52-58`). BREAKING for anything hardcoding the
+            old default, but this operation has zero callers (see above), so
+            there is no consumer to coordinate the change with. The cap
+            stays 20, unrelated to the default and unchanged.
           schema:
             type: integer
             minimum: 1
             maximum: 20
-            default: 6
+            default: 5
       responses:
         "200":
           description: A page of session summaries, most recent first.
@@ -1769,45 +1781,79 @@ components:
     ChatSessionSummaryWire:
       type: object
       description: >-
-        Actual wire shape of `GET /chat/sessions/customer`'s `sessions[]`
-        items (`chat-session.service.ts:323-344`) — replaces the idealized
-        `ChatSessionSummary`, which this document previously documented and
-        which is no longer referenced by any operation. `status`/`mode` are
-        raw integer codes, there is no `lastMessageAt`, `lastMessagePreview`,
-        or `unreadCount`, and a nested `lastMessage` object replaces all
-        three. Currently unconsumed by `@dhaam-ccrm/core` — see the
+        Wire shape of `GET /chat/sessions/customer`'s `sessions[]` items, as
+        built by `chat.routes.ts`'s `listSessions` handler from
+        `chat-session.repository.ts`'s `findCustomerHistory` +
+        `unreadCountsForCustomer`, plus `chat-user.service.ts`'s
+        `getUsersByExternalIds` for `handledBy.displayName`. As of this
+        revision this is field-for-field the SDK's `ChatSessionSummary`
+        (`packages/core/src/state/types.ts:223-240`) — `status`/`mode` are
+        now the canonical v2 STRING enums (D4), and `lastMessageAt` /
+        `lastMessagePreview` / `unreadCount` replace the earlier nested
+        `lastMessage` object — plus the additive `handledBy` field below.
+        Still unconsumed by `@dhaam-ccrm/core` as of this revision — see the
         `listSessions` operation's description.
-      required: [id, status, mode, createdAt, closedAt, lastMessage]
+      required: [id, status, mode, createdAt, closedAt, lastMessageAt, unreadCount]
       properties:
         id:
           type: string
           description: Opaque session identifier.
         status:
-          type: integer
-          description: "1=OPEN, 2=WAITING_FOR_AGENT, 3=ASSIGNED, 4=CLOSED, 5=RESOLVED, 6=ON_HOLD (`shared/constants/enums.ts:15-22`)."
+          $ref: "#/components/schemas/ChatStatus"
         mode:
-          type: integer
-          description: "1=BOT, 2=HUMAN (`shared/constants/enums.ts:24-27`)."
+          $ref: "#/components/schemas/ChatMode"
         createdAt:
           type: string
           format: date-time
         closedAt:
           type: [string, "null"]
           format: date-time
-        lastMessage:
-          oneOf:
-            - type: object
-              required: [content, senderType, createdAt]
-              properties:
-                content:
-                  type: string
-                senderType:
-                  type: integer
-                  description: "1=CUSTOMER, 2=AGENT, 3=BOT, 4=SYSTEM."
-                createdAt:
-                  type: string
-                  format: date-time
-            - type: "null"
+        lastMessageAt:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            Timestamp of the most recent PUBLIC message (§11.2 — INTERNAL
+            agent notes never reach a customer-facing response), or `null`
+            if the session has no public message yet.
+        lastMessagePreview:
+          type: string
+          description: >-
+            Verbatim content of the most recent PUBLIC message. Absent —
+            never an empty string — when the session has no public message
+            yet; mirror `lastMessageAt: null` to tell "no preview" apart
+            from "preview happens to be empty".
+        unreadCount:
+          type: integer
+          minimum: 0
+          description: >-
+            PUBLIC messages not sent by the customer, created after the
+            customer's own read watermark for this session (or all such
+            messages if they have never read it). `0`, never absent, when
+            nothing is unread.
+        handledBy:
+          type: object
+          description: >-
+            Who is/was handling this session. Absent — never `null` or a
+            placeholder — when nobody has picked it up yet (e.g. freshly
+            escalated and still unassigned): the bot has already handed
+            off and no agent has taken it, so neither `BOT` nor `AGENT`
+            would be a true answer. See `buildHandledBy` in `chat.routes.ts`
+            for the exact assigned-agent / still-on-bot / nobody-yet rule.
+          required: [kind, id, displayName]
+          properties:
+            kind:
+              type: string
+              enum: [AGENT, BOT]
+            id:
+              type: string
+              description: >-
+                The agent's external id for `kind: AGENT` (falls back to
+                that id as `displayName` too, if the `ChatUser` display-name
+                cache has no entry). A fixed sentinel (`"bot"`) for
+                `kind: BOT` — there is no per-tenant bot identity anywhere
+                in the schema today.
+            displayName:
+              type: string
 
     SessionSummaryPageWire:
       type: object

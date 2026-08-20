@@ -25,9 +25,19 @@ export function acked(seq?: number): AckOutcome {
   };
 }
 
-/** Builds a `rejected` outcome — the server refused it (§7.4). */
-export function rejected(code: ErrorPayload['code'] = 'VALIDATION_FAILED'): AckOutcome {
-  return { status: 'rejected', error: { code, message: 'refused', retryable: false } };
+/**
+ * Builds a `rejected` outcome — the server refused it (§7.4).
+ *
+ * `retryable` defaults to `false`, matching every call site that predates
+ * T9's retry primitive — none of them cared, and flipping the default would
+ * silently change what they were asserting. Pass `true` explicitly for a
+ * test that needs a genuinely-retryable rejection (e.g. `RATE_LIMITED`).
+ */
+export function rejected(
+  code: ErrorPayload['code'] = 'VALIDATION_FAILED',
+  retryable = false,
+): AckOutcome {
+  return { status: 'rejected', error: { code, message: 'refused', retryable } };
 }
 
 export const TIMEOUT: AckOutcome = { status: 'timeout' };

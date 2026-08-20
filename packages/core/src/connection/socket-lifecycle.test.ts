@@ -14,7 +14,7 @@ import { AuthBackoffPolicy, TransportBackoffPolicy } from '../backoff/index.js';
 import { ManualTimers } from '../presence/index.js';
 import type { ConnectionAckPayload, SessionSnapshot } from '../protocol/index.js';
 import { ChatStore, createInitialChatState } from '../state/index.js';
-import { CLOSE_CODE, StubSocketFactory, silentLogger } from '../transport/index.js';
+import { CLOSE_CODE, DEFAULT_CONNECT_TIMEOUT_MS, StubSocketFactory, silentLogger } from '../transport/index.js';
 import type { StubWebSocket } from '../transport/index.js';
 import { ConnectionController } from './controller.js';
 import { createWebSocketTransportFactory } from './types.js';
@@ -256,8 +256,10 @@ describe('reconnect from onClose', () => {
     expect(h.controller.state).toBe('connecting');
 
     // The supersede's own `local` close did not schedule a retry or count an
-    // attempt: the reconnect this call is performing is the only one in flight.
-    expect(h.timers.pendingCount).toBe(0);
+    // attempt: the reconnect this call is performing is the only one in
+    // flight. The one timer that IS pending is the new attempt's own connect
+    // deadline (T4) — not a retry.
+    expect(h.timers.pendingCount).toBe(1);
     expect(h.controller.attempt).toBe(0);
 
     h.sockets.last.open();
@@ -446,5 +448,179 @@ describe('close-code handling over the real transport', () => {
 
     expect(h.controller.state).toBe('connected');
     expect(h.controller.lastAppliedSeq).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Connect deadline: self-healing a hung connect attempt (T4)
+//
+// The user-reported bug this section reproduces: "auto reconnect not working
+// if server down or internet down, and message that need to send stays in
+// sending". Both symptoms trace to the same root cause — a socket that never
+// calls back at all (no open, no error, no close) leaves T8 with no route
+// back to `#scheduleTransportRetry`, which is reachable only from a close.
+// `connecting` parks forever, `connect()` never settles, and nothing ever
+// queues the message for replay because the connection never reports itself
+// disconnected.
+// ---------------------------------------------------------------------------
+
+describe('connect deadline: self-healing a hung connect attempt', () => {
+  it('schedules a retry rather than parking in connecting when the socket never calls back (server down)', async () => {
+    const h = harness();
+    const promise = h.controller.connect();
+    await tick();
+    promise.catch(() => undefined);
+
+    expect(h.controller.state).toBe('connecting');
+    const hung = h.sockets.last;
+
+    // Neither onopen, onerror, nor onclose — exactly what "server down" or
+    // "no route to host" looks like at the WebSocket layer.
+    h.timers.advance(DEFAULT_CONNECT_TIMEOUT_MS);
+    await tick();
+
+    expect(h.controller.state).toBe('reconnecting');
+
+    // And the abandoned socket is fully detached, so it cannot resurrect
+    // itself if it belatedly calls back.
+    expect(hung.onopen).toBeNull();
+    expect(hung.onclose).toBeNull();
+    expect(hung.onerror).toBeNull();
+  });
+
+  it('does not retry before the deadline elapses', async () => {
+    const h = harness();
+    void h.controller.connect();
+    await tick();
+
+    h.timers.advance(DEFAULT_CONNECT_TIMEOUT_MS - 1);
+    await tick();
+
+    expect(h.controller.state).toBe('connecting');
+  });
+
+  it('schedules a retry when the socket reports an error with no close following', async () => {
+    const h = harness();
+    void h.controller.connect();
+    await tick();
+
+    h.sockets.last.emitError();
+    await tick();
+
+    expect(h.controller.state).toBe('reconnecting');
+  });
+
+  it('backs off across repeated hangs per the existing policy, and recovers once the socket finally opens', async () => {
+    const h = harness();
+    const delays: number[] = [];
+    h.store.on('reconnecting', (payload) => delays.push(payload.delayMs));
+
+    const promise = h.controller.connect();
+    await tick();
+
+    // Three consecutive attempts that never call back at all.
+    for (let i = 0; i < 3; i += 1) {
+      expect(h.controller.state).toBe('connecting');
+      h.timers.advance(DEFAULT_CONNECT_TIMEOUT_MS);
+      await tick();
+      expect(h.controller.state).toBe('reconnecting');
+
+      h.timers.advance(30_000);
+      await tick();
+    }
+
+    // Full jitter with the harness's random() = 1: base * 2^attempt, i.e.
+    // exactly the same escalation §8.2 already produces from real closes.
+    expect(delays).toEqual([500, 1000, 2000]);
+
+    // The fourth attempt's socket finally opens and acks — full recovery.
+    goLive(h);
+    await promise;
+
+    expect(h.controller.state).toBe('connected');
+    expect(h.controller.attempt).toBe(0);
+  });
+
+  it('leaves no timer armed once the retry is scheduled — the deadline itself does not leak', async () => {
+    const h = harness();
+    void h.controller.connect();
+    await tick();
+
+    h.timers.advance(DEFAULT_CONNECT_TIMEOUT_MS);
+    await tick();
+
+    // Only the retry timer `#scheduleRetry` just armed. The deadline that
+    // fired is gone; heartbeat is suppressed by this harness and nothing else
+    // is in flight.
+    expect(h.timers.pendingCount).toBe(1);
+  });
+
+  it('survives a hundred consecutive hangs without leaking a timer or a socket handle', async () => {
+    const h = harness();
+    void h.controller.connect();
+    await tick();
+
+    for (let i = 0; i < 100; i += 1) {
+      h.timers.advance(DEFAULT_CONNECT_TIMEOUT_MS);
+      await tick();
+      h.timers.advance(30_000);
+      await tick();
+    }
+
+    // One socket per attempt, never two, never a leftover — and every socket
+    // but the newest is fully detached, so a straggling late event from any
+    // of the prior 100 hung sockets cannot reach the controller.
+    expect(h.sockets.sockets).toHaveLength(101);
+    expect(h.controller.state).toBe('connecting');
+    for (const socket of h.sockets.sockets.slice(0, -1)) {
+      expect(socket.onopen).toBeNull();
+      expect(socket.onclose).toBeNull();
+      expect(socket.onerror).toBeNull();
+    }
+
+    // Exactly the newest attempt's own connect deadline is pending — no
+    // accumulation across 100 cycles.
+    expect(h.timers.pendingCount).toBe(1);
+  });
+
+  it('is idempotent when an error is immediately followed by a close: exactly one retry, one attempt counted', async () => {
+    const h = harness();
+    void h.controller.connect();
+    await tick();
+    const hung = h.sockets.last;
+
+    let reconnectingCount = 0;
+    h.store.on('reconnecting', () => {
+      reconnectingCount += 1;
+    });
+
+    hung.emitError();
+    hung.emitClose({ code: CLOSE_CODE.ABNORMAL, wasClean: false });
+    await tick();
+
+    expect(reconnectingCount).toBe(1);
+    expect(h.controller.attempt).toBe(1);
+    expect(h.controller.state).toBe('reconnecting');
+  });
+
+  it('is idempotent when the deadline fires and the abandoned socket errors afterwards: exactly one retry', async () => {
+    const h = harness();
+    void h.controller.connect();
+    await tick();
+    const hung = h.sockets.last;
+
+    let reconnectingCount = 0;
+    h.store.on('reconnecting', () => {
+      reconnectingCount += 1;
+    });
+
+    h.timers.advance(DEFAULT_CONNECT_TIMEOUT_MS);
+    await tick();
+    hung.emitError();
+    hung.emitClose({ code: CLOSE_CODE.ABNORMAL, wasClean: false });
+    await tick();
+
+    expect(reconnectingCount).toBe(1);
+    expect(h.controller.attempt).toBe(1);
   });
 });

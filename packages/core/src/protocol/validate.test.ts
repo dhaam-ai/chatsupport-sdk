@@ -64,8 +64,9 @@ describe('validateFrame — valid frames of every type pass', () => {
     ['connection.ack', { v: 1, t: 'connection.ack', id: ULID_A, ts: TS, d: { protocolVersion: 1, seq: 10, session: baseSession() } }],
     ['session.updated', { v: 1, t: 'session.updated', id: ULID_A, ts: TS, d: { session: baseSession({ status: 'RESOLVED' }) } }],
     ['session.closed', { v: 1, t: 'session.closed', id: ULID_A, ts: TS, d: { sessionId: 'sess_1', closeReason: 'SWITCHED' } }],
-    ['agent.joined', { v: 1, t: 'agent.joined', id: ULID_A, ts: TS, d: { agentId: 'agent_1', agentName: 'Ada' } }],
-    ['agent.left', { v: 1, t: 'agent.left', id: ULID_A, ts: TS, d: { agentId: 'agent_1' } }],
+    ['agent.joined', { v: 1, t: 'agent.joined', id: ULID_A, ts: TS, d: { kind: 'AGENT', id: 'agent_1', displayName: 'Ada' } }],
+    ['agent.left', { v: 1, t: 'agent.left', id: ULID_A, ts: TS, d: { kind: 'AGENT', id: 'agent_1', displayName: 'Ada' } }],
+    ['agent.joined with kind BOT', { v: 1, t: 'agent.joined', id: ULID_A, ts: TS, d: { kind: 'BOT', id: 'bot_1', displayName: 'Botty' } }],
     [
       'message.new',
       {
@@ -538,5 +539,126 @@ describe('delivery frames — message.markDelivered / message.delivered', () => 
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/server push frame type/);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// v2 wire contract: SessionSnapshot.handledBy, ParticipantSnapshot.displayName,
+// and AgentEventPayload = HandledBy (§ T7). See domain.ts's `HandledBy` doc
+// comment for the semantics ("absent" never means "nobody is handling this").
+// -----------------------------------------------------------------------------
+
+describe('HandledBy — SessionSnapshot.handledBy, ParticipantSnapshot.displayName, agent.joined/left', () => {
+  const ack = (d: unknown) => ({ v: 1, t: 'connection.ack', id: ULID_A, ts: TS, d });
+  const agentJoined = (d: unknown) => ({ v: 1, t: 'agent.joined', id: ULID_A, ts: TS, d });
+  const agentLeft = (d: unknown) => ({ v: 1, t: 'agent.left', id: ULID_A, ts: TS, d });
+
+  it('accepts a session snapshot with handledBy kind AGENT', () => {
+    const result = validateFrame(
+      ack({ protocolVersion: 1, seq: 1, session: baseSession({ handledBy: { kind: 'AGENT', id: 'p1', displayName: 'Ada' } }) }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a session snapshot with handledBy kind BOT', () => {
+    const result = validateFrame(
+      ack({ protocolVersion: 1, seq: 1, session: baseSession({ handledBy: { kind: 'BOT', id: 'bot_1', displayName: 'Botty' } }) }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a session snapshot with handledBy entirely absent', () => {
+    const result = validateFrame(ack({ protocolVersion: 1, seq: 1, session: baseSession() }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a handledBy whose kind is outside the AGENT|BOT union', () => {
+    const result = validateFrame(
+      ack({ protocolVersion: 1, seq: 1, session: baseSession({ handledBy: { kind: 'CUSTOMER', id: 'p1', displayName: 'Ada' } }) }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.session.handledBy.kind');
+  });
+
+  it.each([
+    ['null', null],
+    ['empty string', ''],
+  ])('rejects a session participant displayName of %s', (_label, displayName) => {
+    const result = validateFrame(
+      ack({
+        protocolVersion: 1,
+        seq: 1,
+        session: baseSession({ participants: [{ participantId: 'p1', type: 'CUSTOMER', displayName }] }),
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.session.participants[0].displayName');
+  });
+
+  it('accepts a session participant with displayName present', () => {
+    const result = validateFrame(
+      ack({
+        protocolVersion: 1,
+        seq: 1,
+        session: baseSession({ participants: [{ participantId: 'p1', type: 'CUSTOMER', displayName: 'Grace' }] }),
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts a session participant with displayName absent', () => {
+    // baseSession()'s default participant already carries no displayName —
+    // asserted explicitly here so the additive contract has its own test.
+    const result = validateFrame(ack({ protocolVersion: 1, seq: 1, session: baseSession() }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('validates agent.joined and agent.left under the new HandledBy shape', () => {
+    expect(validateFrame(agentJoined({ kind: 'AGENT', id: 'agent_1', displayName: 'Ada' })).ok).toBe(true);
+    expect(validateFrame(agentLeft({ kind: 'AGENT', id: 'agent_1', displayName: 'Ada' })).ok).toBe(true);
+    expect(validateFrame(agentJoined({ kind: 'BOT', id: 'bot_1', displayName: 'Botty' })).ok).toBe(true);
+  });
+
+  it('rejects agent.joined whose kind is outside the AGENT|BOT union', () => {
+    const result = validateFrame(agentJoined({ kind: 'SUPERVISOR', id: 'agent_1', displayName: 'Ada' }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.kind');
+  });
+
+  it('rejects agent.joined/left missing displayName — required on HandledBy, unlike the old agentName', () => {
+    const joined = validateFrame(agentJoined({ kind: 'AGENT', id: 'agent_1' }));
+    expect(joined.ok).toBe(false);
+    if (!joined.ok) expect(joined.path).toBe('d.displayName');
+
+    const left = validateFrame(agentLeft({ kind: 'AGENT', id: 'agent_1' }));
+    expect(left.ok).toBe(false);
+    if (!left.ok) expect(left.path).toBe('d.displayName');
+  });
+
+  it.each([
+    ['null', null],
+    ['empty string', ''],
+  ])('rejects agent.joined whose displayName is %s', (_label, displayName) => {
+    const result = validateFrame(agentJoined({ kind: 'AGENT', id: 'agent_1', displayName }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.displayName');
+  });
+
+  it('an old-server payload with neither handledBy nor any participant displayName still validates and connects', () => {
+    // baseSession() is exactly what a pre-v2 server would have sent: no
+    // handledBy, no participant displayName. Additive evolution (One-Version
+    // Rule) requires this to keep working unmodified.
+    const result = validateFrame({
+      v: 1,
+      t: 'connection.ack',
+      id: ULID_A,
+      ts: TS,
+      d: { protocolVersion: 1, seq: 1, session: baseSession() },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok && result.frame.t === 'connection.ack') {
+      expect(result.frame.d.session.handledBy).toBeUndefined();
+      expect(result.frame.d.session.participants[0]?.displayName).toBeUndefined();
+    }
   });
 });

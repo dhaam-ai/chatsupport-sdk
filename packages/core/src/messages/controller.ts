@@ -13,10 +13,12 @@
 
 import type {
   AttachmentMetadata,
+  ErrorCode,
   MessagePayload,
   MessageSendPayload,
   MessageType,
 } from '../protocol/index.js';
+import { isErrorCode } from '../protocol/index.js';
 import type { FailedSend, QueuedSend } from '../queue/index.js';
 import type { ChatError, ChatMessage, ChatStore } from '../state/index.js';
 import type { SendFailureReason } from '../state/types.js';
@@ -56,7 +58,42 @@ export interface MessageControllerOptions {
  */
 type SendOutcome =
   | { readonly kind: 'acked'; readonly seq: number | undefined }
-  | { readonly kind: 'failed'; readonly reason: SendFailureReason };
+  | {
+      readonly kind: 'failed';
+      readonly reason: SendFailureReason;
+      readonly code: ErrorCode | undefined;
+      readonly retryable: boolean;
+    };
+
+/**
+ * Safe default for `MessageDelivery.retryable` / `sendFailed.retryable` when
+ * there is nothing to mirror.
+ *
+ * This module never re-derives retryability from a hand-maintained copy of
+ * §7.4's code table — the server already computes it once, per code, on
+ * `ErrorPayload.retryable` (protocol/envelope.ts), and duplicating that logic
+ * here is exactly the kind of drift D4 exists to prevent. So this constant is
+ * reached only when there is truly no server signal to trust: a `FailedSend`
+ * from a server build that predates this field, or a `SendFailureReason` the
+ * SDK decided locally (`sessionClosed`, `expired`, `evicted`, `storage`) with
+ * no wire `ErrorPayload` behind it at all.
+ *
+ * `true` — "assume a retry might work" — because this boolean gates a UI
+ * affordance, not a data-safety decision. Defaulting `false` would silently
+ * remove the retry button for every send this SDK cannot classify, which is a
+ * pure capability regression: the user's only recourse becomes retyping the
+ * message from scratch, with no way to tell that was ever necessary.
+ * Defaulting `true` costs nothing worse than this SDK's pre-fix behavior —
+ * every failed send already showed retry unconditionally — so the fallback
+ * can never make an unclassified case worse than it already was; it can only
+ * fail to *improve* on cases the SDK now has enough information to improve.
+ */
+export const DEFAULT_RETRYABLE_FALLBACK = true;
+
+/** Narrows a `FailedSend.code` (plain `string`) to the canonical §7.4 union, or `undefined`. */
+function resolveCode(code: string | undefined): ErrorCode | undefined {
+  return code !== undefined && isErrorCode(code) ? code : undefined;
+}
 
 /**
  * The message as the server confirmed it: `seq` recorded, `delivery` gone.
@@ -71,8 +108,23 @@ function confirmed(message: ChatMessage, seq: number | undefined): ChatMessage {
 }
 
 /** The message as a terminal failure: still listed, now retryable by the app. */
-function failed(message: ChatMessage, reason: SendFailureReason): ChatMessage {
-  return { ...message, delivery: { state: 'failed', reason } };
+function failed(
+  message: ChatMessage,
+  reason: SendFailureReason,
+  code: ErrorCode | undefined,
+  retryable: boolean,
+): ChatMessage {
+  return {
+    ...message,
+    delivery: {
+      state: 'failed',
+      reason,
+      retryable,
+      // `exactOptionalPropertyTypes` is on, so an absent code is an absent
+      // property rather than one explicitly set to undefined.
+      ...(code === undefined ? {} : { code }),
+    },
+  };
 }
 
 /**
@@ -353,15 +405,24 @@ export class MessageController {
   /**
    * A queued send will never be retried again (§9.6) — the queue's single
    * notification channel for a dead send, mapped onto §6.5's `sendFailed`.
+   *
+   * The parameter widens `FailedSend` with an optional `retryable` rather
+   * than requiring `queue/` to declare it: `queue/types.ts` does not carry
+   * this field today (T9 owns that module), and a caller supplying it once
+   * `queue/` does add it is structurally identical to this type either way.
+   * Absent — the only case reachable through the queue right now — falls
+   * back to {@link DEFAULT_RETRYABLE_FALLBACK}.
    */
-  readonly onFailed = (failure: FailedSend): void => {
+  readonly onFailed = (failure: FailedSend & { readonly retryable?: boolean }): void => {
     const { entry, reason } = failure;
-    const patched = this.#patch(entry.id, (message) => failed(message, reason));
+    const code = resolveCode(failure.code);
+    const retryable = failure.retryable ?? DEFAULT_RETRYABLE_FALLBACK;
+    const patched = this.#patch(entry.id, (message) => failed(message, reason, code, retryable));
     if (!patched) {
-      this.#settledEarly.set(entry.id, { kind: 'failed', reason });
+      this.#settledEarly.set(entry.id, { kind: 'failed', reason, code, retryable });
       return;
     }
-    this.#emitFailed(entry, reason);
+    this.#emitFailed(entry, reason, code, retryable);
   };
 
   // -----------------------------------------------------------------------
@@ -424,7 +485,7 @@ export class MessageController {
         ? optimistic
         : outcome.kind === 'acked'
           ? confirmed(optimistic, outcome.seq)
-          : failed(optimistic, outcome.reason);
+          : failed(optimistic, outcome.reason, outcome.code, outcome.retryable);
 
     this.#write(message);
 
@@ -433,7 +494,7 @@ export class MessageController {
     this.#store.emit('message', message);
 
     if (outcome?.kind === 'acked') this.#emitAck(entry.id, outcome.seq);
-    if (outcome?.kind === 'failed') this.#emitFailed(entry, outcome.reason);
+    if (outcome?.kind === 'failed') this.#emitFailed(entry, outcome.reason, outcome.code, outcome.retryable);
   }
 
   /**
@@ -484,7 +545,20 @@ export class MessageController {
     this.#store.emit('messageAck', seq === undefined ? { id } : { id, seq });
   }
 
-  #emitFailed(entry: QueuedSend, reason: SendFailureReason): void {
-    this.#store.emit('sendFailed', { id: entry.id, sessionId: entry.sessionId, reason });
+  #emitFailed(
+    entry: QueuedSend,
+    reason: SendFailureReason,
+    code: ErrorCode | undefined,
+    retryable: boolean,
+  ): void {
+    this.#store.emit('sendFailed', {
+      id: entry.id,
+      sessionId: entry.sessionId,
+      reason,
+      retryable,
+      // `exactOptionalPropertyTypes` is on, so an absent code is an absent
+      // property rather than one explicitly set to undefined.
+      ...(code === undefined ? {} : { code }),
+    });
   }
 }

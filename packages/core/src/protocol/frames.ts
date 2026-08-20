@@ -11,6 +11,7 @@
 import type { AckFrame, ErrorFrame, ErrorPayload, Frame } from './envelope.js';
 import type {
   AttachmentMetadata,
+  HandledBy,
   MessageMetadata,
   PresenceEntry,
   SessionSnapshot,
@@ -168,11 +169,26 @@ export interface SessionClosedPayload {
   closeReason: CloseReason;
 }
 
-/** Shared by `agent.joined` and `agent.left` (§6.5's event catalog uses the same shape for both). */
-export interface AgentEventPayload {
-  agentId: string;
-  agentName?: string;
-}
+/**
+ * Pushed on `agent.joined` / `agent.left`. Identical shape to
+ * {@link SessionSnapshot.handledBy} (domain.ts) — see that doc comment for
+ * why: both are populated from the same resolver, so a client rendering the
+ * session header from `handledBy` and one reacting to `agent.joined` for a
+ * toast/animation can never see two different names for the same
+ * participant.
+ *
+ * `kind` is `'BOT'` when the bot starts/stops handling a session (e.g. the
+ * bot resumes after a human agent leaves), not only for human agents —
+ * "agent" here is the §6.5 event-catalog name for "who is handling this
+ * chat", not a claim that only humans fire it.
+ *
+ * BREAKING (v2 wire contract): this replaced
+ * `{ agentId: string; agentName?: string }` outright rather than extending
+ * it. `agent.joined`/`agent.left` were declared in §6.5 but never actually
+ * emitted on the wire, so there was zero live traffic to protect — see the
+ * T7 report.
+ */
+export type AgentEventPayload = HandledBy;
 
 /**
  * The pushed message itself. `id` is the message's permanent id — for a

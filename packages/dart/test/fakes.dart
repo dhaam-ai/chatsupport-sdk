@@ -34,6 +34,18 @@ class FakeSocket implements ChatSocket {
   Future<void> drop() async {
     if (!_controller.isClosed) await _controller.close();
   }
+
+  /// Raises a transport error WITHOUT completing the stream.
+  ///
+  /// "An error is always followed by a close" is browser folklore, not an
+  /// interface guarantee, and it is not one `web_socket_channel` makes either:
+  /// error and done are separate signals on the same stream and no backend
+  /// promises an ordering between them. A client that only retries from the
+  /// done handler is stranded by a socket that only ever errors, which is
+  /// precisely the shape this method reproduces.
+  void fail([Object error = 'socket error']) {
+    if (!_controller.isClosed) _controller.addError(error);
+  }
 }
 
 class _Task {
@@ -84,7 +96,15 @@ class FakeScheduler implements Scheduler {
   }
 
   /// Moves the clock forward, running everything that comes due in order.
-  void advance(Duration by) {
+  ///
+  /// Asynchronous, and it has to be: a real Dart isolate drains the microtask
+  /// queue before it runs the next timer, so an `await` inside a timer
+  /// callback always resolves before any later timer fires. A synchronous
+  /// version runs an hour of timers without ever letting a single `await`
+  /// continue, which manufactures failures no real clock can produce — a
+  /// connect deadline expiring "while" a socket factory that already resolved
+  /// is still suspended at its await, for instance.
+  Future<void> advance(Duration by) async {
     final Duration target = _elapsed + by;
     while (true) {
       _Task? next;
@@ -102,8 +122,26 @@ class FakeScheduler implements Scheduler {
         next.due = next.due + interval;
       }
       next.callback();
+      await Future<void>.delayed(Duration.zero);
     }
     _elapsed = target;
+  }
+
+  /// Runs exactly the next pending timer, moving the clock to its due time.
+  ///
+  /// Use this where a test means "let the retry fire" rather than "let a
+  /// minute pass". They are not the same: a retry arms the next attempt's own
+  /// deadlines, so advancing a generous duration also runs those, and a test
+  /// that reads as one reconnect quietly becomes a test of however many
+  /// cycles fit inside the duration someone picked.
+  Future<void> advanceToNextTimer() async {
+    _Task? next;
+    for (final _Task task in _tasks) {
+      if (task.cancelled) continue;
+      if (next == null || task.due < next.due) next = task;
+    }
+    if (next == null) return;
+    await advance(next.due - _elapsed);
   }
 
   /// Pending, uncancelled tasks.

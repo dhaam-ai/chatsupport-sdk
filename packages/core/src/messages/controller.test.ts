@@ -5,10 +5,11 @@ import {
   SendQueue,
   rejected,
 } from '../queue/index.js';
+import type { QueuedSend } from '../queue/index.js';
 import { ChatStore } from '../state/index.js';
 import type { ChatMessage, ChatSession } from '../state/index.js';
 import { MemoryStorageAdapter } from '../storage/index.js';
-import { MessageController } from './controller.js';
+import { DEFAULT_RETRYABLE_FALLBACK, MessageController } from './controller.js';
 import { NoActiveSessionError } from './types.js';
 
 /** `subscribe` is microtask-batched (§6.4), so state assertions await a tick. */
@@ -267,7 +268,14 @@ describe('sendMessage — ack clears delivery and records seq (§9.3, D2)', () =
     await h.controller.sendMessage('doomed');
     await h.settle();
 
-    expect(h.messages()[0]?.delivery).toEqual({ state: 'failed', reason: 'rejected' });
+    expect(h.messages()[0]?.delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      code: 'VALIDATION_FAILED',
+      // The real signal now, not the fallback: `rejected()` defaults to
+      // `retryable: false` and `SendQueue` threads it through (T9).
+      retryable: false,
+    });
     expect(h.events.map((e) => e.name)).toEqual(['message', 'sendFailed']);
   });
 
@@ -293,7 +301,14 @@ describe('sendMessage — permanent failure (§9.6, §6.5)', () => {
     await h.settle();
 
     expect(h.messages()).toHaveLength(1);
-    expect(h.messages()[0]?.delivery).toEqual({ state: 'failed', reason: 'rejected' });
+    expect(h.messages()[0]?.delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      code: 'VALIDATION_FAILED',
+      // The real signal now, not the fallback: `rejected('VALIDATION_FAILED')`
+      // defaults to `retryable: false` and `SendQueue` threads it through (T9).
+      retryable: false,
+    });
 
     const failures = h.events.filter((e) => e.name === 'sendFailed');
     expect(failures).toHaveLength(1);
@@ -301,6 +316,8 @@ describe('sendMessage — permanent failure (§9.6, §6.5)', () => {
       id: h.messages()[0]?.id,
       sessionId: 'sess-1',
       reason: 'rejected',
+      code: 'VALIDATION_FAILED',
+      retryable: false,
     });
   });
 
@@ -326,6 +343,119 @@ describe('sendMessage — permanent failure (§9.6, §6.5)', () => {
   });
 });
 
+// The bug this section guards against: an agent closes the session, the
+// customer's next message is rejected `SESSION_CLOSED`, and the pre-fix SDK
+// collapsed that into the same bare 'rejected' every other rejection produces
+// — so the widget could not tell "retrying is futile" from "retrying will
+// probably work" and showed the same Retry affordance either way. `onFailed`
+// is exercised directly here (rather than only through the real `SendQueue`)
+// because `code`/`retryable` are threaded through `MessageController` ahead
+// of `queue/` gaining them (T9's node) — `FailedSend & { retryable?: boolean
+// }` is exactly the shape `queue/` will hand this callback once it does, so a
+// hand-built payload of that shape is what a real, upgraded queue will send.
+describe('sendMessage — permanent failure surfaces the server\'s retryable signal (§7.4, §9.6)', () => {
+  async function queuedEntry(h: Harness, content: string): Promise<QueuedSend> {
+    await h.controller.sendMessage(content);
+    const entry = h.queue.pending().find((candidate) => candidate.payload.content === content);
+    if (entry === undefined) throw new Error('expected the send to still be queued');
+    return entry;
+  }
+
+  it('surfaces code: SESSION_CLOSED and retryable: false for a non-retryable rejection', async () => {
+    const h = await harness();
+    h.transport.isOpen = false; // keep the entry queued so it can be hand-settled below
+
+    const entry = await queuedEntry(h, 'doomed');
+    h.controller.onFailed({ entry, reason: 'rejected', code: 'SESSION_CLOSED', retryable: false });
+    await flush();
+
+    expect(h.messages()[0]?.delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      code: 'SESSION_CLOSED',
+      retryable: false,
+    });
+
+    const failures = h.events.filter((e) => e.name === 'sendFailed');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.payload).toEqual({
+      id: entry.id,
+      sessionId: entry.sessionId,
+      reason: 'rejected',
+      code: 'SESSION_CLOSED',
+      retryable: false,
+    });
+  });
+
+  it('surfaces retryable: true for a genuinely transient rejection', async () => {
+    const h = await harness();
+    h.transport.isOpen = false;
+
+    const entry = await queuedEntry(h, 'try me again');
+    h.controller.onFailed({ entry, reason: 'rejected', code: 'RATE_LIMITED', retryable: true });
+    await flush();
+
+    expect(h.messages()[0]?.delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      code: 'RATE_LIMITED',
+      retryable: true,
+    });
+
+    const failures = h.events.filter((e) => e.name === 'sendFailed');
+    expect(failures[0]?.payload).toMatchObject({ code: 'RATE_LIMITED', retryable: true });
+  });
+
+  it('falls back to the documented default when the server sent no retryable field', async () => {
+    const h = await harness();
+    h.transport.isOpen = false;
+
+    const entry = await queuedEntry(h, 'unknown fate');
+    // No `retryable` key at all — the exact shape an older server's
+    // `FailedSend` carries, since the field did not exist before this fix.
+    h.controller.onFailed({ entry, reason: 'rejected', code: 'INTERNAL' });
+    await flush();
+
+    expect(h.messages()[0]?.delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      code: 'INTERNAL',
+      retryable: DEFAULT_RETRYABLE_FALLBACK,
+    });
+  });
+
+  it('drops an unrecognized code rather than mis-surfacing it as a canonical ErrorCode', async () => {
+    const h = await harness();
+    h.transport.isOpen = false;
+
+    const entry = await queuedEntry(h, 'mystery');
+    h.controller.onFailed({ entry, reason: 'rejected', code: 'SOME_FUTURE_CODE', retryable: false });
+    await flush();
+
+    expect(h.messages()[0]?.delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      retryable: false, // still trusted — retryable and code are independent
+    });
+  });
+
+  it('keeps `reason` alone readable — an existing consumer reading only reason is unaffected', async () => {
+    const h = await harness();
+    h.transport.respondWith(rejected('VALIDATION_FAILED'));
+
+    await h.controller.sendMessage('doomed');
+    await h.settle();
+
+    const failures = h.events.filter((e) => e.name === 'sendFailed');
+    // Deliberately typed as the pre-fix shape: a consumer that only ever knew
+    // about `reason` still compiles and still reads the right value.
+    const payload = failures[0]?.payload as { id: string; sessionId: string; reason: string };
+    expect(payload.reason).toBe('rejected');
+    expect(payload.id).toBe(h.messages()[0]?.id);
+    expect(payload.sessionId).toBe('sess-1');
+  });
+});
+
 describe('sendMessage — retention eviction (§9.6)', () => {
   it('marks an evicted older send failed and emits sendFailed once', async () => {
     // maxEntries 1: queueing the second send sheds the first.
@@ -337,7 +467,11 @@ describe('sendMessage — retention eviction (§9.6)', () => {
     await h.controller.sendMessage('second');
 
     const evicted = h.messages().find((m) => m.id === firstId);
-    expect(evicted?.delivery).toEqual({ state: 'failed', reason: 'evicted' });
+    expect(evicted?.delivery).toEqual({
+      state: 'failed',
+      reason: 'evicted',
+      retryable: true, // fallback default — eviction never carries a server code
+    });
 
     const failures = h.events.filter((e) => e.name === 'sendFailed');
     expect(failures).toHaveLength(1);
@@ -345,6 +479,7 @@ describe('sendMessage — retention eviction (§9.6)', () => {
       id: firstId,
       sessionId: 'sess-1',
       reason: 'evicted',
+      retryable: true,
     });
   });
 

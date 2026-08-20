@@ -36,6 +36,10 @@
 //     paths, both REST-only "same as v1". No T7-T12 module defines a seam for
 //     them, so this file adds one, following the exact shape of `history`/
 //     `uploader`: an interface core does not implement, only calls.
+//   - `sessionSummarySource` (optional, T10). Backs `listSessions()` — the
+//     session-picker's data source. Same shape of seam as `sessionActions`:
+//     `GET /chat/sessions/customer` is REST-only, core does no HTTP, so this
+//     is an interface core calls, never implements.
 //   - `webSocketFactory`, `schedule`, `now` (all optional, advanced). Needed
 //     to construct a deterministic, network-free end-to-end test through the
 //     public API — and, not incidentally, to run on a React Native JS engine
@@ -68,12 +72,13 @@ import type {
   SendMessageOptions,
 } from '../messages/index.js';
 import type { PresenceStatus } from '../protocol/index.js';
-import type { SendQueueRetention } from '../queue/index.js';
+import type { RetryOutcome, SendQueueRetention } from '../queue/index.js';
 import type {
   ChatEventHandler,
   ChatEventMap,
   ChatEventName,
   ChatSession,
+  ChatSessionSummary,
   ChatState,
   Unsubscribe,
 } from '../state/index.js';
@@ -125,6 +130,29 @@ export type { LocalSender, AttachmentUploader, MessageHistorySource, SendAttachm
 export interface SessionActions {
   reopenSession(sessionId: string): Promise<ChatSession>;
   closeSession(sessionId: string): Promise<ChatSession>;
+}
+
+/**
+ * Backs `client.listSessions()` (T10) — the customer's own recent sessions,
+ * for the SDK's session-picker.
+ *
+ * REST-only, same reasoning as `SessionActions`: `GET
+ * /chat/sessions/customer` (openapi's `listSessions` operation) has no
+ * WebSocket frame counterpart, core does no HTTP (§4), so this is an
+ * interface core calls, never implements.
+ * `@dhaam-ccrm/rest`'s `createSessionSummarySource<ChatSessionSummary>(client)`
+ * satisfies this structurally — same pattern as `history`/`uploader`/
+ * `sessionActions`, so a divergence between the two packages fails to
+ * typecheck at the consumer's `createChatClient(...)` call, not here.
+ *
+ * **A guest gets `200` with `[]`, never a 403/404** (see the `listSessions`
+ * operation's own description) — `client.listSessions()` passes that
+ * straight through as a normal, successful empty result. Do not treat
+ * emptiness as absence of configuration or as a reason to retry; the picker
+ * uses an empty array to decide not to render at all.
+ */
+export interface SessionSummarySource {
+  listSessions(query?: { readonly limit?: number }): Promise<readonly ChatSessionSummary[]>;
 }
 
 /** Thrown when a `ChatClient` operation needs configuration that was not supplied. */
@@ -223,6 +251,9 @@ export interface ChatClientConfig {
   /** Backs `reopenSession`/`closeSession` (§6.2). Optional — each throws {@link ChatClientConfigError} if omitted and called. */
   readonly sessionActions?: SessionActions;
 
+  /** Backs `listSessions()` (T10). Optional — throws {@link ChatClientConfigError} if omitted and called. */
+  readonly sessionSummarySource?: SessionSummarySource;
+
   /** Advanced: overrides the platform `WebSocket` global (§11 — React Native, tests). Defaults to the ambient global, probed lazily at connect time. */
   readonly webSocketFactory?: WebSocketFactory;
 
@@ -254,7 +285,62 @@ export interface ChatClient {
   connect(): Promise<void>;
   /** User-initiated, terminal (§8.1). No auto-reconnect follows. */
   disconnect(): void;
+  /**
+   * Joins a session by id over the open socket (`session.join`).
+   *
+   * Fire-and-forget like `leaveSession`/`requestAgent`: a successful join is
+   * observed through the `session.updated`/`connection.ack` snapshot that
+   * follows (`ChatState.session` becomes `sessionId`), not through this
+   * call's own return. A REJECTED join (the server's ownership check —
+   * v2/handlers.ts — refusing a session that does not belong to this
+   * customer) is surfaced through `ChatState.lastError`/the `error` event,
+   * same as every other protocol-level failure (§6.4) — it does not throw
+   * here and does not silently vanish either.
+   *
+   * `switchSession` below is this exact method under the name a session
+   * picker calls it by; the two are not independent operations that could
+   * drift apart — see its doc.
+   */
   joinSession(sessionId: string): void;
+  /**
+   * Switches to a different session — the session-picker's action (T10).
+   * **Literally `joinSession(sessionId)`** — same frame, same ack handling,
+   * same everything; provided under this name only because "switch to this
+   * past conversation" reads better at a picker call site than "join". Pick
+   * whichever name reads better at your call site; nothing behaves
+   * differently between them, and nothing ever will — that equivalence is
+   * intentional and load-bearing, so a consumer can safely treat the two
+   * names as one operation.
+   *
+   * `v2/handlers.ts` already ownership-checks `session.join` and already
+   * accepts a TERMINAL session (`CLOSED`/`RESOLVED`) — switching to a past,
+   * closed conversation is exactly that path, not a special case this SDK
+   * adds. Joining a terminal session does not, by itself, reopen it and does
+   * not optimistically flip `status` locally — this client never guesses at
+   * a status the server has not confirmed (§9.4). Reopening only happens if
+   * the customer then sends a message into it: node T1 (backend) reactivates
+   * a terminal session to `WAITING_FOR_AGENT` on the next CUSTOMER message,
+   * behind `FEATURE_SESSION_REACTIVATE_ON_CUSTOMER_MESSAGE` (default OFF),
+   * and this client only ever learns that happened from the resulting
+   * `session.updated` — never assumes it.
+   *
+   * ── The SWITCHED-close pairing ──
+   *
+   * That same reactivation may ALSO close the customer's other still-active
+   * session with `closeReason: 'SWITCHED'` server-side (one customer, one
+   * live conversation). This client can therefore observe one `session.closed`
+   * (for the session just left) and one `session.updated`/reactivation (for
+   * the session just switched into) in either order. Both are handled so
+   * that pair can never corrupt the session just switched into: `SWITCHED`
+   * is a parked close (§12.5) so the old session's queued sends are left
+   * alone rather than failed, and — the part T10 had to add — the
+   * `sessionClosed` event and `closedAt` stamp only ever apply to whichever
+   * session `frame.d.sessionId` actually names, never to whatever happens to
+   * be `ChatState.session` at the moment the frame arrives. A customer who
+   * has already switched will not be told their NEW chat just closed because
+   * their OLD one, elsewhere, did.
+   */
+  switchSession(sessionId: string): void;
   leaveSession(): void;
 
   /**
@@ -293,6 +379,29 @@ export interface ChatClient {
   reopenSession(sessionId: string): Promise<ChatSession>;
   /** REST-only (§6.2). Throws {@link ChatClientConfigError} if `config.sessionActions` was not supplied. */
   closeSession(): Promise<void>;
+  /**
+   * The session-picker's data source (T10) — the customer's own recent
+   * sessions, most recent first.
+   *
+   * Also writes the result to `ChatState.pastSessions` wholesale (§9.4-style
+   * replace, not a merge), so a caller does not need a second `getState()`
+   * round trip to render the picker — the returned array and
+   * `getState().pastSessions` are the same data.
+   *
+   * REST-only. Throws {@link ChatClientConfigError} if
+   * `config.sessionSummarySource` was not supplied. Otherwise rejects with
+   * whatever the adapter rejects with — this does not swallow a failure into
+   * `lastError` the way `loadOlderMessages` does, because a picker calling
+   * this once on open needs a direct signal to show its own "couldn't load"
+   * state, not a side-channel it would have to separately subscribe to.
+   *
+   * **An empty result (including for an unidentified/guest caller) is a
+   * normal, successful resolution — `[]` — never an error and never
+   * distinguished from "no sessions yet".** Do not add a check for this;
+   * see {@link SessionSummarySource}'s doc for why the wire itself makes no
+   * such distinction.
+   */
+  listSessions(query?: { readonly limit?: number }): Promise<readonly ChatSessionSummary[]>;
 
   // ---- §6.3 message operations ----
   sendMessage(content: string, opts?: SendMessageOptions): Promise<void>;
@@ -307,6 +416,45 @@ export interface ChatClient {
    * that same lastError/`error` path unchanged, per §6.4.
    */
   sendAttachment(file: Blob, opts?: SendAttachmentOptions): Promise<void>;
+  /**
+   * Retries a permanently-failed send (T10, wrapping T9's `SendQueue.retry`
+   * verbatim) — the id is the message's own permanent id (D1), the SAME one
+   * `ChatMessage.id`/`sendFailed.id` already carry, so a Retry button on an
+   * already-rendered failed bubble needs no new id to track.
+   *
+   * Replays the ORIGINAL envelope under its original id (the server dedupes
+   * on it, §9.3) rather than minting a new message — so retrying never
+   * produces a second, independently-failing copy of what the user
+   * experiences as one message.
+   *
+   * Resolves to a {@link RetryOutcome} the caller can branch on directly,
+   * never a bare boolean or a thrown error for the ordinary refusal case:
+   *
+   *   - `{status: 'retried', entry}` — durably re-queued and draining;
+   *     `getState().messages` is updated synchronously before this resolves,
+   *     so the message reads `delivery: {state: 'queued'}` again immediately
+   *     (its eventual ack/failure arrives the normal way, through the
+   *     `message`/`messageAck`/`sendFailed` events).
+   *   - `{status: 'refused', reason: 'not-found'}` — nothing eligible under
+   *     this id (already retried, already succeeded, or never failed).
+   *   - `{status: 'refused', reason: 'not-retryable'}` — retrying is not
+   *     worth attempting. This is also what a caller gets for an id whose
+   *     failed send belonged to a session that is no longer the one
+   *     currently joined (T10): `message.send` carries no `sessionId` on the
+   *     wire, so replaying that id now would silently attribute it to
+   *     whatever session IS current — exactly the misattribution
+   *     `startNewSession`/`switchSession` already guard against on the
+   *     reconnect path (see `SendFailureReason.sessionClosed`'s doc). A
+   *     caller does not need to special-case this — it is folded into the
+   *     ordinary `'not-retryable'` refusal, so "don't show a Retry button"
+   *     is decided the same way regardless of why.
+   *
+   * Check `ChatMessage.delivery`'s `failed.retryable`/`failed.code` (state/
+   * types.ts) BEFORE ever calling this, to decide whether to render the
+   * Retry affordance in the first place — this method is what runs when the
+   * user presses it, not what decides whether to show it.
+   */
+  retryMessage(id: string): Promise<RetryOutcome>;
   markRead(): void;
   startTyping(): void;
   stopTyping(): void;

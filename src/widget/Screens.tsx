@@ -1,4 +1,7 @@
 import React, { useEffect } from 'react';
+import type { ChatSessionSummary } from '../types';
+import { partitionSessions, isTerminalStatus, handledByLabel } from '../sessionHistory';
+import { formatRelative } from './helpers';
 
 // ── Escalating screen ─────────────────────────────────────────────────────────
 
@@ -121,6 +124,95 @@ export function EndChatConfirmModal({ onConfirm, onCancel }: EndChatConfirmModal
           <button onClick={onConfirm} style={{ flex: 1, padding: '12px', borderRadius: '14px', border: 'none', background: 'linear-gradient(135deg,#ef4444,#dc2626)', color: '#ffffff', fontSize: '14px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>End Chat</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Session picker (pre-chat) ─────────────────────────────────────────────────
+// Shown when the widget opens and the customer has past conversations.
+//
+// GUEST HANDLING: none here, on purpose. The backend returns an empty
+// sessions[] for a caller it has not identified, so the caller simply does not
+// render this screen when the list is empty (shouldShowSessionPicker). A second
+// client-side guest check would be a second source of truth for the same
+// question.
+
+interface SessionPickerScreenProps {
+  primaryColor: string;
+  sessions: ChatSessionSummary[];
+  /** Whether typing into a terminal session can bring it back. Both this and
+   *  the backend's FEATURE_SESSION_REACTIVATE_ON_CUSTOMER_MESSAGE must be on. */
+  canReactivate: boolean;
+  onSelect: (sessionId: string) => void;
+  onStartNew: () => void;
+}
+
+export function SessionPickerScreen({
+  primaryColor, sessions, canReactivate, onSelect, onStartNew,
+}: SessionPickerScreenProps) {
+  const { active, terminal } = partitionSessions(sessions);
+
+  const row = (s: ChatSessionSummary) => {
+    const isTerminal = isTerminalStatus(s.status);
+    const handler    = handledByLabel(s);
+    const preview    = s.lastMessagePreview?.trim();
+    return (
+      <button
+        key={s.id}
+        onClick={() => onSelect(s.id)}
+        style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 4, width: '100%', textAlign: 'left', padding: '12px 14px', border: '1px solid #ece9f7', borderRadius: 12, background: '#ffffff', cursor: 'pointer', fontFamily: 'inherit' }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = primaryColor; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = '#ece9f7'; }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#1a1a2e', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {handler ?? (isTerminal ? 'Past conversation' : 'Conversation')}
+          </span>
+          {s.unreadCount > 0 && (
+            <span style={{ minWidth: 18, padding: '1px 6px', borderRadius: 9, background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 700, lineHeight: '16px', textAlign: 'center' }}>
+              {s.unreadCount > 99 ? '99+' : s.unreadCount}
+            </span>
+          )}
+          <span style={{ fontSize: 11, color: '#9ca3af', flexShrink: 0 }}>{formatRelative(s.lastMessageAt ?? s.closedAt ?? s.createdAt)}</span>
+        </div>
+        <div style={{ fontSize: 12, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {preview ?? 'No messages yet'}
+        </div>
+        {isTerminal && (
+          <div style={{ fontSize: 10, color: '#9ca3af' }}>
+            {canReactivate ? 'Closed · send a message to reopen' : 'Closed · view only'}
+          </div>
+        )}
+      </button>
+    );
+  };
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column', gap: 10, padding: '16px 14px', backgroundColor: '#fafafa' }}>
+      <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5 }}>
+        Pick up where you left off, or start something new.
+      </div>
+
+      {active.length > 0 && (
+        <>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Active</div>
+          {active.map(row)}
+        </>
+      )}
+
+      {terminal.length > 0 && (
+        <>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: active.length > 0 ? 6 : 0 }}>Recent</div>
+          {terminal.map(row)}
+        </>
+      )}
+
+      <button
+        onClick={onStartNew}
+        style={{ marginTop: 6, padding: '12px', borderRadius: 22, border: 'none', background: `linear-gradient(135deg,${primaryColor},${primaryColor}cc)`, color: '#ffffff', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+      >
+        + Start new conversation
+      </button>
     </div>
   );
 }

@@ -12,7 +12,12 @@
 // module* exposes to the rest of core. T13's src/index.ts decides what leaves
 // the package.
 
-export { DEFAULT_ACK_TIMEOUT_MS, DEFAULT_PROTOCOL_VERSION, WebSocketTransport } from './transport.js';
+export {
+  DEFAULT_ACK_TIMEOUT_MS,
+  DEFAULT_CONNECT_TIMEOUT_MS,
+  DEFAULT_PROTOCOL_VERSION,
+  WebSocketTransport,
+} from './transport.js';
 export type {
   AckableClientFrameType,
   PendingSend,

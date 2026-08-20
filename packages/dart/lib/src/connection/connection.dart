@@ -88,6 +88,7 @@ class ConnectionController {
     Backoff? backoff,
     ResumeTracker? resumeTracker,
     UlidGenerator? ulids,
+    this.connectTimeout = const Duration(seconds: 10),
     this.handshakeTimeout = const Duration(seconds: 10),
     this.heartbeatInterval = const Duration(seconds: 25),
   })  : _wsUrl = wsUrl,
@@ -107,6 +108,30 @@ class ConnectionController {
   final Backoff _backoff;
   final ResumeTracker _resume;
   final UlidGenerator _ulids;
+
+  /// How long one connect attempt may spend before the socket is up.
+  ///
+  /// ── The gap no callback can cover ─────────────────────────────────────
+  ///
+  /// Retry is reachable from exactly one place in this class —
+  /// [_scheduleReconnect], driven by a terminated attempt — so an attempt
+  /// that never terminates is an attempt that is never retried. Both things
+  /// this method awaits before a socket exists can hang without ever
+  /// throwing: `getToken()` is host code talking to the host's own backend,
+  /// and the socket factory reaches the network, where "server down" and "no
+  /// route to host" look on many platforms like a connect that simply does
+  /// not call back until the OS's own TCP timeout gives up — tens of seconds
+  /// to several minutes later, with no WebSocket-level event in between.
+  /// Without this deadline the client sits in [ConnectionState.connecting]
+  /// for all of it and a host cannot tell that apart from a slow connect.
+  ///
+  /// Armed at the start of every attempt and cancelled the moment the socket
+  /// is up, after which [handshakeTimeout] bounds the rest. 10 seconds
+  /// matches the TypeScript core's `DEFAULT_CONNECT_TIMEOUT_MS` and this
+  /// file's other two deadlines; nothing about iOS, Android or Flutter Web
+  /// argues for a different number, and a mobile round trip has a long way
+  /// to go before it needs more.
+  final Duration connectTimeout;
 
   /// How long to wait for `connection.ack` after sending `connection.hello`.
   ///
@@ -143,6 +168,18 @@ class ConnectionController {
   Cancellable? _retryTimer;
   Cancellable? _heartbeatTimer;
   Cancellable? _handshakeTimer;
+  Cancellable? _connectTimer;
+
+  /// Which connect attempt owns this controller right now.
+  ///
+  /// Every terminal callback carries the generation it was armed for, so a
+  /// close, an error or a deadline belonging to an attempt that has already
+  /// been superseded cannot terminate the attempt that replaced it.
+  int _attemptGeneration = 0;
+
+  /// Whether the current attempt is still unterminated. This is what makes
+  /// [_finishAttempt] idempotent — see there.
+  bool _attemptLive = false;
   Completer<void>? _connectCompleter;
   int _transportAttempt = 0;
   int _authFailures = 0;
@@ -210,6 +247,7 @@ class ConnectionController {
 
   /// User-initiated close. Terminal — no auto-reconnect follows (§8.1).
   Future<void> disconnect() async {
+    _attemptLive = false;
     _cancelTimers();
     _setState(ConnectionState.closed);
     _failConnect(const ConnectionClosedError());
@@ -246,6 +284,7 @@ class ConnectionController {
   /// Releases every resource. The controller cannot be reused afterwards.
   Future<void> dispose() async {
     _disposed = true;
+    _attemptLive = false;
     _cancelTimers();
     await _teardownSocket();
     await _stateController.close();
@@ -258,6 +297,7 @@ class ConnectionController {
   // ── Handshake ───────────────────────────────────────────────────────────
 
   Future<void> _openSocket() async {
+    final int generation = _beginAttempt();
     _setState(ConnectionState.connecting);
 
     final String token;
@@ -268,6 +308,7 @@ class ConnectionController {
       // kept as `cause` and never interpolated into a message — this package
       // cannot know whether it embeds the token it failed to parse.
       _onAuthFailure(
+        generation,
         const ErrorPayload(
           code: ErrorCode.authInvalid,
           message: 'getToken() failed',
@@ -278,11 +319,17 @@ class ConnectionController {
       return;
     }
 
+    // The deadline may have fired while that future was outstanding, in which
+    // case this attempt is already retried and everything below belongs to
+    // nobody. Checked after every await for the same reason.
+    if (!_isCurrentAttempt(generation)) return;
+
     if (token.isEmpty) {
       // §10.6 counts "resolves to a falsy value" as a failure. An empty token
       // would otherwise be sent and rejected a round trip later, which spends
       // one of only three auth attempts on a question already answered here.
       _onAuthFailure(
+        generation,
         const ErrorPayload(
           code: ErrorCode.authInvalid,
           message: 'getToken() returned an empty token',
@@ -296,20 +343,37 @@ class ConnectionController {
     try {
       socket = await _socketFactory(_wsUrl);
     } on Object catch (_) {
-      _scheduleReconnect();
+      _finishAttempt(generation);
       return;
     }
 
-    if (_state == ConnectionState.closed || _disposed) {
+    if (!_isCurrentAttempt(generation) ||
+        _state == ConnectionState.closed ||
+        _disposed) {
+      // A socket that arrived for an attempt nobody is waiting on any more.
+      // Closing it is not tidiness: left open it stays authenticated
+      // server-side until the liveness reaper collects it, and its eventual
+      // close would tear down whatever connection replaced this one.
       await socket.close();
       return;
     }
 
+    // The socket is up, which is this transport's `onopen`. The connect
+    // deadline has done its job and [handshakeTimeout] bounds the rest —
+    // leaving it armed would kill a healthy connection ten seconds in.
+    _connectTimer?.cancel();
+    _connectTimer = null;
+
     _socket = socket;
     _subscription = socket.frames.listen(
       _onFrameText,
-      onError: (Object _) => _onTransportGone(),
-      onDone: _onTransportGone,
+      // NOT a log statement. Nothing across this seam guarantees that a done
+      // follows an error — `web_socket_channel`'s backends deliver the two
+      // independently — so an error that only logged would strand the
+      // connection with no close to retry from. Both route into the same
+      // funnel, which is what keeps the pair from producing two retries.
+      onError: (Object _) => _finishAttempt(generation),
+      onDone: () => _finishAttempt(generation),
       cancelOnError: false,
     );
 
@@ -329,7 +393,7 @@ class ConnectionController {
     );
 
     _handshakeTimer = _scheduler.schedule(handshakeTimeout, () {
-      if (_state == ConnectionState.authenticating) _onTransportGone();
+      if (_state == ConnectionState.authenticating) _finishAttempt(generation);
     });
   }
 
@@ -392,7 +456,7 @@ class ConnectionController {
           retryable: false,
         ),
       );
-      _onTransportGone();
+      _finishAttempt(_attemptGeneration);
       return;
     }
 
@@ -455,7 +519,9 @@ class ConnectionController {
     switch (error.code) {
       case ErrorCode.authInvalid:
       case ErrorCode.authExpired:
-        _onAuthFailure(error);
+        // Arrived on this attempt's own socket, so the attempt in flight is
+        // by definition the one being failed.
+        _onAuthFailure(_attemptGeneration, error);
         break;
       case ErrorCode.protocolVersionUnsupported:
         _suspend(SuspendReason.protocolUnsupported);
@@ -475,7 +541,12 @@ class ConnectionController {
 
   // ── Failure paths ───────────────────────────────────────────────────────
 
-  void _onAuthFailure(ErrorPayload error, {Object? cause}) {
+  void _onAuthFailure(int generation, ErrorPayload error, {Object? cause}) {
+    // Claimed through the same funnel every other terminal path uses, so a
+    // close arriving from this attempt's socket afterwards cannot spend a
+    // second auth attempt on the same failure.
+    if (!_claimAttempt(generation)) return;
+
     _authFailures++;
     if (_authFailures >= _backoff.policy.maxAuthAttempts) {
       _suspend(SuspendReason.auth, cause: cause);
@@ -488,6 +559,10 @@ class ConnectionController {
   }
 
   void _suspend(SuspendReason reason, {Object? cause}) {
+    // Not a claim: [_onAuthFailure] has already claimed by the time it gets
+    // here, while the §7.5 version path arrives with the attempt still live.
+    // Setting the flag directly is idempotent and works for both.
+    _attemptLive = false;
     _cancelTimers();
     _suspendReason = reason;
     _setState(ConnectionState.suspended);
@@ -502,7 +577,47 @@ class ConnectionController {
     );
   }
 
-  void _onTransportGone() {
+  /// Starts a connect attempt, arming the deadline that guarantees it ends.
+  int _beginAttempt() {
+    _cancelTimers();
+    _attemptLive = true;
+    final int generation = ++_attemptGeneration;
+    _connectTimer = _scheduler.schedule(connectTimeout, () {
+      _connectTimer = null;
+      _finishAttempt(generation);
+    });
+    return generation;
+  }
+
+  /// Whether [generation] is still the attempt this controller is running.
+  bool _isCurrentAttempt(int generation) =>
+      _attemptLive && generation == _attemptGeneration;
+
+  /// Claims the right to terminate [generation], exactly once.
+  ///
+  /// Returns false for an attempt that has already ended and for one that has
+  /// been superseded — which is the whole reason every terminal signal routes
+  /// through here rather than acting directly. A socket that errors and then
+  /// closes, a handshake that times out just before the server's close frame
+  /// lands, a deadline that fires as the connect finally resolves: all of
+  /// those deliver two terminal signals for one attempt, and two retries mean
+  /// a double-advanced backoff counter and a phantom "reconnecting in Ns" a
+  /// host will render.
+  ///
+  /// Cancelling the timers HERE, rather than in each caller, is what stops
+  /// the connect deadline leaking: there is no terminal path that does not
+  /// pass through this method.
+  bool _claimAttempt(int generation) {
+    if (!_isCurrentAttempt(generation)) return false;
+    _attemptLive = false;
+    _cancelTimers();
+    return true;
+  }
+
+  /// The one funnel every ended attempt runs through, and the only route into
+  /// [_scheduleReconnect] for a transport failure.
+  void _finishAttempt(int generation) {
+    if (!_claimAttempt(generation)) return;
     if (_state == ConnectionState.closed ||
         _state == ConnectionState.suspended ||
         _disposed) {
@@ -543,6 +658,8 @@ class ConnectionController {
   }
 
   void _cancelTimers() {
+    _connectTimer?.cancel();
+    _connectTimer = null;
     _retryTimer?.cancel();
     _retryTimer = null;
     _heartbeatTimer?.cancel();
