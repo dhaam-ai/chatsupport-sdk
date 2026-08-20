@@ -298,6 +298,51 @@ void main() {
     });
   });
 
+  group('a send that was in flight when the connection dropped', () {
+    test('is failed rather than left pending forever', () async {
+      // The commonest real failure on a phone, and the one with no ack to
+      // settle it: the frame reached the wire and the tunnel arrived before
+      // the reply did. Nothing else will ever resolve this send, so leaving it
+      // `pending` means a spinner that never stops and a Retry button a host
+      // has no reason to render.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<ChatMessage> seen = <ChatMessage>[];
+      harness.client.messages.listen(seen.add);
+
+      final ChatMessage echo = harness.client.sendMessage('hello');
+      await harness.socket.drop();
+      await flush();
+
+      expect(seen.last.id, equals(echo.id));
+      expect(seen.last.delivery, equals(MessageDelivery.failed));
+
+      await harness.client.dispose();
+    });
+
+    test('is retryable, and replays under the original id', () async {
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final ChatMessage echo = harness.client.sendMessage('hello');
+      final String original = harness.sends.single['id']! as String;
+
+      await harness.socket.drop();
+      await flush();
+      await harness.scheduler.advanceToNextTimer();
+      await flush();
+      harness.socket.deliver(ackJson());
+      await flush();
+
+      expect(harness.client.retry(echo.id), isA<RetryRetried>());
+      expect(harness.sends.single['id'], equals(original));
+      expect(original, equals(echo.id));
+
+      await harness.client.dispose();
+    });
+  });
+
   group('a send that never reached the transport', () {
     test('defaults to retryable — there was no server flag to read', () async {
       // kDefaultRetryable. The flag gates a Retry affordance, so defaulting to

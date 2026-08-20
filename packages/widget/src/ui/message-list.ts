@@ -20,11 +20,12 @@
 import { deriveTickState } from '@dhaam-ccrm/js';
 import type { ChatMessage, ChatState, MessageTickState } from '@dhaam-ccrm/js';
 // Straight from core: `@dhaam-ccrm/js` re-exports the whole of `ChatState`'s
-// shape EXCEPT `AttachmentMetadata`, even though `ChatMessage.attachment` is
-// typed as one — so a binding consumer cannot name the type of a field the
-// binding hands them. Reported as a gap in that package; imported from the
-// source here rather than restated locally.
-import type { AttachmentMetadata, CloseReason } from '@dhaam-ccrm/core';
+// shape EXCEPT `AttachmentMetadata`/`SendFailureReason`'s sibling copy here,
+// even though `ChatMessage.attachment`/`.delivery` are typed with them — so a
+// binding consumer cannot name the type of a field the binding hands them.
+// Reported as a gap in that package; imported from the source here rather
+// than restated locally.
+import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-ccrm/core';
 
 import { ICONS, el, icon } from './dom.js';
 
@@ -34,6 +35,20 @@ const TICK_PRESENTATION: Record<MessageTickState, { glyph: string; label: string
   sent: { glyph: '✓', label: 'Sent' },
   delivered: { glyph: '✓✓', label: 'Delivered' },
   read: { glyph: '✓✓', label: 'Read' },
+};
+
+/**
+ * What a failed send says, per `SendFailureReason` (state/types.ts). Shown
+ * on EVERY failure, whether or not a Retry button accompanies it — a
+ * `Record` so the compiler catches a reason core adds that this list has not
+ * been taught to describe.
+ */
+const FAILURE_REASON_COPY: Record<SendFailureReason, string> = {
+  rejected: 'This message could not be sent.',
+  sessionClosed: 'This conversation ended before this message could send.',
+  expired: 'This message took too long to send.',
+  evicted: 'Too many messages were waiting to send.',
+  storage: 'This message could not be saved on this device.',
 };
 
 /**
@@ -159,7 +174,13 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // true for a growing list.
     const wasAtBottom = isNearBottom(log);
 
-    empty.hidden = state.messages.length > 0;
+    // `initialLoaded`, not `messages.length` alone: an empty list before the
+    // first page has come back means "not asked yet", and "No messages yet.
+    // Ask us anything" is a lie in that window — it tells a customer with a
+    // year of history that their conversation is empty, for as long as the
+    // fetch takes. It is also the window a session switch re-enters, where the
+    // wrong answer would flash on every switch.
+    empty.hidden = state.messages.length > 0 || !state.pagination.initialLoaded;
     loadOlder.hidden = !state.pagination.hasMore;
     loadOlder.disabled = state.pagination.loadingMore;
     loadOlder.textContent = state.pagination.loadingMore
@@ -285,13 +306,17 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
   const time = el('time', { attrs: { class: 'dh-msg-time' } });
   const tickGlyph = el('span', { attrs: { class: 'dh-tick', 'aria-hidden': 'true' } });
   const tickLabel = el('span', { attrs: { class: 'dh-sr' } });
+  // Shown on EVERY failure, retryable or not — see `FAILURE_REASON_COPY`.
+  // This is what a permanently-refused send falls back to once `retry`
+  // below is hidden: the customer is told why, even with no button to press.
+  const failureText = el('span', { attrs: { class: 'dh-failure', hidden: true } });
   const retry = el('button', {
     attrs: { class: 'dh-retry', type: 'button', hidden: true },
     text: 'Retry',
   });
   const meta = el('div', {
     attrs: { class: 'dh-msg-meta' },
-    children: [time, tickGlyph, tickLabel, retry],
+    children: [time, tickGlyph, tickLabel, failureText, retry],
   });
 
   const node = el('div', { attrs: { class: 'dh-msg' }, children: [body, meta] });
@@ -334,11 +359,26 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
       // `delivered` visually; this is what distinguishes them otherwise.
       tickLabel.textContent = presentation === null ? '' : ` ${presentation.label}`;
 
-      const failed = message.delivery?.state === 'failed';
-      retry.hidden = !failed;
-      if (failed) {
-        const reason = message.delivery?.state === 'failed' ? message.delivery.reason : '';
-        retry.setAttribute('aria-label', `Message failed to send (${reason}). Retry`);
+      // Bug #4: this used to be `retry.hidden = !failed`, which showed Retry
+      // for EVERY failure — including one the server (or core, locally) has
+      // already refused as non-retryable, e.g. `code: 'SESSION_CLOSED'`.
+      // Retrying that exact send is refused identically every time
+      // (`MessageDelivery.retryable`'s own doc: it "mirrors the server's
+      // `ErrorPayload.retryable`... the server already computes this once
+      // per code"), so a button offering it is a lie the customer has no way
+      // to detect until they click it. `delivery.retryable` is core's own
+      // canonical answer — never re-derived here from `reason` or `code`,
+      // the same reasoning `deriveTickState` gets for ticks.
+      if (message.delivery?.state === 'failed') {
+        const { reason, retryable } = message.delivery;
+        failureText.textContent = FAILURE_REASON_COPY[reason];
+        failureText.hidden = false;
+        retry.hidden = !retryable;
+        if (retryable) retry.setAttribute('aria-label', `Retry sending this message`);
+      } else {
+        failureText.hidden = true;
+        failureText.textContent = '';
+        retry.hidden = true;
       }
     },
   };

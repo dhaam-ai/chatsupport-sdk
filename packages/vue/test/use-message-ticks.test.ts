@@ -101,7 +101,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     label: 'failed delivery → no tick (retry affordance, not a tick)',
-    message: buildMessage({ delivery: { state: 'failed', reason: 'rejected' } }),
+    message: buildMessage({ delivery: { state: 'failed', reason: 'rejected', retryable: false } }),
     deliveredWatermarks: {},
     readWatermarks: {},
     localParticipantId: LOCAL,

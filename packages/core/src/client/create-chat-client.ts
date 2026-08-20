@@ -37,9 +37,10 @@ import {
 } from '../connection/index.js';
 import { MessageController, upsertMessage } from '../messages/index.js';
 import type { LocalSender } from '../messages/index.js';
-import { PresenceCoordinator } from '../presence/index.js';
+import { PresenceCoordinator, systemTimers } from '../presence/index.js';
+import type { ScheduleTimer } from '../presence/index.js';
 import { isParkedCloseReason } from '../protocol/index.js';
-import type { ErrorPayload, ServerFrame } from '../protocol/index.js';
+import type { ChatStatus, ErrorPayload, ServerFrame } from '../protocol/index.js';
 import { SendQueue } from '../queue/index.js';
 import type { QueuedSend, QueueTransport, RetryOutcome } from '../queue/index.js';
 import { ChatStore } from '../state/index.js';
@@ -55,7 +56,7 @@ import {
   sessionSnapshotToChatSession,
   statusOrModeChanged,
 } from './session.js';
-import { ChatClientConfigError } from './types.js';
+import { ChatClientConfigError, SessionSwitchError } from './types.js';
 import type { ChatClient, ChatClientConfig } from './types.js';
 
 /** Resolves `config.localSender` to a plain `() => LocalSender`, whether given as an object or a thunk. */
@@ -83,6 +84,49 @@ const UNCONFIGURED_UPLOADER = {
     );
   },
 };
+
+/**
+ * Storage key, under the same namespace as the send queue, holding the id of
+ * the session the user actually chose.
+ *
+ * The SDK needs this because the protocol does not carry it:
+ * `ConnectionHelloPayload` has no `sessionId` field (protocol/frames.ts), so
+ * on every fresh connection the server re-resolves the customer's session on
+ * its own — most recently updated, ACTIVE only. A session picked out of a
+ * picker is usually CLOSED or RESOLVED, so it is not a candidate, and the
+ * server hands back a different conversation entirely. That is the whole of
+ * "reload the app and it does not load the messages of the session we spoke
+ * in": nothing was wrong with the transcript, the client was silently put
+ * back into another session.
+ *
+ * Persisting client-side rather than adding `sessionId` to the hello payload
+ * is deliberate: it needs no wire change and no backend deploy, and a client
+ * that re-joins explicitly is also correct against a server that has not been
+ * updated.
+ */
+const SELECTED_SESSION_KEY = 'selectedSession';
+
+/**
+ * How long a switch waits for the `session.updated` push that follows the
+ * join ack before giving up.
+ *
+ * Bounded because the ack cannot stand in for it: `session.join`'s ack is
+ * `EmptyAckData` (protocol/frames.ts) and proves only that the server
+ * accepted the frame. Unbounded, a server that acked and then never pushed
+ * would leave `switchSession()` pending forever and a picker spinning with no
+ * way to report anything.
+ */
+const SESSION_SNAPSHOT_TIMEOUT_MS = 10_000;
+
+/**
+ * Statuses a conversation cannot be continued from.
+ *
+ * Only ever read to decide what to PERSIST as the session to come back to
+ * (see `rememberEstablishedSession`) — never to gate rendering, joining, or
+ * sending, all of which stay legal against a finished session. `ON_HOLD` is
+ * deliberately absent: it is paused, not over.
+ */
+const TERMINAL_SESSION_STATUSES: readonly ChatStatus[] = ['CLOSED', 'RESOLVED'];
 
 function toChatError(payload: ErrorPayload): ChatError {
   return {
@@ -197,7 +241,12 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       const previous = store.getState().session;
       const next = sessionSnapshotToChatSession(frame.d.session, previous);
       store.setState({ session: next });
-      if (statusOrModeChanged(previous, next)) {
+      // Same session only. §6.5 defines `statusChange` as "the session you are
+      // in changed status"; a snapshot for a DIFFERENT session — the one a
+      // switch just landed on — is a different chat, not a change, and firing
+      // here would tell a customer who just opened a resolved conversation
+      // that their chat was "just closed".
+      if (previous !== null && previous.id === next.id && statusOrModeChanged(previous, next)) {
         store.emit('statusChange', { status: next.status, mode: next.mode });
       }
     }
@@ -262,6 +311,12 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
         // rejection would land on the host app's window.
         if (!isParkedCloseReason(frame.d.closeReason)) {
           void queue.abandonSession(frame.d.sessionId).catch(() => undefined);
+          // A genuinely-ended session must not be what the next reload
+          // re-joins: the customer would come back to a dead conversation
+          // instead of the one the server would have given them. `SWITCHED`
+          // is exempt for the same reason its queued sends are — §12.5 parks
+          // that session rather than ending it.
+          void forgetSelectedSession(frame.d.sessionId);
         }
         return;
       }
@@ -340,6 +395,11 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       return queue.enqueue(sessionId, payload);
     },
     sender: resolveLocalSender,
+    // The SAME counter `performSwitch`'s `stale()` checks read — a history
+    // read that resolves after a switch began is stale for exactly the reason
+    // a switch step is, and must not learn it a second, divergent way. See
+    // `MessageControllerOptions.generation`.
+    generation: () => switchEpoch,
     history: config.history,
     uploader: config.uploader ?? UNCONFIGURED_UPLOADER,
     ...(config.pageSize === undefined ? {} : { pageSize: config.pageSize }),
@@ -413,7 +473,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       // restore() does not itself flush — if a connection raced ahead of
       // restore and is already live, nothing would otherwise drain what was
       // just recovered from disk until the next `connected`/`enqueue`.
-      void queue.flush();
+      // Through the funnel, not `queue.flush()` directly: this path is
+      // reachable mid-connection, which is precisely when the session the
+      // entries would be delivered into is still being decided.
+      void flushQueue();
       return report;
     },
     (error: unknown) => {
@@ -435,12 +498,13 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     },
   );
 
-  // §8.4: the queue flushes in FIFO order on reconnect. `connected` fires
-  // symmetrically on fresh connect and reconnect alike (§12.3), so this one
-  // subscription covers both.
-  store.on('connected', () => {
-    void queue.flush();
-  });
+  // §8.4's "the queue flushes in FIFO order on reconnect" is wired at the
+  // BOTTOM of this file, in the one `connected` subscription that also
+  // restores the customer's session — see `flushQueue`. It deliberately does
+  // not have a subscription of its own here: `connected` handlers run in
+  // registration order, so a flush registered at this point would run BEFORE
+  // the session restore and deliver into whichever session the server
+  // happened to resolve.
 
   // presence.ts's `reset()` doc: "Called on disconnect: presence learned
   // over a socket that is now gone is not evidence of anything." Nothing in
@@ -496,30 +560,468 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
 
   /**
    * Sends `session.join` and reports a REJECTED ack through
-   * `lastError`/`error` (§6.4) — the one path both `ChatClient.joinSession`
-   * and `ChatClient.switchSession` go through, so the two public names can
-   * never behave differently by accident. See `switchSession`'s doc
-   * (client/types.ts) for why they are one operation under two names rather
-   * than two independent ones.
+   * `lastError`/`error` (§6.4) — the fire-and-forget form, backing the raw
+   * `ChatClient.joinSession`.
    *
-   * A successful join is deliberately NOT awaited or reported here — it is
-   * observed the normal way, through the `session.updated`/`connection.ack`
-   * snapshot `dispatchFrame` above already applies to `ChatState.session`.
-   * Previously (pre-T10) `joinSession` discarded `realTransport.send`'s
-   * returned ack outright, so a join the server's ownership check refused
-   * (v2/handlers.ts) vanished with no signal at all — this is what closes
-   * that gap, using the exact same `toChatError` conversion every other
-   * protocol-level failure in this file already goes through.
+   * `switchSession` deliberately does NOT go through here any more. It needs
+   * to settle on the ack rather than glance at it, and it needs every other
+   * non-`acked` outcome too (a `disconnected` send writes nothing at all),
+   * so it uses `joinSessionAwaited` below. The two are no longer one
+   * operation under two names: `joinSession` is the protocol frame,
+   * `switchSession` is the session replacement built on top of it. See
+   * `ChatClient.switchSession`'s doc for the full contract.
+   *
+   * A successful join is not reported here — it is observed the normal way,
+   * through the `session.updated`/`connection.ack` snapshot `dispatchFrame`
+   * above already applies to `ChatState.session`. Previously (pre-T10)
+   * `joinSession` discarded `realTransport.send`'s returned ack outright, so
+   * a join the server's ownership check refused (v2/handlers.ts) vanished
+   * with no signal at all — this is what closes that gap.
    */
   function joinSessionFrame(sessionId: string): void {
     const { ack } = realTransport.send('session.join', { sessionId });
     void ack.then((outcome) => {
       if (outcome.status !== 'rejected') return;
-      const chatError = toChatError(outcome.error);
-      store.setState({ lastError: chatError });
-      store.emit('error', chatError);
+      reportChatError(toChatError(outcome.error));
     });
   }
+
+  /** Writes `error` to `lastError` and emits it — the one §6.4 reporting path. */
+  function reportChatError(error: ChatError): ChatError {
+    store.setState({ lastError: error });
+    store.emit('error', error);
+    return error;
+  }
+
+  // ---------------------------------------------------------------------
+  // 7b. Session replacement — the machinery behind switchSession() and the
+  //     reload path. See ChatClient.switchSession's doc for the contract.
+  // ---------------------------------------------------------------------
+
+  const scheduleTimer: ScheduleTimer = schedule ?? systemTimers;
+
+  /**
+   * Which switch is the current one.
+   *
+   * Two picker clicks in quick succession start two switches over one socket,
+   * and both will eventually get their ack and their page. Without this the
+   * loser's page is prepended into the winner's transcript — `prependPage`
+   * cannot catch that, it dedupes by id and two sessions never share ids.
+   * Every step that writes to state re-checks its own epoch, so a superseded
+   * switch stops at the first checkpoint it reaches instead of racing.
+   */
+  let switchEpoch = 0;
+
+  /**
+   * Resolves once the session this connection will actually be in has been
+   * decided — i.e. once `restoreSelectionAndSeed` has finished re-joining the
+   * customer's remembered session, or established that there is nothing to
+   * re-join.
+   *
+   * `message.send` carries no `sessionId` on the wire (protocol/frames.ts):
+   * the server files a send under whichever session `session.join` last set.
+   * So a queued send is not addressed to a conversation until the moment it
+   * is flushed, and flushing it before the restore has run delivers the
+   * customer's unsent question into whichever session the server's own
+   * active-session resolution happened to pick. `performSwitch`'s
+   * `queue.abandonSession(previous)` cannot undo that — by then the send has
+   * left, filed under a conversation nobody will look at again.
+   *
+   * Starts resolved: with no connection there is no session to get wrong, and
+   * a flush against a closed socket is a no-op anyway.
+   */
+  let selectionRestored: Promise<void> = Promise.resolve();
+  let releaseQueueFlush: () => void = () => undefined;
+
+  /**
+   * The ONE place `queue.flush()` is called from. Nothing in this file may
+   * call `queue.flush()` directly — the ordering above is the whole point,
+   * and a second call site is how it gets reintroduced.
+   */
+  async function flushQueue(): Promise<void> {
+    await selectionRestored;
+    await queue.flush();
+  }
+
+  /**
+   * Every projection of "the session I am in", cleared in ONE write.
+   *
+   * One `setState` rather than several, for the same reason `startNewSession`
+   * does it that way: `ChatStore` notifies per batch but `getState()` is
+   * read synchronously by anything reacting to an event, so a split write
+   * leaves a window in which the new session's id is readable against the old
+   * session's transcript. `session` itself is NOT touched here — see
+   * `performSwitch` for why nulling it would be actively harmful.
+   *
+   * `pastSessions` is deliberately preserved: it is a list *about* other
+   * sessions, not state *of* this one.
+   */
+  function resetPerSessionState(): void {
+    store.setState({
+      messages: [],
+      typing: { isTyping: false },
+      unreadCount: 0,
+      pagination: { hasMore: false, loadingMore: false, initialLoaded: false },
+      uploading: false,
+      // Keyed by participantId, not by session, which is exactly why they
+      // have to go explicitly: the same agent picking up the other
+      // conversation would otherwise arrive with a read watermark earned in
+      // this one, marking messages read that they have never seen.
+      readWatermarks: {},
+      deliveredWatermarks: {},
+      presence: {},
+      lastError: null,
+    });
+  }
+
+  /** Reads the persisted selected-session id. A storage fault reads as "none". */
+  async function readSelectedSession(): Promise<string | null> {
+    try {
+      const value = await queueStorage.get(SELECTED_SESSION_KEY);
+      return value === null || value === '' ? null : value;
+    } catch {
+      // Never fatal: not knowing which session was chosen is exactly the
+      // pre-fix behaviour, so falling back to the server's choice is strictly
+      // no worse than not having persisted at all.
+      return null;
+    }
+  }
+
+  /** Records the session the user is in, so a reload comes back to it. */
+  async function rememberSelectedSession(sessionId: string): Promise<void> {
+    try {
+      await queueStorage.set(SELECTED_SESSION_KEY, sessionId);
+    } catch {
+      // A failed write costs the reload behaviour, nothing else. It must not
+      // fail a switch that has already succeeded on the wire.
+    }
+  }
+
+  /**
+   * Records the session this connection actually established, for a customer
+   * who never picked one — the ordinary path, and the one bug 2's first fix
+   * left out.
+   *
+   * Without this, only an explicit `switchSession`/`startNewSession` ever
+   * persisted anything, so "come back to the conversation I was in" worked
+   * only after an explicit pick. A customer who simply chats in the session
+   * the server handed them had nothing stored, and once that session went
+   * CLOSED/RESOLVED the next connection's server-side resolution — most
+   * recently updated, ACTIVE only — landed them somewhere else entirely.
+   *
+   * **A session that is already finished is not recorded.** That is the
+   * deliberate resolution of the two hazards pulling against each other here:
+   *
+   *   - Recording it would override the server's own active-session
+   *     resolution on the next connection with a conversation that cannot be
+   *     continued — pinning the customer to a dead chat is strictly worse
+   *     than the resolution this was meant to improve on, because the server
+   *     at least only ever resolves live sessions.
+   *   - Not recording it costs nothing: the client is in that session for as
+   *     long as this connection lasts, and with nothing stored the next
+   *     connection simply falls back to the server's answer, which is the
+   *     pre-fix behaviour.
+   *
+   * An EXPLICIT pick is the opposite case and keeps its own rule: a customer
+   * who opens a resolved conversation out of a picker meant it, so
+   * `performSwitch` records it whatever its status. The implicit record here
+   * only ever says "keep me where I already am".
+   *
+   * A recording made while the session was live still stands after it closes,
+   * until either the `session.closed` push clears it (`dispatchFrame`) or the
+   * server refuses the re-join (`restoreSelectionAndSeed`). Both of those are
+   * evidence; a status read at connect time is the only evidence available
+   * here, and it is used.
+   */
+  async function rememberEstablishedSession(): Promise<void> {
+    const session = store.getState().session;
+    if (session === null) return;
+    if (TERMINAL_SESSION_STATUSES.includes(session.status)) return;
+    await rememberSelectedSession(session.id);
+  }
+
+  /**
+   * Forgets the persisted selection, optionally only if it still names
+   * `sessionId` — so a stale close for a session already switched away from
+   * cannot clear the selection the customer just made.
+   */
+  async function forgetSelectedSession(sessionId?: string): Promise<void> {
+    try {
+      if (sessionId !== undefined && (await readSelectedSession()) !== sessionId) return;
+      await queueStorage.remove(SELECTED_SESSION_KEY);
+    } catch {
+      // Same reasoning as rememberSelectedSession.
+    }
+  }
+
+  /**
+   * Sends `session.join` and settles on the ack, rather than dropping it.
+   *
+   * Every non-`acked` outcome is a real failure a caller can act on, and all
+   * three were previously silent:
+   *
+   *   - `rejected` — the server's ownership check refused the session;
+   *   - `disconnected` — `WebSocketTransport.send` resolves this WITHOUT
+   *     writing anything when the socket is closed (transport/transport.ts),
+   *     so the join simply never happened;
+   *   - `timeout` — acked by nobody within the transport's own window.
+   *
+   * All of them are reported through `lastError`/`error` (§6.4) *and* thrown,
+   * so a picker awaiting the switch and a subscriber watching state are told
+   * the same thing.
+   */
+  async function joinSessionAwaited(sessionId: string): Promise<void> {
+    const { ack } = realTransport.send('session.join', { sessionId });
+    const outcome = await ack;
+    if (outcome.status === 'acked') return;
+
+    const error =
+      outcome.status === 'rejected'
+        ? toChatError(outcome.error)
+        : ({
+            source: 'transport',
+            code: null,
+            message:
+              outcome.status === 'disconnected'
+                ? 'session.join was not sent: the socket is not open'
+                : 'session.join was not acknowledged in time',
+            retryable: true,
+          } satisfies ChatError);
+
+    throw new SessionSwitchError(sessionId, reportChatError(error));
+  }
+
+  /**
+   * Waits until `predicate()` holds, or the deadline passes.
+   *
+   * Subscription-based rather than a poll, and re-checked up front, because
+   * the state it is waiting on may already have been written by the time this
+   * is called — a server that pushes `session.updated` before its own ack is
+   * flushed is entirely legal.
+   */
+  function awaitState(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+    if (predicate()) return Promise.resolve(true);
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      let unsubscribe: (() => void) | undefined;
+
+      const finish = (value: boolean): void => {
+        if (settled) return;
+        settled = true;
+        cancelTimer();
+        unsubscribe?.();
+        resolve(value);
+      };
+
+      const cancelTimer = scheduleTimer(() => {
+        finish(false);
+      }, timeoutMs);
+
+      unsubscribe = store.subscribe(() => {
+        if (predicate()) finish(true);
+      });
+
+      // The predicate may have flipped between the check above and the
+      // subscription being registered.
+      if (predicate()) finish(true);
+    });
+  }
+
+  /**
+   * The whole session-replacement sequence. `switchSession` is this, and so
+   * is the reload path's re-join.
+   *
+   * Ordering is load-bearing at every step; see the inline notes.
+   */
+  async function performSwitch(sessionId: string): Promise<void> {
+    const previous = store.getState().session?.id;
+    if (previous === sessionId) return;
+
+    const epoch = (switchEpoch += 1);
+    const stale = (): boolean => epoch !== switchEpoch;
+
+    // 1. Before the join lands on the wire. `message.send` carries no
+    //    sessionId (protocol/frames.ts) and the server attributes it to
+    //    whatever session `session.join` last set, so an entry still queued
+    //    for the outgoing session would be delivered into the incoming one —
+    //    the customer's unsent question about a resolved order appearing in
+    //    the conversation they just opened. They are failed, not deleted, so
+    //    the app can show them as dead and re-sendable.
+    //
+    //    `queueRestored` first, for the same reason `#send` and
+    //    `retryMessage` await it: on the reload path this runs while
+    //    `SendQueue.restore()` is still in flight, and abandoning an empty
+    //    in-memory queue would let restore() put the old session's entries
+    //    back moments later — straight into the session just joined.
+    await queueRestored.catch(() => undefined);
+    if (stale()) return;
+    if (previous !== undefined) await queue.abandonSession(previous);
+    if (stale()) return;
+
+    // 2. Typing timers and presence describe a conversation that is no longer
+    //    on screen.
+    presenceCoordinator.reset();
+
+    // 3. The anchor is a position in a per-session history and can only ever
+    //    advance (connection/resume.ts). Carried across, the next
+    //    `connection.hello` asks to resume from a `seq` this session has
+    //    never reached, and the v2 endpoint answers NON-RETRYABLY with
+    //    VALIDATION_FAILED — stranding the client in `suspended`.
+    connectionController.forgetResumeAnchor();
+
+    // 4. One atomic write, so nothing can read the new id against the old
+    //    transcript. This is also what re-arms `loadMore`: its guard reads
+    //    `pagination.initialLoaded`, which this clears — without it the seed
+    //    in step 7 no-ops and the switch is invisible, which is bug 1.
+    resetPerSessionState();
+
+    try {
+      // 5. Join, and await the ack so a refusal is surfaced rather than
+      //    dropped. `session` is deliberately NOT nulled first: a concurrent
+      //    `sendMessage`/`loadOlderMessages` would then throw
+      //    NoActiveSessionError, and a binding's header would blank
+      //    mid-switch. The epoch checks make nulling unnecessary anyway.
+      await joinSessionAwaited(sessionId);
+      if (stale()) return;
+
+      // 6. The ack is `EmptyAckData` — `{ ok: true }` with no payload — so it
+      //    does NOT mean `ChatState.session` has moved. The snapshot arrives
+      //    as a separate `session.updated` push the server volunteers after
+      //    it (v2/handlers.ts acks, loads the snapshot, then pushes).
+      const arrived = await awaitState(
+        () => store.getState().session?.id === sessionId || stale(),
+        SESSION_SNAPSHOT_TIMEOUT_MS,
+      );
+      if (stale()) return;
+      if (!arrived) {
+        throw new SessionSwitchError(
+          sessionId,
+          reportChatError({
+            source: 'transport',
+            code: null,
+            message: 'the session was joined but its snapshot never arrived',
+            retryable: true,
+          }),
+        );
+      }
+
+      // 7. Explicitly by id, never via `ChatState.session`: page one must be
+      //    this session's even if another frame moved `session` in between.
+      await messageController.loadMore(sessionId);
+      if (stale()) return;
+    } catch (error) {
+      // The reset in step 4 already happened — it has to, because the
+      // snapshot for the new session can land in the same tick as the ack and
+      // a later reset would be readable as "new id, old transcript". So a
+      // switch that fails after it would otherwise leave the customer staring
+      // at a blank pane for the session they are still in. Put it back.
+      if (!stale()) await restoreTranscript(previous);
+      throw error;
+    }
+
+    await rememberSelectedSession(sessionId);
+  }
+
+  /**
+   * Re-reads page one for `sessionId`, used to undo a failed switch's reset.
+   *
+   * Never rejects and never clears `lastError`: the failure that caused the
+   * rollback is the one the app should still be reporting.
+   */
+  async function restoreTranscript(sessionId: string | undefined): Promise<void> {
+    if (sessionId === undefined) return;
+    if (store.getState().session?.id !== sessionId) return;
+    await messageController.loadMore(sessionId).catch(() => undefined);
+  }
+
+  /**
+   * On every `connected`, put the client back into the session the customer
+   * actually chose, then make sure its first page is on screen.
+   *
+   * Both halves belong here rather than in a binding. Every binding needs
+   * them, none of them can do the reset half (`ChatStore` exposes no
+   * `setState`), and the widget's version — a once-ever latch on the
+   * connection-state transition — could not re-arm for a switch and could not
+   * survive a reconnect either.
+   */
+  async function restoreSelectionAndSeed(): Promise<void> {
+    /** Whether a stored selection is still the one being honoured. */
+    let honouringSelection = false;
+
+    try {
+      const selected = await readSelectedSession();
+      honouringSelection = selected !== null;
+      const current = store.getState().session?.id;
+
+      if (selected !== null && current !== undefined && selected !== current) {
+        try {
+          await performSwitch(selected);
+          return;
+        } catch (error) {
+          // Already reported through lastError/error. The session the ack gave
+          // us is still there, so fall through and seed THAT rather than
+          // leaving the customer with a blank screen.
+          //
+          // Only a REJECTED join forgets the selection: that is the server
+          // saying this session is not available to this customer, and
+          // retrying it on every reconnect would be a permanent loop. A
+          // transport failure — the socket dropped mid-restore — says nothing
+          // about the session, and erasing the customer's choice over a flaky
+          // network would turn a momentary blip into a lost conversation.
+          //
+          // Either way the selection is no longer being honoured, so nothing
+          // below may quietly record the fallback session in its place: the
+          // customer's choice is REPLACED only by another choice, never by
+          // whichever conversation a failed restore happened to leave us in.
+          // A refusal has already erased it, so the next ordinary connect
+          // records what the server resolves — one connection later, and
+          // deliberately.
+          if (error instanceof SessionSwitchError && error.cause.source === 'protocol') {
+            await forgetSelectedSession(selected);
+          }
+        }
+      }
+    } finally {
+      // The session is decided: either `performSwitch` re-joined the
+      // remembered one, or this connection stays in the one the server
+      // resolved. Queued sends can be addressed now, and not one moment
+      // earlier — see `selectionRestored`. In a `finally` so that no failure
+      // path can strand the queue behind a gate that never opens.
+      releaseQueueFlush();
+    }
+
+    // `initialLoaded` — not `messages.length` — is what makes this safe to run
+    // on every reconnect: it will not re-request page one under a user who
+    // has already scrolled back, and it is not fooled by a list that is
+    // non-empty because the offline queue was rehydrated from storage.
+    if (!store.getState().pagination.initialLoaded) {
+      await messageController.loadMore().catch(() => undefined);
+    }
+
+    // Bug 2's other half: with no pick anywhere, the session this connection
+    // established is still the one to come back to. See
+    // `rememberEstablishedSession` for why a finished session is not.
+    if (!honouringSelection) await rememberEstablishedSession();
+  }
+
+  // Ordering inside `connection.ack` is already correct and needs no change:
+  // ConnectionController applies the session snapshot and the replay BEFORE
+  // moving the machine to `connected` (connection/controller.ts), so
+  // `ChatState.session` is populated by the time this runs.
+  //
+  // This is also the file's ONLY `connected` subscription, which is what
+  // makes the restore-before-flush ordering structural rather than a matter
+  // of which `store.on('connected')` call happens to appear first: the gate is
+  // armed synchronously here, before anything can await it, and `flushQueue`
+  // is the only way to reach `queue.flush()`.
+  store.on('connected', () => {
+    selectionRestored = new Promise<void>((resolve) => {
+      releaseQueueFlush = resolve;
+    });
+    void restoreSelectionAndSeed();
+    void flushQueue();
+  });
 
   // ---------------------------------------------------------------------
   // 8. The public surface.
@@ -562,37 +1064,36 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
 
       // 4. Every per-session projection, in one write so no subscriber ever
       //    observes the new session's id against the old one's transcript.
-      //    `pastSessions` is deliberately kept — it is a list *about* other
-      //    sessions, not state *of* this one.
-      store.setState({
-        session: null,
-        messages: [],
-        typing: { isTyping: false },
-        unreadCount: 0,
-        pagination: { hasMore: false, loadingMore: false },
-        uploading: false,
-        // Keyed by participantId, not by session, which is exactly why they
-        // have to go explicitly: the same agent picking up the new
-        // conversation would otherwise arrive with a read watermark earned in
-        // the old one, marking messages read that they have never seen.
-        readWatermarks: {},
-        deliveredWatermarks: {},
-        presence: {},
-        lastError: null,
-      });
+      //    Shared verbatim with `switchSession`; the extra `session: null`
+      //    belongs to this path alone, because here there is genuinely no
+      //    session until the server mints one.
+      store.setState({ session: null });
+      resetPerSessionState();
 
-      // 5. A hello with no `resumeFrom` reads as a first connection, which is
+      // 5. Any remembered selection must go BEFORE the connect, not after:
+      //    the `connected` handler reads it, and a leftover id would send
+      //    this client straight back into the conversation it was just told
+      //    to abandon. Also bumps the epoch, so an in-flight switch cannot
+      //    write its page into the brand-new session.
+      switchEpoch += 1;
+      await forgetSelectedSession();
+
+      // 6. A hello with no `resumeFrom` reads as a first connection, which is
       //    what makes the server mint a new session (WAITING_FOR_AGENT, seq
       //    0) rather than resume the closed one. Resolves on `connection.ack`,
       //    so awaiting this means the new session is in state.
       await connectionController.connect();
+
+      // 7. And now the new session's id is known, so a reload comes back to
+      //    the conversation just opened rather than to whichever one the
+      //    server would pick on its own.
+      const opened = store.getState().session?.id;
+      if (opened !== undefined) await rememberSelectedSession(opened);
     },
     joinSession: (sessionId) => {
       joinSessionFrame(sessionId);
     },
-    switchSession: (sessionId) => {
-      joinSessionFrame(sessionId);
-    },
+    switchSession: (sessionId) => performSwitch(sessionId),
     leaveSession: () => {
       realTransport.send('session.leave', {});
     },
@@ -724,21 +1225,15 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     // §6.3 names this `loadOlderMessages`; messages/controller.ts spells it
     // `loadMore` — this is the one place the public name is chosen.
     //
-    // Cold-start decision: `ChatState.pagination.hasMore` starts `false`
-    // (§6.4's initial state), which would make a cold start unable to fetch
-    // its first page — EXCEPT `MessageController.loadMore` already special-
-    // cases it: its guard is `!hasMore && messages.length > 0`, so an empty
-    // list bypasses the `hasMore` check on the very first call. That is the
-    // deliberate choice this client relies on, over the alternative of
-    // seeding `hasMore`/an initial page from `GET /sessions/{id}/full` on
-    // connect: no `ChatClientConfig` seam for a "full session" REST fetch
-    // exists (only `MessageHistorySource`, which already IS the paginated
-    // history endpoint), and adding one would put a second REST round trip
-    // inside `connect()`, contradicting §14's "connect() -> connected should
-    // complete within one network round trip plus token-fetch latency ...
-    // no artificial delays." A binding calls `loadOlderMessages()` once on
-    // mount to populate history, exactly as it would for every subsequent
-    // page — no special first-call behavior for it to know about.
+    // Cold start is no longer a binding's job: core seeds page one itself on
+    // every `connected` (see `restoreSelectionAndSeed`), guarded by
+    // `pagination.initialLoaded` so a reconnect cannot re-request it under a
+    // user who has scrolled back. Calling this on mount anyway is harmless —
+    // the same guard makes the second call a no-op — but a binding that never
+    // calls it now still gets a transcript, which is what react/vue/angular
+    // were missing. The seam is still `MessageHistorySource` alone: no "full
+    // session" REST fetch was added to `connect()`, so §14's "one network
+    // round trip plus token-fetch latency" is unchanged.
     loadOlderMessages: () => messageController.loadMore(),
 
     setPresence: (status) => {

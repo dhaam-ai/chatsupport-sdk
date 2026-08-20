@@ -10,8 +10,9 @@
 
 import { isParkedCloseReason } from '@dhaam-ccrm/core';
 import type { CloseReason } from '@dhaam-ccrm/core';
+import { ChatClientConfigError } from '@dhaam-ccrm/js';
 import type { ChatStore } from '@dhaam-ccrm/js';
-import type { ChatMessage, ChatState, ConnectionState } from '@dhaam-ccrm/js';
+import type { ChatMessage, ChatSessionSummary, ChatState, ConnectionState } from '@dhaam-ccrm/js';
 
 import { createWidgetStore } from './client.js';
 import { resolveConfig } from './config.js';
@@ -20,10 +21,13 @@ import { createComposer } from './ui/composer.js';
 import { ICONS, el, icon } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
 import type { FocusTrap } from './ui/focus.js';
+import { createIdentityHeader } from './ui/identity-header.js';
 import { createMessageList } from './ui/message-list.js';
 import { resolvePresentation } from './ui/presentation.js';
 import type { ResolvedPresentation } from './ui/presentation.js';
 import { createWidgetRoot } from './ui/root.js';
+import { createPreChatScreen, createSessionSwitcher } from './ui/session-picker.js';
+import type { SessionPickerCallbacks } from './ui/session-picker.js';
 import { STYLES, themeCss } from './ui/styles.js';
 
 /** How the host drives the widget after mounting it. */
@@ -41,42 +45,125 @@ export interface ChatWidget {
 /**
  * The two connection states core deliberately does NOT retry out of (§8.1).
  *
- * Everything else recovers on its own and must be left alone: an ordinary
- * transport drop goes to `reconnecting` and is retried indefinitely with full
- * jitter (`#scheduleTransportRetry`), and an auth failure is retried against a
- * freshly-minted token up to `DEFAULT_MAX_CONSECUTIVE_AUTH_FAILURES` (3)
- * before it escalates. Offering a "Reconnect" button during those would race
- * core's own backoff and turn one client's bad minute into a reconnect storm.
+ * `suspended` means core stopped on purpose because something outside its
+ * control is broken — an unsupported protocol version, or credentials that
+ * failed three times running — and `closed` follows a `disconnect()`. Core
+ * documents `connect()` as the only way out of either, which makes recovering
+ * from them the host's job.
  *
- * These two are different in kind. `suspended` means core has stopped on
- * purpose because something outside its control is broken — an unsupported
- * protocol version, or credentials that failed three times running — and
- * `closed` follows a `disconnect()`. Core documents `connect()` as the only
- * way out of either, which makes recovering from them the host's job, and
- * before this the widget never did it: it connected once at mount and had no
- * path back.
+ * These are the only two states in which the Reconnect button is PRESSABLE.
+ * See {@link WorkingConnectionState} for why it is deliberately inert
+ * everywhere else, even though it is no longer invisible there.
  */
 const TERMINAL_CONNECTION_STATES: ReadonlySet<ConnectionState> = new Set(['suspended', 'closed']);
 
-/**
- * Words for each connection state. Never colour alone — the dot is decoration.
- *
- * The two terminal states name the control that fixes them. `suspended`
- * previously read "Offline — messages will send when you reconnect", which
- * promised an automatic recovery that by definition never comes in that state
- * — core has stopped retrying, so the sentence was waiting on an event that
- * required the customer to act and never told them so.
- */
-const CONNECTION_LABEL: Record<ConnectionState, string> = {
+/** Words for the states in which nothing is being attempted. */
+const SETTLED_CONNECTION_LABEL = {
   idle: 'Not connected',
-  connecting: 'Connecting…',
-  authenticating: 'Connecting…',
   connected: 'Online',
-  // True, and core really is retrying on its own here — no affordance offered.
-  reconnecting: 'Reconnecting…',
+  // Both terminal states name the control that fixes them. `suspended` once
+  // read "Offline — messages will send when you reconnect", which promised an
+  // automatic recovery that by definition never comes in that state: core has
+  // stopped retrying, so the sentence was waiting on an event that required the
+  // customer to act and never told them so.
   suspended: 'Not connected — use Reconnect to try again',
   closed: 'Disconnected — use Reconnect to try again',
-};
+} as const satisfies Partial<Record<ConnectionState, string>>;
+
+type SettledConnectionState = keyof typeof SETTLED_CONNECTION_LABEL;
+
+/**
+ * The states in which core is still working on the connection by itself.
+ *
+ * ── Why "Reconnect" is inert here, and does not force an attempt ──────────
+ *
+ * The bug this set exists to fix was that `connecting` belonged to NEITHER
+ * list: the Reconnect button and the `online` listener were both gated on
+ * `TERMINAL_CONNECTION_STATES`, so in the one state a client actually parks in
+ * when the server is down, both silently did nothing and the customer got an
+ * indefinite "Connecting…" with no further signal.
+ *
+ * The answer is not to let them call `connect()` here. Two independent reasons,
+ * both readable in core's connection/controller.ts:
+ *
+ *   1. It cannot work. `connect()` returns the in-flight promise whenever one
+ *      is pending, and that promise settles only on `connection.ack`,
+ *      `disconnect()`, or `#suspend` — never on a retryable close. In exactly
+ *      the reported scenario (server unreachable from the first load) it stays
+ *      pending for the whole retry loop, so every `connect()` returns the same
+ *      promise and opens no socket. A button wired to it would be a no-op by
+ *      construction; enabling it only makes the no-op loud.
+ *
+ *   2. Where it could work, it would compete. After a successful connect and a
+ *      later drop the promise is settled, so `connect()` runs `#cancelTimers()`
+ *      and resets `#attempt` to 0 — cancelling core's armed backoff timer AND
+ *      restarting its exponential backoff from the bottom. A customer tapping
+ *      the button would pin backoff at attempt 0 for as long as they kept
+ *      tapping. That is the second, competing retry mechanism this widget must
+ *      not become.
+ *
+ * Core also no longer needs the help: every attempt now produces a close
+ * within `connectTimeoutMs` (10s by default) and routes into the existing
+ * backoff, so `connecting` self-heals unaided. What was missing was never the
+ * button — it was the SIGNAL. So the control becomes visible-but-disabled once
+ * something has demonstrably gone wrong, the status line says which thing, and
+ * the button becomes pressable the instant core actually parks.
+ */
+type WorkingConnectionState = Exclude<ConnectionState, SettledConnectionState>;
+
+/**
+ * `in`, not a cast.
+ *
+ * This is the one place the settled and working halves of
+ * {@link ConnectionState} are separated, and the narrowing it produces is
+ * checked by the compiler rather than asserted by us. The concrete payoff is
+ * that {@link SETTLED_CONNECTION_LABEL} can only ever be indexed by a key it
+ * actually has: an eighth connection state added to core would fall through to
+ * {@link workingConnectionStatus}'s generic copy, which is wrong-but-harmless,
+ * where the cast this replaced would have put a literal `undefined` in the
+ * status line.
+ */
+function isSettledConnection(state: ConnectionState): state is SettledConnectionState {
+  return state in SETTLED_CONNECTION_LABEL;
+}
+
+/**
+ * How many consecutive failed attempts before this stops being called a blip.
+ *
+ * One failure is the commonest event the transport has — a wifi handover, a
+ * proxy recycling a socket — and core is usually back inside a second.
+ * Escalated copy and a visible control on the FIRST failure would fire
+ * constantly, on a healthy connection, for a condition that resolves itself
+ * before the customer finishes reading it. Two consecutive failures is the
+ * cheapest honest evidence that something is actually wrong.
+ */
+const OUTAGE_ATTEMPT_THRESHOLD = 2;
+
+/**
+ * More specific than "still trying", and it names something the customer can
+ * act on. Reached from `navigator.onLine`, which is a fact the browser
+ * volunteers rather than a guess this widget makes.
+ */
+const OFFLINE_LABEL = 'No internet connection — we\u2019ll reconnect when it\u2019s back';
+
+/**
+ * The copy the reported bug was missing.
+ *
+ * An indefinite "Connecting…" says an attempt is going fine. Once attempts
+ * have failed twice running, that is false, and the true sentence has to say
+ * both halves: we cannot reach it, AND we have not given up.
+ */
+const OUTAGE_LABEL = 'Can\u2019t reach chat \u2014 still trying';
+
+/**
+ * What the composer promises once anything typed will be held rather than sent.
+ *
+ * The composer stays ENABLED in every one of these states on purpose — core's
+ * send queue is durable (§9.6), so a customer with no signal can still type
+ * their question and have it go out on reconnect. Only the promise about what
+ * happens to it changes.
+ */
+const QUEUEING_PLACEHOLDER = 'Type a message \u2014 we\u2019ll send it when you\u2019re back online';
 
 const CONNECTION_COLOR: Record<ConnectionState, string> = {
   idle: 'var(--dh-text-muted)',
@@ -87,6 +174,93 @@ const CONNECTION_COLOR: Record<ConnectionState, string> = {
   suspended: '#b42318',
   closed: 'var(--dh-text-muted)',
 };
+
+/**
+ * How many past conversations the picker asks for.
+ *
+ * Five is the server's own default for `GET /chat/sessions/customer` and well
+ * inside its cap of 20 (chat.validator.ts). A picker is a shortcut back to a
+ * recent conversation, not an archive browser — a longer list would push the
+ * "start a new conversation" action below the fold on a phone, which is the
+ * one action every customer needs to be able to reach.
+ */
+const SESSION_PICKER_LIMIT = 5;
+
+/** Everything the connection's state implies for the UI, decided in one place. */
+interface ConnectionStatus {
+  readonly label: string;
+  readonly color: string;
+  /**
+   * `hidden` — no recovery control at all; nothing has gone wrong yet.
+   * `inert` — shown and disabled: recovery is underway and pressing is not the
+   *   missing step (see {@link WorkingConnectionState}).
+   * `ready` — core has parked and only an explicit `connect()` revives it.
+   */
+  readonly control: 'hidden' | 'inert' | 'ready';
+  /** Whether anything typed now will be held rather than sent immediately. */
+  readonly queueing: boolean;
+}
+
+/**
+ * The one function that decides what the customer is told about the connection.
+ *
+ * Pure, and the single source for all three surfaces it drives — the status
+ * line, the Reconnect control, and the composer's prompt. They previously
+ * disagreed because each was written separately: the composer stayed silent
+ * while the status line said "Connecting…" forever, and the button's
+ * visibility rule knew nothing about either. Any two of them contradicting
+ * each other is now impossible by construction rather than by discipline.
+ */
+function resolveConnectionStatus(
+  connectionState: ConnectionState,
+  online: boolean,
+  failedAttempts: number,
+): ConnectionStatus {
+  if (isSettledConnection(connectionState)) {
+    return {
+      label: SETTLED_CONNECTION_LABEL[connectionState],
+      color: CONNECTION_COLOR[connectionState],
+      control: TERMINAL_CONNECTION_STATES.has(connectionState) ? 'ready' : 'hidden',
+      // `suspended` really does hold what is typed: core has stopped retrying,
+      // but the durable send queue (§9.6) is untouched by that.
+      queueing: connectionState === 'suspended',
+    };
+  }
+
+  return workingConnectionStatus(connectionState, online, failedAttempts);
+}
+
+/**
+ * The half of {@link resolveConnectionStatus} that runs while core is still
+ * working on the connection by itself.
+ *
+ * Split out so the compiler, not a comment, guarantees the two halves cover
+ * every {@link ConnectionState} exactly once — see {@link isSettledConnection}.
+ */
+function workingConnectionStatus(
+  connectionState: WorkingConnectionState,
+  online: boolean,
+  failedAttempts: number,
+): ConnectionStatus {
+  const color = CONNECTION_COLOR[connectionState];
+  const outage = failedAttempts >= OUTAGE_ATTEMPT_THRESHOLD;
+  const control = outage ? 'inert' : 'hidden';
+
+  // Checked before the attempt count: "there is no network" is both more
+  // specific and more actionable than "we cannot reach the server", and it is
+  // the reason the attempts are failing rather than a separate fact.
+  if (!online) return { label: OFFLINE_LABEL, color, control, queueing: true };
+  if (outage) return { label: OUTAGE_LABEL, color, control, queueing: true };
+
+  return {
+    // Zero failures is a first attempt genuinely in flight; one is a blip core
+    // fixes on its own, which is what `reconnecting` has always meant here.
+    label: failedAttempts === 0 ? 'Connecting\u2026' : 'Reconnecting\u2026',
+    color,
+    control,
+    queueing: false,
+  };
+}
 
 export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const config = resolveConfig(rawConfig);
@@ -102,18 +276,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   let trap: FocusTrap | null = null;
   let restoreFocus: (() => void) | null = null;
   let destroyed = false;
-
-  // History never arrives over the socket by design — `connection.ack`
-  // deliberately does not carry messages (see create-chat-client.ts) — so
-  // without this, `ChatState.messages` starts and stays empty until the user
-  // finds the "load older" affordance, which itself stays hidden because
-  // `pagination.hasMore` starts `false` (§6.4) and nothing else ever flips
-  // it. `loadOlderMessages()` bypasses that guard on an empty list, which is
-  // exactly the seam this widget is supposed to drive once on connect. Fired
-  // only once (`historyRequested`): a later reconnect fires `connected`
-  // again, and re-requesting page 1 there would fight with whatever real
-  // "load older" progress the user made while connected.
-  let historyRequested = false;
 
   /**
    * The id of the session an agent closed, or `null` while the conversation
@@ -133,6 +295,46 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   let startingNewConversation = false;
   let reconnecting = false;
   let lastAutoReconnectAt = 0;
+
+  /**
+   * What the browser says about connectivity, mirrored so the status can be
+   * recomputed from an event rather than polled.
+   *
+   * Guarded because this file is imported in environments without a
+   * `navigator` (SSR bundling a host page), where "assume online" is the only
+   * answer that does not put a false offline notice on a server render.
+   */
+  let online = typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+
+  /**
+   * Consecutive failed connection attempts, reset on every successful connect.
+   *
+   * Counted from core's `reconnecting` event, which fires once per scheduled
+   * retry, rather than derived from `connectionState` — the state cycles
+   * `connecting → reconnecting → connecting` indefinitely, so it says whether
+   * an attempt is in flight but never how many have already failed. That
+   * missing number is precisely what separates "connecting normally" from the
+   * indefinite "Connecting…" the customer reported.
+   */
+  let failedAttempts = 0;
+
+  /** Whether the list has been asked for yet. Asked once, on the first open. */
+  let sessionsRequested = false;
+  /** Whether the pre-chat screen is the thing currently on screen. */
+  let preChatOpen = false;
+  /**
+   * Whether the pre-chat screen may ever be shown for this widget.
+   *
+   * A host that passed `sessionId` has already named the conversation it wants
+   * on screen, and opening onto a chooser would override an explicit
+   * instruction. The header switcher still mounts in that case — being pointed
+   * at one conversation is not the same as being locked into it.
+   *
+   * This is screen flow, not guest detection. The one guest-facing gate is
+   * `sessions.length > 0` in `renderSessionPicker`, and there is no second one
+   * anywhere in this package.
+   */
+  const preChatAllowed = config.sessionId === undefined;
 
   const report = (error: unknown): void => config.onError(error);
 
@@ -177,7 +379,23 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     on: { click: () => close() },
   });
 
-  const titleNode = el('h2', { attrs: { class: 'dh-title', id: 'dh-title' }, text: config.title });
+  /**
+   * Who the customer is talking to.
+   *
+   * Its `node` IS the `<h2 id="dh-title">` — mounted in place of the h2 this
+   * file used to build by hand, so the panel's existing
+   * `aria-labelledby="dh-title"` keeps working with nothing to change and,
+   * more importantly, so there is exactly one title element rather than a
+   * component and a hand-built rival for the same job.
+   *
+   * Nothing here interprets `handledBy`. The two rules that are easy to get
+   * wrong — an ABSENT handler means "render the configured title", and a
+   * PRESENT one can still be stale on a session reactivated from CLOSED —
+   * both live inside the component behind core's own `isHandledByCurrent`.
+   * Adding any identity logic on this side would be the second source of
+   * truth that design exists to prevent.
+   */
+  const identityHeader = createIdentityHeader(config.title);
 
   const messageList = createMessageList({
     onRetry: (message) => retry(message),
@@ -205,6 +423,32 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     onError: report,
   });
 
+  /**
+   * One set of callbacks behind both picker surfaces.
+   *
+   * The pre-chat screen and the header switcher are two views of the same two
+   * decisions — "take me back to that conversation" and "start a fresh one" —
+   * so they share one implementation of each. Giving them separate handlers
+   * would let the same click mean two different things depending on which
+   * surface the customer happened to use.
+   */
+  const pickerCallbacks: SessionPickerCallbacks = {
+    // `void`: every failure inside `selectSession` is already reported, and a
+    // promise handed back to a DOM click handler is a promise nothing awaits.
+    onSelect: (sessionId) => void selectSession(sessionId),
+    onStartNew: () => startNewConversation(),
+  };
+
+  const preChat = createPreChatScreen(pickerCallbacks);
+  const switcher = createSessionSwitcher(pickerCallbacks);
+
+  /**
+   * The composer's ordinary prompt, read from the component rather than
+   * restated here. Restating it would put the same sentence in two files, and
+   * the copy would drift the first time either one was edited alone.
+   */
+  const composerPlaceholder = composer.input.placeholder;
+
   const panel = el('div', {
     attrs: {
       class: 'dh-panel',
@@ -226,15 +470,27 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       el('header', {
         attrs: { class: 'dh-header' },
         children: [
-          el('div', { children: [titleNode, status] }),
+          el('div', { children: [identityHeader.node, status] }),
           el('div', { attrs: { class: 'dh-header-spacer' } }),
           reconnectButton,
+          // One self-contained node (its own positioning context), so it can
+          // sit here without the header having to know anything about the
+          // popover it opens. Hidden until there is something to switch to.
+          switcher.node,
           closeButton,
         ],
       }),
+      // The pre-chat screen stands in for the log + composer rather than
+      // sitting above them — a chooser and the conversation it chooses between
+      // are alternatives, not a stack.
+      preChat.node,
       messageList.log,
       composer.node,
       messageList.liveRegion,
+      // Its own channel, deliberately not folded into `status` or the message
+      // log's region: `status` re-announces on every connection change, and
+      // the log's region is busy narrating ticks. See identity-header.ts.
+      identityHeader.liveRegion,
     ],
     on: {
       keydown: (event) => {
@@ -250,6 +506,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   });
 
   shadow.append(launcher, panel);
+
+  // The conversation is the default screen. The pre-chat chooser only ever
+  // replaces it once a non-empty session list has actually arrived, so it
+  // starts hidden rather than being hidden later by a subscription that has
+  // no reason to fire on an empty list.
+  showConversation();
 
   // ── presentation ──────────────────────────────────────────────────────
   function applyPresentation(): void {
@@ -276,11 +538,32 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   };
   window.addEventListener('resize', onResize, { passive: true });
 
-  // The one ambient signal worth acting on: the browser saying connectivity
-  // returned. It fires on a real transition rather than on a timer, and
-  // `reconnect` ignores it outright unless core has actually given up.
-  const onOnline = (): void => reconnect('auto');
+  /**
+   * The browser's own connectivity signals — the one ambient source worth
+   * acting on, because they fire on a real transition rather than on a timer.
+   *
+   * Both listeners now do something in EVERY state, which is the half of the
+   * reported bug that lived here: `onOnline` used to be nothing but
+   * `reconnect('auto')`, and `reconnect` returns immediately unless core has
+   * parked — so in `connecting`, the state that actually matters, coming back
+   * online was silently ignored and the customer was told nothing had changed.
+   *
+   * What it does now is recompute the status, not force an attempt: while core
+   * is working, forcing one is either a provable no-op or a reset of core's own
+   * backoff — see {@link WorkingConnectionState}. `reconnect('auto')` is
+   * still called and still self-gates, so the terminal case is unchanged.
+   */
+  const onOnline = (): void => {
+    online = true;
+    syncConnection();
+    reconnect('auto');
+  };
+  const onOffline = (): void => {
+    online = false;
+    syncConnection();
+  };
   window.addEventListener('online', onOnline);
+  window.addEventListener('offline', onOffline);
 
   // ── state → DOM ───────────────────────────────────────────────────────
   function syncLauncher(state: ChatState): void {
@@ -323,13 +606,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     store.select(
       (state) => state.connectionState,
       (connectionState) => {
-        statusText.textContent = CONNECTION_LABEL[connectionState];
-        statusDot.style.color = CONNECTION_COLOR[connectionState];
-        syncComposer();
-        syncReconnect();
+        // A completed handshake is the only proof the run of failures is over.
+        if (connectionState === 'connected') failedAttempts = 0;
+        syncConnection();
       },
       { immediate: true },
     ),
+    // The count core's state cannot supply. `#scheduleRetry` emits this once
+    // per scheduled retry, immediately after moving to `reconnecting` — so the
+    // selector above has already re-rendered with the OLD count by the time
+    // this runs, and this second render is what applies the new one.
+    store.on('reconnecting', () => {
+      failedAttempts += 1;
+      syncConnection();
+    }),
     // An agent ending the conversation. Core applies the close to session
     // state and emits this; before it was handled here, nothing in the widget
     // reacted at all — the transcript simply stopped accepting replies with
@@ -361,28 +651,310 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         syncComposer();
       },
     ),
+    // Default `strictEqual` comparison, on purpose: `applyAgentJoined` and
+    // `applyAgentLeft` both spread a NEW session object, so a reference change
+    // is exactly the signal that something about the handler moved. A
+    // field-wise comparison here would have to enumerate `status`/`handledBy`
+    // and would silently stop firing the day a third field joins them.
+    store.select(
+      (state) => state.session,
+      (session) => identityHeader.update(session),
+      { immediate: true },
+    ),
+    store.select(
+      (state) => state.pastSessions,
+      (sessions) => renderSessionPicker(sessions),
+      { immediate: true },
+    ),
+    // Keeps `aria-current` on the switcher's rows honest after a switch, a
+    // `startNewSession`, or a server-side reactivation moved which session is
+    // the current one. Renders from `pastSessions`, which this does not read
+    // — one input, two triggers.
+    store.select(
+      (state) => state.session?.id ?? null,
+      () => renderSessionPicker(store.getState().pastSessions),
+    ),
     store.select(
       (state) => state.uploading,
       (uploading) => composer.setUploading(uploading),
       { immediate: true },
     ),
-    store.select(
-      (state) => state.connectionState,
-      (connectionState) => {
-        if (connectionState !== 'connected' || historyRequested) return;
-        historyRequested = true;
-        // `.catch`, not `void`, for the same reason `onLoadOlder` below is:
-        // an unhandled rejection here must not surface on the HOST's window.
-        // A failure is not swallowed either — `loadOlderMessages()` never
-        // rejects (messages/controller.ts), it reports through `lastError`/
-        // the `error` event instead, which the host is already free to watch.
-        store.client.loadOlderMessages().catch(report);
-      },
-    ),
   ];
 
+  /**
+   * The Retry button on a permanently-failed bubble.
+   *
+   * `retryMessage(message.id)`, NEVER `sendMessage(message.content)`. That
+   * distinction is the whole of the reported bug: a message's envelope id IS
+   * its permanent id (D1), the server dedupes sends on
+   * `@@unique([chatSessionId, clientMessageId])`, and `sendMessage` mints a
+   * fresh ULID. So the old call was not a retry at all — it was a second,
+   * independent message that failed independently, which is why every press
+   * left another failed bubble with its own Retry button behind it.
+   * `retryMessage` replays the ORIGINAL envelope under its original id, which
+   * the server therefore collapses into the one message the user thinks they
+   * sent.
+   */
+  // ── session picker ────────────────────────────────────────────────────
+
+  /**
+   * Shows or hides one pane of the panel.
+   *
+   * The `hidden` attribute alone is not enough here and the reason is worth
+   * stating: `.dh-log`, `.dh-prechat` and `.dh-switcher` all carry an explicit
+   * `display` in styles.ts, and a stylesheet `display` beats the UA's
+   * `[hidden] { display: none }`. The attribute still does the job that
+   * matters most — taking the pane out of the tab order and the accessibility
+   * tree — and the inline style is what actually takes it off the screen.
+   */
+  function setPaneVisible(node: HTMLElement, visible: boolean): void {
+    node.hidden = !visible;
+    node.style.display = visible ? '' : 'none';
+  }
+
+  /**
+   * Asks for the customer's recent conversations, once.
+   *
+   * Once, not on every open: the answer only changes when this customer starts
+   * or switches a conversation, and both of those go through this file, which
+   * re-renders from `pastSessions` either way. Re-fetching on every open would
+   * spend a round trip to re-learn what the widget already knows.
+   *
+   * The result is not read from this promise. `listSessions` writes the page
+   * to `ChatState.pastSessions` (§9.4-style wholesale replace) and the
+   * subscription below renders from there, so the picker has one input rather
+   * than two that could disagree.
+   */
+  function requestSessions(): void {
+    if (sessionsRequested || destroyed) return;
+    sessionsRequested = true;
+
+    store.client
+      .listSessions({ limit: SESSION_PICKER_LIMIT })
+      .then(() => {
+        // Revealing the chooser is deliberately tied to the DATA arriving
+        // rather than to the open, so the panel never flashes an empty picker
+        // on its way to the conversation.
+        maybeShowPreChat();
+      })
+      .catch((error: unknown) => {
+        // An embed whose client has no `sessionSummarySource` is a
+        // CONFIGURATION fact, not a fault: core is telling us this deployment
+        // simply has no session list. Degrading to "no picker" is exactly
+        // right, and it is what keeps this change invisible to an existing
+        // embed built against an older client — so it is swallowed rather than
+        // pushed at the host's error tracker on every page load.
+        //
+        // Every other failure — a 5xx, a network drop, a malformed page — IS
+        // a fault and is reported. Distinguished by the error's type, not by
+        // its message.
+        if (error instanceof ChatClientConfigError) return;
+        report(error);
+      });
+  }
+
+  /**
+   * The one gate on both picker surfaces: `sessions.length > 0`, and nothing
+   * else.
+   *
+   * `GET /chat/sessions/customer` answers an unidentified caller with
+   * `200 { sessions: [] }` rather than a 403, so an empty page IS the guest
+   * signal — there is no second "is this a guest" check here, in the
+   * components (T11 left one out on purpose), or in `client.ts`. There is also
+   * deliberately no widget flag: emptiness already gates the rollout in both
+   * directions, and a flag on top would be a second off-switch that can
+   * express nothing emptiness cannot.
+   */
+  function renderSessionPicker(sessions: readonly ChatSessionSummary[]): void {
+    const hasSessions = sessions.length > 0;
+    setPaneVisible(switcher.node, hasSessions);
+
+    if (!hasSessions) {
+      switcher.close();
+      // Never strand the customer on a chooser with nothing to choose.
+      if (preChatOpen) showConversation();
+      return;
+    }
+
+    switcher.render(sessions, store.getState().session?.id ?? null);
+    preChat.render(sessions);
+  }
+
+  /** Reveals the chooser, if this widget is allowed one and has anything to offer. */
+  function maybeShowPreChat(): void {
+    if (destroyed || preChatOpen || !preChatAllowed) return;
+    if (store.getState().pastSessions.length === 0) return;
+
+    preChatOpen = true;
+    setPaneVisible(preChat.node, true);
+    setPaneVisible(messageList.log, false);
+    composer.node.hidden = true;
+    if (open) preChat.focus();
+  }
+
+  /** Puts the conversation back on screen. Idempotent. */
+  function showConversation(): void {
+    preChatOpen = false;
+    setPaneVisible(preChat.node, false);
+    setPaneVisible(messageList.log, true);
+    composer.node.hidden = false;
+  }
+
+  /**
+   * Take me back to that conversation.
+   *
+   * `switchSession` joins the chosen session, and the server accepts a
+   * TERMINAL (`CLOSED`/`RESOLVED`) one there — picking a past conversation is
+   * that ordinary path, not a special case. Nothing here
+   * touches `status`: reactivation happens server-side on the customer's next
+   * message, behind `FEATURE_SESSION_REACTIVATE_ON_CUSTOMER_MESSAGE` (default
+   * OFF), and guessing at it locally would show a customer a live conversation
+   * on a deployment where that flag is off.
+   *
+   * The conversation is shown immediately rather than on completion. The
+   * switch is awaitable — it joins, waits for the snapshot, then seeds the
+   * transcript — but holding the chooser up for a round trip would read as a
+   * dead click, so the pane flips at once and the transcript fills in behind
+   * it.
+   *
+   * The failure has to be caught, and caught around the `await`: a REJECTED
+   * join or a snapshot that never arrives rejects the promise, and an
+   * unhandled rejection here surfaces on the HOST's window and lands in the
+   * host's error tracker as a bug in their page. `retry()` below documents the
+   * same rule.
+   *
+   * No busy guard: core stamps each switch with an epoch and abandons a
+   * superseded one, so a customer clicking two rows quickly lands on the
+   * second. Guarding here would instead ignore their second click.
+   */
+  async function selectSession(sessionId: string): Promise<void> {
+    showConversation();
+    if (open) composer.input.focus({ preventScroll: true });
+
+    // Behind core's own connect-time page-one load, for the reason
+    // `whenHistorySettles` documents — a switch that overlaps it silently
+    // fetches nothing and leaves the previous conversation's messages under
+    // the new conversation's header, which is the reported bug. Free in the
+    // ordinary case: by the time a customer has opened the panel and picked a
+    // row, page one landed long ago and this resolves without waiting.
+    await whenHistorySettles();
+    if (destroyed) return;
+
+    try {
+      await store.client.switchSession(sessionId);
+    } catch (error) {
+      report(error);
+    }
+  }
+
+  /**
+   * Resolves once core's own connect-time history work has finished.
+   *
+   * Every `connected` puts core to work: it re-joins whatever session the
+   * customer last chose and seeds page one of the transcript. Both are async
+   * and both are already in flight by the time `connect()`'s promise settles,
+   * so a switch started off that promise does not queue behind them — it
+   * races them, and loses in both directions. `MessageController.loadMore`
+   * refuses to start while another page is in flight, and refuses again once
+   * one has landed (`initialLoaded && !hasMore`), so the racing switch joins
+   * the named session and then quietly fetches nothing: the customer ends up
+   * in one conversation reading another's transcript, or reading nothing at
+   * all, depending on which round trip won. Sequencing is the only lever this
+   * package has — the alternative would be for a switch to invalidate loads
+   * started before it, which is core's to decide, not ours.
+   *
+   * `pagination` carries the whole signal. `initialLoaded` means a page has
+   * landed; a `loadingMore` that has gone true and back to false means one was
+   * attempted and failed. Either way nothing is in flight any more and the
+   * switch's own load is free to run.
+   */
+  function whenHistorySettles(): Promise<void> {
+    if (destroyed || store.getState().pagination.initialLoaded) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      let attempted = false;
+      const unsubscribe = store.select(
+        (state) => state.pagination,
+        (pagination) => {
+          attempted ||= pagination.loadingMore;
+          if (pagination.loadingMore) return;
+          if (!attempted && !pagination.initialLoaded) return;
+          unsubscribe();
+          resolve();
+        },
+      );
+    });
+  }
+
+  /**
+   * Opens the conversation the HOST named in `config.sessionId`.
+   *
+   * `switchSession`, not `joinSession`: the host asked for a conversation to
+   * be on screen, and only the former clears the one that is there and fetches
+   * the one that was asked for.
+   *
+   * Deliberately last, behind {@link whenHistorySettles}, which is also what
+   * makes it beat the customer's remembered choice when the two disagree: core
+   * stamps every switch with an epoch and the last one to START wins, so
+   * running after core's restore has finished is what turns "the host named a
+   * session" into the instruction that actually holds.
+   */
+  async function openNamedSession(sessionId: string): Promise<void> {
+    await whenHistorySettles();
+    if (destroyed) return;
+    await store.client.switchSession(sessionId);
+  }
+
   function retry(message: ChatMessage): void {
-    store.client.sendMessage(message.content).catch(report);
+    store.client
+      .retryMessage(message.id)
+      .then((outcome) => {
+        if (outcome.status === 'retried') return;
+        handleRetryRefusal(message, outcome.reason);
+      })
+      // `.catch`, not `void`: `retryMessage` resolves rather than throws for
+      // the ordinary refusal, but a storage failure underneath it still
+      // rejects, and an unhandled rejection here surfaces on the HOST's
+      // window.
+      .catch(report);
+  }
+
+  /**
+   * What to show when core declines to replay an id.
+   *
+   * Rare by construction — message-list.ts gates the button's visibility on
+   * `delivery.retryable`, which is core's own answer to "is this worth
+   * offering" — but not impossible: the customer may have switched sessions
+   * since the failure, and core refuses that case because `message.send`
+   * carries no `sessionId` on the wire, so replaying the id now would
+   * misattribute it to whichever session is current.
+   *
+   * Branched on `outcome.reason`, the discriminant, never on any message
+   * text. The two reasons want opposite treatment and collapsing them would
+   * get one of them wrong:
+   *
+   *   - `not-retryable` — this id will never reach the server. The customer's
+   *     words are otherwise stranded in a dead bubble, so they are handed
+   *     back to the composer where one keystroke sends them as a fresh
+   *     message. Only into an EMPTY composer: silently overwriting something
+   *     half-typed would lose more than it recovers.
+   *   - `not-found` — nothing eligible under this id: already retried, already
+   *     succeeded, or never failed. Offering the text back here would invite a
+   *     genuine duplicate of a message that may well have landed, which is the
+   *     exact failure this whole change removes. Report it and leave the UI
+   *     alone; the re-render below already shows core's real state.
+   */
+  function handleRetryRefusal(message: ChatMessage, reason: 'not-found' | 'not-retryable'): void {
+    report(new Error(`chat widget could not retry message ${message.id}: ${reason}`));
+
+    // Re-read core rather than trust the affordance that was just pressed: a
+    // refusal means the button's state and core's disagreed.
+    messageList.render(store.getState(), localParticipantId);
+
+    if (reason !== 'not-retryable') return;
+    if (composer.input.value !== '') return;
+    composer.input.value = message.content;
+    composer.input.focus({ preventScroll: true });
   }
 
   /**
@@ -406,11 +978,33 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   /** How long before an *automatic* recovery attempt may fire again. */
   const AUTO_RECONNECT_MIN_INTERVAL_MS = 5_000;
 
-  function syncReconnect(): void {
-    const terminal = TERMINAL_CONNECTION_STATES.has(store.getState().connectionState);
-    reconnectButton.hidden = !terminal;
-    reconnectButton.disabled = reconnecting;
+  /**
+   * Writes one {@link resolveConnectionStatus} answer out to all three
+   * surfaces it governs.
+   *
+   * One writer, so the status line, the Reconnect control and the composer's
+   * prompt cannot describe three different connections — the failure mode the
+   * old code had, where the status said "Connecting…" indefinitely while the
+   * button and the composer said nothing at all.
+   */
+  function syncConnection(): void {
+    const status = resolveConnectionStatus(store.getState().connectionState, online, failedAttempts);
+
+    statusText.textContent = status.label;
+    statusDot.style.color = status.color;
+
+    reconnectButton.hidden = status.control === 'hidden';
+    // `inert` and "a manual attempt is already running" are different reasons
+    // for the same disabled state, and both must win over `ready`.
+    reconnectButton.disabled = status.control === 'inert' || reconnecting;
     reconnectButton.textContent = reconnecting ? 'Reconnecting…' : 'Reconnect';
+
+    // The composer stays ENABLED throughout — core queues sends durably (§9.6)
+    // and a customer in a lift must still be able to type their question. What
+    // changes is only the promise made about what happens to it.
+    composer.input.placeholder = status.queueing ? QUEUEING_PLACEHOLDER : composerPlaceholder;
+
+    syncComposer();
   }
 
   /**
@@ -442,13 +1036,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
 
     reconnecting = true;
-    syncReconnect();
+    syncConnection();
     store.client
       .connect()
       .catch(report)
       .finally(() => {
         reconnecting = false;
-        syncReconnect();
+        syncConnection();
       });
   }
 
@@ -463,15 +1057,40 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   function startNewConversation(): void {
     if (startingNewConversation) return;
     startingNewConversation = true;
-    messageList.setStartingNewConversation(true);
+    setStartingNewConversation(true);
 
+    // `startNewSession`, never `switchSession`: a switch joins a session that
+    // already exists and deliberately mints nothing, so using it here would
+    // drop the customer into whichever conversation the server picked rather
+    // than the fresh one they asked for.
     store.client
       .startNewSession()
+      .then(() => {
+        // Only on success. A rejected `startNewSession` leaves the old session
+        // abandoned but no new one in place, and dropping the customer onto an
+        // empty transcript there would hide the fact that nothing happened.
+        showConversation();
+        if (open) composer.input.focus({ preventScroll: true });
+      })
       .catch(report)
       .finally(() => {
         startingNewConversation = false;
-        messageList.setStartingNewConversation(false);
+        setStartingNewConversation(false);
       });
+  }
+
+  /**
+   * One busy flag, three surfaces.
+   *
+   * All three offer the same "start a new conversation" action, so all three
+   * have to go busy together — a customer who pressed the button on the
+   * pre-chat screen must not find a live one waiting in the switcher, which is
+   * how a socket round trip's worth of impatience becomes two sessions.
+   */
+  function setStartingNewConversation(busy: boolean): void {
+    messageList.setStartingNewConversation(busy);
+    preChat.setStartingNew(busy);
+    switcher.setStartingNew(busy);
   }
 
   // ── open / close ──────────────────────────────────────────────────────
@@ -490,10 +1109,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
     trap = trapFocus(panel, shadow);
 
-    // Focus the composer, which is what the user came to use. `preventScroll`
-    // stops the host page from jumping to the widget's position — on a
-    // fixed-position element that scroll is always wrong.
-    composer.input.focus({ preventScroll: true });
+    // Focus what is actually on screen. `preventScroll` stops the host page
+    // from jumping to the widget's position — on a fixed-position element that
+    // scroll is always wrong.
+    if (preChatOpen) preChat.focus();
+    else composer.input.focus({ preventScroll: true });
+
+    // Asked here rather than at mount: a widget nobody opens should cost the
+    // host page nothing beyond the socket it already opens. Fires once — see
+    // `requestSessions`.
+    requestSessions();
 
     try {
       store.client.markRead();
@@ -518,6 +1143,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     launcher.setAttribute('aria-expanded', 'false');
     launcher.hidden = false;
 
+    // A popover left open over a closed panel re-appears on the next open,
+    // over whatever the customer came back for.
+    switcher.close();
+
     trap?.release();
     trap = null;
 
@@ -537,19 +1166,28 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // Nothing above this point opened a socket. Connecting last means a config
   // or DOM failure surfaces before any network cost is incurred.
   //
-  // History is seeded by the `connectionState` subscription above (the
-  // `historyRequested` guard), not chained off this promise: that subscription
-  // fires off the actual state transition to 'connected', which is what
-  // `loadMore()` needs (`state.session.id` populated) regardless of exactly
-  // when `connect()`'s own promise settles relative to it — one owner for
-  // "seed history once," not two racing on the same guard.
-  store.client.connect().catch(report);
-  if (config.sessionId !== undefined) {
-    try {
-      store.client.joinSession(config.sessionId);
-    } catch (error) {
-      report(error);
-    }
+  // Nothing here seeds history, and neither does any subscription above. Core
+  // does it, on every `connected`, guarded by `pagination.initialLoaded` — so
+  // it fetches page one exactly once per session and never re-requests it
+  // under a customer who has scrolled back. The once-ever latch this file used
+  // to keep could do neither: it could not re-arm when the customer switched
+  // conversations, which is why picking a past session left the previous
+  // session's transcript on screen.
+  const connecting = store.client.connect();
+
+  const namedSession = config.sessionId;
+  if (namedSession === undefined) {
+    connecting.catch(report);
+  } else {
+    // AFTER the socket is up, and through `switchSession` rather than
+    // `joinSession`. Both halves of the old call were wrong. `joinSession`
+    // writes a raw `session.join` frame, and `WebSocketTransport.send` DROPS a
+    // frame written while the socket is closed — which, fired synchronously
+    // beside `connect()`, it always was — so a host that named a session had
+    // its instruction silently discarded on every page load. And even landed,
+    // `joinSession` changes no client state: it neither clears the transcript
+    // that is on screen nor fetches the named session's history.
+    connecting.then(() => openNamedSession(namedSession)).catch(report);
   }
   if (config.openOnLoad) openPanel();
 
@@ -564,10 +1202,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       destroyed = true;
       window.removeEventListener('resize', onResize);
       window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
       trap?.release();
       restoreFocus?.();
       for (const unsubscribe of unsubscribers) unsubscribe();
       composer.destroy();
+      // The switcher owns a document-level `pointerdown` listener for its
+      // outside-click close, which outlives the shadow root unless released.
+      switcher.destroy();
+      preChat.destroy();
       // `disconnect: true` — this store built the client it wraps, so nothing
       // else on the page is using that socket.
       store.destroy({ disconnect: true });

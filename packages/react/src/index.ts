@@ -21,6 +21,17 @@ export { useChatState } from './use-chat-state.js';
 export { useChannel } from './use-channel.js';
 export type { UseChannelResult } from './use-channel.js';
 
+export { useHandledBy } from './use-handled-by.js';
+export type { UseHandledByResult } from './use-handled-by.js';
+
+export { useSessionList } from './use-session-list.js';
+export type {
+  SessionSwitchOutcome,
+  UseSessionListOptions,
+  UseSessionListResult,
+  UseSessionListStatus,
+} from './use-session-list.js';
+
 export { useMessages } from './use-messages.js';
 export type { UseMessagesResult } from './use-messages.js';
 
@@ -111,10 +122,21 @@ export type {
   ChatState,
   ChatTicket,
   ConnectionState,
+  HandledBy,
   MessageDelivery,
+  QueuedSend,
+  RetryOutcome,
   SendAttachmentOptions,
   SendFailureReason,
   SendMessageOptions,
   Unsubscribe,
 } from '@dhaam-ccrm/core';
-export { ChatClientConfigError, ConnectionAbortedError, ConnectionSuspendedError } from '@dhaam-ccrm/core';
+export {
+  ChatClientConfigError,
+  ConnectionAbortedError,
+  ConnectionSuspendedError,
+  // What `switchSession` rejects with. Re-exported as a value so a consumer
+  // can `instanceof` it (and read `.sessionId`/`.cause`) without adding
+  // @dhaam-ccrm/core as a second dependency.
+  SessionSwitchError,
+} from '@dhaam-ccrm/core';

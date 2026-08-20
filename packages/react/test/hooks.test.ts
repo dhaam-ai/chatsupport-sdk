@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { RetryOutcome } from '@dhaam-ccrm/core';
 
 import { ChatProvider } from '../src/context.js';
 import { useChatError } from '../src/use-chat-error.js';
@@ -16,7 +18,7 @@ afterEach(() => {
 
 describe('useMessages', () => {
   it('exposes messages/pagination/uploading and delegates its actions to the client', () => {
-    const client = createFakeChatClient({ pagination: { hasMore: true, loadingMore: false } });
+    const client = createFakeChatClient({ pagination: { hasMore: true, loadingMore: false, initialLoaded: true } });
 
     function View() {
       const { messages, pagination, sendMessage, loadOlderMessages } = useMessages();
@@ -40,6 +42,74 @@ describe('useMessages', () => {
 
     fireEvent.click(screen.getByText('load-more'));
     expect(client.loadOlderMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('retryMessage replays the original id through client.retryMessage and hands back the typed RetryOutcome, without ever calling sendMessage', async () => {
+    const client = createFakeChatClient();
+    client.retryMessage = vi.fn(async (id: string): Promise<RetryOutcome> => ({
+      status: 'retried',
+      entry: {
+        id,
+        sessionId: 'sess_1',
+        payload: { type: 'TEXT', content: 'hi' },
+        enqueuedAt: 0,
+        attempts: 1,
+      },
+    }));
+
+    let observedOutcome: RetryOutcome | undefined;
+
+    function RetryView() {
+      const { retryMessage } = useMessages();
+      return h('button', {
+        onClick: () => {
+          void retryMessage('msg_failed_1').then((outcome) => {
+            observedOutcome = outcome;
+          });
+        },
+      }, 'retry');
+    }
+
+    render(h(ChatProvider, { client }, h(RetryView)));
+
+    fireEvent.click(screen.getByText('retry'));
+
+    expect(client.retryMessage).toHaveBeenCalledWith('msg_failed_1');
+    expect(client.retryMessage).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(observedOutcome?.status).toBe('retried');
+    });
+  });
+
+  it('a "refused" retryMessage outcome is branchable on `reason` without string-matching', async () => {
+    const client = createFakeChatClient(); // default: refused / not-found
+
+    let observedOutcome: RetryOutcome | undefined;
+
+    function RetryView() {
+      const { retryMessage } = useMessages();
+      return h('button', {
+        onClick: () => {
+          void retryMessage('msg_gone').then((outcome) => {
+            observedOutcome = outcome;
+          });
+        },
+      }, 'retry');
+    }
+
+    render(h(ChatProvider, { client }, h(RetryView)));
+    fireEvent.click(screen.getByText('retry'));
+
+    await waitFor(() => {
+      expect(observedOutcome?.status).toBe('refused');
+    });
+    // Typed discrimination, not string-matching a message: this only
+    // compiles/passes because `reason` is a real field on the union.
+    expect(observedOutcome && observedOutcome.status === 'refused' ? observedOutcome.reason : null).toBe(
+      'not-found',
+    );
   });
 });
 

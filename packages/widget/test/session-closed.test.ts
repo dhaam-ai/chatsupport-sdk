@@ -134,6 +134,7 @@ async function connected(sessionId = 'sess_1'): Promise<FakeWebSocket> {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   ulidCounter = 0;
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);

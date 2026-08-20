@@ -28,7 +28,15 @@ export 'src/auth/keys.dart'
         PublishableKeyEnvironment,
         SecretKeyInClientError;
 export 'src/auth/token.dart' show TokenProvider, TokenUnavailableError;
-export 'src/client.dart' show ChatClient, TypingEvent;
+export 'src/client.dart'
+    show
+        ChatClient,
+        RetryOutcome,
+        RetryRefusalReason,
+        RetryRefused,
+        RetryRetried,
+        TypingEvent,
+        kDefaultRetryable;
 export 'src/connection/backoff.dart' show Backoff, BackoffPolicy;
 export 'src/connection/connection.dart'
     show

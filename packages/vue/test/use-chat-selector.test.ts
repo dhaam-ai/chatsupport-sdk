@@ -117,14 +117,14 @@ describe('useChatSelector', () => {
   });
 
   it('suppresses the update when a composite selector rebuilds a shallow-equal object', async () => {
-    const client = createConformanceChatClient({ pagination: { hasMore: true, loadingMore: false } });
+    const client = createConformanceChatClient({ pagination: { hasMore: true, loadingMore: false, initialLoaded: true } });
     const { value, stop } = observe(client, (s) => ({ hasMore: s.pagination.hasMore }), shallowEqual);
 
     client.__harness.setState({ unreadCount: 7 });
     await client.__harness.flushMicrotasks();
     expect(value.updates()).toBe(0);
 
-    client.__harness.setState({ pagination: { hasMore: false, loadingMore: false } });
+    client.__harness.setState({ pagination: { hasMore: false, loadingMore: false, initialLoaded: true } });
     await client.__harness.flushMicrotasks();
     expect(value.updates()).toBe(1);
     expect(value.selected.value).toEqual({ hasMore: false });
@@ -135,7 +135,7 @@ describe('useChatSelector', () => {
     // Proves the previous test is testing `isEqual` and not something that
     // would have held anyway: identical selector, default `Object.is`, and a
     // fresh object literal per call is never `Object.is`-equal.
-    const client = createConformanceChatClient({ pagination: { hasMore: true, loadingMore: false } });
+    const client = createConformanceChatClient({ pagination: { hasMore: true, loadingMore: false, initialLoaded: true } });
     const { value, stop } = observe(client, (s) => ({ hasMore: s.pagination.hasMore }));
 
     client.__harness.setState({ unreadCount: 7 });

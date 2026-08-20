@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { validateFrame, isFrame, isValidUlid, isIsoTimestamp, isKnownFrameType } from './validate.js';
+import { validateFrame, isFrame, isValidUlid, isValidMessageId, isIsoTimestamp, isKnownFrameType } from './validate.js';
 
 const ULID_A = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
 const ULID_B = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
+// A real bot-reply id, straight off chat-service-node: messages the backend
+// mints itself (bot replies, system messages) never carry a client ULID and
+// get the database's UUID default instead.
+const UUID_BOT = 'b19afa49-5628-41fd-883b-e2182bf17978';
 const TS = 1_692_000_000_000;
 const ISO = '2026-08-17T00:00:00.000Z';
 
@@ -75,6 +79,16 @@ describe('validateFrame — valid frames of every type pass', () => {
         id: ULID_A,
         ts: TS,
         d: { id: ULID_B, sessionId: 'sess_1', senderId: 'p1', senderType: 'CUSTOMER', type: 'TEXT', content: 'hi', seq: 1, createdAt: ISO },
+      },
+    ],
+    [
+      'message.new from the bot, whose id is a server-minted UUID rather than a client ULID',
+      {
+        v: 1,
+        t: 'message.new',
+        id: ULID_A,
+        ts: TS,
+        d: { id: UUID_BOT, sessionId: 'sess_1', senderId: 'ai-bot', senderType: 'BOT', type: 'TEXT', content: 'Hello! How can I assist you today?', seq: 14, createdAt: ISO },
       },
     ],
     ['message.read', { v: 1, t: 'message.read', id: ULID_A, ts: TS, d: { participantId: 'agent_1', readAt: ISO } }],
@@ -290,6 +304,34 @@ describe('validateFrame — malformed frames rejected with a useful reason', () 
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.path).toBe('d.replay[0].d.sessionId');
+  });
+
+  // The bug this guards: a single bot reply inside the replay window made
+  // `validateReplayFrame` fail, which fails the WHOLE `connection.ack` — so a
+  // session that had ever seen the bot could not complete a resume handshake
+  // at all, and the widget showed nothing rather than one missing bubble.
+  it('accepts a connection.ack whose replay contains a bot message with a UUID id', () => {
+    const result = validateFrame({
+      v: 1,
+      t: 'connection.ack',
+      id: ULID_A,
+      ts: TS,
+      d: {
+        protocolVersion: 1,
+        seq: 14,
+        session: baseSession(),
+        replay: [
+          {
+            v: 1,
+            t: 'message.new',
+            id: ULID_B,
+            ts: TS,
+            d: { id: UUID_BOT, sessionId: 'sess_1', senderId: 'ai-bot', senderType: 'BOT', type: 'TEXT', content: 'hi', seq: 14, createdAt: ISO },
+          },
+        ],
+      },
+    });
+    expect(result.ok).toBe(true);
   });
 
   it('accepts a connection.ack whose replay array contains valid server push frames', () => {
@@ -659,6 +701,55 @@ describe('HandledBy — SessionSnapshot.handledBy, ParticipantSnapshot.displayNa
     if (result.ok && result.frame.t === 'connection.ack') {
       expect(result.frame.d.session.handledBy).toBeUndefined();
       expect(result.frame.d.session.participants[0]?.displayName).toBeUndefined();
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Message ids: ULID or UUID, and nothing looser.
+// -----------------------------------------------------------------------------
+
+describe('isValidMessageId', () => {
+  it('accepts a client-originated ULID', () => {
+    expect(isValidMessageId(ULID_A)).toBe(true);
+  });
+
+  it('accepts a server-minted UUID, in either case', () => {
+    expect(isValidMessageId(UUID_BOT)).toBe(true);
+    expect(isValidMessageId(UUID_BOT.toUpperCase())).toBe(true);
+  });
+
+  it('still rejects anything that is neither', () => {
+    for (const bad of ['', 'not-an-id', '01ARZ3NDEKTSV4RRFFQ69G5FA', 'b19afa49-5628-41fd-883b', 42, null, undefined, {}]) {
+      expect(isValidMessageId(bad)).toBe(false);
+    }
+  });
+
+  it('leaves isValidUlid strict — envelope ids and ack refs are unchanged', () => {
+    expect(isValidUlid(UUID_BOT)).toBe(false);
+    expect(isValidUlid(ULID_A)).toBe(true);
+  });
+});
+
+describe('validateFrame — message.new id shapes', () => {
+  const message = (id: unknown) => ({
+    v: 1,
+    t: 'message.new',
+    id: ULID_A,
+    ts: TS,
+    d: { id, sessionId: 'sess_1', senderId: 'ai-bot', senderType: 'BOT', type: 'TEXT', content: 'hi', seq: 14, createdAt: ISO },
+  });
+
+  it('accepts a bot reply carrying a UUID id', () => {
+    expect(validateFrame(message(UUID_BOT)).ok).toBe(true);
+  });
+
+  it('rejects an id that is neither a ULID nor a UUID, and says so', () => {
+    const result = validateFrame(message('not-an-id'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.path).toBe('d.id');
+      expect(result.reason).toBe('must be a valid ULID or UUID');
     }
   });
 });

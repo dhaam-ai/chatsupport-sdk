@@ -2,16 +2,21 @@
 //
 // Regression test for the "no history on load" symptom: the widget connects
 // fine and can send/receive live messages, but `ChatState.messages` never
-// gets seeded from `GET /chat/sessions/{id}/messages` because nothing ever
-// calls `client.loadOlderMessages()`. The "Load older" button in
-// ui/message-list.ts is wired to call it, but that button stays
+// gets seeded from `GET /chat/sessions/{id}/messages`, so a customer who
+// reloads comes back to an empty transcript. The "Load older" button in
+// ui/message-list.ts is wired to fetch it, but that button stays
 // `hidden = !state.pagination.hasMore`, and `pagination.hasMore` starts
-// `false` (state/types.ts) and is never flipped by anything else — so the
-// one thing that could trigger the fetch is a control the user can never see
-// or click. `MessageController.loadMore()` (core/src/messages/controller.ts)
-// is explicitly written to special-case an empty message list past that
-// guard, which is exactly what makes it safe to call unconditionally once,
-// on connect — this test proves the widget actually does that now.
+// `false` (state/types.ts) — so the one thing that could trigger the fetch is
+// a control the customer can never see or click.
+//
+// WHO does the seeding has since moved: the widget used to fire a once-ever
+// `loadOlderMessages()` off the `connectionState` transition, and core now
+// does it itself on every `connected`, guarded by `pagination.initialLoaded`.
+// That is why the latch is gone from widget.ts — it could not re-arm for a
+// session switch (see session-switch.test.ts) and it could not survive a
+// reconnect either. What this test asserts is unchanged and still the thing
+// that matters to a customer: reaching `connected` produces exactly one
+// history request, no more and no fewer.
 //
 // Uses a hand-driven fake WebSocket (mirroring
 // `@dhaam-ccrm/core`'s transport/stub-socket.ts, which is not part of this
@@ -69,6 +74,7 @@ function config(overrides: Partial<WidgetConfig> = {}): WidgetConfig {
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  localStorage.clear();
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);
 
@@ -138,11 +144,10 @@ describe('history on connect', () => {
       }),
     });
 
-    // Let the connection-state transition and the widget's `connected`
-    // handler (which calls `loadOlderMessages()`) run.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Macrotasks, not microtasks: core's `connected` handler reads the
+    // remembered session out of storage before it seeds, so the fetch is no
+    // longer issued in the same microtask drain as the ack.
+    for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 
     const historyCalls = fetchMock.mock.calls.filter(([input]) =>
       String(input).includes(`/chat/sessions/${SESSION_ID}/messages`),

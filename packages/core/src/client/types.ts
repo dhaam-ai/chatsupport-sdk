@@ -74,6 +74,7 @@ import type {
 import type { PresenceStatus } from '../protocol/index.js';
 import type { RetryOutcome, SendQueueRetention } from '../queue/index.js';
 import type {
+  ChatError,
   ChatEventHandler,
   ChatEventMap,
   ChatEventName,
@@ -160,6 +161,36 @@ export class ChatClientConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ChatClientConfigError';
+  }
+}
+
+/**
+ * Thrown by {@link ChatClient.switchSession} when the switch did not complete.
+ *
+ * `switchSession` is a composite operation — abandon, reset, join, wait for
+ * the snapshot, load page one — and every one of those steps can fail for a
+ * reason the caller can act on: the server refused the join (not your
+ * session), the socket was not open when the frame was written, or the
+ * snapshot never arrived. Before this existed all three failed the same way:
+ * silently, with the picker row highlighted and the transcript unchanged.
+ *
+ * `cause` carries the same {@link ChatError} that was written to
+ * `ChatState.lastError` and emitted as `error`, so a caller may handle this
+ * either way — by catching, or by watching state — without the two
+ * disagreeing.
+ */
+export class SessionSwitchError extends Error {
+  /** The session that could not be switched to. */
+  readonly sessionId: string;
+
+  /** The failure, in the same shape `ChatState.lastError` reports it. */
+  readonly cause: ChatError;
+
+  constructor(sessionId: string, cause: ChatError) {
+    super(`could not switch to session "${sessionId}": ${cause.message}`);
+    this.name = 'SessionSwitchError';
+    this.sessionId = sessionId;
+    this.cause = cause;
   }
 }
 
@@ -286,31 +317,83 @@ export interface ChatClient {
   /** User-initiated, terminal (§8.1). No auto-reconnect follows. */
   disconnect(): void;
   /**
-   * Joins a session by id over the open socket (`session.join`).
+   * Sends the raw `session.join` frame and nothing else.
    *
-   * Fire-and-forget like `leaveSession`/`requestAgent`: a successful join is
-   * observed through the `session.updated`/`connection.ack` snapshot that
-   * follows (`ChatState.session` becomes `sessionId`), not through this
-   * call's own return. A REJECTED join (the server's ownership check —
-   * v2/handlers.ts — refusing a session that does not belong to this
-   * customer) is surfaced through `ChatState.lastError`/the `error` event,
-   * same as every other protocol-level failure (§6.4) — it does not throw
-   * here and does not silently vanish either.
+   * Fire-and-forget, like `leaveSession`/`requestAgent`: a successful join is
+   * observed through the `session.updated` snapshot that follows
+   * (`ChatState.session` becomes `sessionId`), not through this call's own
+   * return. A REJECTED join (the server's ownership check — v2/handlers.ts —
+   * refusing a session that does not belong to this customer) is surfaced
+   * through `ChatState.lastError`/the `error` event, same as every other
+   * protocol-level failure (§6.4) — it does not throw here and does not
+   * silently vanish either.
    *
-   * `switchSession` below is this exact method under the name a session
-   * picker calls it by; the two are not independent operations that could
-   * drift apart — see its doc.
+   * **This is the protocol primitive, not "switch to this conversation".** It
+   * changes nothing about `ChatState` on its own: the transcript, watermarks,
+   * presence, unread count and resume anchor all still describe the session
+   * you were in, and no history is fetched for the session you named. Sending
+   * this frame and then rendering the resulting `session.updated` is exactly
+   * how a session picker used to show a NEW session's header above the OLD
+   * session's messages.
+   *
+   * Use {@link ChatClient.switchSession} to actually change conversations.
+   * This method remains for callers that genuinely want the bare frame — an
+   * agent-side console attaching to a session it is already displaying
+   * separately, or a test asserting on the wire.
    */
   joinSession(sessionId: string): void;
   /**
-   * Switches to a different session — the session-picker's action (T10).
-   * **Literally `joinSession(sessionId)`** — same frame, same ack handling,
-   * same everything; provided under this name only because "switch to this
-   * past conversation" reads better at a picker call site than "join". Pick
-   * whichever name reads better at your call site; nothing behaves
-   * differently between them, and nothing ever will — that equivalence is
-   * intentional and load-bearing, so a consumer can safely treat the two
-   * names as one operation.
+   * Switches the client to a different session — the session-picker's action.
+   *
+   * The composite operation, and the counterpart to {@link
+   * ChatClient.startNewSession}: where that one abandons the current session
+   * for a brand-new one, this one abandons it for an EXISTING one. In order:
+   *
+   *   1. the outgoing session's still-queued sends are failed rather than
+   *      carried over — `message.send` has no `sessionId` on the wire
+   *      (protocol/frames.ts), so an entry that outlived its session would be
+   *      attributed to whichever session is joined next;
+   *   2. typing timers and presence — both descriptions of a conversation no
+   *      longer on screen — are cleared;
+   *   3. the resume anchor is dropped: it is a position in a *per-session*
+   *      history (§12.5), and carrying it across makes the next
+   *      `connection.hello` ask to resume from a `seq` the new session has
+   *      never reached, which the v2 endpoint refuses NON-RETRYABLY and which
+   *      strands the client in `suspended`;
+   *   4. every per-session projection — `messages`, `pagination`, `typing`,
+   *      `unreadCount`, `readWatermarks`, `deliveredWatermarks`, `presence`,
+   *      `lastError` — is cleared in ONE `setState`, so no subscriber ever
+   *      observes the new session's id against the old session's transcript.
+   *      `pastSessions` is deliberately kept: it is a list *about* other
+   *      sessions, not state *of* this one;
+   *   5. `session.join` is sent and its ack awaited;
+   *   6. and page one of the new session's history is loaded.
+   *
+   * **Resolves only once that first page is in `ChatState.messages`**, so a
+   * caller can show a spinner for exactly the duration of the switch and know
+   * the transcript is on screen when it settles. Awaiting the `session.join`
+   * ack alone would not be enough: that ack is `EmptyAckData` (`{ ok: true }`,
+   * protocol/frames.ts) and carries no snapshot — the session itself arrives
+   * as a separate `session.updated` push the server volunteers afterwards.
+   *
+   * **Rejects with {@link SessionSwitchError}** if the server refused the
+   * join, the socket was not open when the frame was written, or the snapshot
+   * never arrived. The same failure is also written to `ChatState.lastError`
+   * and emitted as `error`, so either style of handling works — but the
+   * promise is the one that tells a picker that *this particular row* did not
+   * open. Do not call it and drop the promise on the floor.
+   *
+   * Switching to the session already joined is a no-op that resolves
+   * immediately: no frame, no reset, no refetch.
+   *
+   * The chosen session is remembered through `ChatClientConfig.storage`, so a
+   * page reload re-joins it rather than falling back to whatever session the
+   * server picks for a `connection.hello` — which carries no session id at
+   * all, leaving the server to re-resolve the customer's most recently
+   * updated ACTIVE session. That is very often not the one being read, since
+   * a session picked out of a picker is usually CLOSED or RESOLVED. Supply a
+   * durable adapter (`createBrowserStorageAdapter()`) for that to survive a
+   * real reload; the default `MemoryStorageAdapter` does not.
    *
    * `v2/handlers.ts` already ownership-checks `session.join` and already
    * accepts a TERMINAL session (`CLOSED`/`RESOLVED`) — switching to a past,
@@ -324,6 +407,11 @@ export interface ChatClient {
    * and this client only ever learns that happened from the resulting
    * `session.updated` — never assumes it.
    *
+   * A `statusChange` event is NOT emitted for the new session's status, even
+   * when it differs from the old one's: §6.5 defines that event as "the
+   * session you are in changed status", and a different session having a
+   * different status is a different chat, not a change.
+   *
    * ── The SWITCHED-close pairing ──
    *
    * That same reactivation may ALSO close the customer's other still-active
@@ -333,14 +421,13 @@ export interface ChatClient {
    * the session just switched into) in either order. Both are handled so
    * that pair can never corrupt the session just switched into: `SWITCHED`
    * is a parked close (§12.5) so the old session's queued sends are left
-   * alone rather than failed, and — the part T10 had to add — the
-   * `sessionClosed` event and `closedAt` stamp only ever apply to whichever
-   * session `frame.d.sessionId` actually names, never to whatever happens to
-   * be `ChatState.session` at the moment the frame arrives. A customer who
-   * has already switched will not be told their NEW chat just closed because
-   * their OLD one, elsewhere, did.
+   * alone rather than failed, and the `sessionClosed` event and `closedAt`
+   * stamp only ever apply to whichever session `frame.d.sessionId` actually
+   * names, never to whatever happens to be `ChatState.session` at the moment
+   * the frame arrives. A customer who has already switched will not be told
+   * their NEW chat just closed because their OLD one, elsewhere, did.
    */
-  switchSession(sessionId: string): void;
+  switchSession(sessionId: string): Promise<void>;
   leaveSession(): void;
 
   /**

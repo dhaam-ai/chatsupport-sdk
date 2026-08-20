@@ -86,6 +86,11 @@ export {
   ChatClientConfigError,
   ConnectionAbortedError,
   ConnectionSuspendedError,
+  // `switchSession()` is a composite operation (abandon, reset, join, wait
+  // for the snapshot, load page one) and every step of it can fail in a way
+  // a picker must be able to report on the row the user clicked. Public so a
+  // caller can tell that apart from an ordinary rejection.
+  SessionSwitchError,
   // The one canonical `handledBy`-staleness derivation (T10) — every binding
   // gates "connected to <name>" copy on this rather than re-deriving the
   // WAITING_FOR_AGENT-after-reactivation rule ad hoc. Same reasoning as

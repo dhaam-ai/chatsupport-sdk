@@ -121,6 +121,7 @@ async function connected(): Promise<{ widget: ChatWidget; socket: FakeWebSocket 
 }
 
 beforeEach(() => {
+  localStorage.clear();
   ulidCounter = 0;
   FakeWebSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeWebSocket);

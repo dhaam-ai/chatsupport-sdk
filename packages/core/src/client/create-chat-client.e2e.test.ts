@@ -20,10 +20,11 @@ import { describe, expect, it } from 'vitest';
 import type { MessageHistorySource, MessagePage } from '../messages/index.js';
 import { ManualTimers } from '../presence/index.js';
 import type { ConnectionAckPayload, MessagePayload, SessionSnapshot } from '../protocol/index.js';
+import type { ChatSessionSummary } from '../state/index.js';
 import { MemoryStorageAdapter } from '../storage/index.js';
 import { CLOSE_CODE, StubSocketFactory } from '../transport/index.js';
 import { createChatClient } from './create-chat-client.js';
-import type { ChatClientConfig } from './types.js';
+import type { ChatClientConfig, SessionSummarySource } from './types.js';
 
 const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -61,6 +62,18 @@ function ackJson(seq: number, session: SessionSnapshot, idNum: number): unknown 
 
 function genericAckJson(ref: string, idNum: number, extra: Record<string, unknown> = {}): unknown {
   return { v: 1, t: 'ack', id: ulid(idNum), ref, ts: 0, d: { ok: true, ...extra } };
+}
+
+function rejectedAckJson(
+  ref: string,
+  idNum: number,
+  error: { code: string; message: string; retryable: boolean },
+): unknown {
+  return { v: 1, t: 'ack', id: ulid(idNum), ref, ts: 0, d: { ok: false, error } };
+}
+
+function sessionUpdatedJson(session: SessionSnapshot, idNum: number): unknown {
+  return { v: 1, t: 'session.updated', id: ulid(idNum), ts: 0, d: { session } };
 }
 
 function messageNewJson(idNum: number, seq: number, overrides: Partial<MessagePayload> = {}): unknown {
@@ -533,7 +546,9 @@ describe('createChatClient — recovering from a closed session', () => {
     expect(state.presence).toEqual({});
     expect(state.typing.isTyping).toBe(false);
     expect(state.unreadCount).toBe(0);
-    expect(state.pagination).toEqual({ hasMore: false, loadingMore: false });
+    // `initialLoaded` is true, not false: core seeds page one on every
+    // `connected`, and the new session's (empty) history has been read.
+    expect(state.pagination).toEqual({ hasMore: false, loadingMore: false, initialLoaded: true });
   });
 
   it('fails a send queued against the closed session instead of delivering it into the new one', async () => {
@@ -584,5 +599,374 @@ describe('createChatClient — recovering from a closed session', () => {
     // §12.5: SWITCHED parks the session rather than ending it, so its
     // undelivered sends are still live.
     expect(failures).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listSessions() — the picker's data source (T10)
+// ---------------------------------------------------------------------------
+
+class FakeSessionSummarySource implements SessionSummarySource {
+  readonly calls: Array<{ readonly limit?: number } | undefined> = [];
+  result: readonly ChatSessionSummary[] = [];
+  failure: unknown;
+
+  async listSessions(query?: { readonly limit?: number }): Promise<readonly ChatSessionSummary[]> {
+    this.calls.push(query);
+    if (this.failure !== undefined) throw this.failure;
+    return this.result;
+  }
+}
+
+describe('createChatClient — listSessions()', () => {
+  it('throws ChatClientConfigError when config.sessionSummarySource was not supplied', async () => {
+    const h = harness();
+    const client = createChatClient(h.config);
+    await expect(client.listSessions()).rejects.toThrow(/sessionSummarySource/);
+  });
+
+  it('writes the result to ChatState.pastSessions (including handledBy) and returns the same data', async () => {
+    const source = new FakeSessionSummarySource();
+    const summary: ChatSessionSummary = {
+      id: 'sess_old_1',
+      status: 'RESOLVED',
+      mode: 'HUMAN',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      closedAt: '2026-08-01T01:00:00.000Z',
+      lastMessageAt: '2026-08-01T00:30:00.000Z',
+      unreadCount: 0,
+      handledBy: { kind: 'AGENT', id: 'agent_old_1', displayName: 'Ada' },
+    };
+    source.result = [summary];
+
+    const h = harness({ sessionSummarySource: source });
+    const client = createChatClient(h.config);
+
+    const result = await client.listSessions({ limit: 5 });
+
+    expect(result).toEqual([summary]);
+    expect(client.getState().pastSessions).toEqual([summary]);
+    expect(source.calls).toEqual([{ limit: 5 }]);
+  });
+
+  it('an empty result is a normal, successful state — not an error, not converted to a special case', async () => {
+    const source = new FakeSessionSummarySource();
+    source.result = []; // e.g. an unidentified guest — the wire's own "200 { sessions: [] }".
+
+    const h = harness({ sessionSummarySource: source });
+    const client = createChatClient(h.config);
+
+    await expect(client.listSessions()).resolves.toEqual([]);
+    expect(client.getState().pastSessions).toEqual([]);
+    expect(client.getState().lastError).toBeNull();
+  });
+
+  it('rejects when the adapter rejects, rather than swallowing the failure into lastError', async () => {
+    const source = new FakeSessionSummarySource();
+    source.failure = new Error('network down');
+
+    const h = harness({ sessionSummarySource: source });
+    const client = createChatClient(h.config);
+
+    await expect(client.listSessions()).rejects.toThrow('network down');
+    // Unlike loadOlderMessages, this does not have a side-channel — a picker
+    // calling this once on open needs a direct rejection to show its own
+    // "couldn't load" state.
+    expect(client.getState().lastError).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// switchSession() — the session-picker's action (T10)
+// ---------------------------------------------------------------------------
+
+describe('createChatClient — switchSession()', () => {
+  it('sends session.join with the given id and does not optimistically change ChatState.session', async () => {
+    const h = harness();
+    const client = await connected(h);
+    const before = client.getState().session;
+
+    void client.switchSession('session_2').catch(() => undefined);
+    await tick();
+
+    const sent = h.sockets.last
+      .sentFrames()
+      .find((frame) => (frame as { t: string }).t === 'session.join') as { d: Record<string, unknown> };
+    expect(sent?.d).toEqual({ sessionId: 'session_2' });
+    // Same object — the switch never guesses at a session the server has not
+    // confirmed, so `session` still describes the one the client is in.
+    expect(client.getState().session).toBe(before);
+  });
+
+  it('DOES replace the transcript, rather than leaving the old session\'s messages on screen', async () => {
+    // User-reported bug 1, at the level core owns it. `switchSession` used to
+    // be `joinSession` under a second name: it sent the frame and changed
+    // nothing else, so a picker moved the header onto the new session while
+    // the old session's messages stayed put. Full coverage of the
+    // replacement lives in ./session-switch.test.ts; this is the headline
+    // behaviour asserted from the composed client.
+    const h = harness();
+    const client = await connected(h);
+    h.sockets.last.emitJson(messageNewJson(50, 1, { content: 'existing transcript' }));
+    await tick();
+    expect(client.getState().messages).toHaveLength(1);
+
+    const switching = client.switchSession('session_2');
+    await tick();
+
+    const join = h.sockets.last
+      .sentFrames()
+      .find((frame) => (frame as { t: string }).t === 'session.join') as { id: string };
+    h.sockets.last.emitJson(genericAckJson(join.id, 44));
+    await tick();
+    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 45));
+    await tick();
+    await switching;
+
+    expect(client.getState().session?.id).toBe('session_2');
+    expect(client.getState().messages).toHaveLength(0); // FakeHistory serves an empty page
+    expect(h.history.calls.some((call) => call.sessionId === 'session_2')).toBe(true);
+  });
+
+  it('applies the switch only once session.updated for the new session arrives — status is observed, never guessed', async () => {
+    const h = harness();
+    const client = await connected(h); // session_1, ASSIGNED
+
+    void client.switchSession('session_2').catch(() => undefined);
+    await tick();
+    // Still the old session: `session.join`'s ack is EmptyAckData, so the
+    // switch is confirmed only by the snapshot that follows.
+    expect(client.getState().session?.id).toBe('session_1');
+
+    // v2/handlers.ts already accepts a TERMINAL session join — this one
+    // comes back CLOSED, unreactivated, and the client must render exactly
+    // that rather than assuming a join reopens it.
+    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2', status: 'CLOSED' }), 40));
+    await tick();
+
+    expect(client.getState().session?.id).toBe('session_2');
+    expect(client.getState().session?.status).toBe('CLOSED');
+
+    // Reactivation (T1, backend) is observed from a LATER snapshot, never
+    // assumed locally — this client never flips status itself.
+    h.sockets.last.emitJson(
+      sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2', status: 'WAITING_FOR_AGENT' }), 41),
+    );
+    await tick();
+    expect(client.getState().session?.status).toBe('WAITING_FOR_AGENT');
+  });
+
+  it('surfaces a REJECTED join through lastError/error rather than vanishing silently (v2/handlers.ts ownership check)', async () => {
+    const h = harness();
+    const client = await connected(h);
+    const errors: unknown[] = [];
+    client.on('error', (error) => errors.push(error));
+
+    const switching = client.switchSession('session_not_owned');
+    await tick();
+
+    const sent = h.sockets.last
+      .sentFrames()
+      .find((frame) => (frame as { t: string }).t === 'session.join') as { id: string };
+    h.sockets.last.emitJson(
+      rejectedAckJson(sent.id, 41, { code: 'SESSION_NOT_FOUND', message: 'not yours', retryable: false }),
+    );
+    // Reported through lastError/error AND thrown, so a picker awaiting the
+    // switch and a subscriber watching state hear the same thing.
+    await expect(switching).rejects.toThrow(/session_not_owned/);
+    await tick();
+
+    expect(errors).toHaveLength(1);
+    expect(client.getState().lastError?.code).toBe('SESSION_NOT_FOUND');
+    // A rejected switch leaves the session the client WAS in untouched.
+    expect(client.getState().session?.id).toBe('session_1');
+  });
+
+  it('the SWITCHED-close of the OLD session, arriving AFTER the switch is confirmed, does not corrupt or announce-closed the new one', async () => {
+    const h = harness();
+    const client = await connected(h); // session_1
+    const closures: { closeReason: string }[] = [];
+    client.on('sessionClosed', (payload) => closures.push(payload));
+
+    void client.switchSession('session_2').catch(() => undefined);
+    await tick();
+
+    // The switch is confirmed and reactivated first — the realistic
+    // ordering: T1's reactivation only fires once the customer sends a
+    // message into the newly-joined session, well after the join's own
+    // snapshot already landed.
+    h.sockets.last.emitJson(
+      sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2', status: 'WAITING_FOR_AGENT' }), 40),
+    );
+    await tick();
+    expect(client.getState().session?.id).toBe('session_2');
+
+    // ...and only THEN does the OLD session (session_1), elsewhere, close
+    // with SWITCHED.
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'SWITCHED', 41));
+    await tick();
+
+    // Must NOT read as "your current chat just closed" — session_1 is not
+    // ChatState.session by this point.
+    expect(closures).toEqual([]);
+    expect(client.getState().session?.id).toBe('session_2');
+    expect(client.getState().session?.status).toBe('WAITING_FOR_AGENT');
+    expect(client.getState().session?.closedAt).toBeNull();
+  });
+
+  it('the same pairing in the opposite order still lands correctly on the new session, never stuck closed', async () => {
+    const h = harness();
+    const client = await connected(h); // session_1
+
+    void client.switchSession('session_2').catch(() => undefined);
+    await tick();
+
+    // This time the OLD session's SWITCHED close arrives WHILE session_1 is
+    // still ChatState.session (the switch has not been confirmed yet) — a
+    // legitimate "the session I am currently in just closed" observation at
+    // that instant, not the corruption case above.
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'SWITCHED', 40));
+    await tick();
+
+    // The switch itself is unaffected by that close either way.
+    h.sockets.last.emitJson(
+      sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2', status: 'WAITING_FOR_AGENT' }), 41),
+    );
+    await tick();
+
+    expect(client.getState().session?.id).toBe('session_2');
+    expect(client.getState().session?.status).toBe('WAITING_FOR_AGENT');
+    expect(client.getState().session?.closedAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// retryMessage() — wraps SendQueue.retry() (T9) verbatim, plus the
+// wrong-session guard T10 added (T9's primitive cannot see "the current
+// session" on its own).
+// ---------------------------------------------------------------------------
+
+describe('createChatClient — retryMessage()', () => {
+  it('refuses as not-found when nothing failed under that id', async () => {
+    const h = harness();
+    const client = await connected(h);
+    await expect(client.retryMessage('01ARZ3NDEKTSV4RRFFQ69G5FAA')).resolves.toEqual({
+      status: 'refused',
+      reason: 'not-found',
+    });
+  });
+
+  it('retries a rejected-but-retryable send: re-queues under the SAME id and shows it as queued again immediately', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    await client.sendMessage('will fail');
+    await tick();
+    const sendFrame = h.sockets.last
+      .sentFrames()
+      .find((frame) => (frame as { t: string }).t === 'message.send') as { id: string };
+    const id = sendFrame.id;
+
+    h.sockets.last.emitJson(
+      rejectedAckJson(id, 40, { code: 'RATE_LIMITED', message: 'slow down', retryable: true }),
+    );
+    await tick();
+    expect(client.getState().messages.find((m) => m.id === id)?.delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      code: 'RATE_LIMITED',
+      retryable: true,
+    });
+
+    const outcome = await client.retryMessage(id);
+    expect(outcome.status).toBe('retried');
+    if (outcome.status === 'retried') {
+      // The ORIGINAL envelope id, verbatim — the server dedupes on it (§9.3).
+      expect(outcome.entry.id).toBe(id);
+    }
+
+    // Back to 'queued' immediately — no waiting on the eventual outcome to
+    // drop the dead bubble's Retry affordance.
+    expect(client.getState().messages.find((m) => m.id === id)?.delivery).toEqual({ state: 'queued' });
+
+    // Two message.send frames went out in total (the original attempt, then
+    // the replay) — both under the IDENTICAL id, never a second, distinct
+    // ULID for what the user experiences as one message.
+    const sendFrames = h.sockets.last
+      .sentFrames()
+      .filter((frame): frame is { t: string; id: string } => (frame as { t: string }).t === 'message.send');
+    expect(sendFrames).toHaveLength(2);
+    expect(sendFrames.every((frame) => frame.id === id)).toBe(true);
+
+    // And the eventual outcome still arrives the normal way, through the
+    // same onAck wiring — retryMessage did not have to rewire anything.
+    h.sockets.last.emitJson(genericAckJson(id, 41, { seq: 9 }));
+    await tick();
+    const finalMessage = client.getState().messages.find((m) => m.id === id);
+    expect(finalMessage?.delivery).toBeUndefined();
+    expect(finalMessage?.seq).toBe(9);
+  });
+
+  it('refuses as not-retryable, and leaves the message failed, when the server said retryable:false', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    await client.sendMessage('will fail for good');
+    await tick();
+    const id = (
+      h.sockets.last.sentFrames().find((frame) => (frame as { t: string }).t === 'message.send') as { id: string }
+    ).id;
+
+    h.sockets.last.emitJson(
+      rejectedAckJson(id, 40, { code: 'VALIDATION_FAILED', message: 'bad content', retryable: false }),
+    );
+    await tick();
+
+    const outcome = await client.retryMessage(id);
+    expect(outcome).toEqual({ status: 'refused', reason: 'not-retryable' });
+    // Unchanged — still failed, no re-queue attempt went out.
+    expect(client.getState().messages.find((m) => m.id === id)?.delivery).toEqual({
+      state: 'failed',
+      reason: 'rejected',
+      code: 'VALIDATION_FAILED',
+      retryable: false,
+    });
+  });
+
+  it("refuses as not-retryable a failure whose ORIGINAL session is no longer the one currently joined (T10's wrong-session guard)", async () => {
+    const h = harness();
+    const client = await connected(h); // session_1
+
+    // Never acked, so it is still queued when session_1 closes.
+    await client.sendMessage('about my resolved order');
+    await tick();
+    const id = (
+      h.sockets.last.sentFrames().find((frame) => (frame as { t: string }).t === 'message.send') as { id: string }
+    ).id;
+
+    h.sockets.last.emitJson(sessionClosedJson('session_1', 'RESOLVED', 20));
+    await tick();
+    expect(client.getState().messages.find((m) => m.id === id)?.delivery).toMatchObject({
+      state: 'failed',
+      reason: 'sessionClosed',
+    });
+
+    const restart = client.startNewSession();
+    await tick();
+    ackNewSocket(h, sessionSnapshot({ sessionId: 'session_2' }));
+    await restart;
+    await tick();
+
+    // T9's SendQueue.retry() alone cannot see this: message.send carries no
+    // sessionId, so replaying this entry now would silently attribute the
+    // old session's message to session_2.
+    const outcome = await client.retryMessage(id);
+    expect(outcome).toEqual({ status: 'refused', reason: 'not-retryable' });
+
+    // Nothing for it went out on the new socket.
+    const sentOnNewSocket = h.sockets.last
+      .sentFrames()
+      .filter((frame) => (frame as { t: string; id: string }).t === 'message.send' && (frame as { id: string }).id === id);
+    expect(sentOnNewSocket).toEqual([]);
   });
 });

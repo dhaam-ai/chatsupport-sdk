@@ -106,10 +106,12 @@ describe('delivery ticks', () => {
     expect(view.log.querySelector('.dh-msg')?.textContent).not.toContain('Delivered');
   });
 
-  it('offers a retry, and no tick, on a failed send', () => {
+  it('offers a retry, and no tick, on a failed send core marked retryable', () => {
     const { view, onRetry } = build();
     view.render(
-      state({ messages: [message({ delivery: { state: 'failed', reason: 'rejected' } })] }),
+      state({
+        messages: [message({ delivery: { state: 'failed', reason: 'rejected', retryable: true } })],
+      }),
       ME,
     );
 
@@ -118,10 +120,111 @@ describe('delivery ticks', () => {
     // A tick would claim something untrue about a message that will never
     // arrive; `delivery.reason` plus a retry button is the right affordance.
     expect(view.log.querySelector('.dh-tick')?.textContent).toBe('');
+    // The failure is stated in words regardless of the button, and stays
+    // stated once the button is present too.
+    expect(view.log.querySelector('.dh-failure')?.textContent).toBe(
+      'This message could not be sent.',
+    );
 
     retry?.click();
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
+
+  it('bug #4: hides retry — and shows why — on a failure core marked non-retryable', () => {
+    // The exact bug: `retry.hidden = !failed` used to show Retry for EVERY
+    // failure, including one refused as non-retryable (e.g. a rejected send
+    // with `code: 'SESSION_CLOSED'`). Retrying that exact send is refused
+    // identically every time, so the button must not exist at all — the
+    // failure reason is shown with no button beside it.
+    const { view, onRetry } = build();
+    view.render(
+      state({
+        messages: [
+          message({
+            delivery: { state: 'failed', reason: 'rejected', code: 'SESSION_CLOSED', retryable: false },
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    // `hidden`, not merely visually suppressed: this is what takes the
+    // control out of both the layout and the tab order, per the native
+    // `hidden` attribute's semantics (WCAG-visible: a control absent from
+    // the accessibility tree, not just styled away).
+    const retry = view.log.querySelector<HTMLButtonElement>('.dh-retry');
+    expect(retry?.hidden).toBe(true);
+    const failure = view.log.querySelector<HTMLElement>('.dh-failure');
+    expect(failure?.textContent).toBe('This message could not be sent.');
+    expect(failure?.hidden).toBe(false);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('shows a distinct reason per SendFailureReason, exhaustively', () => {
+    const cases: Array<['rejected' | 'sessionClosed' | 'expired' | 'evicted' | 'storage', string]> = [
+      ['rejected', 'This message could not be sent.'],
+      ['sessionClosed', 'This conversation ended before this message could send.'],
+      ['expired', 'This message took too long to send.'],
+      ['evicted', 'Too many messages were waiting to send.'],
+      ['storage', 'This message could not be saved on this device.'],
+    ];
+
+    for (const [reason, expected] of cases) {
+      document.body.innerHTML = '';
+      const { view } = build();
+      view.render(
+        state({ messages: [message({ delivery: { state: 'failed', reason, retryable: false } })] }),
+        ME,
+      );
+      expect(view.log.querySelector('.dh-failure')?.textContent).toBe(expected);
+    }
+  });
+
+  it('clears the failure line once a message stops being failed', () => {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [message({ id: 'a', delivery: { state: 'failed', reason: 'rejected', retryable: true } })],
+      }),
+      ME,
+    );
+    expect(view.log.querySelector('.dh-failure')?.textContent).not.toBe('');
+
+    // Same message id, now confirmed — core patches `delivery` away entirely.
+    view.render(state({ messages: [message({ id: 'a', seq: 3 })] }), ME);
+    expect(view.log.querySelector('.dh-failure')?.textContent).toBe('');
+    expect(view.log.querySelector<HTMLButtonElement>('.dh-retry')?.hidden).toBe(true);
+  });
+
+  it(
+    'passes the real message — id, content, and attachment intact — to retry, even when the ' +
+      'bubble suppresses the attachment-url placeholder',
+    () => {
+      // The related bug named in the brief: retry used to be able to send ''
+      // for an attachment message because something read the SUPPRESSED
+      // bubble text. `onRetry` never goes through `visibleContent()` at
+      // all — it is handed the message object core gave this row, id and
+      // all, so a retry keyed on `message.id` (core's `retryMessage`) can
+      // never see the placeholder-stripped string in the first place.
+      const { view, onRetry } = build();
+      const url = 'https://cdn.example.com/receipts/receipt.png';
+      const failed = message({
+        id: 'att-1',
+        content: url, // §12.10 placeholder — suppressed in the bubble
+        attachment: { url, fileName: 'receipt.png', mimeType: 'image/png', mediaType: 'image', size: 10 },
+        delivery: { state: 'failed', reason: 'rejected', retryable: true },
+      });
+      view.render(state({ messages: [failed] }), ME);
+
+      // Confirms the suppression really did fire on this fixture.
+      expect(view.log.querySelector('.dh-msg-body')?.textContent).toBe('');
+
+      view.log.querySelector<HTMLButtonElement>('.dh-retry')?.click();
+      expect(onRetry).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'att-1', content: url, attachment: failed.attachment }),
+      );
+    },
+  );
 });
 
 describe('the live region', () => {
@@ -200,6 +303,34 @@ describe('the live region', () => {
 });
 
 describe('rendering', () => {
+  it('says "no messages yet" only once it knows there are none', () => {
+    const { view } = build();
+    const empty = view.log.querySelector<HTMLElement>('.dh-empty');
+    if (empty === null) throw new Error('no empty state rendered');
+
+    // Before the first page comes back, an empty list means "nobody has asked
+    // yet" — telling a customer with a year of history that their conversation
+    // is empty is a lie, and it is a lie the customer re-reads on every
+    // session switch, which clears the transcript on purpose.
+    view.render(state({ messages: [] }), ME);
+    expect(empty.hidden).toBe(true);
+
+    view.render(
+      state({ messages: [], pagination: { hasMore: false, loadingMore: false, initialLoaded: true } }),
+      ME,
+    );
+    expect(empty.hidden).toBe(false);
+
+    view.render(
+      state({
+        messages: [message()],
+        pagination: { hasMore: false, loadingMore: false, initialLoaded: true },
+      }),
+      ME,
+    );
+    expect(empty.hidden).toBe(true);
+  });
+
   it('renders message text as text, never as markup', () => {
     const { view } = build();
     view.render(state({ messages: [message({ content: '<img src=x onerror=alert(1)>' })] }), ME);
@@ -551,9 +682,13 @@ describe('a conversation the agent closed', () => {
 
   it('hides retry, so a dead session offers one way forward rather than two', () => {
     const { view } = build();
+    // `retryable: true` deliberately, so this test still exercises the
+    // CSS-driven `data-closed` suppression rather than passing vacuously
+    // because `retryable` gating already hid the button for an unrelated
+    // reason.
     const failed = message({
       id: 'a',
-      delivery: { state: 'failed', reason: 'sessionClosed' },
+      delivery: { state: 'failed', reason: 'sessionClosed', retryable: true },
     });
 
     view.render(state({ messages: [failed] }), ME);

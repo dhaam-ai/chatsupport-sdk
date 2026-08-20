@@ -56,6 +56,10 @@ const PUBLIC_SURFACE: readonly string[] = [
   'InvalidTokenResponseError',
   'NoActiveSessionError',
   'SecretKeyInClientError',
+  // A failed `switchSession()` — the server refused the join, the socket was
+  // not open, or the snapshot never arrived. A session picker has to be able
+  // to tell that apart from any other rejection to report on the right row.
+  'SessionSwitchError',
   'StorageError',
   'isStorageError',
   // §6.4/§6.5 state and event catalogue.

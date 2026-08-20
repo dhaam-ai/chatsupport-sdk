@@ -16,7 +16,7 @@ import { useChatSelector } from './use-chat-selector.js';
 export interface UseMessagesResult {
   /** In server order (D2's `seq`), optimistic sends appended per core's own ordering — never re-sorted here (§6.4). */
   messages: Readonly<ShallowRef<ChatMessage[]>>;
-  pagination: Readonly<ShallowRef<{ hasMore: boolean; loadingMore: boolean }>>;
+  pagination: Readonly<ShallowRef<{ hasMore: boolean; loadingMore: boolean; initialLoaded: boolean }>>;
   /** True while an attachment upload is in flight (§6.4). */
   uploading: Readonly<ShallowRef<boolean>>;
 
@@ -29,7 +29,7 @@ export interface UseMessagesResult {
 }
 
 const selectMessages = (state: ChatState): ChatMessage[] => state.messages;
-const selectPagination = (state: ChatState): { hasMore: boolean; loadingMore: boolean } => state.pagination;
+const selectPagination = (state: ChatState): { hasMore: boolean; loadingMore: boolean; initialLoaded: boolean } => state.pagination;
 const selectUploading = (state: ChatState): boolean => state.uploading;
 
 export function useMessages(): UseMessagesResult {

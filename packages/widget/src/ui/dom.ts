@@ -83,4 +83,7 @@ export const ICONS = {
   mic: ['M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z', 'M19 10v1a7 7 0 0 1-14 0v-1', 'M12 18.5V22'],
   trash: ['M3 6h18', 'M8 6V4h8v2', 'M19 6l-1 14H6L5 6'],
   stop: ['M7 7h10v10H7z'],
+  // The session-switcher toggle (ui/session-picker.ts) — a plain list glyph,
+  // not a chat/clock icon, so it does not compete visually with the launcher.
+  list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
 } as const;

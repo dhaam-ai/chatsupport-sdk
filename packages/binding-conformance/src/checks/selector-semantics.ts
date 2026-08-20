@@ -54,7 +54,7 @@ export const SELECTOR_SEMANTICS_CHECKS: ConformanceCheck[] = [
     id: 'selector-shallow-equal-caching-suppresses-notify',
     description: 'a composite selector returning a shallow-equal new object does not notify (React useSyncExternalStore identity trap)',
     async run(adapter) {
-      const client = createConformanceChatClient({ pagination: { hasMore: true, loadingMore: false } });
+      const client = createConformanceChatClient({ pagination: { hasMore: true, loadingMore: false, initialLoaded: true } });
       const handle = adapter.mount(client);
       try {
         // A fresh object literal every call, by construction — the exact
@@ -73,7 +73,7 @@ export const SELECTOR_SEMANTICS_CHECKS: ConformanceCheck[] = [
         ).toBe(0);
         expect(view.value()).toEqual({ hasMore: true });
 
-        client.__harness.setState({ pagination: { hasMore: false, loadingMore: false } });
+        client.__harness.setState({ pagination: { hasMore: false, loadingMore: false, initialLoaded: true } });
         await client.__harness.flushMicrotasks();
         await handle.settle();
         expect(view.updateCount(), 'hasMore itself finally changed').toBe(1);

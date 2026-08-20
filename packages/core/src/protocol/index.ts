@@ -101,6 +101,7 @@ export type {
 
 export {
   isValidUlid,
+  isValidMessageId,
   isIsoTimestamp,
   isKnownFrameType,
   isClientToServerFrameType,

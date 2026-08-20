@@ -50,6 +50,25 @@ export interface MessageControllerOptions {
 
   /** Defaults to {@link DEFAULT_PAGE_SIZE}. */
   readonly pageSize?: number;
+
+  /**
+   * The session-switch generation counter, sampled when a history read is
+   * ISSUED and compared again when it RESOLVES.
+   *
+   * This is not a second, parallel staleness mechanism — it is a read of the
+   * one `createChatClient` already keeps for exactly this purpose
+   * (`switchEpoch`, whose `stale()` checks gate every step of
+   * `performSwitch`). A history read has no other way to learn that the
+   * session moved underneath it: `ChatState.session` still names the OUTGOING
+   * session for the whole window between the switch's per-session reset and
+   * the server's `session.updated` push, so "compare against whatever is
+   * current" answers "yes, still mine" for precisely the interval in which it
+   * is wrong.
+   *
+   * Omitted outside `createChatClient` (there is no switch to be stale
+   * against), where it reads as a constant.
+   */
+  readonly generation?: () => number;
 }
 
 /**
@@ -157,8 +176,21 @@ export class MessageController {
   readonly #uploader: AttachmentUploader;
   readonly #pageSize: number;
 
+  readonly #generation: () => number;
+
   /** Uploads currently in flight. See `#setUploading`. */
   #uploads = 0;
+
+  /**
+   * Identifies the most recently ISSUED history read.
+   *
+   * `pagination` is single-valued but reads can overlap — a switch issues its
+   * own page one while an earlier read is still outstanding — so exactly one
+   * read may own that slot, and it is always the newest. An older read that
+   * resolves late writes nothing at all rather than reopening the reentrancy
+   * latch under its successor.
+   */
+  #loadToken = 0;
 
   /**
    * Outcomes that arrived before the message they describe was in state.
@@ -182,6 +214,7 @@ export class MessageController {
     this.#history = options.history;
     this.#uploader = options.uploader;
     this.#pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE;
+    this.#generation = options.generation ?? (() => 0);
   }
 
   // -----------------------------------------------------------------------
@@ -292,38 +325,77 @@ export class MessageController {
    * (`lastError`) and §6.5 makes it an event, so a caller that already
    * subscribes would otherwise hear about the same failure twice and be
    * forced into a `try`/`catch` for something it is already watching.
+   *
+   * @param sessionId Reads history for this session instead of
+   * `ChatState.session`. Supplied by the session-switch path, which must not
+   * depend on the server's `session.updated` push having landed first — and
+   * for which an in-flight switch would otherwise be a race between "which
+   * session is current" and "which session is being paged". Omitted
+   * everywhere else, where "the current session" is exactly right.
    */
-  async loadMore(): Promise<void> {
+  async loadMore(sessionId?: string): Promise<void> {
     const state = this.#store.getState();
-    const sessionId = state.session?.id;
-    if (sessionId === undefined) throw new NoActiveSessionError('loadMore');
+    const target = sessionId ?? state.session?.id;
+    if (target === undefined) throw new NoActiveSessionError('loadMore');
 
     // Reentrancy guard: a scroll handler can fire this many times per frame,
     // and a second in-flight page would request the same cursor.
     if (state.pagination.loadingMore) return;
 
-    // Nothing older to walk back to. The empty-list case is deliberately not
-    // covered by this guard: `hasMore` starts `false` (§6.4's initial state),
-    // so treating that as "nothing older exists" before anything is loaded
-    // would make a cold start permanently unable to fetch its first page.
-    if (!state.pagination.hasMore && state.messages.length > 0) return;
+    // Nothing older to walk back to — and `initialLoaded` is what makes that
+    // readable. `hasMore` starts `false` (§6.4's initial state), so it cannot
+    // distinguish "the server said there is nothing older" from "nobody has
+    // asked yet"; this guard used to substitute `messages.length > 0` for
+    // that, which is wrong whenever the list is non-empty for any reason
+    // other than a finished history load — a rehydrated offline send queue,
+    // or a live `message.new` that beat page one. In both cases the guard
+    // fired, `loadMore()` returned silently, and the transcript never
+    // appeared.
+    if (state.pagination.initialLoaded && !state.pagination.hasMore) return;
 
-    this.#store.setState({ pagination: { hasMore: state.pagination.hasMore, loadingMore: true } });
+    // The stamp. Both halves are re-checked before EITHER state write below,
+    // because a read that outlived its session must be able to change nothing
+    // at all — not the rows, and not `pagination`. Latching `initialLoaded`
+    // for a conversation nobody is reading is what silently disarms the
+    // switch's own seed at the `initialLoaded && !hasMore` guard above, and
+    // latching the old `hasMore` is what lets two transcripts be spliced
+    // together when it does run.
+    const token = (this.#loadToken += 1);
+    const generation = this.#generation();
 
-    const before = state.messages[0]?.id;
+    this.#store.setState({
+      pagination: {
+        hasMore: state.pagination.hasMore,
+        loadingMore: true,
+        initialLoaded: state.pagination.initialLoaded,
+      },
+    });
+
+    // Only ever a cursor within `target`'s own history. A `before` taken from
+    // a different session's oldest message asks the server to page a session
+    // the cursor does not belong to.
+    const before = sessionId === undefined ? state.messages[0]?.id : undefined;
     try {
       const page = await this.#history.listMessages({
-        sessionId,
+        sessionId: target,
         ...(before === undefined ? {} : { before }),
         limit: this.#pageSize,
       });
 
+      if (this.#discard(token, target, generation)) return;
+
       // Re-read: a live `message.new` may have landed during the fetch.
       this.#store.setState({
-        messages: prependPage(this.#store.getState().messages, page.messages),
-        pagination: { hasMore: page.hasMore, loadingMore: false },
+        messages: prependPage(this.#store.getState().messages, this.#ownRows(page.messages, target)),
+        pagination: { hasMore: page.hasMore, loadingMore: false, initialLoaded: true },
       });
     } catch {
+      // Same stamp check as the success path, and for the same reason with
+      // one addition: `lastError` is per-session state (`switchSession`
+      // clears it), so reporting a failure earned in the session the customer
+      // just left would surface it against the one they just opened.
+      if (this.#discard(token, target, generation)) return;
+
       // The adapter's error text is deliberately not copied into the message:
       // a failed request can carry a tokenized URL (§14).
       const error: ChatError = {
@@ -332,12 +404,77 @@ export class MessageController {
         message: 'failed to load message history',
         retryable: true,
       };
+      // `initialLoaded` is preserved, never latched: a load that FAILED did
+      // not load anything, so latching it here would make the guard above
+      // refuse every retry and leave an empty transcript permanently empty.
       this.#store.setState({
-        pagination: { hasMore: this.#store.getState().pagination.hasMore, loadingMore: false },
+        pagination: {
+          hasMore: this.#store.getState().pagination.hasMore,
+          loadingMore: false,
+          initialLoaded: this.#store.getState().pagination.initialLoaded,
+        },
         lastError: error,
       });
       this.#store.emit('error', error);
     }
+  }
+
+  /**
+   * Whether a resolved history read must write nothing.
+   *
+   * Two independent ways a read stops being the one that owns `pagination`:
+   *
+   *   - **Superseded.** A newer read has since been issued, so the newer one
+   *     owns the slot. This one returns in complete silence — clearing
+   *     `loadingMore` here would reopen the reentrancy latch underneath a
+   *     request that is still in flight.
+   *   - **Stale.** Still the newest read, but for a session or a switch
+   *     generation that has moved on. `loadingMore` IS released, because this
+   *     read is the one that set it and nothing else will: leaving it latched
+   *     jams the guard in `loadMore` and turns every later page request into
+   *     a silent no-op. Nothing else is written.
+   */
+  #discard(token: number, target: string, generation: number): boolean {
+    if (token !== this.#loadToken) return true;
+    if (!this.#isStale(target, generation)) return false;
+
+    const pagination = this.#store.getState().pagination;
+    if (pagination.loadingMore) {
+      this.#store.setState({ pagination: { ...pagination, loadingMore: false } });
+    }
+    return true;
+  }
+
+  /**
+   * Whether the session this read was issued for is still the one on screen.
+   *
+   * The generation check is the load-bearing half. `ChatState.session` keeps
+   * naming the OUTGOING session across the whole window between
+   * `performSwitch`'s per-session reset and the server's `session.updated`
+   * push, so a read issued for that session before the switch began looks
+   * perfectly current if all you compare is the id — which is exactly the
+   * window the reported bug lives in. The id check catches the other
+   * direction: a session replaced without a switch at all (a reconnect the
+   * server resolves onto a different conversation).
+   */
+  #isStale(target: string, generation: number): boolean {
+    if (this.#generation() !== generation) return true;
+    const current = this.#store.getState().session?.id;
+    return current !== undefined && current !== target;
+  }
+
+  /**
+   * Drops rows belonging to some other session.
+   *
+   * Judged against `target` — the session the read was ISSUED for — never
+   * against whatever `ChatState.session` happens to name when it resolves.
+   * The two disagree for the entire duration of a switch, and during that
+   * window "current" is the session being left, so filtering by it admits
+   * precisely the rows that must be dropped. `prependPage` cannot catch them
+   * either: it dedupes by id, and two sessions' messages never share ids.
+   */
+  #ownRows(rows: readonly ChatMessage[], target: string): ChatMessage[] {
+    return rows.filter((row) => row.sessionId === target);
   }
 
   // -----------------------------------------------------------------------
@@ -361,7 +498,16 @@ export class MessageController {
    * a second `message` event for something the app already rendered.
    */
   applyIncoming(payload: MessagePayload): void {
-    const messages = this.#store.getState().messages;
+    const state = this.#store.getState();
+
+    // Not this session's message. The server addresses pushes per connection,
+    // not per joined session, so a frame for a session this client has
+    // already switched away from can still arrive — and rendering it would
+    // splice two conversations together.
+    const current = state.session?.id;
+    if (current !== undefined && payload.sessionId !== current) return;
+
+    const messages = state.messages;
     if (messages.some((message) => message.id === payload.id)) return;
 
     const message: ChatMessage = {

@@ -347,7 +347,23 @@ export interface ChatState {
   messages: ChatMessage[];
   typing: { isTyping: boolean; participantId?: string };
   unreadCount: number;
-  pagination: { hasMore: boolean; loadingMore: boolean };
+  /**
+   * Backward-pagination state (§6.3, §12.10).
+   *
+   * `initialLoaded` is what separates "there is nothing older" from "nothing
+   * has been asked for yet". `hasMore` starts `false`, so on its own it
+   * cannot tell those apart — and the guard that used to stand in for it
+   * ("the list is empty, so this must be a cold start") is wrong the moment
+   * the list is non-empty for a reason other than a completed history load:
+   * a send queue rehydrated from storage after a reload, or a live
+   * `message.new` that arrived before page one did. Both of those made
+   * `loadMore()` return silently and the transcript never appear.
+   *
+   * It is per-session and is cleared whenever the session is replaced, which
+   * is also what makes a re-seed on switch possible at all. A FAILED load
+   * deliberately leaves it unchanged, so a retry is always possible.
+   */
+  pagination: { hasMore: boolean; loadingMore: boolean; initialLoaded: boolean };
   uploading: boolean;
   pastSessions: ChatSessionSummary[];
 
@@ -402,7 +418,7 @@ export function createInitialChatState(): ChatState {
     messages: [],
     typing: { isTyping: false },
     unreadCount: 0,
-    pagination: { hasMore: false, loadingMore: false },
+    pagination: { hasMore: false, loadingMore: false, initialLoaded: false },
     uploading: false,
     pastSessions: [],
     readWatermarks: {},

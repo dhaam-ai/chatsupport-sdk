@@ -101,7 +101,7 @@ describe('select', () => {
   });
 
   it('keeps the previous value when isEqual says nothing changed, so identity checks see "unchanged"', async () => {
-    const { client, store: chat } = store({ pagination: { hasMore: true, loadingMore: false } });
+    const { client, store: chat } = store({ pagination: { hasMore: true, loadingMore: false, initialLoaded: true } });
     const slice = chat.select((s) => ({ hasMore: s.pagination.hasMore }), shallowEqual);
 
     const before = slice();
@@ -110,7 +110,7 @@ describe('select', () => {
 
     expect(slice(), 'same reference back — this is what stops every consumer re-rendering').toBe(before);
 
-    client.__harness.setState({ pagination: { hasMore: false, loadingMore: false } });
+    client.__harness.setState({ pagination: { hasMore: false, loadingMore: false, initialLoaded: true } });
     await settle(client);
     expect(slice()).not.toBe(before);
     expect(slice()).toEqual({ hasMore: false });

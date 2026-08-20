@@ -61,6 +61,7 @@ const query = <T extends Element>(selector: string): T => {
 };
 
 beforeEach(() => {
+  localStorage.clear();
   vi.stubGlobal('WebSocket', SilentSocket);
   vi.stubGlobal(
     'fetch',

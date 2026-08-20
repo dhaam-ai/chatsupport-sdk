@@ -273,7 +273,7 @@ describe('useChatEvent', () => {
     });
 
     off();
-    client.__harness.emit('agentLeft', { agentId: 'agent_1' });
+    client.__harness.emit('agentLeft', { kind: 'AGENT', id: 'agent_1', displayName: 'Jamie' });
     expect(received).toEqual([]);
     expect(client.__harness.eventListenerCount('agentLeft')).toBe(0);
 

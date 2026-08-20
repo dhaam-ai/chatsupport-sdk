@@ -219,6 +219,12 @@ export function createConformanceChatClient(initial?: Partial<ChatState>): Confo
     closeSession: async () => {},
 
     sendMessage: async (_content: string, _opts?: SendMessageOptions) => {},
+
+    switchSession: async (_sessionId: string) => {},
+
+    listSessions: async (_query?: { readonly limit?: number }) => [],
+
+    retryMessage: async (_id: string) => ({ status: 'refused' as const, reason: 'not-found' as const }),
     sendAttachment: async (_file: Blob, _opts?: SendAttachmentOptions) => {},
     markRead: () => {},
     startTyping: () => {},

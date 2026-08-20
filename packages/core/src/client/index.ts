@@ -13,7 +13,12 @@ export {
   sessionSnapshotToChatSession,
   statusOrModeChanged,
 } from './session.js';
-export { ChatClientConfigError, ConnectionAbortedError, ConnectionSuspendedError } from './types.js';
+export {
+  ChatClientConfigError,
+  ConnectionAbortedError,
+  ConnectionSuspendedError,
+  SessionSwitchError,
+} from './types.js';
 export type {
   AttachmentUploader,
   AuthToken,

@@ -155,12 +155,14 @@ class ChatClient {
           ulids: ulids,
         ) {
     _subscription = _connection.frames.listen(_onFrame);
+    _stateSubscription = _connection.states.listen(_onConnectionState);
   }
 
   final ConnectionController _connection;
   final Scheduler _scheduler;
 
   late final StreamSubscription<ServerFrame> _subscription;
+  late final StreamSubscription<ConnectionState> _stateSubscription;
 
   final StreamController<ChatMessage> _messages =
       StreamController<ChatMessage>.broadcast();
@@ -297,12 +299,65 @@ class ChatClient {
       delivery: MessageDelivery.pending,
     );
 
-    final bool handed = _connection.send(frame);
-    final ChatMessage echo = handed ? optimistic : optimistic.failed();
-    if (handed) _pending[id] = optimistic;
+    if (_connection.send(frame)) {
+      _pending[id] = _InFlightSend(frame, optimistic);
+      _emit(_messages, optimistic);
+      return optimistic;
+    }
 
+    // Nowhere to put it. The frame is kept anyway so [retry] can replay this
+    // exact envelope — dropping it here is what forces a host to "retry" by
+    // calling sendMessage again, which mints a fresh ULID and turns one failed
+    // message into two.
+    _failed[id] = _FailedSend(frame, optimistic, null);
+    final ChatMessage echo = optimistic.failed();
     _emit(_messages, echo);
     return echo;
+  }
+
+  /// Replays a failed send under its ORIGINAL envelope id.
+  ///
+  /// ── Why this method exists at all ─────────────────────────────────────
+  ///
+  /// The envelope id IS the permanent message id (D1) and the server dedupes
+  /// on it. A host that implements Retry by calling [sendMessage] again mints
+  /// a fresh ULID, defeats that dedup, and produces a second, distinct
+  /// message — so every press against a failure that has not gone away adds
+  /// another dead message to the thread. The only fix that holds is
+  /// structural: this replays a frame built once, and there is no path here
+  /// that can produce a new id.
+  ///
+  /// Only a send currently marked [MessageDelivery.failed] is eligible; see
+  /// [RetryRefusalReason] for what each refusal means. A retried send is
+  /// re-emitted on [messages] as [MessageDelivery.pending] and settles
+  /// through the normal ack path.
+  ///
+  /// This is NOT the durable offline queue §9.1 describes: nothing here
+  /// survives a process restart, and a retry needs a live connection to be
+  /// accepted.
+  RetryOutcome retry(String id) {
+    final _FailedSend? failure = _failed[id];
+    if (failure == null) {
+      return const RetryRefused(RetryRefusalReason.notFound);
+    }
+
+    if (!(failure.retryable ?? kDefaultRetryable)) {
+      // Left in place: the host is still rendering this message as failed and
+      // is entitled to ask again and get the same answer.
+      return const RetryRefused(RetryRefusalReason.notRetryable);
+    }
+
+    // THE original frame. Not a copy, not a rebuild.
+    if (!_connection.send(failure.frame)) {
+      return const RetryRefused(RetryRefusalReason.disconnected);
+    }
+
+    // Claimed only once the frame is actually on the wire, so a refusal never
+    // loses the record.
+    _failed.remove(id);
+    _pending[id] = _InFlightSend(failure.frame, failure.message);
+    _emit(_messages, failure.message);
+    return RetryRetried(failure.message);
   }
 
   /// Joins a session (§6.2).
@@ -365,6 +420,7 @@ class ChatClient {
   /// Releases every resource.
   Future<void> dispose() async {
     await _subscription.cancel();
+    await _stateSubscription.cancel();
     await _connection.dispose();
     await _messages.close();
     await _sessions.close();
@@ -376,14 +432,46 @@ class ChatClient {
 
   // ── Routing ─────────────────────────────────────────────────────────────
 
+  /// Fails every send that was still awaiting an `ack` when the connection
+  /// left [ConnectionState.connected].
+  ///
+  /// Nothing else will ever settle those: the ack they were waiting for was
+  /// on a socket that is gone, and the server will not re-send it. Left alone
+  /// they stay [MessageDelivery.pending] for the life of the process — a
+  /// spinner that never stops, and no Retry affordance, for what is the
+  /// commonest failure on a phone: the frame reached the wire and the tunnel
+  /// arrived before the reply did.
+  ///
+  /// Marked failed with no server verdict, so [retry] resolves them through
+  /// [kDefaultRetryable] — a dropped connection is the archetypal retryable
+  /// failure. §8.4 says these belong in the durable offline queue; until that
+  /// exists, this is the honest report and [retry] is the manual drain.
+  void _onConnectionState(ConnectionState state) {
+    if (state == ConnectionState.connected || _pending.isEmpty) return;
+
+    final List<_InFlightSend> orphans = _pending.values.toList();
+    _pending.clear();
+    for (final _InFlightSend orphan in orphans) {
+      _failed[orphan.frame.id] =
+          _FailedSend(orphan.frame, orphan.message, null);
+      _emit(_messages, orphan.message.failed());
+    }
+  }
+
   void _onFrame(ServerFrame frame) {
     switch (frame) {
       case AckSuccessFrame(:final String ref, :final Map<String, Object?> data):
         _settlePending(ref, data);
         break;
-      case AckFailureFrame(:final String ref):
-        final ChatMessage? pending = _pending.remove(ref);
-        if (pending != null) _emit(_messages, pending.failed());
+      case AckFailureFrame(:final String ref, :final ErrorPayload error):
+        final _InFlightSend? inFlight = _pending.remove(ref);
+        if (inFlight != null) {
+          // The server's own verdict is carried into the failure record so
+          // [retry] gates on it rather than on a second copy of §7.4's table.
+          _failed[ref] =
+              _FailedSend(inFlight.frame, inFlight.message, error.retryable);
+          _emit(_messages, inFlight.message.failed());
+        }
         break;
       case PushFrame(:final String type, :final Map<String, Object?> d):
         _onPush(type, d);
@@ -395,8 +483,9 @@ class ChatClient {
   }
 
   void _settlePending(String ref, Map<String, Object?> data) {
-    final ChatMessage? pending = _pending.remove(ref);
-    if (pending == null) return;
+    final _InFlightSend? inFlight = _pending.remove(ref);
+    if (inFlight == null) return;
+    final ChatMessage pending = inFlight.message;
     final Object? seq = data['seq'];
     if (seq is int) {
       _emit(_messages, pending.settled(seq: seq));

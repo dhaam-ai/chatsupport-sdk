@@ -14,13 +14,19 @@ import type {
   ChatClientConfig,
   ChatMessage,
   ChatSession,
+  ChatSessionSummary,
 } from '@dhaam-ccrm/core';
-import { createChatClient } from '@dhaam-ccrm/core';
+import {
+  MemoryStorageAdapter,
+  createBrowserStorageAdapter,
+  createChatClient,
+} from '@dhaam-ccrm/core';
 import {
   RestClient,
   createAttachmentUploader,
   createHistorySource,
   createSessionActions,
+  createSessionSummarySource,
 } from '@dhaam-ccrm/rest';
 
 import { createTokenSource } from './auth.js';
@@ -55,12 +61,48 @@ export function createWidgetStore(config: ResolvedConfig): ChatStore {
     // mislabels every optimistic echo the user sees.
     localSender: { senderId: config.identity.userId, senderType: 'CUSTOMER' },
 
+    // Durable, not in-memory. Core's default is `MemoryStorageAdapter`, which
+    // by its own doc "survives a network blip, not a reload" — and two things
+    // the customer would call bugs depend on surviving exactly that:
+    //
+    //   1. The offline send queue (§9.1). A message typed with no signal is
+    //      shown as queued and is then lost by refreshing the tab.
+    //   2. Which conversation the customer is IN. `connection.hello` carries
+    //      no session id and the server re-resolves the customer to whichever
+    //      session is ACTIVE, so a customer reading a RESOLVED conversation
+    //      comes back to a different one. Core records the choice under
+    //      `chatsdk:<publishableKey>:selectedSession` and re-joins it on
+    //      connect — but only if it has somewhere to write it.
+    //
+    // `?? new MemoryStorageAdapter()` is core's own documented fallback, not a
+    // defensive flourish: `createBrowserStorageAdapter()` returns `null` when
+    // site data is blocked (Safari private mode, a locked-down enterprise
+    // profile), and a widget that threw there would take the host's page down
+    // over a preference the visitor is entitled to.
+    storage: createBrowserStorageAdapter() ?? new MemoryStorageAdapter(),
+
     // The explicit type arguments are load-bearing, not decoration: these
     // factories are generic over the wire shape and infer `unknown` without
     // them, which then fails to satisfy core's seam interfaces.
     history: createHistorySource<ChatMessage>(rest),
     uploader: createAttachmentUploader<AttachmentMetadata>(rest),
     sessionActions: createSessionActions<ChatSession>(rest),
+
+    // What the session picker runs on. Without it `client.listSessions()`
+    // throws `ChatClientConfigError` instead of returning a page, and the
+    // widget would have a picker with nothing to put in it.
+    //
+    // `createSessionSummarySource` returns a structural, not nominal, match
+    // for core's `SessionSummarySource` — it is generic over the row shape and
+    // the explicit `<ChatSessionSummary>` is what makes the two line up,
+    // exactly as for the three factories above.
+    //
+    // Note what is NOT here: any notion of "is this caller a guest".
+    // `GET /chat/sessions/customer` answers a guest with `200 { sessions: [] }`
+    // rather than a 403, so emptiness is the signal, and it is read once — at
+    // the one place that decides whether to show a picker — rather than
+    // re-derived here.
+    sessionSummarySource: createSessionSummarySource<ChatSessionSummary>(rest),
 
     // §14: core promises this never receives credentials or message content,
     // so routing it to the host's error sink is safe. Only `warn`/`error` are

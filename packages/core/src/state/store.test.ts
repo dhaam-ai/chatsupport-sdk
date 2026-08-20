@@ -35,7 +35,7 @@ describe('ChatStore.getState', () => {
       messages: [],
       typing: { isTyping: false },
       unreadCount: 0,
-      pagination: { hasMore: false, loadingMore: false },
+      pagination: { hasMore: false, loadingMore: false, initialLoaded: false },
       uploading: false,
       pastSessions: [],
       readWatermarks: {},

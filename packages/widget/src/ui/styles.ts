@@ -514,6 +514,16 @@ button {
   color: var(--dh-accent, inherit);
 }
 
+/* The reason a failed send did not go through — shown whether or not a
+   Retry button accompanies it, so a permanently-refused send still tells the
+   customer why instead of just silently withholding the button. */
+.dh-failure {
+  font-size: 12px;
+  color: var(--dh-danger);
+}
+.dh-failure[hidden] { display: none; }
+.dh-msg[data-mine="true"] .dh-failure { color: #ffd7d3; }
+
 .dh-retry {
   font-size: 12px;
   color: var(--dh-danger);
@@ -525,6 +535,149 @@ button {
    The "start a new conversation" button is the way forward instead. */
 .dh-log[data-closed="true"] .dh-retry { display: none; }
 .dh-msg[data-mine="true"] .dh-retry { color: #ffd7d3; }
+
+/* ── Session picker: pre-chat screen + in-chat switcher ──────────────────
+   One row style (.dh-session-row and its children) shared by both
+   surfaces (ui/session-picker.ts) — the "one component family" the two
+   screens are built from. */
+
+.dh-prechat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: calc(var(--dh-space) * 4);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 3);
+  background: var(--dh-surface);
+}
+.dh-prechat-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dh-text-muted);
+}
+
+.dh-session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 2);
+}
+.dh-session-empty {
+  text-align: center;
+  color: var(--dh-text-muted);
+  font-size: 13px;
+  padding: calc(var(--dh-space) * 4) 0;
+}
+.dh-session-empty[hidden] { display: none; }
+
+.dh-session-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(var(--dh-space) * 1);
+  padding: calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  text-align: start;
+}
+.dh-session-row:hover { background: var(--dh-surface-sunken); }
+.dh-session-row[aria-current="true"] { border-color: var(--dh-accent); }
+
+.dh-session-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--dh-space) * 2);
+}
+.dh-session-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px calc(var(--dh-space) * 2);
+  border-radius: 999px;
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text-muted);
+}
+/* A terminal status is information, not an archive marker — no dimming, no
+   disabled affordance. Picking this row reactivates it server-side. */
+.dh-session-row[data-status="ON_HOLD"] .dh-session-status { color: #c98a00; }
+
+.dh-session-time {
+  font-size: 11px;
+  color: var(--dh-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dh-session-preview {
+  font-size: 13px;
+  color: var(--dh-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dh-session-preview[hidden] { display: none; }
+
+.dh-session-handler {
+  font-size: 12px;
+  color: var(--dh-text-muted);
+}
+.dh-session-handler[hidden] { display: none; }
+
+.dh-session-unread {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px calc(var(--dh-space) * 2);
+  border-radius: 999px;
+  background: var(--dh-danger);
+  color: #fff;
+}
+.dh-session-unread[hidden] { display: none; }
+
+.dh-prechat-start, .dh-switcher-start {
+  padding: calc(var(--dh-space) * 3);
+  border-radius: 10px;
+  background: var(--dh-accent);
+  color: var(--dh-accent-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+.dh-prechat-start[disabled], .dh-switcher-start[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+/* The in-chat switcher: a disclosure button plus a self-contained popover —
+   position: relative lives on .dh-switcher itself so this renders correctly
+   wherever the header mounts it, with no dependency on an ancestor's
+   positioning context. */
+.dh-switcher { position: relative; display: inline-flex; }
+.dh-switcher-toggle[aria-expanded="true"] { background: var(--dh-surface-sunken); color: var(--dh-text); }
+
+.dh-switcher-panel {
+  position: absolute;
+  top: calc(100% + var(--dh-space) * 2);
+  inset-inline-end: 0;
+  z-index: 2;
+  width: min(300px, 80vw);
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 3);
+  padding: calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  box-shadow: var(--dh-shadow);
+}
+.dh-switcher-panel[hidden] { display: none; }
 
 /* ── Typing indicator ─────────────────────────────────────────────────── */
 

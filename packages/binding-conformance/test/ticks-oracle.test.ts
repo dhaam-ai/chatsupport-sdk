@@ -71,7 +71,7 @@ describe('resolveTickOracle', () => {
     const oracle = resolveTickOracle();
     const mine = buildMessage({ senderId: 'me', seq: 5 });
     const theirs = buildMessage({ senderId: 'someone-else', seq: 5 });
-    const failed = buildMessage({ senderId: 'me', delivery: { state: 'failed', reason: 'rejected' } });
+    const failed = buildMessage({ senderId: 'me', delivery: { state: 'failed', reason: 'rejected', retryable: false } });
     const noSeq = buildMessage({ senderId: 'me' });
 
     expect(oracle.deriveTickState({ message: mine, localParticipantId: null, deliveredWatermarks: {}, readWatermarks: {} })).toBeNull();

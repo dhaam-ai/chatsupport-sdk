@@ -33,8 +33,12 @@ client.sendMessage('Hello');   // returns the optimistic echo synchronously
 | §8.2 full-jitter backoff, saturating | Done |
 | D2 resume: `resumeFrom`, inline replay, gap detection | Done |
 | D1 optimistic send, client ULID as permanent id | Done |
+| Retry replaying the ORIGINAL envelope id (`ChatClient.retry`) | Done — in memory, not durable |
+| v2 identity contract: `HandledBy`, `handledBy`, `displayName` | Done |
+| Connect deadline — every attempt terminates into the one retry path | Done |
 | §10 publishable key + `getToken` callback | Done |
 | §9.1 durable offline queue | **Out of scope** |
+| Session listing (`GET /chat/sessions/customer`) | **Not possible here** — no HTTP layer, see below |
 | Delivery ticks (`message.markDelivered`/`.delivered`) | **Out of scope** — frames decode, nothing acts |
 | Attachments upload | **Out of scope** — inbound metadata decodes |
 | Voice | **Out of scope** |
@@ -45,9 +49,22 @@ client.sendMessage('Hello');   // returns the optimistic echo synchronously
 - **Offline queue.** `ConnectionController.send` returns `bool`. `ChatClient`
   turns `false` into `MessageDelivery.failed`; a queue slots in exactly there,
   turning it into `queued` instead. No other code has to change.
+  `ChatClient.retry` is already the in-memory half of what that queue does —
+  it holds the frame AS SENT and replays that exact envelope, so the
+  never-mint-a-new-ULID rule is enforced before the queue exists. What it is
+  missing is durability, ordering, retention and a drain: it needs a live
+  connection, and it refuses with `RetryRefusalReason.disconnected` otherwise.
+  That refusal reason is the thing the queue deletes.
 - **Delivery ticks.** `message.delivered` already decodes. It needs a
   watermark field and a `markDelivered` call on the same shape as `markRead`.
-- **REST.** Nothing in this package does HTTP. `ResumeGap` is the trigger.
+- **REST.** Nothing in this package does HTTP — no `package:http`, no
+  `dart:io` `HttpClient`, one runtime dependency and it is a WebSocket. So
+  `GET /chat/sessions/customer` (the multi-session picker: `limit` 1-20,
+  default 5; a guest gets `200` with `[]`, never a `403`, and emptiness is the
+  signal to render no picker) cannot be implemented here without introducing
+  an HTTP dependency and the base-path, envelope-unwrapping and auth-header
+  layer that goes with it. `ResumeGap` is the existing trigger for the same
+  missing surface.
 - **Storage.** No `StorageAdapter` yet, because nothing here persists. The
   queue is what will need one.
 
@@ -157,6 +174,18 @@ wait. A half-open connection through a NAT that dropped state — routine on
 mobile — strands the client forever. A 10s timeout is imposed here; the value
 is invented.
 
+The same hole exists one step earlier and §8 does not mention it either:
+nothing bounds `connecting`. `getToken()` is host code and the socket factory
+reaches the network, and either can hang without throwing — "server down" and
+"no route to host" look on many platforms like a connect that simply never
+calls back until the OS's own TCP timeout gives up, tens of seconds to minutes
+later. Retry here is reachable only from a terminated attempt, so an attempt
+that never terminates is never retried. `ConnectionController.connectTimeout`
+(10s, matching the TypeScript core's `DEFAULT_CONNECT_TIMEOUT_MS`) bounds it,
+and every terminal signal — close, error, handshake timeout, connect deadline —
+routes through one `_finishAttempt` funnel so an attempt produces exactly one
+retry no matter how many of them fire.
+
 ### 10. No heartbeat interval
 
 §7.3 lists `system.heartbeat`/`system.pong`; v2 states no cadence and no
@@ -233,19 +262,16 @@ should rely on is unclear.
 
 ## What was and was not run
 
-**No Dart SDK is installed on this machine.** `dart` is not on `PATH`, there is
-no `~/.pub-cache`, and the `flutter` shell function points at
-`/Volumes/SSD/flutter/flutter/bin/flutter` on a volume that is not mounted.
+Everything below was executed in this directory on Dart SDK 3.5.4 (macOS
+arm64):
 
-Therefore **none of the following was executed**:
+```
+dart pub get
+dart analyze     # No issues found!
+dart test        # 177 passed, 0 failed
+dart format --output=none --set-exit-if-changed lib test
+```
 
-- `dart pub get` — dependencies were never resolved
-- `dart analyze` — no type checking, no lint pass
-- `dart test` — **every test in `test/` is unexecuted**
-- `dart format` — formatting is by hand
-
-The tests are written and complete, and the assertions encode the behaviour
-described above, but *no claim is made that they pass*. Anyone with a Dart SDK
-should run `dart pub get && dart analyze && dart test` in this directory first
-and treat whatever falls out as the real starting point. Expect the analyzer to
-find something.
+An earlier revision of this file recorded that no Dart SDK was available and
+that the whole suite was unexecuted. That is no longer true and the claim has
+been replaced rather than left standing.

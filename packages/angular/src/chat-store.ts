@@ -164,7 +164,7 @@ export interface ChatStore {
   readonly messages: Signal<ChatMessage[]>;
   readonly typing: Signal<{ isTyping: boolean; participantId?: string }>;
   readonly unreadCount: Signal<number>;
-  readonly pagination: Signal<{ hasMore: boolean; loadingMore: boolean }>;
+  readonly pagination: Signal<{ hasMore: boolean; loadingMore: boolean; initialLoaded: boolean }>;
   /** True while an attachment upload is in flight (§6.4). */
   readonly uploading: Signal<boolean>;
   readonly pastSessions: Signal<ChatSessionSummary[]>;

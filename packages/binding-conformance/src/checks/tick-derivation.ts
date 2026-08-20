@@ -102,7 +102,7 @@ function buildTickTable(): TickCase[] {
     },
     {
       label: 'failed delivery → no tick (retry affordance, not a tick)',
-      message: buildMessage({ id: 'tick_failed', senderId: LOCAL_ID, delivery: { state: 'failed', reason: 'rejected' } }),
+      message: buildMessage({ id: 'tick_failed', senderId: LOCAL_ID, delivery: { state: 'failed', reason: 'rejected', retryable: false } }),
       localParticipantId: LOCAL_ID,
       deliveredWatermarks: {},
       readWatermarks: {},

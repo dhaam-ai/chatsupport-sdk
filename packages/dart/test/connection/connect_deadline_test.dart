@@ -117,7 +117,8 @@ void main() {
       // getToken() is host code reaching the host's own backend. §10.6 covers
       // it THROWING; nothing covers it hanging, and a hung token fetch parks
       // the client in exactly the same place a hung socket does.
-      final Harness harness = Harness(getToken: () => Completer<String>().future);
+      final Harness harness =
+          Harness(getToken: () => Completer<String>().future);
 
       unawaited(harness.controller.connect().catchError((Object _) {}));
       await flush();

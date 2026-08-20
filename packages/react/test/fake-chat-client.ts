@@ -24,7 +24,9 @@ import type {
   ChatEventMap,
   ChatEventName,
   ChatSession,
+  ChatSessionSummary,
   ChatState,
+  RetryOutcome,
   SendAttachmentOptions,
   SendMessageOptions,
   Unsubscribe,
@@ -106,6 +108,7 @@ export function createFakeChatClient(initial?: Partial<ChatState>): FakeChatClie
     connect: vi.fn(async () => {}),
     disconnect: vi.fn(() => {}),
     joinSession: vi.fn((_sessionId: string) => {}),
+    switchSession: vi.fn(async (_sessionId: string) => {}),
     leaveSession: vi.fn(() => {}),
     startNewSession: vi.fn(async () => {}),
     requestAgent: vi.fn((_reason?: string) => {}),
@@ -113,9 +116,18 @@ export function createFakeChatClient(initial?: Partial<ChatState>): FakeChatClie
       throw new Error('createFakeChatClient: reopenSession has no default — override it for this test.');
     }),
     closeSession: vi.fn(async () => {}),
+    // Default: no sessions — matches the guest-signal shape (§6.2's "200 with
+    // []") described on `SessionSummarySource`, so a test that doesn't care
+    // about the list gets the ordinary "nothing yet" outcome rather than
+    // having to override this to avoid a throw.
+    listSessions: vi.fn(async (_query?: { limit?: number }): Promise<readonly ChatSessionSummary[]> => []),
 
     sendMessage: vi.fn(async (_content: string, _opts?: SendMessageOptions) => {}),
     sendAttachment: vi.fn(async (_file: Blob, _opts?: SendAttachmentOptions) => {}),
+    // Default: refuses as 'not-found' — the ordinary outcome for an id this
+    // fake's queue (it has none) never heard of. Override per test for the
+    // 'retried' / 'not-retryable' branches.
+    retryMessage: vi.fn(async (_id: string): Promise<RetryOutcome> => ({ status: 'refused', reason: 'not-found' })),
     markRead: vi.fn(() => {}),
     startTyping: vi.fn(() => {}),
     stopTyping: vi.fn(() => {}),

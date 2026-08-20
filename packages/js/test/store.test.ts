@@ -73,7 +73,7 @@ describe('select', () => {
   });
 
   it('keeps the OLD selected reference when isEqual reports no change', async () => {
-    const { client, store } = harness({ pagination: { hasMore: true, loadingMore: false } });
+    const { client, store } = harness({ pagination: { hasMore: true, loadingMore: false, initialLoaded: true } });
     const delivered: { hasMore: boolean }[] = [];
 
     store.select(
@@ -87,7 +87,7 @@ describe('select', () => {
 
     expect(delivered, 'an unrelated change must not deliver a new wrapper object').toHaveLength(1);
 
-    await commit(client, { pagination: { hasMore: false, loadingMore: false } });
+    await commit(client, { pagination: { hasMore: false, loadingMore: false, initialLoaded: true } });
     expect(delivered).toHaveLength(2);
     expect(delivered[1], 'a real change delivers a genuinely new value').not.toBe(first);
   });

@@ -80,7 +80,7 @@ async function harness(options: {
   store.setState({
     session: options.session === undefined ? SESSION : options.session,
     ...(options.seed === undefined ? {} : { messages: options.seed }),
-    ...(options.hasMore === undefined ? {} : { pagination: { hasMore: options.hasMore, loadingMore: false } }),
+    ...(options.hasMore === undefined ? {} : { pagination: { hasMore: options.hasMore, loadingMore: false, initialLoaded: true } }),
   });
 
   return { store, controller, queries, errors, messages: () => store.getState().messages };
@@ -203,7 +203,7 @@ describe('loadMore — pagination state (§6.4)', () => {
 
     await h.controller.loadMore();
 
-    expect(h.store.getState().pagination).toEqual({ hasMore: true, loadingMore: false });
+    expect(h.store.getState().pagination).toEqual({ hasMore: true, loadingMore: false, initialLoaded: true });
   });
 
   it('clears hasMore once the server says there is nothing older', async () => {
@@ -332,7 +332,7 @@ describe('loadMore — live messages during a fetch', () => {
       },
       uploader: { upload: () => Promise.reject(new Error('unused')) },
     });
-    store.setState({ session: SESSION, messages: [message('c', 3)], pagination: { hasMore: true, loadingMore: false } });
+    store.setState({ session: SESSION, messages: [message('c', 3)], pagination: { hasMore: true, loadingMore: false, initialLoaded: true } });
 
     const pending = controller.loadMore();
     // A live `message.new` lands mid-fetch.
