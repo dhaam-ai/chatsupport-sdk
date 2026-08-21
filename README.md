@@ -184,6 +184,30 @@ await chat.client.sendMessage('Hello');
 
 ---
 
+## Local tarballs
+
+Downstream demo apps install this SDK from `file:` tarballs rather than from a
+registry, so the four packages they consume have to be repacked by hand
+whenever the SDK changes:
+
+| Script | What it does |
+|---|---|
+| `pnpm pack:check` | **Dry run.** `pnpm pack --dry-run` over every package. Prints what *would* go in each tarball and writes nothing to disk. |
+| `pnpm pack:local` | **The real one.** Builds, then writes `packages/{core,js,rest,widget}/dhaam-ccrm-*-0.1.0.tgz`. |
+
+`pack:local` runs `pnpm build` first, and that is not optional. Packages resolve
+each other through their `exports` → `dist/`, `dist/` is gitignored, and the
+widget's build (`tsup && node scripts/bundle.mjs`) externalises core, js and
+rest — so packing without a full, current build ships a widget bundle wired to
+a stale core.
+
+It packs exactly the four packages the demo app pins, and deliberately not
+`react`: consumers pin the tarball *filename*, so the version must not change
+under them. Add a changeset for the release, but do not run `changeset version`
+while anything installs these by path.
+
+---
+
 ## License
 
 MIT

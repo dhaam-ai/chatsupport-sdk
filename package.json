@@ -12,6 +12,7 @@
     "typecheck": "pnpm -r typecheck",
     "verify": "pnpm build && pnpm typecheck && pnpm test",
     "pack:check": "pnpm -r --filter \"./packages/*\" exec pnpm pack --dry-run",
+    "pack:local": "pnpm build && pnpm -r --filter \"@dhaam-ccrm/core\" --filter \"@dhaam-ccrm/js\" --filter \"@dhaam-ccrm/rest\" --filter \"@dhaam-ccrm/widget\" exec pnpm pack --pack-destination .",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm verify && changeset publish"
