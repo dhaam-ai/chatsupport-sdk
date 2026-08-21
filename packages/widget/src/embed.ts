@@ -27,6 +27,7 @@ import { configFromAttributes } from './attributes.js';
 import { getWidget, mount } from './index.js';
 import type { ChatWidget } from './widget.js';
 import type { WidgetConfig } from './config.js';
+import type { ChatEventHandler, ChatEventName, Unsubscribe } from '@dhaam-ccrm/js';
 
 /** The API a `<script>`-tag integrator gets, on `window.DhaamChat`. */
 export interface DhaamChatGlobal {
@@ -35,8 +36,91 @@ export interface DhaamChatGlobal {
   close(): void;
   toggle(): void;
   destroy(): void;
+
+  /**
+   * Subscribes to core's §6.5 event catalog. Returns an unsubscribe.
+   *
+   *     DhaamChat.on('conversationStarted', () => DhaamChat.open());
+   *
+   * The whole catalog rather than a hand-picked subset, so this method never
+   * needs extending again — and one method rather than a callback slot per
+   * event, so a host adds a listener the same way whatever they listen for.
+   *
+   * ── Order-independent, which is the point ────────────────────────────
+   *
+   * A `<script>` tag mounts on `DOMContentLoaded`, so the obvious host code —
+   * our tag, then an inline `<script>` that calls this — runs BEFORE any
+   * widget exists. Reaching through `widget()` there returns `null` and drops
+   * the subscription on the floor, which is exactly the trap this method
+   * exists to remove. Registrations are held and attached at mount, and
+   * re-attached if the widget is destroyed and mounted again, so a handler
+   * registered once stays live for whatever widget is on the page.
+   */
+  on<E extends ChatEventName>(event: E, handler: ChatEventHandler<E>): Unsubscribe;
+
   /** The mounted widget, or `null` — the escape hatch to `store.client`. */
   widget(): ChatWidget | null;
+}
+
+/**
+ * A host registration, plus its live subscription to the current widget.
+ *
+ * `release` is null whenever nothing is mounted — before the first mount, and
+ * after a `destroy()` — which is the state the whole buffer exists to survive.
+ */
+interface Registration {
+  readonly event: ChatEventName;
+  readonly handler: ChatEventHandler<ChatEventName>;
+  release: Unsubscribe | null;
+}
+
+const registrations = new Set<Registration>();
+
+/**
+ * The widget the registrations are currently bound to.
+ *
+ * Compared by IDENTITY, not by "is something mounted". A host can tear a
+ * widget down without going through `DhaamChat.destroy()` — `widget()
+ * .destroy()` and the `mount`/`unmount` module exports both do it — and the
+ * next mount then produces a DIFFERENT widget with a different store. Without
+ * an identity check the registrations would still be holding releases for the
+ * dead one, look attached, and never re-bind.
+ */
+let attachedTo: ChatWidget | null = null;
+
+function attach(registration: Registration, widget: ChatWidget): void {
+  try {
+    registration.release = widget.store.on(registration.event, registration.handler);
+  } catch (error) {
+    // Subscribing is not supposed to be able to fail, but this file's contract
+    // is that nothing it does reaches the host page as an exception.
+    report(error);
+  }
+}
+
+function detach(registration: Registration): void {
+  try {
+    registration.release?.();
+  } catch {
+    // A store torn down before us has already dropped every listener it held,
+    // so failing to release one is not news and must not be reported as such.
+  }
+  registration.release = null;
+}
+
+/** Binds every registration to `widget`, rebinding if it is a new one. */
+function attachAll(widget: ChatWidget): void {
+  if (attachedTo === widget) return;
+  attachedTo = widget;
+  for (const registration of registrations) {
+    detach(registration);
+    attach(registration, widget);
+  }
+}
+
+function detachAll(): void {
+  attachedTo = null;
+  for (const registration of registrations) detach(registration);
 }
 
 function report(error: unknown): void {
@@ -64,13 +148,56 @@ function locateScript(): HTMLElement | null {
   return document.querySelector<HTMLElement>('script[data-publishable-key]');
 }
 
+/**
+ * The one funnel every mount on this API goes through.
+ *
+ * Both `DhaamChat.mount(…)` and the script tag's own auto-boot land here, so
+ * there is no path that mounts a widget without attaching the registrations
+ * waiting for it. `mount()` is itself idempotent (singleton.ts), and attaching
+ * is guarded on `release` being null, so a second call adds no duplicates.
+ */
+function mountAndAttach(config: WidgetConfig): ChatWidget {
+  const widget = mount(config);
+  attachAll(widget);
+  return widget;
+}
+
 function install(): void {
   const api: DhaamChatGlobal = {
-    mount,
+    mount: mountAndAttach,
     open: () => getWidget()?.open(),
     close: () => getWidget()?.close(),
     toggle: () => getWidget()?.toggle(),
-    destroy: () => getWidget()?.destroy(),
+    destroy: () => {
+      // Released BEFORE the teardown that would invalidate them, but the
+      // registrations themselves are kept: a host that subscribed once and
+      // then remounted must not have to subscribe again, which is the same
+      // promise `on` makes about subscribing before the first mount.
+      detachAll();
+      getWidget()?.destroy();
+    },
+    on: (event, handler) => {
+      const registration: Registration = {
+        event,
+        handler: handler as ChatEventHandler<ChatEventName>,
+        release: null,
+      };
+      registrations.add(registration);
+
+      // Binds immediately when a widget is already up — including one mounted
+      // through the module export rather than through this API, which is why
+      // this reads `getWidget()` rather than trusting `attachedTo`.
+      const widget = getWidget();
+      if (widget !== null) {
+        attachedTo = widget;
+        attach(registration, widget);
+      }
+
+      return () => {
+        registrations.delete(registration);
+        detach(registration);
+      };
+    },
     widget: getWidget,
   };
 
@@ -96,7 +223,7 @@ function boot(): void {
   // about it would train integrators to ignore our console output.
   if (script.dataset['publishableKey'] === undefined) return;
 
-  mount(configFromAttributes(script.dataset));
+  mountAndAttach(configFromAttributes(script.dataset));
 }
 
 /**
