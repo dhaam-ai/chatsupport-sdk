@@ -14,7 +14,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ManualTimers } from '../presence/index.js';
-import type { ConnectionAckPayload, SessionSnapshot, SessionUpdatedPayload } from '../protocol/index.js';
+import type {
+  ConnectionAckPayload,
+  MessagePayload,
+  SessionSnapshot,
+  SessionUpdatedPayload,
+} from '../protocol/index.js';
 import { MemoryStorageAdapter } from '../storage/index.js';
 import { StubSocketFactory } from '../transport/index.js';
 import { createChatClient } from './create-chat-client.js';
@@ -45,6 +50,28 @@ function ackJson(sessionId: string): unknown {
 function updatedJson(sessionId: string, status: SessionSnapshot['status'] = 'ASSIGNED'): unknown {
   const payload: SessionUpdatedPayload = { session: snapshot(sessionId, status) };
   return { v: 1, t: 'session.updated', id: '01ARZ3NDEKTSV4RRFFQ69G5FAB', ts: 0, d: payload };
+}
+
+/**
+ * A real ULID. `message.new.d.id` is validated as ULID-or-UUID
+ * (`isValidMessageId`), and a made-up string is dropped as a MALFORMED frame
+ * long before it reaches the session guard — which would make an ordering test
+ * pass for entirely the wrong reason.
+ */
+const AGENT_MSG_ID = '01ARZ3NDEKTSV4RRFFQ69G5FBB';
+
+function messageJson(sessionId: string, id: string): unknown {
+  const payload: MessagePayload = {
+    id,
+    sessionId,
+    senderId: 'participant_agent_1',
+    senderType: 'AGENT',
+    type: 'TEXT',
+    content: 'Hi — following up on your order.',
+    seq: 1,
+    createdAt: '2026-08-21T09:00:01.000Z',
+  };
+  return { v: 1, t: 'message.new', id: '01ARZ3NDEKTSV4RRFFQ69G5FAC', ts: 0, d: payload };
 }
 
 /** Connected, with `session_1` on screen. */
@@ -163,5 +190,70 @@ describe('conversationStarted', () => {
     expect(client.getState().session?.id).toBe('session_2');
     expect(client.getState().messages).toEqual([]);
     expect(client.getState().pagination.initialLoaded).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Frame ordering — a contract the SERVER has to keep
+// ---------------------------------------------------------------------------
+
+describe('session.updated vs message.new ordering', () => {
+  // `applyIncoming` (messages/controller.ts) drops any `message.new` whose
+  // `sessionId` is not the session currently in state:
+  //
+  //     const current = state.session?.id;
+  //     if (current !== undefined && payload.sessionId !== current) return;
+  //
+  // That guard is correct and predates this feature — the server addresses
+  // pushes per CONNECTION, not per joined session, so without it a frame for a
+  // session the client has left would splice two conversations together. But
+  // it makes the agent-initiated flow order-dependent, and the client cannot
+  // fix that from its side: at the instant the message arrives it has no way
+  // to know a replacement is coming.
+  //
+  // Both frames travel the same socket and the transport applies them
+  // synchronously in arrival order (`#handleMessage` -> `#handleFrame` ->
+  // `onFrame`), so there is no client-side reordering to blame or to exploit.
+  // The order the server WRITES them in is the order they take effect.
+
+  it('keeps the agent message when session.updated is written FIRST', async () => {
+    const { sockets, client } = await connected();
+    const messages = vi.fn();
+    client.on('message', messages);
+
+    sockets.last.emitJson(updatedJson('session_2'));
+    await tick();
+    sockets.last.emitJson(messageJson('session_2', AGENT_MSG_ID));
+    await tick();
+
+    expect(client.getState().messages.map((m) => m.id)).toEqual([AGENT_MSG_ID]);
+    expect(messages).toHaveBeenCalledTimes(1);
+  });
+
+  it('DROPS the agent message when message.new is written first', async () => {
+    // Documents the failure, it does not bless it. The message is discarded by
+    // the session guard while the old session is still on screen, and the
+    // `message` event never fires — so anything driven by that event (unread
+    // counts, notifications, a host's own handler) never learns of it.
+    //
+    // The transcript itself can still recover, but only via the REST page-one
+    // read `seedReplacedSession` issues, and only if the server has already
+    // persisted the message by the time that read runs. That is a database
+    // visibility race standing in for an ordering guarantee.
+    const { sockets, client } = await connected();
+    const messages = vi.fn();
+    client.on('message', messages);
+
+    sockets.last.emitJson(messageJson('session_2', AGENT_MSG_ID));
+    await tick();
+
+    expect(client.getState().messages).toEqual([]);
+    expect(messages).not.toHaveBeenCalled();
+
+    // And the replacement that follows does not resurrect it: the frame is
+    // gone, and the seeded page is a separate REST read.
+    sockets.last.emitJson(updatedJson('session_2'));
+    await tick();
+    expect(messages).not.toHaveBeenCalled();
   });
 });
