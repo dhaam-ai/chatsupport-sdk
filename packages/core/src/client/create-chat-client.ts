@@ -366,7 +366,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       // is still news.
       if (replacing && switchTarget !== null && next.id !== switchTarget) return;
 
-      commitSession(next);
+      // `connection.ack` seeds itself: the `connected` handler that follows
+      // every handshake ends in `restoreSelectionAndSeed`'s own page-one read.
+      // See `seedReplacedSession`.
+      commitSession(next, frame.t === 'connection.ack');
 
       // Same session only. §6.5 defines `statusChange` as "the session you are
       // in changed status"; a snapshot for a DIFFERENT session — the one a
@@ -871,11 +874,11 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
    * session already in state and none of them can change its id (see
    * client/session.ts, where every one of them no-ops on a mismatched id).
    */
-  function commitSession(next: ChatSession): void {
+  function commitSession(next: ChatSession, seededByCaller = false): void {
     const previous = store.getState().session;
     const replacing = previous !== null && previous.id !== next.id;
     store.setState(replacing ? { session: next, ...perSessionReset() } : { session: next });
-    if (replacing) seedReplacedSession(next.id);
+    if (replacing && !seededByCaller) seedReplacedSession(next.id);
   }
 
   /**
@@ -897,14 +900,22 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
    * Seeding from the commit itself is what makes "a committed session always
    * has its history read" true by construction rather than per caller.
    *
-   * `switchTarget` is the double-seed guard, and it is exact rather than
-   * approximate: it is non-null for precisely the span of a switch, and the
-   * switch paths (`joinAndSeed`, and `restoreSelectionAndSeed` behind it) issue
-   * their own page one deliberately — by explicit id, AWAITED, so the promise
-   * a picker holds does not resolve before the transcript is on screen. Seeding
-   * here as well would not double-request (`loadMore`'s `loadingMore` latch
-   * refuses the second), but it would make that await return early against a
-   * read it does not own.
+   * Two callers already own their own seed and say so, rather than being
+   * seeded twice:
+   *
+   *   - a SWITCH, flagged by `switchTarget` being non-null. That is exact
+   *     rather than approximate — it is non-null for precisely the span of a
+   *     switch — and `joinAndSeed` issues page one by explicit id and AWAITS
+   *     it, so the promise a picker holds does not resolve before the
+   *     transcript is on screen.
+   *   - `connection.ack`, via `commitSession`'s `seededByCaller`. Every
+   *     handshake is followed by the `connected` handler, and
+   *     `restoreSelectionAndSeed` ends in `if (!initialLoaded) loadMore()` —
+   *     which this commit has just re-armed by clearing `initialLoaded`.
+   *
+   * Neither would double-REQUEST if seeded here as well (`loadMore`'s
+   * `loadingMore` latch refuses the second), but both would have their own
+   * awaited read turned into an early return against a read they do not own.
    */
   function seedReplacedSession(sessionId: string): void {
     if (switchTarget !== null) return;

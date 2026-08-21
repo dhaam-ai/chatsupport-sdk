@@ -1093,17 +1093,26 @@ describe('a page-one read for the outgoing session cannot survive a switch', () 
     h.history.release('session_1');
     await tick();
 
-    // The stale page belongs to a conversation nobody is reading.
-    expect(client.getState().messages).toHaveLength(0);
-    // ...but the read it discarded must not leave `loadingMore` latched, or
-    // the reentrancy guard jams and every later page request is a silent
+    // The stale page belongs to a conversation nobody is reading, so not one
+    // of its rows lands.
+    expect(client.getState().messages.every((m) => m.sessionId === 'session_2')).toBe(true);
+    // A committed session always gets its history read, whichever path
+    // committed it — a raw `joinSession` included (see `seedReplacedSession`).
+    // This assertion used to read `messages).toHaveLength(0)`: the blank pane
+    // with zero history requests WAS the reported symptom, pinned here by
+    // accident because nothing on this path had ever seeded.
+    expect(h.history.callsFor('session_2')).toHaveLength(1);
+    expect(client.getState().messages.map((m) => m.id)).toEqual(['new_1']);
+    // ...and the read that was discarded must not leave `loadingMore` latched,
+    // or the reentrancy guard jams and every later page request is a silent
     // no-op — the transcript would never appear at all.
     expect(client.getState().pagination.loadingMore).toBe(false);
 
     await client.loadOlderMessages();
     await tick();
 
-    expect(h.history.callsFor('session_2')).toHaveLength(1);
+    expect(h.history.callsFor('session_2')).toHaveLength(2);
+    expect(h.history.calls[h.history.calls.length - 1]?.before).toBe('new_1');
     expect(client.getState().messages.map((m) => m.id)).toEqual(['new_1']);
   });
 });

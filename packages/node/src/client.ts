@@ -31,6 +31,7 @@
 import { HttpClient } from './http.js';
 import { parseSecretKey, type SecretKey } from './keys.js';
 import { mintAccessToken } from './tokens.js';
+import { recordCommerceEvent } from './commerce.js';
 import {
   listMessagePages,
   listMessages,
@@ -44,7 +45,13 @@ import {
   type ReceivedWebhookEvent,
   type WebhookVerifyOptions,
 } from './webhooks.js';
-import type { ChatMessage, MintTokenRequest, MintTokenResponse } from './types.js';
+import type {
+  ChatMessage,
+  CommerceEvent,
+  CommerceEventResult,
+  MintTokenRequest,
+  MintTokenResponse,
+} from './types.js';
 
 /** Webhook options with the secret key already supplied by the client. */
 export type BoundWebhookVerifyOptions = Omit<WebhookVerifyOptions, 'secretKey'>;
@@ -180,6 +187,57 @@ export class ChatServerClient {
    */
   async mintToken(request: MintTokenRequest): Promise<MintTokenResponse> {
     return mintAccessToken(this.#http, request);
+  }
+
+  /**
+   * Record one order or cart event against a contact — the second and last
+   * route the secret key is valid on.
+   *
+   * The event's `customerId` is YOUR identifier for the shopper. The server
+   * resolves it to a contact, creating one if this is the first it has heard
+   * of them, so there is no contact to look up or create beforehand.
+   *
+   * **After a rejection, retry with the SAME `eventId`. Never mint a new
+   * one.** A rejected event does not consume its id: a `404 CART_NOT_FOUND`
+   * or `422 INVALID_CART_TRANSITION` rolls back its entire transaction,
+   * idempotency insert included, so resending the identical `eventId` later
+   * is processed as a fresh attempt rather than short-circuited as a replay.
+   * That is the intended recovery for out-of-order arrival — a
+   * `cart.abandoned` that overtakes the `cart.updated` which would have
+   * created its cart. Only an ACCEPTED event makes its id inert: resending
+   * THAT one returns `applied: false` with the original outcome and
+   * re-applies nothing.
+   *
+   * **Do not branch on `ChatApiError.retryable` here — call
+   * {@link isRetryableContactsError} (`errors.ts`) instead.** This route
+   * answers through the legacy `{success:false,error:{...}}` envelope, which
+   * never carries a `retryable` field, and `http.ts` reads that absence as
+   * `false`. So even a `500 INTERNAL_ERROR` — which is worth retrying, and
+   * which the idempotency contract makes safe to retry — arrives with
+   * `.retryable === false`. Trusting the flag on this route dead-letters
+   * events a second attempt would have accepted.
+   *
+   * ```ts
+   * try {
+   *   await chat.recordCommerceEvent(event);
+   * } catch (error) {
+   *   if (isRetryableContactsError(error)) {
+   *     await queueRetry(event); // the same eventId — it was never consumed
+   *   } else {
+   *     await deadLetter(event, error); // needs a code or config fix first
+   *   }
+   * }
+   * ```
+   *
+   * @throws {InvalidCommerceEventError} (`commerce.ts`) if the event is
+   *   malformed. Thrown locally — nothing is sent to the server.
+   * @throws {ChatApiError} if the server rejects it. `.code` is a
+   *   {@link ContactsErrorCode} (`errors.ts`), not a {@link ChatErrorCode}.
+   * @throws {ChatTransportError} if the request never reached the server.
+   *   Always safe to retry with the same `eventId`; nothing was applied.
+   */
+  async recordCommerceEvent(event: CommerceEvent): Promise<CommerceEventResult> {
+    return recordCommerceEvent(this.#http, event);
   }
 
   /**

@@ -163,6 +163,14 @@ interface HarnessOptions {
   readonly identity?: Pick<ChatClientConfig, 'identityProfile' | 'identitySync'>;
   readonly storage?: StorageAdapter;
   readonly timers?: ManualTimers;
+  /**
+   * Defaults to {@link CUSTOMER_ID}. Overridable so a test can build two
+   * clients that share one underlying `storage` but represent two DIFFERENT
+   * signed-in identities on the same device — the scenario the two-level
+   * `tenantStorage` namespace (create-chat-client.ts, keyed by publishable key
+   * only, deliberately NOT by senderId) has to survive.
+   */
+  readonly senderId?: string;
 }
 
 interface Harness {
@@ -182,7 +190,7 @@ function harness(options: HarnessOptions = {}): Harness {
     getToken: async () => 'tok',
     wsUrl: 'wss://example.test/chat-services/v2/ws',
     storage: options.storage ?? new MemoryStorageAdapter(),
-    localSender: { senderId: CUSTOMER_ID, senderType: 'CUSTOMER' },
+    localSender: { senderId: options.senderId ?? CUSTOMER_ID, senderType: 'CUSTOMER' },
     history: { listMessages: async () => ({ messages: [], hasMore: false }) },
     webSocketFactory: sockets.create,
     schedule: timers.schedule,
@@ -519,6 +527,162 @@ describe('the dedup gate is wired to the real profile and the real clock', () =>
     await settle();
 
     expect(second.calls).toEqual([changed]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap-fill: a device shared by two identities (verification item #4)
+// ---------------------------------------------------------------------------
+//
+// dedup.test.ts already proves, at the pure-function level, that a stored
+// fingerprint folds `userId` in and so cannot match a different user's
+// profile. What it does NOT exercise is the actual production wiring: the
+// two-level `tenantStorage = namespaced(namespaced(storage, 'chatsdk'),
+// publishableKey)` that create-chat-client.ts builds — deliberately keyed by
+// TENANT only, not by senderId, so the whole feature is bounded to "one
+// stored record per tenant forever" (create-chat-client.ts's own comment).
+// The tests below build two REAL clients through `createChatClient`, sharing
+// one underlying `StorageAdapter` and the same `PUBLISHABLE_KEY`, to prove the
+// two-level namespace behaves exactly as documented rather than merely
+// asserting it against a hand-called `shouldSyncIdentity`.
+describe('one browser, two identities: the tenant-level dedup record cannot leak or corrupt', () => {
+  it('a second user is never suppressed by the first user’s record, even though both share the one dedup key', async () => {
+    const sharedStorage = new MemoryStorageAdapter();
+
+    const userA = recordingSync();
+    const a = harness({
+      identity: { identityProfile: PROFILE, identitySync: userA.sync },
+      storage: sharedStorage,
+      senderId: 'participant_customer_A',
+    });
+    connectDetached(a.client);
+    await settle();
+    expect(userA.calls).toEqual([PROFILE]);
+
+    // Same tenant (same PUBLISHABLE_KEY, so the same two-level tenantStorage),
+    // same physical storage, the SAME profile content — only the senderId
+    // differs. Deliberately NOT a different profile: two merely-different
+    // profiles would both sync even if userId were never folded into the
+    // fingerprint at all, which would make this test pass for the wrong
+    // reason. Isolating userId as the one variable is what makes this test
+    // actually sensitive to a regression in the fold-in (confirmed by
+    // mutation testing: dropping `userId` from `profileFingerprint` turns
+    // this red, where an earlier draft with a differing profileB did not).
+    const userB = recordingSync();
+    const b = harness({
+      identity: { identityProfile: PROFILE, identitySync: userB.sync },
+      storage: sharedStorage,
+      senderId: 'participant_customer_B',
+    });
+    connectDetached(b.client);
+    await settle();
+
+    // Not skipped: A's record cannot match B's fingerprint, because the
+    // fingerprint folds `userId` in.
+    expect(userB.calls).toEqual([PROFILE]);
+  });
+
+  it('the overwrite costs the first user one redundant, idempotent POST — never a corrupted or permanently lost identify', async () => {
+    const sharedStorage = new MemoryStorageAdapter();
+
+    const userA = recordingSync();
+    const a = harness({
+      identity: { identityProfile: PROFILE, identitySync: userA.sync },
+      storage: sharedStorage,
+      senderId: 'participant_customer_A',
+    });
+    connectDetached(a.client);
+    await settle();
+    expect(userA.calls).toEqual([PROFILE]);
+
+    // B signs in on the same device and overwrites the tenant's one dedup
+    // record (by construction — see dedup.ts's "ONE key for all users" doc).
+    const userB = recordingSync();
+    const b = harness({
+      identity: { identityProfile: { name: 'Sam Lee' }, identitySync: userB.sync },
+      storage: sharedStorage,
+      senderId: 'participant_customer_B',
+    });
+    connectDetached(b.client);
+    await settle();
+    expect(userB.calls).toHaveLength(1);
+
+    // A comes back — a brand-new client, as a real page reload would build —
+    // still well inside what would have been A's own TTL window. A's own
+    // record is gone (B's overwrote it), so A re-identifies. That is the
+    // harmless direction: one redundant call, not silence and not an error.
+    const userAAgain = recordingSync();
+    const aAgain = harness({
+      identity: { identityProfile: PROFILE, identitySync: userAAgain.sync },
+      storage: sharedStorage,
+      senderId: 'participant_customer_A',
+      timers: new ManualTimers(1_000),
+    });
+    connectDetached(aAgain.client);
+    await settle();
+
+    expect(userAAgain.calls).toEqual([PROFILE]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap-fill: startNewSession() as an unguarded entry point (verification item #1)
+// ---------------------------------------------------------------------------
+//
+// T14's note: `startNewSession()` reaches `connectionController.connect()`
+// DIRECTLY (create-chat-client.ts) rather than through the public `connect()`
+// closure a few lines below it — and `startIdentifyOnce()` is called from
+// nowhere BUT that public closure. So identify never fires for a client whose
+// very first call is `startNewSession()`.
+//
+// T14 judged this unreachable from the widget, and that claim checks out
+// independently: `packages/widget/src/widget.ts` calls the PUBLIC
+// `store.client.connect()` unconditionally and SYNCHRONOUSLY during
+// `createWidget()`'s own construction (widget.ts, "Nothing above this point
+// opened a socket... Connecting last"). The widget's only call to
+// `startNewSession()` is `startNewConversation()` (widget.ts), reachable
+// exclusively through a UI callback (`onStartNewConversation`/`onStartNew`)
+// wired to a button — and a click handler cannot run until that synchronous
+// construction function has already returned control to the event loop. By
+// then `connect()`, and therefore `startIdentifyOnce()`, has already executed.
+// So no defect in the shipped feature.
+//
+// What is NOT protected is core's own public API surface: nothing in this
+// file stops a bare `createChatClient` consumer (a headless `js`/`react`/
+// `angular` integration that never calls the widget) from calling
+// `startNewSession()` as its literal first action. The test below pins that
+// current behavior on purpose — so a change to this ordering, in either
+// direction, is a deliberate decision made in a diff that touches this test,
+// not a silent regression.
+describe('startNewSession() bypasses identify — pinned as a known, widget-safe gap in core’s raw API', () => {
+  it('fires zero identify calls when startNewSession() is the first thing a caller does', async () => {
+    const { sync, calls } = recordingSync();
+    const h = harness({ identity: { identityProfile: PROFILE, identitySync: sync } });
+
+    // No socket handshake is driven in this harness, so the connect() inside
+    // startNewSession() never settles — irrelevant here, since the assertion
+    // is about whether identify fired, and that would happen synchronously
+    // alongside the call, not after the handshake completes.
+    void h.client.startNewSession().catch(() => undefined);
+    await settle();
+
+    expect(calls).toEqual([]);
+  });
+
+  it('contrast: connect() first, then startNewSession(), still identifies exactly once — the bypass is specific to being called FIRST', async () => {
+    const { sync, calls } = recordingSync();
+    const h = harness({ identity: { identityProfile: PROFILE, identitySync: sync } });
+
+    connectDetached(h.client);
+    await settle();
+    expect(calls).toEqual([PROFILE]);
+
+    void h.client.startNewSession().catch(() => undefined);
+    await settle();
+
+    // Still exactly one — startNewSession() does not fire a second identify
+    // either, since startIdentifyOnce()'s latch was already tripped.
+    expect(calls).toEqual([PROFILE]);
   });
 });
 

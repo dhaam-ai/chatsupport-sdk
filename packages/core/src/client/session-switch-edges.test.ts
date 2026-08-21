@@ -342,7 +342,8 @@ describe('edge 2: a session replaced outside the connected handler', () => {
     // snapshot — outside `connected`, so nothing on the restore path runs.
     client.joinSession('session_5');
     await tick();
-    const join = framesOfType(h.sockets.last, 'session.join').at(-1);
+    const joins = framesOfType(h.sockets.last, 'session.join');
+    const join = joins[joins.length - 1];
     expect(join).toBeDefined();
     h.sockets.last.emitJson(genericAckJson(join!.id, 800));
     await tick();

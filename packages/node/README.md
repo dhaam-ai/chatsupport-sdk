@@ -132,13 +132,160 @@ The route answers with `{ success: true, data: { messages, hasMore } }` wrapped 
 
 `asUser` requires the **publishable** key as well, because every session and message route needs both credentials. The secret key is valid on `POST /tokens` and nowhere else; `asUser` never sees it.
 
+## Recording commerce events
+
+Your backend posts order and cart state to the chat service via `recordCommerceEvent()`, which populates a contact's commerce data for CRM features — knowing the customer's order history, cart state, and average order value shapes how an agent responds to them.
+
+**The secret key is valid on exactly two routes: `POST /tokens` and `POST /contacts/commerce-events`. It cannot authenticate any browser-facing endpoint.**
+
+### Order lifecycle
+
+An order moves through three states, and each is a separate event:
+
+```ts
+// Step 1: order placed — customer checked out
+await chat.recordCommerceEvent({
+  eventId: 'evt_19b8a0d5c',  // Your idempotency key — see "Release-on-reject" below
+  type: 'order.placed',
+  customerId: 'cust_5847',    // YOUR identifier for the shopper
+  occurredAt: new Date().toISOString(),
+  orderId: 'ord_9f3bef2c',
+  value: 159.99,              // Optional, but drives averageOrderValue
+  merchant: 'Nike',           // Optional, context for the agent
+  category: 'Footwear',       // Optional, context for the agent
+  cartId: 'cart_7e2d9c1f',    // Optional, ties this order back to its cart
+});
+
+// Step 2: order completed — shipped and confirmed delivered
+await chat.recordCommerceEvent({
+  eventId: 'evt_9e2c4d8f1',
+  type: 'order.completed',
+  customerId: 'cust_5847',
+  occurredAt: new Date().toISOString(),
+  orderId: 'ord_9f3bef2c',    // Same as the placed event
+  value: 159.99,              // Required here; drives averageOrderValue
+  merchant: 'Nike',           // Optional
+  category: 'Footwear',       // Optional
+});
+
+// Step 3: order cancelled — refunded or never shipped
+await chat.recordCommerceEvent({
+  eventId: 'evt_3a1b7f9e5',
+  type: 'order.cancelled',
+  customerId: 'cust_5847',
+  occurredAt: new Date().toISOString(),
+  orderId: 'ord_9f3bef2c',    // Same order
+});
+```
+
+### Cart lifecycle
+
+A cart lives longer than an order and can be updated or abandoned:
+
+```ts
+// Step 1: cart updated — customer added or removed items
+await chat.recordCommerceEvent({
+  eventId: 'evt_cart_001',
+  type: 'cart.updated',
+  customerId: 'cust_5847',
+  occurredAt: new Date().toISOString(),
+  cartId: 'cart_7e2d9c1f',
+  items: [
+    { name: 'Air Jordan 1 Retro', quantity: 1, unitPrice: 150.00, sku: 'AJ1-BLK-11' },
+    { name: 'Crew Socks', quantity: 3, unitPrice: 15.99, sku: 'SOCK-WHT' },
+  ],
+});
+
+// Step 2: cart abandoned — customer left without checking out
+await chat.recordCommerceEvent({
+  eventId: 'evt_cart_002',
+  type: 'cart.abandoned',
+  customerId: 'cust_5847',
+  occurredAt: new Date().toISOString(),
+  cartId: 'cart_7e2d9c1f',
+});
+
+// OR Step 2: cart converted — customer checked out
+await chat.recordCommerceEvent({
+  eventId: 'evt_cart_003',
+  type: 'cart.converted',
+  customerId: 'cust_5847',
+  occurredAt: new Date().toISOString(),
+  cartId: 'cart_7e2d9c1f',
+  orderId: 'ord_9f3bef2c',  // Optional, ties the cart to the resulting order
+});
+```
+
+### Release-on-reject: the recovery path for out-of-order arrival
+
+**This is the single most expensive mistake an integrator can make here, and it costs a production incident.**
+
+A rejected event — `404 CART_NOT_FOUND` or `422 INVALID_CART_TRANSITION` — does **not** consume its `eventId`. The entire transaction, including the idempotency insert, rolls back, so retrying the **identical** `eventId` later is processed as a completely fresh attempt, never short-circuited as a replay.
+
+This is the *intended* recovery path for out-of-order arrival. If a `cart.abandoned` event races ahead of the `cart.updated` that created the cart, the abandoned event will be rejected with a `404`. Retry the SAME `eventId` once the earlier event lands — the second attempt will succeed.
+
+```ts
+try {
+  await chat.recordCommerceEvent(cartAbandonedEvent);
+} catch (error) {
+  // Rejected with 404 or 422? This is normal when events race.
+  // After a rejection, NEVER mint a new eventId. Reuse the same one.
+  if (isRetryableContactsError(error)) {
+    await queueRetry(cartAbandonedEvent);  // same eventId
+  } else {
+    // Validation error, auth error, etc. — needs a code or config fix.
+    await deadLetter(cartAbandonedEvent, error);
+  }
+}
+```
+
+Only an ACCEPTED event (status `200` with `applied: true`) makes its `eventId` inert going forward. Retrying that one returns `200` with `applied: false` and the original outcome; the mutation is never re-applied.
+
+### Why `isRetryableContactsError` exists and `ChatApiError.retryable` is misleading
+
+**Do not branch on `ChatApiError.retryable` for this route.** Call `isRetryableContactsError(error)` instead.
+
+This route answers through a different envelope than most of this SDK — the legacy `{success:false,error:{code,message,details}}` schema used by the Fastify error handler, which never includes a `retryable` field. When `http.ts` reads the response, it sees the absence of `retryable` and coerces it to `false` rather than `undefined`.
+
+That coercion is correct for most routes (a server verdict without an explicit "retry me" flag should not be retried). But for commerce events, the split between retryable and fatal is **not** the same as "generic HTTP retryability":
+
+- A `500 INTERNAL_ERROR` is genuinely ambiguous (unclear if the transaction committed), but the idempotency contract makes retrying safe regardless — an already-applied `eventId` replays as `applied: false`, an unapplied one is fresh.
+- A `422 INVALID_CART_TRANSITION` is a transport-level failure (the cart moved into an illegal state) and needs an automatic retry once the race condition resolves.
+
+Both are retryable with the same `eventId`. Both arrive with `.retryable === false`. Trusting the flag dead-letters legitimate retries.
+
+`isRetryableContactsError` splits on exactly the codes where resending the same `eventId` will ever succeed:
+
+- **Retryable:** `CART_NOT_FOUND`, `INVALID_CART_TRANSITION` (both rolled back entirely), `RATE_LIMITED` (never touched the transaction), `INTERNAL_ERROR` (idempotency contract handles both outcomes)
+- **Fatal:** `VALIDATION_ERROR`, `AUTH_INVALID` (both happen before the transaction opens — resending the identical, still-malformed request changes nothing), `CONTACT_NOT_FOUND` (unreachable from the machine path this package wraps)
+- **Also fatal:** `InvalidCommerceEventError` (a local validation failure in your own code)
+
+### Contractual caps and constraints
+
+- `items` in a `cart.updated` event: **at most 500 entries** — a 501st item is rejected outright, never silently truncated
+- Each item's `name`: **at most 300 characters**
+- Each item's `sku` (optional): **at most 64 characters**
+
+These are enforced client-side by this SDK before the request leaves your process, matching the server's own `.reject() not .clamp()` rule. You hit the same rejection locally with a clear error message naming the offending field, rather than only learning about it after a non-ASCII product catalog worth of JSON makes the round trip.
+
+Every other field bound the schema states (`eventId`/`customerId`/`orderId`/`merchant`/`category`/`cartId` lengths, `occurredAt`'s 5-minute future-clock-skew tolerance, `quantity`'s 1–100,000 range, `value`/`unitPrice`'s `>= 0` minimum) is validated server-side only. This SDK validates presence and type for every field — it would not deserve the name otherwise — plus these three explicit caps, then defers the rest to the server.
+
+### Server-derived fields
+
+`averageOrderValue` is **never sent by the caller**. The server computes it server-side as `totalSpend / completedOrders` — a running calculation across all of a contact's `order.completed` events that have a `value` field. It is surfaced in CRM features and agent dashboards to indicate customer lifetime value and buying patterns, but no request includes it.
+
+### Terminal cart states
+
+A cart that has been **converted** or **abandoned** is terminal. Sending another `cart.updated` for a converted or abandoned cart will be rejected with `422 INVALID_CART_TRANSITION`, the same code for any illegal cart transition. There is no separate "cart already converted" code — the `422` is the signal that you asked for an illegal move. Check your ordering: if `cart.converted` arrived before `cart.updated`, that explains the `422`.
+
 ## Public surface
 
 | Export | Purpose |
 |---|---|
-| `ChatServerClient` | Holds the secret key. Mints tokens, verifies webhooks. |
+| `ChatServerClient` | Holds the secret key. Mints tokens, records commerce events, verifies webhooks. |
 | `UserScopedClient` | Read surface for one user, via `chat.asUser(token)`. |
 | `mintAccessToken`, `buildMintTokenBody` | Functional form of token minting. |
+| `recordCommerceEvent`, `buildCommerceEventBody` | Functional form of commerce event recording. |
 | `constructWebhookEvent` | Verify a delivery **and** return its typed event. Preferred. |
 | `assertWebhookSignature` / `verifyWebhookSignature` | Throwing / boolean signature check. |
 | `signWebhookPayload` | Produce a signature — for testing *your* handler. |
@@ -147,7 +294,8 @@ The route answers with `{ success: true, data: { messages, hasMore } }` wrapped 
 | `paginate`, `flatten`, `listMessagePages`, `listMessages` | Cursor iteration. |
 | `parseSecretKey`, `isSecretKey`, `secretKeyEnvironment`, `maskSecretKey` | Key handling. |
 | `ChatApiError`, `ChatTransportError` | Server verdict vs. never reached the server. |
-| `InvalidSecretKeyError`, `PublishableKeyAsSecretError`, `WebhookVerificationError`, `InvalidMintRequestError` | Typed failures. |
+| `InvalidSecretKeyError`, `PublishableKeyAsSecretError`, `WebhookVerificationError`, `InvalidMintRequestError`, `InvalidCommerceEventError` | Typed failures. |
+| `isRetryableContactsError` | Decide whether to retry a commerce event error with the same `eventId`. |
 | `BASE_PATH`, `HttpClient` | `/chat-services/api/v1`, and the low-level request layer. |
 | `toMessagePage`, `toChatMessage`, `unwrapEnvelope`, `normalizeMediaType` | The wire seam — for calling a chat route this package does not wrap. |
 

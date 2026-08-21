@@ -19,8 +19,9 @@ export {
   InvalidSecretKeyError,
   PublishableKeyAsSecretError,
   WebhookVerificationError,
+  isRetryableContactsError,
 } from './errors.js';
-export type { ChatErrorCode, WebhookVerificationFailure } from './errors.js';
+export type { ChatErrorCode, ContactsErrorCode, WebhookVerificationFailure } from './errors.js';
 
 export {
   isSecretKey,
@@ -34,6 +35,12 @@ export { BASE_PATH, HttpClient } from './http.js';
 export type { HeaderProvider, HttpClientOptions } from './http.js';
 
 export { InvalidMintRequestError, buildMintTokenBody, mintAccessToken } from './tokens.js';
+
+export {
+  InvalidCommerceEventError,
+  buildCommerceEventBody,
+  recordCommerceEvent,
+} from './commerce.js';
 
 export {
   DEFAULT_TOLERANCE_SECONDS,
@@ -70,20 +77,35 @@ export type {
   PaginateOptions,
 } from './pagination.js';
 
+// `ContactCartRow` and `ContactCartStatus` are deliberately NOT re-exported.
+// They belong to `GET /contacts/carts`, a staff-token read this package's
+// secret key cannot authenticate, so no method here returns them. They stay
+// declared in `types.ts` — where the reasoning lives in full — and stay off
+// the public surface until something actually returns one.
 export type {
   Attachment,
+  CartAbandonedEvent,
+  CartConvertedEvent,
+  CartUpdatedEvent,
   ChatMessage,
   ChatMode,
   ChatSession,
   ChatSessionSummary,
   ChatStatus,
   CloseReason,
+  CommerceCartItem,
+  CommerceEvent,
+  CommerceEventResult,
+  CommerceEventType,
   MediaType,
   MessagePage,
   MessageReplyPreview,
   MessageType,
   MintTokenRequest,
   MintTokenResponse,
+  OrderCancelledEvent,
+  OrderCompletedEvent,
+  OrderPlacedEvent,
   Profile,
   SenderType,
   SessionSummaryPage,

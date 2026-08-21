@@ -21,6 +21,7 @@ type staticCredentials struct {
 	secretKey      string
 	accessToken    string
 	publishableKey string
+	staffToken     string
 }
 
 func (c staticCredentials) SecretKey(context.Context, chatapi.OperationName) (chatapi.SecretKey, error) {
@@ -33,6 +34,10 @@ func (c staticCredentials) AccessToken(context.Context, chatapi.OperationName) (
 
 func (c staticCredentials) PublishableKey(context.Context, chatapi.OperationName) (chatapi.PublishableKey, error) {
 	return chatapi.PublishableKey{APIKey: c.publishableKey}, nil
+}
+
+func (c staticCredentials) StaffToken(context.Context, chatapi.OperationName) (chatapi.StaffToken, error) {
+	return chatapi.StaffToken{Token: c.staffToken}, nil
 }
 
 // TestMintTokenHitsSpecBasePath is the check this whole package exists for.
