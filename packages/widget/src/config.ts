@@ -9,6 +9,8 @@
 // checks in auth.ts are the second line, for the case someone puts a secret
 // in the *publishable* slot by mistake.
 
+import type { IdentityProfile } from '@dhaam-ccrm/core';
+
 import type { PresentationMode } from './ui/presentation.js';
 
 /** How the host tells us who the end user is, without ever holding a secret. */
@@ -51,6 +53,24 @@ export interface WidgetIdentity {
   readonly userId: string;
   /** Optional display name, used only for the local optimistic echo. */
   readonly displayName?: string;
+
+  /**
+   * The LOGGED-IN user's CRM profile. Supplying it — and only supplying it —
+   * is what makes the widget upsert that user as a Contact via
+   * `POST /identify`. `userId` alone does not and must not, because every
+   * guest has one of those too.
+   *
+   * Omit it for a guest. There is no "empty profile" to pass: the key's
+   * ABSENCE is the signal, and client.ts spreads it conditionally so a guest's
+   * `ChatClientConfig` carries no identity fields at all rather than carrying
+   * them present-and-undefined.
+   *
+   * Nothing here is validated or logged by this package — `resolveConfig`
+   * carries it through untouched and the server owns every rule about it.
+   *
+   * Not reachable from a `data-*` attribute. See attributes.ts.
+   */
+  readonly profile?: IdentityProfile;
 }
 
 export interface WidgetConfig {

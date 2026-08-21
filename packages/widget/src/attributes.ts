@@ -92,6 +92,18 @@ export function configFromAttributes(bag: AttributeBag): WidgetConfig {
       publishableKey: required(bag, 'publishableKey', 'data-publishable-key'),
       tokenEndpoint: required(bag, 'tokenEndpoint', 'data-token-endpoint'),
     },
+    // No `profile` here, and there will not be one: a script-tag embed cannot
+    // express `WidgetIdentity.profile`, so it gets no identify call.
+    //
+    // The reason is the same one that keeps `getToken` out of this file
+    // (config.ts:41-44) — an attribute is a flat string. `IdentityProfile`
+    // carries a `tags` ARRAY and a nested `device` OBJECT, and the only way to
+    // reach those from a `data-*` value is to invent an encoding (JSON in an
+    // attribute, or `data-profile-device-id`-style flattening) and then parse
+    // it. That buys a second, weaker config surface for the one host that
+    // cannot call `mount()` — and identify is a logged-in-user feature, so a
+    // host that knows the user's email already runs enough JS to call
+    // `mount({ identity: { userId, profile } })` directly.
     identity: {
       userId: required(bag, 'userId', 'data-user-id'),
       displayName: optional(bag, 'displayName'),
