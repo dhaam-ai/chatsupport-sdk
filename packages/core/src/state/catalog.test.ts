@@ -50,6 +50,7 @@ const PAYLOADS: { [E in ChatEventName]: ChatEventMap[E] } = {
   agentLeft: { kind: 'AGENT', id: 'agent-1', displayName: 'Ada' },
   statusChange: { status: 'RESOLVED', mode: 'HUMAN' },
   sessionClosed: { closeReason: 'SWITCHED' },
+  conversationStarted: { session, previousSessionId: 'sess-0' },
   presenceUpdate: { participantId: 'agent-1', status: 'AWAY', lastSeen: '2026-01-01T00:00:02.000Z' },
   ticketLinked: { ticketId: 'T-1', ticketUrl: 'https://example.test/T-1' },
   tokenRefreshed: {},

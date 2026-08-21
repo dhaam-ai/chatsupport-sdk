@@ -7,7 +7,10 @@ describe('CHAT_EVENT_NAMES', () => {
   // `sendFailed` was added by the 2026-08-18 §6.5 amendment — see the
   // MessageDelivery note in state/types.ts for why an absent `seq` could not
   // carry a permanently-failed send.
-  it('lists exactly the sixteen events in §6.5', () => {
+  // `conversationStarted` was added by the 2026-08-21 §6.5 amendment — the
+  // agent-initiated conversation. See its entry in events.ts for why it is
+  // disjoint from `statusChange` rather than folded into it.
+  it('lists exactly the seventeen events in §6.5', () => {
     expect([...CHAT_EVENT_NAMES]).toEqual([
       'connected',
       'reconnecting',
@@ -21,6 +24,7 @@ describe('CHAT_EVENT_NAMES', () => {
       'agentLeft',
       'statusChange',
       'sessionClosed',
+      'conversationStarted',
       'presenceUpdate',
       'ticketLinked',
       'tokenRefreshed',

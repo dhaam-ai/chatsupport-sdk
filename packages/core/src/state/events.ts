@@ -107,6 +107,47 @@ export interface ChatEventMap {
    */
   sessionClosed: { closeReason: CloseReason };
 
+  /**
+   * A server-pushed `session.updated` REPLACED the conversation on screen
+   * with a different one (§6.5 amendment, 2026-08-21).
+   *
+   * The counterpart to `statusChange`, and deliberately disjoint from it:
+   * `statusChange` is "the session you are in changed", this is "the session
+   * you are in is now a different session". Exactly one of the two fires per
+   * snapshot, so a subscriber to both can never see one occurrence twice.
+   *
+   * The case it exists for is an agent starting a conversation with a
+   * customer who had no open one. The server moves the customer's connection
+   * into the newly created session and pushes the existing `session.updated`
+   * frame carrying its snapshot; no new frame type is involved, and core
+   * already replaced the conversation wholesale on that frame long before
+   * this event existed. What was missing was any way for an app to KNOW it
+   * happened — a replacement is otherwise indistinguishable from a quiet
+   * state change, so a closed chat panel stayed closed.
+   *
+   * Not limited to the agent-initiated case, and the name should not be read
+   * as promising that: any server-volunteered `session.updated` naming a
+   * different session emits this, including the one a host's own
+   * `joinSession()` call provokes. What core observes is the replacement, not
+   * the intent behind it.
+   *
+   * Deliberately NOT emitted for `connection.ack`. A handshake that resolves
+   * to a different session is a reconnect landing where the server put us,
+   * which happens on any ordinary page load, and treating that as a new
+   * conversation would fire this on almost every visit. Nor is it emitted
+   * during a `switchSession` — the customer picked that session themselves,
+   * so there is nothing to surface.
+   *
+   * `previousSessionId` is a plain `string`, never `null`: a replacement is
+   * defined as a snapshot whose id differs from one that was already there,
+   * so there is always a session being replaced. It is carried because a
+   * handler cannot recover it — the commit that triggers this event has
+   * already overwritten `ChatState.session` by the time the handler runs,
+   * which is the same reason `session` is carried rather than left to be
+   * read back off the store.
+   */
+  conversationStarted: { session: ChatSession; previousSessionId: string };
+
   presenceUpdate: PresenceEntry;
 
   ticketLinked: TicketLinkedPayload;
@@ -145,6 +186,7 @@ export const CHAT_EVENT_NAMES = [
   'agentLeft',
   'statusChange',
   'sessionClosed',
+  'conversationStarted',
   'presenceUpdate',
   'ticketLinked',
   'tokenRefreshed',

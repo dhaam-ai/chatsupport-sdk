@@ -379,6 +379,24 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       if (previous !== null && previous.id === next.id && statusOrModeChanged(previous, next)) {
         store.emit('statusChange', { status: next.status, mode: next.mode });
       }
+
+      // The other half of the same either/or: a DIFFERENT session, which
+      // `statusChange` deliberately refuses above, is news of its own kind.
+      //
+      // `session.updated` only — never `connection.ack`. A handshake resolving
+      // to a different session is just a reconnect landing where the server
+      // put us, which happens on ordinary page loads, and emitting there would
+      // fire this on nearly every visit. `replacing` already excludes the
+      // first-ever snapshot (`previous === null`), and the `switchTarget`
+      // guard above has already returned for every snapshot of a switch the
+      // customer started themselves.
+      //
+      // AFTER `commitSession`, so a handler that reads `ChatState` sees the
+      // conversation this event is announcing rather than the one it replaced
+      // — the ordering `sessionClosed` and `agentJoined` also keep.
+      if (frame.t === 'session.updated' && replacing && previous !== null) {
+        store.emit('conversationStarted', { session: next, previousSessionId: previous.id });
+      }
     }
 
     // presence/, not this file, owns typing/presence/watermarks and (for
