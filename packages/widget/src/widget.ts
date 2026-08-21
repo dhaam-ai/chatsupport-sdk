@@ -323,6 +323,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * still on screen".
    */
   let closedSessionId: string | null = null;
+  /**
+   * An agent opened a conversation while the panel was shut, and the customer
+   * has not looked at it yet.
+   *
+   * A widget-local flag rather than anything in `ChatState`, because it
+   * describes this UI's own "you have not seen this yet", not a fact about the
+   * session — a second widget on another tab has its own answer. Cleared by
+   * `openPanel`, which is the customer seeing it.
+   */
+  let agentInitiated = false;
   let startingNewConversation = false;
   /** One escalation in flight at a time — see {@link requestHumanAgent}. */
   let requestingAgent = false;
@@ -628,17 +638,31 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // ── state → DOM ───────────────────────────────────────────────────────
   function syncLauncher(state: ChatState): void {
     const unread = state.unreadCount;
-    const showBadge = unread > 0 && !open;
+    // Two independent reasons to mark the launcher, and either is enough.
+    // `agentInitiated` covers the conversation an agent opened while the panel
+    // was shut: `session.updated` is not a message, so `unreadCount` need not
+    // have moved at all, and without this the only signal of a waiting
+    // conversation would be a launcher that looks exactly like an idle one.
+    const showBadge = !open && (unread > 0 || agentInitiated);
     badge.hidden = !showBadge;
-    badge.textContent = unread > 99 ? '99+' : String(unread);
+    // Deliberately blank for a count of zero rather than the literal "0" —
+    // `.dh-badge`'s `min-width` renders an empty badge as a plain dot, which
+    // is what "someone is waiting, we cannot say how many messages" looks
+    // like. A "0" badge would read as a bug.
+    badge.textContent = unread === 0 ? '' : unread > 99 ? '99+' : String(unread);
 
     // The count goes in the NAME, not only in the badge. A red dot a screen
-    // reader never mentions is not an unread indicator.
+    // reader never mentions is not an unread indicator. The panel is
+    // `aria-hidden` while closed, so its live region cannot speak here — this
+    // attribute is the only accessible surface a closed widget has.
     const base = open ? 'Close chat' : 'Open chat';
-    launcher.setAttribute(
-      'aria-label',
-      showBadge ? `${base}, ${unread} unread ${unread === 1 ? 'message' : 'messages'}` : base,
-    );
+    launcher.setAttribute('aria-label', showBadge ? `${base}, ${unreadLabel(unread)}` : base);
+  }
+
+  /** The unread half of the launcher's accessible name. */
+  function unreadLabel(unread: number): string {
+    if (unread === 0) return 'a new conversation is waiting';
+    return `${unread} unread ${unread === 1 ? 'message' : 'messages'}`;
   }
 
   const unsubscribers = [
@@ -679,6 +703,25 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     store.on('reconnecting', () => {
       failedAttempts += 1;
       syncConnection();
+    }),
+    // An agent STARTING a conversation with a customer who had none open.
+    // Core has already replaced the session and seeded its first page by the
+    // time this runs; the only thing left is whether the customer finds out.
+    //
+    // Opening is opt-in and off by default — see `openOnAgentInitiated`. Left
+    // off, the launcher carries it instead: `agentInitiated` makes the badge
+    // show even before `unreadCount` moves, because the frame that starts the
+    // conversation is not itself a message and the first agent message may
+    // arrive on the seeded history page rather than as a `message.new`.
+    store.on('conversationStarted', () => {
+      if (config.openOnAgentInitiated) {
+        openPanel();
+        return;
+      }
+      // Already looking at it — the transcript swap is the notification.
+      if (open) return;
+      agentInitiated = true;
+      syncLauncher(store.getState());
     }),
     // An agent ending the conversation. Core applies the close to session
     // state and emits this; before it was handled here, nothing in the widget
@@ -1373,6 +1416,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   function openPanel(): void {
     if (open || destroyed) return;
     open = true;
+    // Seeing the conversation is what clears the mark. Before `syncLauncher`
+    // runs below, so the badge cannot survive the open that answered it.
+    agentInitiated = false;
 
     restoreFocus = captureFocus();
     panel.setAttribute('data-open', 'true');

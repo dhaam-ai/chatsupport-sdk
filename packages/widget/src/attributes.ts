@@ -122,6 +122,7 @@ export function configFromAttributes(bag: AttributeBag): WidgetConfig {
     font: font(bag),
     sheetBreakpointPx: breakpoint(bag),
     openOnLoad: boolean(bag, 'open'),
+    openOnAgentInitiated: boolean(bag, 'openOnAgentInitiated'),
     title: optional(bag, 'title'),
     accent: optional(bag, 'accent'),
     sessionId: optional(bag, 'sessionId'),

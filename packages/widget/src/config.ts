@@ -98,6 +98,24 @@ export interface WidgetConfig {
   /** Opens the panel as soon as it mounts. Defaults to `false`. */
   readonly openOnLoad?: boolean;
 
+  /**
+   * Opens the panel when an agent starts a conversation with this customer —
+   * core's `conversationStarted` (§6.5). Defaults to `false`.
+   *
+   * Default-off is a deliberate product decision, not caution about the
+   * implementation. A chat panel that opens itself covers the page the
+   * customer is actually using, moves focus into a composer they did not ask
+   * for, and on a `sheet` presentation takes the whole viewport — so it is the
+   * host's call to make, per site, and never ours to make for them.
+   *
+   * Left off, the conversation is still surfaced, passively: the launcher
+   * shows its unread indicator and says so in its accessible name, exactly as
+   * it would for any other message arriving on a closed panel. Nothing is
+   * silently dropped either way — the difference is only whether the panel
+   * takes the screen on its own.
+   */
+  readonly openOnAgentInitiated?: boolean;
+
   /** Header title. Defaults to `'Chat with us'`. */
   readonly title?: string;
 
@@ -125,6 +143,7 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly sheetBreakpointPx: number;
   readonly side: 'left' | 'right';
   readonly openOnLoad: boolean;
+  readonly openOnAgentInitiated: boolean;
   readonly title: string;
   readonly accent: string;
   readonly font: 'isolate' | 'inherit';
@@ -222,6 +241,7 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     sheetBreakpointPx,
     side: config.side ?? 'right',
     openOnLoad: config.openOnLoad ?? false,
+    openOnAgentInitiated: config.openOnAgentInitiated ?? false,
     title: config.title ?? 'Chat with us',
     accent: config.accent ?? '#1f2937',
     font: config.font ?? 'isolate',

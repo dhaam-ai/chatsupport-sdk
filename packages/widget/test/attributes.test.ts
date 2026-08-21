@@ -126,6 +126,19 @@ describe('configFromAttributes', () => {
       expect(configFromAttributes({ ...minimal(), open: 'true' }).openOnLoad).toBe(true);
     });
 
+    it('reads data-open-on-agent-initiated, and leaves it absent by default', () => {
+      const bag = minimal();
+      // Absent, not `false`: `resolveConfig` owns the default, and a present
+      // key would misreport that the host asked for it.
+      expect(configFromAttributes(bag).openOnAgentInitiated).toBeUndefined();
+      expect(
+        configFromAttributes({ ...bag, openOnAgentInitiated: '' }).openOnAgentInitiated,
+      ).toBe(true);
+      expect(
+        configFromAttributes({ ...bag, openOnAgentInitiated: 'false' }).openOnAgentInitiated,
+      ).toBe(false);
+    });
+
     it('omits absent optionals rather than setting them to undefined', () => {
       // `exactOptionalPropertyTypes` is on: a present key holding `undefined`
       // is not the same as an absent key, and would misreport what the host
