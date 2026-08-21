@@ -153,6 +153,9 @@ export class ConnectionController {
   /** 0-based reconnect attempt, per §8.2's formula. Reset on every `connection.ack`. */
   #attempt = 0;
 
+  /** See {@link requestNewSession}. Cleared by `connection.ack`, not by sending. */
+  #pendingNewSession = false;
+
   /**
    * Bumped by every action that invalidates work already in flight — a new
    * attempt, a disconnect, a refresh. Async continuations (`getToken()`
@@ -242,6 +245,26 @@ export class ConnectionController {
   forgetResumeAnchor(): void {
     this.#resume.reset();
     this.#connectionResumeFrom = null;
+  }
+
+  /**
+   * Ask the SERVER for a brand-new session on the next handshake.
+   *
+   * The companion to `forgetResumeAnchor`, and the half that was missing.
+   * Forgetting the anchor makes the hello *look* like a first connection, but
+   * chat-service resolves a customer to their one active session either way —
+   * so `startNewSession()` reconnected into the conversation it had just been
+   * told to leave. This states the intent explicitly instead of hoping the
+   * server infers it (`connection.hello.d.newSession`).
+   *
+   * Latched, not one-shot-per-socket: the flag survives failed attempts and is
+   * cleared only by a `connection.ack`, because the customer's request is not
+   * satisfied until a new session actually comes back. A transport retry in
+   * between must carry it too, or the retry silently resumes the old session —
+   * the exact bug, one layer down.
+   */
+  requestNewSession(): void {
+    this.#pendingNewSession = true;
   }
 
   /**
@@ -348,6 +371,9 @@ export class ConnectionController {
       // thing from an absent key, and the wire contract (§7.2, D4) wants it
       // absent rather than null.
       ...(resumeFrom === null ? {} : { resumeFrom }),
+      // Absent, not `false`, when nobody asked — same absence rule as
+      // `resumeFrom` above, and what keeps an older server unaffected.
+      ...(this.#pendingNewSession ? { newSession: true as const } : {}),
     };
 
     try {
@@ -461,6 +487,11 @@ export class ConnectionController {
   #handleConnectionAck(frame: ConnectionAckFrame): void {
     this.#attempt = 0;
     this.#authBackoff.recordSuccess();
+    // The server has answered the "start a new conversation" request — with a
+    // new session, or (on a deployment that predates the field) with the old
+    // one. Either way the request is spent, and carrying it into the NEXT
+    // reconnect would close the customer's live conversation behind them.
+    this.#pendingNewSession = false;
 
     const payload = frame.d;
 

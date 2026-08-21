@@ -9,28 +9,35 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.chat_message import ChatMessage
+    from ..models.chat_message_wire import ChatMessageWire
     from ..models.chat_session import ChatSession
     from ..models.participant import Participant
 
 
-T = TypeVar("T", bound="SessionFull")
+T = TypeVar("T", bound="SessionFullWire")
 
 
 @_attrs_define
-class SessionFull:
-    """
-    Attributes:
-        session (ChatSession):
-        participants (list['Participant']):
-        messages (list['ChatMessage']): Most recent page, ascending chronological order (oldest first).
-        has_more (bool): Whether older messages exist beyond this page. Page further back with `GET
-            /sessions/{sessionId}/messages`.
+class SessionFullWire:
+    """Actual wire shape of `GET /chat/sessions/{sessionId}/full`'s `200` body (inside `data`) — replaces the idealized
+    `SessionFull`, which this document previously documented and which is no longer referenced by any operation. Only
+    `messages` differs structurally from what `SessionFull` modeled — see `ChatMessageWire`. `session`'s own
+    `status`/`mode` are also raw integers on this path (reuse `ChatSession`'s `status`/`mode` field names but expect the
+    same integer codes documented on `ChatMessageWire.senderType`'s sibling table, i.e. `ChatStatus`/`ChatMode`'s
+    backend ints), and its `assignedAgent`/`customer` are missing `participantId` — a smaller, separately-tracked
+    accuracy gap not fully re-modeled in this revision.
+
+        Attributes:
+            session (ChatSession):
+            participants (list['Participant']):
+            messages (list['ChatMessageWire']): Most recent page, ascending chronological order (oldest first).
+            has_more (bool): Whether older messages exist beyond this page. Page further back with `GET
+                /chat/sessions/{sessionId}/messages`.
     """
 
     session: "ChatSession"
     participants: list["Participant"]
-    messages: list["ChatMessage"]
+    messages: list["ChatMessageWire"]
     has_more: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -64,7 +71,7 @@ class SessionFull:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.chat_message import ChatMessage
+        from ..models.chat_message_wire import ChatMessageWire
         from ..models.chat_session import ChatSession
         from ..models.participant import Participant
 
@@ -81,21 +88,21 @@ class SessionFull:
         messages = []
         _messages = d.pop("messages")
         for messages_item_data in _messages:
-            messages_item = ChatMessage.from_dict(messages_item_data)
+            messages_item = ChatMessageWire.from_dict(messages_item_data)
 
             messages.append(messages_item)
 
         has_more = d.pop("hasMore")
 
-        session_full = cls(
+        session_full_wire = cls(
             session=session,
             participants=participants,
             messages=messages,
             has_more=has_more,
         )
 
-        session_full.additional_properties = d
-        return session_full
+        session_full_wire.additional_properties = d
+        return session_full_wire
 
     @property
     def additional_keys(self) -> list[str]:

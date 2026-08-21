@@ -16,10 +16,12 @@ T = TypeVar("T", bound="CloseSessionRequest")
 
 @_attrs_define
 class CloseSessionRequest:
-    """
-    Attributes:
-        reason (Union[Unset, CloseReason]): First-class enum for why a session entered CLOSED (PRD §12.5) — v1 only had
-            this as a loose `string | null` code comment (`'SWITCHED' | 'MANUAL' | null`).
+    """Accepted but currently ignored by the backend — see the `POST /chat/sessions/{sessionId}/close` operation
+    description for why `reason` has no effect today (`chatSessionService.closeSession` takes only the session id).
+
+        Attributes:
+            reason (Union[Unset, CloseReason]): First-class enum for why a session entered CLOSED (PRD §12.5) — v1 only had
+                this as a loose `string | null` code comment (`'SWITCHED' | 'MANUAL' | null`).
     """
 
     reason: Union[Unset, CloseReason] = UNSET

@@ -33,7 +33,14 @@ info:
     `admin.routes.ts`). Neither is documented anywhere in this file. This was
     flagged by the SDK↔backend contract audit that produced the corrections
     below, and is noted here so it stays a tracked gap rather than a silent
-    one.
+    one. **Also undocumented, as of this revision**: the five base Contacts
+    CRM routes (`GET /contacts`, `GET /contacts/:id`, `POST /contacts`,
+    `GET /contacts/cities`, `GET /contacts/tags` —
+    `src/api/rest/routes/contact.routes.ts`). This revision adds four
+    `/contacts`-prefixed operations (commerce events and cart reads, tag
+    `Contacts` below) without adding those five — see "Contacts /
+    commerce-events surface" further down for why, so a reader does not
+    infer contact CRUD is now covered just because part of `/contacts` is.
 
     ## Response shape
 
@@ -94,7 +101,7 @@ info:
     - `Authorization: Bearer <accessToken>` — the short-lived JWT minted by
       `POST /tokens` (PRD §10.3) and supplied to the SDK via `getToken()`
       (PRD §6.1, §10.4). Encodes the authenticated end user and their tenant.
-    - `X-Publishable-Key: dhpk_live_...` / `dhpk_test_...` — identifies the
+    - `X-Publishable-Key: dhp_live_...` / `dhp_test_...` — identifies the
       tenant. Required on every request alongside the access token. The
       server rejects a request whose `X-Publishable-Key` tenant does not
       match the `accessToken`'s tenant claim with `AUTH_INVALID` — the exact
@@ -128,13 +135,17 @@ info:
 
     ### The two key types are never interchangeable
 
-    - **Secret key** (`dhsk_live_...` / `dhsk_test_...`) is valid in exactly two
-      places in this whole system: as the `Authorization: Bearer` credential
-      on `POST /tokens`, and as the HMAC signing key for webhook signature
-      verification (below). It is never a valid credential on any endpoint a
-      browser calls, and it never leaves the customer's own backend (PRD
-      §10.1, §10.7, §14).
-    - **Publishable key** (`dhpk_live_...` / `dhpk_test_...`) identifies a tenant
+    - **Secret key** (`dhk_live_...` / `dhk_test_...`) is valid in exactly
+      three places in this whole system, as of this revision: as the
+      `Authorization: Bearer` credential on `POST /tokens`, as that same
+      credential on `POST /contacts/commerce-events` (added this revision —
+      see `securitySchemes.secretKey` and "Contacts / commerce-events
+      surface" below for exactly what that route does and does not unlock),
+      and as the HMAC signing key for webhook signature verification
+      (below). It is never a valid credential on any endpoint a browser
+      calls, and it never leaves the customer's own backend (PRD §10.1,
+      §10.7, §14).
+    - **Publishable key** (`dhp_live_...` / `dhp_test_...`) identifies a tenant
       and, per PRD §10.1, grants nothing by itself — every browser-facing
       endpoint below requires it *together with* a valid `accessToken`, never
       in place of one.
@@ -293,6 +304,92 @@ info:
     server-side unless the caller supplies one on the request, and every
     error body echoes the same value as `error.details.requestId` for
     support correlation.
+
+    ## Contacts / commerce-events surface
+
+    This revision adds the four `/contacts/...` operations below — two
+    write paths that ingest order/cart events (one machine, one admin/CRM
+    correction) and two admin read paths that segment carts for win-back
+    campaigns. They are the first `/contacts`-prefixed operations this
+    document has ever modeled.
+
+    **This does not mean `/contacts` is now a documented surface.** The
+    five base Contacts CRM routes — `GET /contacts`, `GET /contacts/:id`,
+    `POST /contacts`, `GET /contacts/cities`, `GET /contacts/tags`
+    (`src/api/rest/routes/contact.routes.ts`) — are untouched by this
+    revision and remain undocumented, joining `/agent/...` and
+    `/admin/...` in the known-gap note above. A reader should not infer
+    contact CRUD is covered just because commerce events and cart reads
+    now are; documenting the base five is separate, unstarted work.
+
+    **Envelope.** All four operations below reply in the v1 `{ success,
+    data }` family — like `/chat/sessions/...` and `/upload`, and
+    *unlike* `POST /tokens`'s bare `{accessToken, expiresIn}` — because
+    they are modeled as part of the Contacts CRM API, not the
+    token/session surface. Their error bodies are `{ success: false,
+    error: { code, message, details? } }`: the **legacy** vocabulary the
+    global Fastify error handler produces (`middleware/error-handler.ts`),
+    the same shape `POST /chat/sessions` falls back to for
+    validation/domain errors — see "Error taxonomy" → "Two vocabularies in
+    practice" above. It is **not** this document's `ErrorCode`/
+    `ErrorPayload` bare-envelope shape, and `retryable` is never present.
+    New codes this revision adds to that legacy vocabulary: `AUTH_INVALID`
+    (the secret-key route's one generic auth-failure code — deliberately
+    given the same NAME as this document's own `ErrorCode.AUTH_INVALID`,
+    even though it rides in the legacy envelope here rather than the bare
+    one; one canonical name per concept, per decision D4, extended across
+    the two vocabularies rather than inventing a second name for the same
+    failure), `CONTACT_NOT_FOUND`, `CART_NOT_FOUND`, and
+    `INVALID_CART_TRANSITION`. See `ContactsErrorCode`.
+
+    **No `X-Request-Id` guarantee.** The "Observability" claim just above
+    — every response carries `X-Request-Id`, every error echoes it as
+    `error.details.requestId` — does not hold for this route family.
+    `middleware/error-handler.ts` neither sets an `X-Request-Id` response
+    header nor injects `requestId` into `error.details` (confirmed absent
+    from `src/`; the guarantee is real for the v2 vocabulary's
+    `errorPayload()` builder, not for the global handler these four
+    operations go through). A caller correlating support requests for
+    these operations needs its own client-side id.
+
+    **Idempotency, and rejection recovery.** Both write operations below
+    (`recordCommerceEvent`, `recordCommerceEventForContact`) share one
+    idempotency contract, keyed on the caller-supplied `eventId`, applied
+    inside a single database transaction per event — proved against real
+    Postgres, including the failure case below, before this contract was
+    pinned:
+
+    - Retrying an event that was **accepted and applied** on its first
+      attempt (`200`, `applied: true`) with the same `eventId` returns
+      `200` again with `applied: false` and the ORIGINAL outcome, re-read
+      from the stored idempotency row rather than recomputed. The
+      mutation is never re-applied.
+    - An event that is **rejected** (`404 CART_NOT_FOUND` or
+      `422 INVALID_CART_TRANSITION`) rolls back its entire transaction,
+      including the idempotency insert — no row is left behind. The
+      `eventId` is therefore **not consumed by a rejection**: retrying the
+      identical request with the same `eventId` later is processed as a
+      completely fresh attempt, never short-circuited as a replay. This is
+      the intended recovery path for out-of-order arrival — e.g. a
+      `cart.abandoned` that races ahead of the `cart.updated` that would
+      have created its cart gets a `404` immediately, and the caller
+      simply retries that same `eventId` once the earlier event has
+      landed; no new id needs to be minted, and there is no case where a
+      caller is stuck permanently retrying a request that can never
+      succeed under its original id.
+    - `400`/`401`/`403` responses happen even earlier — before any
+      transaction opens at all, since bad input or a bad credential never
+      reaches the idempotency check — so those were never in question:
+      fix the request and retry with the same `eventId` freely.
+
+    **Request size.** `cart.updated`'s `items` array (up to 500 entries,
+    each with a `name` up to 300 characters and a `sku` up to 64 — see
+    `CommerceCartItem`) is not a small body in the worst case: non-ASCII
+    product names push a maximal request well past what a token-minting-
+    sized limit would allow. Both write operations below accept a request
+    body up to **1 MiB** (Fastify 5's own default), not the 16 KiB
+    `POST /tokens` enforces — sized from the real worst case, not assumed
+    from the ASCII one.
   license:
     name: Proprietary
     identifier: "UNLICENSED"
@@ -305,6 +402,12 @@ tags:
     description: Cursor-paginated message history (PRD §6.3, §12.10).
   - name: Attachments
     description: Two-step upload-then-announce attachment flow (PRD §6.3, §12.10).
+  - name: Contacts
+    description: >-
+      Commerce-event ingestion and cart segmentation for the Contacts CRM.
+      Only these four operations are documented as of this revision — the
+      five base Contacts CRUD routes remain a known gap; see "Contacts /
+      commerce-events surface" in this document's top-level description.
 
 servers:
   - url: "{apiUrl}/chat-services/api/v1"
@@ -334,8 +437,8 @@ paths:
       tags: [Tokens]
       summary: Mint a short-lived, scoped user access token.
       description: |
-        Called by the **customer's own backend** using their `dhsk_live_...` /
-        `dhsk_test_...` secret key — never by a browser (PRD §10.3). The
+        Called by the **customer's own backend** using their `dhk_live_...` /
+        `dhk_test_...` secret key — never by a browser (PRD §10.3). The
         customer's frontend calls *their own* backend endpoint (commonly
         one they name `/token` or similar), which in turn calls this
         endpoint and relays only the resulting `accessToken` to the
@@ -1056,6 +1159,356 @@ paths:
                       code: UPLOAD_ERROR
                       message: "File upload failed"
 
+  /contacts/commerce-events:
+    post:
+      operationId: recordCommerceEvent
+      tags: [Contacts]
+      summary: Record a merchant order or cart event for one of their customers (machine, server-to-server).
+      description: |
+        Called by the **merchant's own commerce backend** with their
+        tenant secret key — the same credential and calling pattern
+        `POST /tokens` already uses, never a browser. The target contact
+        is resolved-or-created from the body's `customerId`; the tenant
+        itself comes from the verified key, never from the body — there
+        is no `tenantId` field anywhere in this request.
+
+        Six event types, discriminated on `type` — see `CommerceEvent`.
+        The server derives every `Contact` aggregate (`totalOrders`,
+        `completedOrders`, `totalSpend`, `averageOrderValue`,
+        `itemsInCart`/`cartValue`, `lastOrderMerchant`/`lastOrderCategory`/
+        `lastOrderAt`) from the event stream; this call never sends a
+        computed total.
+
+        **`200`, never `201`**, for both a first acceptance and a replay
+        of an already-applied event — this is a command over an event
+        stream, not creation of a REST resource, and using one status
+        code for both `applied` states avoids a status-code-encodes-
+        idempotency-state trap. See "Idempotency, and rejection recovery"
+        in this document's top-level description for the full contract,
+        including what happens when the SAME `eventId` is retried after a
+        `404`/`422` rejection (short answer: it is processed fresh, not
+        short-circuited — the transaction that rejected it rolled back
+        the idempotency row along with everything else).
+
+        Request bodies up to 1 MiB are accepted — see "Request size" in
+        the top-level description for why this is larger than
+        `POST /tokens`'s limit.
+
+        Not reachable via `@dhaam-ccrm/node`'s `UserScopedClient` — only
+        `ChatServerClient.recordCommerceEvent()`, alongside `mintToken`,
+        holds the secret key this route requires.
+      security:
+        - secretKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommerceEvent"
+            examples:
+              orderCompleted:
+                summary: order.completed
+                value:
+                  eventId: "evt_order_9f2a1e"
+                  type: order.completed
+                  occurredAt: "2026-08-21T10:15:00Z"
+                  customerId: "cust_8f2a1e"
+                  orderId: "ord_5591"
+                  value: 84.5
+                  merchant: "Acme Outfitters"
+                  category: "apparel"
+              cartUpdated:
+                summary: cart.updated (full replace of the cart's contents; items may be empty)
+                value:
+                  eventId: "evt_cart_1a2b3c"
+                  type: cart.updated
+                  occurredAt: "2026-08-21T10:12:00Z"
+                  customerId: "cust_8f2a1e"
+                  cartId: "cart_77"
+                  items:
+                    - name: "Trail runner, size 10"
+                      quantity: 1
+                      unitPrice: 129.0
+      responses:
+        "200":
+          description: Event accepted (first application) or replayed (already-applied `eventId`) — see `applied`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/CommerceEventResult"
+        "400":
+          $ref: "#/components/responses/ContactsBadRequest"
+        "401":
+          $ref: "#/components/responses/ContactsUnauthorized"
+        "404":
+          $ref: "#/components/responses/ContactsCartNotFound"
+        "422":
+          $ref: "#/components/responses/ContactsUnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/ContactsTooManyRequests"
+        "500":
+          $ref: "#/components/responses/ContactsInternalError"
+
+  /contacts/{id}/commerce-events:
+    post:
+      operationId: recordCommerceEventForContact
+      tags: [Contacts]
+      summary: Record an order or cart correction for one contact (admin/CRM).
+      description: |
+        The human counterpart to `recordCommerceEvent` — a tenant admin in
+        the CRM correcting or backfilling what the machine feed missed or
+        got wrong (a phone order, a manual backfill), through the
+        identical event-shaped mechanism. Not a raw field-override: every
+        write, machine or human, is an event the server derives aggregates
+        from — there is no endpoint that sets e.g. `totalSpend` to an
+        exact number directly.
+
+        `:id` must already exist for the caller's own tenant — unlike the
+        machine path, this path never creates a contact. A typo'd or
+        cross-tenant `:id` is `404 CONTACT_NOT_FOUND`, never `403` — see
+        `ContactsContactNotFound`.
+
+        Same event taxonomy as `CommerceEvent`, minus `customerId` — see
+        `CommerceEventAdmin`. Same `200`-always response shape, and the
+        identical idempotency/rejection-recovery contract, as the machine
+        path (see "Idempotency, and rejection recovery" above).
+
+        Every event this path writes records the acting admin's identity
+        for audit — "who corrected this contact's order history" is a
+        support/compliance question a tenant will ask.
+
+        Not exposed via `@dhaam-ccrm/node` — this is a CRM-console
+        operation, not part of the merchant-facing SDK surface;
+        `ChatServerClient` gains only the machine-path method.
+      security:
+        - staffToken: []
+      parameters:
+        - $ref: "#/components/parameters/ContactIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommerceEventAdmin"
+      responses:
+        "200":
+          description: Event accepted (first application) or replayed (already-applied `eventId`) — see `applied`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    $ref: "#/components/schemas/CommerceEventResult"
+        "400":
+          $ref: "#/components/responses/ContactsBadRequest"
+        "401":
+          $ref: "#/components/responses/ContactsUnauthorized"
+        "403":
+          $ref: "#/components/responses/ContactsForbidden"
+        "404":
+          description: Either the target contact or the targeted cart does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactsError"
+              examples:
+                contactNotFound:
+                  summary: CONTACT_NOT_FOUND
+                  value:
+                    success: false
+                    error:
+                      code: CONTACT_NOT_FOUND
+                      message: "Contact not found"
+                cartNotFound:
+                  summary: CART_NOT_FOUND — does not consume the event's eventId, see "Idempotency, and rejection recovery" above
+                  value:
+                    success: false
+                    error:
+                      code: CART_NOT_FOUND
+                      message: "No cart found for the given cartId"
+        "422":
+          $ref: "#/components/responses/ContactsUnprocessableEntity"
+        "500":
+          $ref: "#/components/responses/ContactsInternalError"
+
+  /contacts/carts:
+    get:
+      operationId: listContactCarts
+      tags: [Contacts]
+      summary: List/segment carts across the tenant's contacts (admin, win-back campaigns).
+      description: |
+        The read side of the cart-segmentation use case — e.g. "carts
+        abandoned in the last 7 days worth $100+," to build a win-back
+        audience. Every query, **including the total count**, carries the
+        caller's own `tenantId` — the same rule `contact-list.service.ts`
+        states for `GET /contacts`: a count that omitted it would leak the
+        size of another tenant's cart segment through a number.
+
+        `status` defaults to `abandoned` — segmentation, not a live-cart
+        dashboard, is this operation's reason to exist.
+      security:
+        - staffToken: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: >-
+            Lowercase only — `LIVE` or `1` are `400`, not silently
+            accepted. This is the query-parameter form; the equivalent
+            response field (`ContactCartRow.status`) is the integer
+            `ContactCartStatus` code, not this string — see that schema's
+            description for why the two intentionally differ.
+          schema:
+            type: string
+            enum: [live, abandoned, converted]
+            default: abandoned
+        - name: minValue
+          in: query
+          required: false
+          description: Inclusive lower bound on `cartValue`.
+          schema:
+            type: number
+            minimum: 0
+        - name: maxValue
+          in: query
+          required: false
+          description: Inclusive upper bound on `cartValue`.
+          schema:
+            type: number
+            minimum: 0
+        - name: updatedAfter
+          in: query
+          required: false
+          description: ISO-8601. Filters on the cart row's `updatedAt`.
+          schema:
+            type: string
+            format: date-time
+        - name: updatedBefore
+          in: query
+          required: false
+          description: ISO-8601. Filters on the cart row's `updatedAt`.
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          description: >-
+            Reject, not clamp — a request above the max is `400`, never
+            silently truncated. Same bound as `GET /contacts`.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - name: sort
+          in: query
+          required: false
+          description: '`<column>:<asc|desc>`. Only these two columns are sortable here.'
+          schema:
+            type: string
+            enum: ["updatedAt:asc", "updatedAt:desc", "cartValue:asc", "cartValue:desc"]
+            default: updatedAt:desc
+      responses:
+        "200":
+          description: A tenant-scoped, filtered, paginated page of cart rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data, total, page, pageSize]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContactCartRow"
+                  total:
+                    type: integer
+                    minimum: 0
+                    description: Tenant-scoped count matching the same filters as `data` — never a cross-tenant total.
+                  page:
+                    type: integer
+                    minimum: 1
+                  pageSize:
+                    type: integer
+                    minimum: 1
+        "400":
+          $ref: "#/components/responses/ContactsBadRequest"
+        "401":
+          $ref: "#/components/responses/ContactsUnauthorized"
+        "403":
+          $ref: "#/components/responses/ContactsForbidden"
+        "500":
+          $ref: "#/components/responses/ContactsInternalError"
+
+  /contacts/{id}/carts:
+    get:
+      operationId: listCartsForContact
+      tags: [Contacts]
+      summary: One contact's full cart history (admin, support-ticket lookup).
+      description: |
+        A support agent looking at one contact's cart history while
+        handling a ticket — every `LIVE`/`ABANDONED`/`CONVERTED` row for
+        that contact, including carts that are NOT the one currently
+        mirrored onto `Contact.itemsInCart`/`cartValue` (that mirror
+        always reflects only the single most-recently-touched `LIVE`
+        cart — see `ContactCartRow`'s description for the full multi-cart
+        mirror rule). Unpaginated; lightly capped rather than truly
+        unbounded, since a contact plausibly has dozens of historical
+        carts, not thousands.
+
+        Same 404-not-403 rule as `GET /contacts/:id`.
+      security:
+        - staffToken: []
+      parameters:
+        - $ref: "#/components/parameters/ContactIdPath"
+      responses:
+        "200":
+          description: Every cart row for this contact, most recently updated first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContactCartRow"
+        "401":
+          $ref: "#/components/responses/ContactsUnauthorized"
+        "403":
+          $ref: "#/components/responses/ContactsForbidden"
+        "404":
+          $ref: "#/components/responses/ContactsContactNotFound"
+        "500":
+          $ref: "#/components/responses/ContactsInternalError"
+
 webhooks:
   messageCreated:
     post:
@@ -1168,12 +1621,41 @@ components:
     secretKey:
       type: http
       scheme: bearer
-      bearerFormat: "dhsk_live_... / dhsk_test_..."
+      bearerFormat: "dhk_live_... / dhk_test_..."
       description: >-
-        Tenant secret key. Valid **only** as the credential on `POST
-        /tokens` (never on any endpoint a browser calls) and, separately, as
-        the HMAC-SHA256 signing key for webhook signature verification. Must
-        never leave the customer's backend (PRD §10.1, §14).
+        Tenant secret key. Valid as the `Authorization: Bearer` credential
+        on exactly two routes — `POST /tokens` and, as of this revision,
+        `POST /contacts/commerce-events` — and, separately, as the
+        HMAC-SHA256 signing key for webhook signature verification. Never
+        valid on any endpoint a browser calls, and must never leave the
+        customer's own backend (PRD §10.1, §14).
+
+
+        **What the `POST /contacts/commerce-events` grant does NOT unlock.**
+        A secret key is not a general server-to-server admin credential —
+        it is scoped narrowly to that one additional route, and even there,
+        narrowly within it:
+
+        - It does not authorize any of the five Contacts CRM routes
+          (`src/api/rest/routes/contact.routes.ts`) — `GET /contacts`,
+          `GET /contacts/:id`, `POST /contacts`, `GET /contacts/cities`,
+          `GET /contacts/tags`. Those accept only a staff Cognito token
+          (`staffToken` below); a secret key presented there is rejected
+          exactly as any other malformed `Authorization` header is today —
+          no special-casing was added to recognize it there.
+        - On the one route it IS valid for, the request body
+          (`CommerceEvent` schema) is `.strict()` and carries **only**
+          commerce-event fields — `eventId`, `type`, `occurredAt`,
+          `customerId`, and the per-`type` order/cart fields below. It has
+          no `name`, `email`, `phone`, `tags`, `consent`, `status`,
+          `userType`, `city`, `country`, or any other PII/profile field. A
+          merchant holding a secret key can, via `customerId`, find-or-create
+          a minimal contact stub (the identical shape
+          `contact-identity.service.ts` already produces for a first chat
+          contact — `externalId`-only, no email, no profile) and record
+          commerce events against it. It cannot read any contact, cannot
+          write or overwrite PII on one, cannot change `status`, and cannot
+          reach any of the five CRM routes above under any circumstance.
     accessToken:
       type: http
       scheme: bearer
@@ -1182,13 +1664,31 @@ components:
         Short-lived, scoped user JWT minted by `POST /tokens` and supplied
         to `@dhaam-ccrm/core` via `getToken()` (PRD §6.1, §10.4). Required,
         together with `publishableKey`, on every session/message/attachment
-        endpoint.
+        endpoint. **Not the same credential as `staffToken` below** — this
+        one identifies an end customer, never a tenant's own staff.
+    staffToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        A tenant STAFF member's Cognito-issued access token, verified by
+        `authenticateAgent` (`src/api/rest/middleware/auth.middleware.ts`,
+        `verifyCognitoToken`). **A different credential from `accessToken`
+        above, not a naming variant of it**: `accessToken` is the
+        short-lived customer JWT minted by `POST /tokens`; this one
+        identifies an agent or admin signed into the CRM/agent console
+        through the tenant's own staff login flow — out of scope of this
+        document, since no operation here mints it. The Contacts
+        commerce-events/cart-read routes below additionally require the
+        verified identity to carry the admin role (`requireAdmin`); a
+        verified-but-non-admin staff token is rejected with `403`, not
+        `401` — see `ContactsForbidden`.
     publishableKey:
       type: apiKey
       in: header
       name: X-Publishable-Key
       description: >-
-        Tenant-identifying key (`dhpk_live_...` / `dhpk_test_...`), safe to ship
+        Tenant-identifying key (`dhp_live_...` / `dhp_test_...`), safe to ship
         in a client bundle. Identifies a tenant and grants nothing on its
         own (PRD §10.1) — always required together with `accessToken`, never
         as a sole credential. The server rejects a request whose
@@ -1201,6 +1701,17 @@ components:
       in: path
       required: true
       description: Opaque session identifier. Do not parse or rely on its internal structure.
+      schema:
+        type: string
+        minLength: 1
+    ContactIdPath:
+      name: id
+      in: path
+      required: true
+      description: >-
+        Opaque contact identifier (`Contact.id`). Do not parse or rely on
+        its internal structure. A contact in another tenant, or that never
+        existed, is `404`, never `403` — see each operation's description.
       schema:
         type: string
         minLength: 1
@@ -1221,7 +1732,7 @@ components:
       description: |
         `t=<unix-seconds>,v1=<hex-encoded HMAC-SHA256>`. The signed payload
         is `${t}.${rawRequestBody}`, HMAC-SHA256'd with the tenant's secret
-        key (`dhsk_live_...` / `dhsk_test_...`) as the key. Verify by
+        key (`dhk_live_...` / `dhk_test_...`) as the key. Verify by
         recomputing the HMAC over the *raw, unparsed* body and comparing
         with constant-time comparison; reject if `t` is more than 5 minutes
         from the receiver's clock (replay protection).
@@ -1404,6 +1915,199 @@ components:
                   code: INTERNAL
                   message: "An unexpected error occurred."
                   retryable: true
+
+    # ── Contacts / commerce-events error responses ──────────────────────────
+    # A DIFFERENT envelope from the seven above: these four operations reply
+    # through the global Fastify error handler's legacy `{success:false,
+    # error:{code,message,details?}}` shape, not this document's bare
+    # `{error:{...}}` `Error` schema. See "Contacts / commerce-events
+    # surface" in the top-level description for why, and note there is
+    # deliberately no `X-Request-Id` response header on any of these —
+    # unlike the seven above, the global error handler never sets one.
+    ContactsBadRequest:
+      description: >-
+        Request body or query failed schema validation — `.strict()`
+        rejected an unrecognised field, a bound was exceeded (reject, not
+        clamp — e.g. `items` over 500 entries is refused outright, never
+        truncated to 500), or a required field was missing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactsError"
+          examples:
+            default:
+              value:
+                success: false
+                error:
+                  code: VALIDATION_ERROR
+                  message: "eventId is required."
+
+    ContactsUnauthorized:
+      description: >-
+        Missing, malformed, revoked, or wrong-type credential. On the
+        secret-key route this is deliberately ONE generic message for every
+        failure reason (bad key, revoked key, a publishable key presented
+        instead, a malformed header) — there is no oracle, matching
+        `POST /tokens`'s own hardening. On the staff-token routes this is a
+        Cognito verification failure (missing, expired, or invalid token) —
+        distinct from `ContactsForbidden` below, which is a
+        verified-but-insufficient-role rejection, not a credential failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactsError"
+          examples:
+            secretKey:
+              summary: Secret-key route — bad, revoked, or wrong-type key
+              value:
+                success: false
+                error:
+                  code: AUTH_INVALID
+                  message: "Invalid or revoked secret key"
+            staffToken:
+              summary: Staff-token route — token missing or failed verification
+              value:
+                success: false
+                error:
+                  code: UNAUTHORIZED
+                  message: "Invalid token"
+
+    ContactsForbidden:
+      description: >-
+        Staff-token routes only. The token verified, but the identity is
+        not an admin (`requireAdmin`,
+        `src/api/rest/middleware/require-role.ts`). **Backend quirk,
+        documented as it actually behaves rather than as it "should"**: the
+        error `code` is still `UNAUTHORIZED` here — the same code
+        `ContactsUnauthorized`'s staff-token case uses for a `401` — even
+        though the HTTP status is `403`. A client distinguishing "not
+        signed in" from "signed in, wrong role" must branch on the HTTP
+        status, not on `error.code`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactsError"
+          examples:
+            default:
+              value:
+                success: false
+                error:
+                  code: UNAUTHORIZED
+                  message: "Administrator role required"
+
+    ContactsContactNotFound:
+      description: >-
+        `:id` does not exist, or exists in another tenant. Always `404`,
+        never `403` — a contact id is enumerable, so "does not exist" and
+        "not yours" must be indistinguishable (the same rule
+        `GET /contacts/:id` documents elsewhere in this service).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactsError"
+          examples:
+            default:
+              value:
+                success: false
+                error:
+                  code: CONTACT_NOT_FOUND
+                  message: "Contact not found"
+
+    ContactsCartNotFound:
+      description: >-
+        The `cartId` an event targets (`cart.abandoned`, `cart.converted`)
+        has no matching row for this contact. **Does not consume the
+        event's `eventId`** — see "Idempotency, and rejection recovery" in
+        the top-level description. The whole transaction, including the
+        idempotency insert, rolls back on this rejection; retrying the SAME
+        `eventId` later (e.g. once the cart actually exists, if a
+        `cart.updated` for it is still in flight) is processed normally,
+        not replayed as a no-op.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactsError"
+          examples:
+            default:
+              value:
+                success: false
+                error:
+                  code: CART_NOT_FOUND
+                  message: "No cart found for the given cartId"
+
+    ContactsUnprocessableEntity:
+      description: >-
+        The event is well-formed but illegal against the target cart's
+        current state — most commonly an event (`cart.abandoned`,
+        `cart.converted`, or an `order.placed` carrying a `cartId`)
+        directed at a cart already `CONVERTED`, which is a terminal state.
+        One generic code covers every illegal transition; there is
+        deliberately no more specific code such as a hypothetical
+        `CART_ALREADY_CONVERTED` for that particular edge — a single `422`
+        was chosen over a family of narrower codes. **Does not consume the
+        event's `eventId`**, exactly like `ContactsCartNotFound` above —
+        see "Idempotency, and rejection recovery" in the top-level
+        description. The transaction rolls back in full, so the same
+        `eventId` is free to retry; it is not treated as "already seen."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactsError"
+          examples:
+            default:
+              value:
+                success: false
+                error:
+                  code: INVALID_CART_TRANSITION
+                  message: "This cart is CONVERTED and cannot accept further cart events"
+
+    ContactsTooManyRequests:
+      description: >-
+        Secret-key route only — per-key rate limit exceeded. The
+        staff-token routes have no dedicated limiter of their own beyond
+        whatever blanket protection the rest of the admin surface already
+        has.
+      headers:
+        RateLimit-Limit:
+          $ref: "#/components/headers/RateLimitLimit"
+        RateLimit-Remaining:
+          $ref: "#/components/headers/RateLimitRemaining"
+        RateLimit-Reset:
+          $ref: "#/components/headers/RateLimitReset"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactsError"
+          examples:
+            default:
+              value:
+                success: false
+                error:
+                  code: RATE_LIMITED
+                  message: "Too many requests."
+
+    ContactsInternalError:
+      description: >-
+        Unexpected server-side fault. On the secret-key route this
+        includes in-transaction contact resolution failing for a reason
+        other than a genuine, recoverable conflict (find-or-create by
+        `customerId`). Like every rejection in this route family, the
+        whole transaction rolls back — the `eventId` is never consumed, so
+        retrying it after the underlying fault is fixed is a normal
+        request, not a replay.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactsError"
+          examples:
+            default:
+              value:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: "An unexpected error occurred."
 
   schemas:
     ChatStatus:
@@ -2119,3 +2823,704 @@ components:
               type: string
             ticket:
               $ref: "#/components/schemas/Ticket"
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Contacts / commerce-events — see "Contacts / commerce-events surface"
+    # in the top-level description for the envelope, error-vocabulary, and
+    # idempotency contract these schemas participate in.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    ContactsErrorCode:
+      type: string
+      description: >-
+        The legacy `ERROR_CODES` vocabulary (`shared/constants/index.ts`),
+        thrown as `AppError` and formatted by the global Fastify error
+        handler — see "Contacts / commerce-events surface" above for why
+        this, and not `ErrorCode`, is what these four operations actually
+        emit, and for `AUTH_INVALID`'s deliberate name-sharing across both
+        vocabularies.
+      enum:
+        - VALIDATION_ERROR
+        - AUTH_INVALID
+        - UNAUTHORIZED
+        - CONTACT_NOT_FOUND
+        - CART_NOT_FOUND
+        - INVALID_CART_TRANSITION
+        - RATE_LIMITED
+        - INTERNAL_ERROR
+
+    ContactsErrorPayload:
+      type: object
+      description: >-
+        No `retryable` field — the global error handler never sets one.
+        Its absence means "unknown," not "false"; apply your own default
+        retry policy for `429`/`500` rather than reading it from the body.
+      required: [code, message]
+      properties:
+        code:
+          $ref: "#/components/schemas/ContactsErrorCode"
+        message:
+          type: string
+          description: Human-readable. Not for programmatic branching — branch on `code`.
+        details:
+          type: object
+          additionalProperties: true
+          description: Structured, error-specific context. Frequently absent.
+
+    ContactsError:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          const: false
+        error:
+          $ref: "#/components/schemas/ContactsErrorPayload"
+
+    CommerceCartItem:
+      type: object
+      description: One line item inside a `cart.updated` snapshot.
+      required: [name, quantity, unitPrice]
+      properties:
+        sku:
+          type: string
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 300
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        unitPrice:
+          type: number
+          minimum: 0
+
+    # ── Machine-path (secret-key) event variants — customerId required ──────
+
+    OrderPlacedEvent:
+      type: object
+      description: >-
+        An order was submitted; fulfillment/payment outcome not yet known.
+        Increments `totalOrders`. Updates `lastOrderMerchant`/
+        `lastOrderCategory`/`lastOrderAt` only if `occurredAt` is strictly
+        newer than the contact's stored `lastOrderAt` AND the corresponding
+        field was supplied. `value`, if supplied, is recorded for audit
+        only — never applied to `totalSpend` (only `order.completed`'s own
+        `value` does that). If `cartId` matches a `LIVE` cart, that cart is
+        transitioned to `CONVERTED` as a side effect — the identical
+        transition an explicit `cart.converted` for the same `cartId` would
+        produce. A `cartId` with no matching row is a silent no-op, not a
+        `404` — only a `cart.*` event 404s on an unknown `cartId`.
+      required: [eventId, type, occurredAt, customerId, orderId]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Idempotency key — see "Idempotency, and rejection recovery" above.
+        type:
+          type: string
+          const: order.placed
+          description: >-
+            An open, additive tag for "a kind of thing that happened," not
+            a closed-cardinality state field — deliberately a wire STRING
+            rather than an integer enum, mirroring `@dhaam-ccrm/node`'s own
+            webhook `type` field (see `WebhookMessageCreatedEvent.type`
+            etc. above) rather than this codebase's usual "enums are
+            integers on the wire" rule. That rule governs closed-
+            cardinality *state* (e.g. `ContactCartRow.status` below);
+            `type` here is the same kind of open catalog
+            `message.created`/`session.updated` already are — new event
+            types are additive, and nothing downstream switches on it as a
+            fixed-size set.
+        occurredAt:
+          type: string
+          format: date-time
+          description: >-
+            When this actually happened, not when the caller calls this
+            endpoint. ISO-8601, UTC. Rejected with `400` if more than 5
+            minutes in the future (clock-skew tolerance). No lower bound —
+            a backdated admin correction is legitimate.
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: >-
+            The caller's own identifier for the shopper — the same value
+            passed as `userId` to `POST /tokens`. The server resolves-or-
+            creates a `Contact` for `(tenantId, externalId = customerId)`.
+            This is the ONLY field that may bind an event to a contact;
+            nothing else in this body is ever used for identity matching.
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        merchant:
+          type: string
+          minLength: 1
+          maxLength: 200
+        category:
+          type: string
+          minLength: 1
+          maxLength: 120
+        cartId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: If this order completed a cart checkout, the cart's id — triggers the `cart.converted` side effect described above.
+        value:
+          type: number
+          minimum: 0
+          description: Audit-only on this event type. Never applied to `totalSpend` — see the schema description.
+
+    OrderCompletedEvent:
+      type: object
+      description: >-
+        An order finished successfully (paid, fulfilled — the merchant's
+        own definition of "done"). Increments `completedOrders`; adds
+        `value` to `totalSpend`; recomputes `averageOrderValue =
+        totalSpend / completedOrders` in the same transaction (`0` when
+        `completedOrders` is `0` — never a division-by-zero error).
+        Updates `lastOrderMerchant`/`lastOrderCategory`/`lastOrderAt` under
+        the identical latest-wins rule `order.placed` uses — a completed
+        order is evidence of "last order" activity too.
+      required: [eventId, type, occurredAt, customerId, orderId, value]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Idempotency key — see "Idempotency, and rejection recovery" above.
+        type:
+          type: string
+          const: order.completed
+          description: >-
+            Wire STRING, not an integer enum — see `OrderPlacedEvent.type`
+            for the full rationale (this is an open event tag, not
+            closed-cardinality state).
+        occurredAt:
+          type: string
+          format: date-time
+          description: >-
+            ISO-8601, UTC. Rejected with `400` if more than 5 minutes in
+            the future; no lower bound. See `OrderPlacedEvent.occurredAt`.
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        value:
+          type: number
+          minimum: 0
+          description: Applied to `totalSpend` and folded into `averageOrderValue` — the only event type whose `value` moves an aggregate.
+        merchant:
+          type: string
+          minLength: 1
+          maxLength: 200
+        category:
+          type: string
+          minLength: 1
+          maxLength: 120
+
+    OrderCancelledEvent:
+      type: object
+      description: >-
+        An order was cancelled or failed. Increments `cancelledOrders`
+        only. Deliberately does **not** touch `lastOrderMerchant`/
+        `lastOrderCategory`/`lastOrderAt` — a cancellation is real activity
+        but not, in a support agent's reading of "last order," an order
+        that actually happened; keeping it out of the latest-wins
+        comparison means "last order" always names a placed-or-completed
+        order, never a cancelled one that happens to be the most recent
+        event.
+      required: [eventId, type, occurredAt, customerId, orderId]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Idempotency key — see "Idempotency, and rejection recovery" above.
+        type:
+          type: string
+          const: order.cancelled
+          description: >-
+            Wire STRING, not an integer enum — see `OrderPlacedEvent.type`
+            for the full rationale.
+        occurredAt:
+          type: string
+          format: date-time
+          description: ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound.
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    CartUpdatedEvent:
+      type: object
+      description: >-
+        The current, LIVE state of one cart — a **full replace** of that
+        cart's contents, not a delta. `items` may be empty: an
+        emptied-but-still-open cart is a valid `LIVE` state with 0 items,
+        distinct from `ABANDONED`. A stale arrival — `occurredAt` older
+        than the cart row's current snapshot — is silently ignored:
+        `applied: true`, no state change, NOT treated as a caller error
+        (distinct from the idempotency `applied: false` case, which is
+        about the *event* having been seen before rather than the *state*
+        being stale). `Contact.itemsInCart`/`cartValue` are recomputed from
+        whichever `LIVE` cart is now this contact's most-recently-touched
+        one — which may or may not be the cart this event just touched;
+        see `ContactCartRow`'s description for the full mirror rule.
+      required: [eventId, type, occurredAt, customerId, cartId, items]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Idempotency key — see "Idempotency, and rejection recovery" above.
+        type:
+          type: string
+          const: cart.updated
+          description: >-
+            Wire STRING, not an integer enum — see `OrderPlacedEvent.type`
+            for the full rationale.
+        occurredAt:
+          type: string
+          format: date-time
+          description: ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound.
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+        cartId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The merchant's own cart identifier. Unique per CONTACT, not globally.
+        items:
+          type: array
+          minItems: 0
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/CommerceCartItem"
+          description: >-
+            Full replacement of the cart's line items. A 501st entry is
+            refused outright with `400` — reject, not clamp — never
+            silently truncated to 500.
+
+    CartAbandonedEvent:
+      type: object
+      description: >-
+        A specific cart is no longer being actively shopped — caller-
+        declared (this event) or server-detected (an idle-cart sweep) both
+        produce the identical state transition. The row must exist
+        (`404 CART_NOT_FOUND` otherwise) and be `LIVE`; transitions to
+        `ABANDONED`. Already `ABANDONED` is a no-op — `200`, `applied:
+        true`, no state change. Already `CONVERTED` is
+        `422 INVALID_CART_TRANSITION` — `CONVERTED` is terminal. See
+        `ContactsCartNotFound` / `ContactsUnprocessableEntity` for the
+        rejection responses and their (non-)effect on this event's
+        `eventId`.
+      required: [eventId, type, occurredAt, customerId, cartId]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Idempotency key — see "Idempotency, and rejection recovery" above.
+        type:
+          type: string
+          const: cart.abandoned
+          description: >-
+            Wire STRING, not an integer enum — see `OrderPlacedEvent.type`
+            for the full rationale.
+        occurredAt:
+          type: string
+          format: date-time
+          description: ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound.
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+        cartId:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    CartConvertedEvent:
+      type: object
+      description: >-
+        A specific cart resulted in a checkout. Also triggered as a side
+        effect of `order.placed` carrying the same `cartId` — they describe
+        the same real-world action two ways; use whichever your checkout
+        flow naturally emits. The row must exist and be `LIVE` or
+        `ABANDONED` (a customer may return to an abandoned cart and check
+        out); transitions to `CONVERTED`. Already `CONVERTED` is a no-op —
+        `200`, `applied: true`, no state change. `404 CART_NOT_FOUND` if
+        the row never existed. `orderId`, if supplied, is stored for
+        correlation only — never applied to any aggregate
+        (`order.completed`'s own `value` is what moves `totalSpend`).
+      required: [eventId, type, occurredAt, customerId, cartId]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Idempotency key — see "Idempotency, and rejection recovery" above.
+        type:
+          type: string
+          const: cart.converted
+          description: >-
+            Wire STRING, not an integer enum — see `OrderPlacedEvent.type`
+            for the full rationale.
+        occurredAt:
+          type: string
+          format: date-time
+          description: ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound.
+        customerId:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+        cartId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Correlation only — stored on the cart row, never applied to any aggregate.
+
+    CommerceEvent:
+      description: >-
+        Discriminated union on `type`, one of the six order/cart events.
+        This is the machine-path (secret-key) request shape — `customerId`
+        is required on every variant. Mirrors `@dhaam-ccrm/node`'s
+        `CommerceEvent` union (`packages/node/src/types.ts`) field-for-field.
+      oneOf:
+        - $ref: "#/components/schemas/OrderPlacedEvent"
+        - $ref: "#/components/schemas/OrderCompletedEvent"
+        - $ref: "#/components/schemas/OrderCancelledEvent"
+        - $ref: "#/components/schemas/CartUpdatedEvent"
+        - $ref: "#/components/schemas/CartAbandonedEvent"
+        - $ref: "#/components/schemas/CartConvertedEvent"
+      discriminator:
+        propertyName: type
+        mapping:
+          order.placed: "#/components/schemas/OrderPlacedEvent"
+          order.completed: "#/components/schemas/OrderCompletedEvent"
+          order.cancelled: "#/components/schemas/OrderCancelledEvent"
+          cart.updated: "#/components/schemas/CartUpdatedEvent"
+          cart.abandoned: "#/components/schemas/CartAbandonedEvent"
+          cart.converted: "#/components/schemas/CartConvertedEvent"
+
+    # ── Admin-path (staff-token) event variants — no customerId ─────────────
+    # Field-for-field identical to their machine-path counterparts above,
+    # minus `customerId` (the target contact is named by `:id` in the path
+    # instead) and with `type` narrowed to the same literal. Kept as
+    # separate, self-contained schemas — rather than composed via `allOf` —
+    # to match this document's existing style (no `allOf` is used anywhere
+    # else in it) and to keep `additionalProperties: false` unambiguous
+    # without relying on `unevaluatedProperties`.
+
+    OrderPlacedEventAdmin:
+      type: object
+      description: >-
+        Admin-path variant of `OrderPlacedEvent` — see that schema for the
+        full behavior. No `customerId`; the target contact is named by
+        `:id` in the path, and supplying `customerId` here is a `400`
+        (`.strict()` rejects the unrecognised field).
+      required: [eventId, type, occurredAt, orderId]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          const: order.placed
+        occurredAt:
+          type: string
+          format: date-time
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        merchant:
+          type: string
+          minLength: 1
+          maxLength: 200
+        category:
+          type: string
+          minLength: 1
+          maxLength: 120
+        cartId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        value:
+          type: number
+          minimum: 0
+
+    OrderCompletedEventAdmin:
+      type: object
+      description: >-
+        Admin-path variant of `OrderCompletedEvent` — see that schema for
+        the full behavior. No `customerId`.
+      required: [eventId, type, occurredAt, orderId, value]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          const: order.completed
+        occurredAt:
+          type: string
+          format: date-time
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        value:
+          type: number
+          minimum: 0
+        merchant:
+          type: string
+          minLength: 1
+          maxLength: 200
+        category:
+          type: string
+          minLength: 1
+          maxLength: 120
+
+    OrderCancelledEventAdmin:
+      type: object
+      description: >-
+        Admin-path variant of `OrderCancelledEvent` — see that schema for
+        the full behavior. No `customerId`.
+      required: [eventId, type, occurredAt, orderId]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          const: order.cancelled
+        occurredAt:
+          type: string
+          format: date-time
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    CartUpdatedEventAdmin:
+      type: object
+      description: >-
+        Admin-path variant of `CartUpdatedEvent` — see that schema for the
+        full behavior, including the full-replace and stale-arrival rules.
+        No `customerId`.
+      required: [eventId, type, occurredAt, cartId, items]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          const: cart.updated
+        occurredAt:
+          type: string
+          format: date-time
+        cartId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        items:
+          type: array
+          minItems: 0
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/CommerceCartItem"
+
+    CartAbandonedEventAdmin:
+      type: object
+      description: >-
+        Admin-path variant of `CartAbandonedEvent` — see that schema for
+        the full behavior, including the terminal-`CONVERTED` rejection.
+        No `customerId`.
+      required: [eventId, type, occurredAt, cartId]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          const: cart.abandoned
+        occurredAt:
+          type: string
+          format: date-time
+        cartId:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    CartConvertedEventAdmin:
+      type: object
+      description: >-
+        Admin-path variant of `CartConvertedEvent` — see that schema for
+        the full behavior. No `customerId`.
+      required: [eventId, type, occurredAt, cartId]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          const: cart.converted
+        occurredAt:
+          type: string
+          format: date-time
+        cartId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        orderId:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    CommerceEventAdmin:
+      description: >-
+        The admin-path (staff-token) request shape for
+        `POST /contacts/{id}/commerce-events` — field-for-field identical
+        to `CommerceEvent` except `customerId` is absent from every
+        variant. The target contact is named by `:id` in the path instead;
+        supplying `customerId` in the body is a `400` (`.strict()` rejects
+        the unrecognised field — it does not silently ignore it, so a
+        caller cannot believe it retargeted the event and be wrong).
+      oneOf:
+        - $ref: "#/components/schemas/OrderPlacedEventAdmin"
+        - $ref: "#/components/schemas/OrderCompletedEventAdmin"
+        - $ref: "#/components/schemas/OrderCancelledEventAdmin"
+        - $ref: "#/components/schemas/CartUpdatedEventAdmin"
+        - $ref: "#/components/schemas/CartAbandonedEventAdmin"
+        - $ref: "#/components/schemas/CartConvertedEventAdmin"
+      discriminator:
+        propertyName: type
+        mapping:
+          order.placed: "#/components/schemas/OrderPlacedEventAdmin"
+          order.completed: "#/components/schemas/OrderCompletedEventAdmin"
+          order.cancelled: "#/components/schemas/OrderCancelledEventAdmin"
+          cart.updated: "#/components/schemas/CartUpdatedEventAdmin"
+          cart.abandoned: "#/components/schemas/CartAbandonedEventAdmin"
+          cart.converted: "#/components/schemas/CartConvertedEventAdmin"
+
+    CommerceEventResult:
+      type: object
+      description: Response `data` for both write operations, first application or replay alike.
+      required: [eventId, type, contactId, applied]
+      properties:
+        eventId:
+          type: string
+        type:
+          type: string
+          enum: [order.placed, order.completed, order.cancelled, cart.updated, cart.abandoned, cart.converted]
+        contactId:
+          type: string
+          description: The resolved (machine path) or path-supplied (admin path) contact's opaque id — same identifier `GET /contacts/:id` returns as `id`.
+        applied:
+          type: boolean
+          description: >-
+            `false` only when this `eventId` had already been accepted and
+            processed before — a replay. The mutation is not re-applied;
+            these fields are read back from the original stored event, not
+            recomputed. `true` on first acceptance AND on an accepted
+            no-op (e.g. `cart.abandoned` repeated against an already-
+            `ABANDONED` cart, or a stale out-of-order `cart.updated`) —
+            `applied` distinguishes "have I seen this `eventId` before,"
+            not "did this event change any state."
+
+    ContactCartRow:
+      type: object
+      description: >-
+        One row from `contact_carts`, as returned by both cart-read
+        operations. `status` is a raw integer code — this feature follows
+        the same wire convention every other Contacts CRM enum already
+        uses (`GET /contacts`'s `status`/`userType`/`channel` fields), not
+        the lowercase string the `status` QUERY parameter on
+        `GET /contacts/carts` accepts. The two are intentionally different
+        shapes for the same concept: the query parameter is a human-typed
+        filter value, the response field is the established typed-enum
+        wire contract. `Contact.itemsInCart`/`cartValue` mirror only the
+        contact's single most-recently-touched `LIVE` row (by
+        `lastEventAt`) — a contact can have more than one `LIVE` row here
+        at once (two browser tabs, a guest cart merged into a signed-in
+        one), and this operation is the only way to see the rest.
+      required: [contactId, contactRef, cartId, status, itemsCount, cartValue, items, abandonedAt, convertedAt, updatedAt]
+      properties:
+        contactId:
+          type: string
+          description: Opaque contact id — same value as `GET /contacts/:id`'s `id`.
+        contactRef:
+          type: string
+          description: The contact's customer-facing reference — what an agent building a win-back campaign wants to see, not the opaque id.
+        cartId:
+          type: string
+          description: The merchant's own cart identifier, as supplied on `cart.*` events. Unique per contact, not globally.
+        status:
+          type: integer
+          enum: [1, 2, 3]
+          description: "`ContactCartStatus`: 1=LIVE, 2=ABANDONED, 3=CONVERTED (`shared/constants/enums.ts`)."
+        itemsCount:
+          type: integer
+          minimum: 0
+          description: Sum of `quantity` across the cart's line items as of the most recently applied `cart.updated`.
+        cartValue:
+          type: number
+          minimum: 0
+          description: Sum of `unitPrice × quantity` across the cart's line items.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommerceCartItem"
+          description: Line-item snapshot as of the most recently applied `cart.updated`.
+        abandonedAt:
+          type: [string, "null"]
+          format: date-time
+        convertedAt:
+          type: [string, "null"]
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time

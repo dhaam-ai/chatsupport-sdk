@@ -753,3 +753,46 @@ describe('validateFrame — message.new id shapes', () => {
     }
   });
 });
+
+// -----------------------------------------------------------------------------
+// `message.send.sessionId` — the addressing field (ROOT B).
+//
+// A `message.send` had no session on the wire at all: the server filed it under
+// whatever `session.join` last set on the connection. A queued send that was
+// authored in session B and flushed after the client had switched to session A
+// was therefore delivered INTO session A — silent cross-conversation leakage,
+// not a rendering glitch.
+//
+// The field is OPTIONAL on purpose. An older client that omits it must keep
+// working exactly as before (server attributes to the joined session), so
+// adding it is not a breaking wire change. What is NOT optional is its shape:
+// an empty or non-string session id is a malformed address, and a malformed
+// address must be refused at the edge rather than silently ignored — ignoring
+// it degrades straight back to "file it wherever the connection happens to be
+// joined", which is the exact bug this field exists to remove.
+// -----------------------------------------------------------------------------
+describe('message.send addresses its own session (ROOT B)', () => {
+  const send = (d: Record<string, unknown>) => ({ v: 1, t: 'message.send', id: ULID_A, ts: TS, d });
+
+  it('accepts a message.send carrying an explicit sessionId', () => {
+    expect(validateFrame(send({ content: 'hi', type: 'TEXT', sessionId: 'sess_b' })).ok).toBe(true);
+  });
+
+  it('still accepts a message.send with no sessionId — the field is optional (older clients)', () => {
+    expect(validateFrame(send({ content: 'hi', type: 'TEXT' })).ok).toBe(true);
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['a number', 7],
+    ['null', null],
+    ['an object', { id: 'sess_b' }],
+  ])('rejects a message.send whose sessionId is %s', (_label, sessionId) => {
+    const result = validateFrame(send({ content: 'hi', type: 'TEXT', sessionId }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.path).toBe('d.sessionId');
+      expect(result.frameType).toBe('message.send');
+    }
+  });
+});

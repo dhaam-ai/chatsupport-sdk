@@ -188,6 +188,20 @@ class ChatClient {
   /// SENT so [retry] can replay it rather than rebuild it.
   final Map<String, _FailedSend> _failed = <String, _FailedSend>{};
 
+  /// The conversation this client is in — the session a message composed now
+  /// is addressed to.
+  ///
+  /// Written by the authoritative snapshot and by nothing else:
+  /// `connection.ack` and `session.updated` (§9.4 — overwrite wholesale),
+  /// which are the same two frames that push [sessions] and therefore the same
+  /// two moments a host repaints. One writer is the point; a second one that
+  /// ran earlier is how this field and the screen come to name different
+  /// conversations. See [joinSession].
+  ///
+  /// The one deliberate exception is [leaveSession], which clears it. Leaving
+  /// names no incoming session, so there is nothing to be wrong about, and a
+  /// send composed after it is unaddressed rather than addressed to a
+  /// conversation the host has left.
   String? _sessionId;
 
   // ── Connection ──────────────────────────────────────────────────────────
@@ -261,6 +275,30 @@ class ChatClient {
   /// adds `seq`. Watching [messages] for the confirmed echo is the honest way
   /// to observe delivery, and it works identically for a message that was
   /// queued and one that went straight out.
+  ///
+  /// ── The frame is ADDRESSED to the session it was composed in ──────────
+  ///
+  /// `d.sessionId` is stamped here, from the session this client currently
+  /// holds a snapshot for, and it travels with the frame for the rest of that
+  /// frame's life. The alternative — letting the server file the message under
+  /// whatever the connection last joined — is a property of the CONNECTION
+  /// rather than of the message, and the two diverge whenever a frame built at
+  /// one moment reaches the wire at another. This package has no offline
+  /// queue, so that happens in exactly two places, and both are ordinary:
+  ///
+  ///  * [retry] replays a frame built arbitrarily long ago, after the customer
+  ///    may well have moved to another conversation;
+  ///  * a reconnect's `connection.ack` carries a session this client never
+  ///    asked for, and the sends orphaned by that same drop are precisely the
+  ///    ones a host offers a Retry button for.
+  ///
+  /// Without the address, either one delivers a message the customer typed in
+  /// one conversation into another, acked as success.
+  ///
+  /// The field is optional on the wire: absent means the old behaviour, so an
+  /// older server or an older client is unaffected. Present, the server runs
+  /// the same ownership check `session.join` runs and refuses outright on
+  /// failure rather than falling back.
   ChatMessage sendMessage(
     String content, {
     MessageType type = MessageType.text,
@@ -276,6 +314,10 @@ class ChatClient {
       messageSendPayload(
         content: content,
         type: type,
+        // The session this message is composed in, stamped ONCE, here — see
+        // the method doc. Null only before any snapshot has named a session,
+        // and null omits the field rather than sending `''`.
+        sessionId: _sessionId,
         replyToMessageId: replyToMessageId,
         attachment: attachment,
       ),
@@ -361,8 +403,28 @@ class ChatClient {
   }
 
   /// Joins a session (§6.2).
+  ///
+  /// ── The join does not move this client until the server says so ───────
+  ///
+  /// This sends the frame and nothing else. Which conversation this client is
+  /// in is written in exactly one place — the authoritative snapshot on
+  /// `connection.ack` and `session.updated` (§9.4, overwrite wholesale) — so a
+  /// join takes effect when the server's `session.updated` lands, which is
+  /// also the moment [sessions] tells the host to repaint.
+  ///
+  /// Pointing at [sessionId] optimistically here would open a window in which
+  /// this client is committed to the incoming session while [sessions] — the
+  /// only thing a host renders off — still names the outgoing one. A message
+  /// typed into that screen belongs to the conversation on it, and stamping it
+  /// with the incoming session is the cross-conversation delivery that
+  /// [sendMessage]'s address exists to prevent. The window is also
+  /// unrecoverable when the join is REFUSED: nothing rolls the pointer back,
+  /// so every later send names a session this client is not in.
+  ///
+  /// A join the server never answers therefore leaves sends composing into the
+  /// session on screen, which is the conservative half of the trade and the
+  /// same commit rule the TypeScript core's session switch was rebuilt around.
   void joinSession(String sessionId) {
-    _sessionId = sessionId;
     _connection.send(
       _connection.buildFrame(
         'session.join',

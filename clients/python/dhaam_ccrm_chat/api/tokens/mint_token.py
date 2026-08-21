@@ -82,8 +82,8 @@ def sync_detailed(
 ) -> Response[Union[Error, MintTokenResponse]]:
     """Mint a short-lived, scoped user access token.
 
-     Called by the **customer's own backend** using their `dhsk_live_...` /
-    `dhsk_test_...` secret key — never by a browser (PRD §10.3). The
+     Called by the **customer's own backend** using their `dhk_live_...` /
+    `dhk_test_...` secret key — never by a browser (PRD §10.3). The
     customer's frontend calls *their own* backend endpoint (commonly
     one they name `/token` or similar), which in turn calls this
     endpoint and relays only the resulting `accessToken` to the
@@ -131,8 +131,8 @@ def sync(
 ) -> Optional[Union[Error, MintTokenResponse]]:
     """Mint a short-lived, scoped user access token.
 
-     Called by the **customer's own backend** using their `dhsk_live_...` /
-    `dhsk_test_...` secret key — never by a browser (PRD §10.3). The
+     Called by the **customer's own backend** using their `dhk_live_...` /
+    `dhk_test_...` secret key — never by a browser (PRD §10.3). The
     customer's frontend calls *their own* backend endpoint (commonly
     one they name `/token` or similar), which in turn calls this
     endpoint and relays only the resulting `accessToken` to the
@@ -175,8 +175,8 @@ async def asyncio_detailed(
 ) -> Response[Union[Error, MintTokenResponse]]:
     """Mint a short-lived, scoped user access token.
 
-     Called by the **customer's own backend** using their `dhsk_live_...` /
-    `dhsk_test_...` secret key — never by a browser (PRD §10.3). The
+     Called by the **customer's own backend** using their `dhk_live_...` /
+    `dhk_test_...` secret key — never by a browser (PRD §10.3). The
     customer's frontend calls *their own* backend endpoint (commonly
     one they name `/token` or similar), which in turn calls this
     endpoint and relays only the resulting `accessToken` to the
@@ -222,8 +222,8 @@ async def asyncio(
 ) -> Optional[Union[Error, MintTokenResponse]]:
     """Mint a short-lived, scoped user access token.
 
-     Called by the **customer's own backend** using their `dhsk_live_...` /
-    `dhsk_test_...` secret key — never by a browser (PRD §10.3). The
+     Called by the **customer's own backend** using their `dhk_live_...` /
+    `dhk_test_...` secret key — never by a browser (PRD §10.3). The
     customer's frontend calls *their own* backend endpoint (commonly
     one they name `/token` or similar), which in turn calls this
     endpoint and relays only the resulting `accessToken` to the

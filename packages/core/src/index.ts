@@ -56,6 +56,14 @@
 //                ConnectionSuspendedError) — plus isHandledByCurrent (T10),
 //                the one canonical "is handledBy safe to narrate as active"
 //                derivation, same spirit as messages/'s deriveTickState.
+//   identity/    IdentityProfile and IdentitySync — the two seam types
+//                behind `ChatClientConfig.identityProfile`/`.identitySync`.
+//                Type-only, because the module has no runtime surface at
+//                all: the `POST /identify` call is made by an injected
+//                implementation (packages/rest's `createIdentitySync`), so
+//                there is nothing here for a consumer to construct. Public
+//                for the same reason AttachmentUploader is — a host cannot
+//                populate a config field whose type it cannot name.
 //   state/       ChatState and everything it is built from (§6.4) — the
 //                observable surface — plus the §6.5 event catalog types.
 //   protocol/    The domain enums and shapes that appear inside ChatState/
@@ -110,6 +118,15 @@ export type {
   SessionSummarySource,
   TokenProvider,
 } from './client/index.js';
+
+// ---------------------------------------------------------------------------
+// identity/ — the two ChatClientConfig identity seams. Type-only: this module
+// contributes no runtime export, so the hand-typed allowlist in
+// test/invariants/public-barrel-surface.test.ts is deliberately unchanged by
+// this addition.
+// ---------------------------------------------------------------------------
+
+export type { IdentityProfile, IdentitySync } from './identity/index.js';
 
 // ---------------------------------------------------------------------------
 // state/ — the observable surface (§6.4) and event catalog (§6.5).

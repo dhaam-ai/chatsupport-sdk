@@ -132,16 +132,38 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** Sockets whose `connection.hello` has already been answered. */
+let handshaked = new WeakSet<FakeWebSocket>();
+
+/**
+ * Completes the handshake on every socket the client opened but nobody drove,
+ * and returns the newest one.
+ *
+ * Picking a row calls `switchSession()`, which is a TEARDOWN and a
+ * re-establish (see core's `switchToSession`): it drops the socket the widget
+ * booted on and opens another, whose `connection.ack` the server resolves on
+ * its own — `connection.hello` carries no session id. The explicit
+ * `session.join` that follows is what corrects it.
+ */
+async function driveHandshakes(resolved = 'sess_current'): Promise<FakeWebSocket> {
+  for (const instance of FakeWebSocket.instances) {
+    if (handshaked.has(instance)) continue;
+    handshaked.add(instance);
+    instance.open();
+    instance.ack(resolved);
+    await settle();
+  }
+  const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+  if (socket === undefined) throw new Error('no socket was opened');
+  return socket;
+}
+
 async function openedWidget(
   overrides: Partial<WidgetConfig> = {},
 ): Promise<{ widget: ChatWidget; socket: FakeWebSocket }> {
   const widget = mount(config(overrides));
   await settle();
-  const socket = FakeWebSocket.instances[0];
-  if (socket === undefined) throw new Error('no socket was opened');
-  socket.open();
-  socket.ack();
-  await settle();
+  const socket = await driveHandshakes();
   widget.open();
   await settle();
   return { widget, socket };
@@ -152,6 +174,7 @@ beforeEach(() => {
   frameCounter = 0;
   sessionRows = [];
   FakeWebSocket.instances = [];
+  handshaked = new WeakSet<FakeWebSocket>();
   vi.stubGlobal('WebSocket', FakeWebSocket);
   vi.stubGlobal(
     'fetch',
@@ -235,7 +258,11 @@ describe('picking a conversation', () => {
     row.click();
     await settle();
 
-    const joins = socket.frames('session.join');
+    // The socket the switch opened, not the one the widget booted on: the
+    // teardown drops that one before any join is written.
+    const live = await driveHandshakes();
+    expect(live).not.toBe(socket);
+    const joins = live.frames('session.join');
     expect(joins).toHaveLength(1);
     expect(joins[0]?.d['sessionId']).toBe('sess_past');
 
@@ -346,8 +373,16 @@ describe('the SWITCHED-close pairing', () => {
     row.click();
     await settle();
 
+    const live = await driveHandshakes();
+    const join = live.frames('session.join')[0];
+    if (join === undefined) throw new Error('no session.join frame was sent');
+    live.onmessage?.({
+      data: JSON.stringify({ v: 1, t: 'ack', id: frameId(), ref: join.id, ts: Date.now(), d: { ok: true } }),
+    });
+    await settle();
+
     // The server acks the switch...
-    socket.push('session.updated', {
+    live.push('session.updated', {
       session: {
         sessionId: 'sess_past',
         status: 'WAITING_FOR_AGENT',
@@ -360,7 +395,7 @@ describe('the SWITCHED-close pairing', () => {
 
     // ...and, in either order, closes the OTHER session the customer left
     // behind. One customer, one live conversation.
-    socket.push('session.closed', { sessionId: 'sess_current', closeReason: 'SWITCHED' });
+    live.push('session.closed', { sessionId: 'sess_current', closeReason: 'SWITCHED' });
     await settle();
 
     // The session just switched into must survive both halves of that pair.

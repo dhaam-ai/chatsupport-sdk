@@ -24,84 +24,181 @@ func trimTrailingSlashes(u *url.URL) {
 type Invoker interface {
 	// CloseSession invokes closeSession operation.
 	//
+	// Path corrected: `POST /chat/sessions/{sessionId}/close` (`chat.routes.ts:282`).
+	//
 	// Transitions `status` to `CLOSED`. Backs the core method `client.closeSession(): Promise<void>` (PRD
-	// §6.2) — there is no WebSocket frame type for this action in the T1 catalog, so it is a REST-only
-	// operation in v2, same as v1.
+	// §6.2) — there is no WebSocket frame type for this action, so it is REST-only.
 	//
-	// Idempotency: naturally idempotent. Calling this on a session that is already `CLOSED` returns `200`
-	// with its current state, not an error — repeats are always safe with no `Idempotency-Key` needed.
+	// Naturally idempotent: calling this on a session that is already `CLOSED` returns `200` with its
+	// current state, not an error.
 	//
-	// POST /sessions/{sessionId}/close
+	// The request body is accepted but entirely ignored. The handler never validates or reads it
+	// (`chat.routes.ts:282-293` calls no `validate()` on `request.body` at all), and
+	// `chatSessionService.closeSession(sessionId)` takes only the session id — no `reason` parameter
+	// exists anywhere in its signature (`chat-session.service.ts:227`). `CloseSessionRequest.reason` below
+	// is kept in this schema only because sending it is harmless (it is silently dropped), not because the
+	// backend does anything with it.
+	//
+	// Response shape corrected: the actual `200` body is `SessionCloseResult`
+	// (`{sessionId, status, closedAt}`, raw integer `status`) — not the full `ChatSession` this
+	// operation previously promised (`chat.routes.ts:289-292`).
+	//
+	// `@dhaam-ccrm/rest` performs a follow-up fetch. `packages/core`'s `SessionActions.closeSession`
+	// contract requires the full `ChatSession` shape (`packages/core/src/client/types.ts:105-108` —
+	// "unlike the WebSocket `SessionSnapshot`... carries full `Profile` objects"), which this response
+	// cannot satisfy on its own: it has no `createdAt`, `assignedAgent`, `customer`, or `ticket`, and uses
+	// `sessionId` where `ChatSession` needs `id`. `@dhaam-ccrm/rest`'s `createSessionActions` adapter
+	// calls this endpoint and then immediately issues a follow-up `GET /chat/sessions/{sessionId}/full` to
+	// assemble the full `ChatSession` core requires — two HTTP round trips per `closeSession()` call.
+	// This is now implemented (see `packages/rest/src/envelope.ts` and the session-actions adapter), not a
+	// workaround pending a backend change.
+	//
+	// POST /chat/sessions/{sessionId}/close
 	CloseSession(ctx context.Context, request OptCloseSessionRequest, params CloseSessionParams) (CloseSessionRes, error)
 	// CreateSession invokes createSession operation.
 	//
+	// Path corrected: `POST /chat/sessions`, not `POST /sessions` (`chat.routes.ts:190`).
+	//
 	// Starts a new session, defaulting to `mode: BOT` and `status: OPEN` (PRD §12.5's observed
 	// lifecycle). The caller's identity comes entirely from the validated `accessToken` — the request
-	// body carries only optional client-side context, never customer identity fields, which fixes v1's
-	// pattern of re-sending `customerId`/`customerName`/ `customerEmail` in the body even though the same
-	// values were already embedded in the auth token.
+	// body carries only optional client-side context, never customer identity fields.
 	//
-	// Open Question (not resolved by the PRD): PRD §12.3 documents that in v1, explicit REST session
-	// creation is a client-orchestrated recovery path — used only when the socket's `connection.ack`
-	// resolves to an already-`CLOSED` session — and PRD §8.3 explicitly leaves open whether v2 keeps
-	// this client-side responsibility or moves it server-side inside `connection.ack` itself. This
-	// endpoint is included because backend (non-WebSocket) SDKs need an explicit, REST-only way to start a
-	// session regardless of how that question is resolved for the browser client; whether
-	// `@dhaam-ccrm/core` ever calls it directly is exactly the open question above, not something this
-	// document can settle.
+	// Open Question (not resolved by the PRD): whether `@dhaam-ccrm/core` should ever call this directly,
+	// or whether session bootstrap stays entirely WebSocket-driven (`connection.ack`). As of this
+	// revision, core does not call it — confirmed by the contract audit that produced this correction.
 	//
-	// Idempotency: supports `Idempotency-Key`. Without it, retrying after a timeout may create two
-	// sessions; with it, a replayed request within the key's 24h window returns the original session
-	// unchanged.
+	// Response shape corrected: the actual `201` body is `SessionMutationResult`
+	// (`{sessionId, status, mode}`, raw integer enum codes) — not the full `ChatSession` this operation
+	// previously promised. `chat.routes.ts:215-218` builds the reply from exactly those three fields off
+	// `chatSessionService.createSession()`'s return value; no other field is ever included.
 	//
-	// POST /sessions
-	CreateSession(ctx context.Context, request OptCreateSessionRequest, params CreateSessionParams) (CreateSessionRes, error)
+	// No `Location` header is set. An earlier revision of this document documented one on the `201`; the
+	// handler never calls `reply.header('Location', ...)`, so it has been removed rather than left
+	// describing a response the backend does not send.
+	//
+	// `Idempotency-Key` is not implemented — see "Idempotency" above. What IS true: a customer with an
+	// already-active session gets that session back unchanged rather than a second one
+	// (`chat-session.service.ts:42-72`), which is a property of the domain (one active session per
+	// customer), not of a request replay key.
+	//
+	// POST /chat/sessions
+	CreateSession(ctx context.Context, request OptCreateSessionRequest) (CreateSessionRes, error)
 	// GetSessionFull invokes getSessionFull operation.
 	//
-	// Generalizes v1's `GET /sessions/{id}/full` (PRD §12.9, §12.10), which this spec confirms is the
-	// origin of the read-watermark model: each entry in `participants[]` carries `lastReadAt`, and a
-	// customer widget seeds its "seen" UI from the maximum `lastReadAt` across all `AGENT` participants
-	// (defending against multi-agent sessions). This is a read-only view of that watermark — see this
-	// document's top-level description for why there is no corresponding write endpoint here.
+	// Path corrected: `GET /chat/sessions/{sessionId}/full` (`chat.routes.ts:242`).
 	//
-	// `messages` is the most recent page (see `limit`), returned in ascending chronological order (oldest
-	// first). Use `GET /sessions/{sessionId}/messages` with `before` to page further back.
+	// Generalizes v1's `GET /sessions/{id}/full` (PRD §12.9, §12.10): each entry in `participants[]`
+	// carries `lastReadAt`, and a customer widget seeds its "seen" UI from the maximum `lastReadAt` across
+	// all `AGENT` participants (defending against multi-agent sessions).
 	//
-	// GET /sessions/{sessionId}/full
+	// `messages` is the most recent page (see `messageLimit`), returned in ascending chronological order
+	// (oldest first). Use `GET /chat/sessions/{sessionId}/messages` with `before` to page further back.
+	//
+	// Message shape corrected: `messages[]` in the real response is `ChatMessageWire`, not the normalized
+	// `ChatMessage` — see that schema for the two concrete deviations (raw integer enum codes, unlifted
+	// `metadata.attachment`) and for how `@dhaam-ccrm/rest` normalizes them. `session`'s own
+	// `status`/`mode` are also raw integers on this path, and its `assignedAgent`/`customer` profile
+	// objects are missing `participantId` (`chat-user.service.ts:189-231`'s enrichment never sets it) —
+	// noted here as a known, separately-tracked gap not fully re-modeled in this revision.
+	//
+	// GET /chat/sessions/{sessionId}/full
 	GetSessionFull(ctx context.Context, params GetSessionFullParams) (GetSessionFullRes, error)
+	// ListCartsForContact invokes listCartsForContact operation.
+	//
+	// A support agent looking at one contact's cart history while handling a ticket — every
+	// `LIVE`/`ABANDONED`/`CONVERTED` row for that contact, including carts that are NOT the one currently
+	// mirrored onto `Contact.itemsInCart`/`cartValue` (that mirror always reflects only the single
+	// most-recently-touched `LIVE` cart — see `ContactCartRow`'s description for the full multi-cart
+	// mirror rule). Unpaginated; lightly capped rather than truly unbounded, since a contact plausibly has
+	// dozens of historical carts, not thousands.
+	//
+	// Same 404-not-403 rule as `GET /contacts/:id`.
+	//
+	// GET /contacts/{id}/carts
+	ListCartsForContact(ctx context.Context, params ListCartsForContactParams) (ListCartsForContactRes, error)
+	// ListContactCarts invokes listContactCarts operation.
+	//
+	// The read side of the cart-segmentation use case — e.g. "carts abandoned in the last 7 days worth
+	// $100+," to build a win-back audience. Every query, including the total count, carries the caller's
+	// own `tenantId` — the same rule `contact-list.service.ts` states for `GET /contacts`: a count that
+	// omitted it would leak the size of another tenant's cart segment through a number.
+	//
+	// `status` defaults to `abandoned` — segmentation, not a live-cart dashboard, is this operation's
+	// reason to exist.
+	//
+	// GET /contacts/carts
+	ListContactCarts(ctx context.Context, params ListContactCartsParams) (ListContactCartsRes, error)
 	// ListSessionMessages invokes listSessionMessages operation.
 	//
-	// Matches v1's proven pagination shape exactly (PRD §12.10, §6.3): opaque-id backward cursor
-	// (`before`), a `limit`, and a `hasMore` boolean in the response. There is no forward cursor — live
-	// messages arrive over the WebSocket (`message.new`, T1), not by polling this endpoint. Omit `before`
-	// to fetch the most recent page (equivalent to the first page a scroll-up pagination UI would
-	// request).
+	// Path corrected: `GET /chat/sessions/{sessionId}/messages` (`chat.routes.ts:262`). This is the
+	// endpoint at the center of the "message history not appearing after reload" defect this correction
+	// pass exists to close — see `ChatMessageWire` below for exactly what it returns and why an earlier
+	// version of `@dhaam-ccrm/rest` could not render it correctly even once the path itself was fixed.
 	//
-	// Returned in ascending chronological order (oldest first) — the oldest message in the response is
-	// the one immediately following the given `before` cursor, so a client can prepend the page to its
-	// existing message list without re-sorting.
+	// Matches v1's proven pagination shape (PRD §12.10, §6.3): opaque-id backward cursor (`before`), a
+	// `limit`, and a `hasMore` boolean in the response — confirmed unchanged from this document's
+	// original design (`listMessagesQuerySchema`, `chat.validator.ts:39-42`). There is no forward cursor
+	// — live messages arrive over the WebSocket (`message.new`), not by polling this endpoint. Omit
+	// `before` to fetch the most recent page.
 	//
-	// GET /sessions/{sessionId}/messages
+	// Returned in ascending chronological order (oldest first) — confirmed: the repository queries
+	// `createdAt desc` and the service reverses the slice before returning it
+	// (`message.repository.ts:174-187`, `message.service.ts:290`) — so the oldest message in the
+	// response is the one immediately following the given `before` cursor, and a client can prepend the
+	// page without re-sorting.
+	//
+	// Message shape corrected: the response's `messages[]` is `ChatMessageWire`, not the normalized
+	// `ChatMessage`. Two concrete deviations, both confirmed against `message.service.ts:285-296` and
+	// `:470-482` (`getMessages`/`getMessagesPaginated`, which return Prisma rows verbatim — neither
+	// method touches `metadata` or converts an enum):
+	//
+	// 1. `senderType` and `messageType` are raw integer codes (`shared/constants/enums.ts:29-44`), not
+	//    string enum names. Only the WebSocket path's `projectMessage`
+	//    (`api/websocket/v2/projection.ts:81-82,205-206`) converts these; this REST path never does.
+	// 2. `attachment` is never present at the top level. When a message carries one, it is nested at
+	//    `metadata.attachment` (`api/websocket/v2/projection.ts:213-220`'s own comment: "the database
+	//    keeps attachments inside the legacy `metadata` column" — that comment describes the persistence
+	//    layer this REST path reads from directly, unprojected).
+	//
+	// `@dhaam-ccrm/rest`'s `createHistorySource` adapter converts every row of this shape into the
+	// normalized `ChatMessage` (int→string lookup, and lifting/stripping `metadata.attachment`) before
+	// handing it to `@dhaam-ccrm/core` — this is now implemented (see
+	// `packages/rest/src/projection.ts`). This schema exists so that normalization step stays visible and
+	// is never "corrected" back out under the assumption that the wire already matches `ChatMessage`.
+	//
+	// GET /chat/sessions/{sessionId}/messages
 	ListSessionMessages(ctx context.Context, params ListSessionMessagesParams) (ListSessionMessagesRes, error)
 	// ListSessions invokes listSessions operation.
 	//
-	// Hydrates `ChatState.pastSessions` (PRD §6.4), which the PRD specifies as state but never gave a
-	// data source — this endpoint closes that gap.
+	// Path corrected: the real route is `GET /chat/sessions/customer`, registered ahead of
+	// `/chat/sessions/:sessionId` so Fastify's static route wins (`chat.routes.ts:229`, comment:
+	// "registered before /:sessionId (static wins in Fastify)"). An earlier revision of this document
+	// modeled this as `GET /sessions`, which does not exist — `chat.routes.ts` has no bare
+	// `GET /chat/sessions` handler at all.
 	//
-	// Replaces v1's `GET /chat/sessions/customer?tenantId=&customerId=` (`src/context.tsx:923`). That
-	// shape is not carried forward: taking `customerId` as a query parameter means the endpoint trusts the
-	// caller to declare whose sessions to return, so any customer could enumerate another's history by
-	// changing one parameter. Here both tenant and customer identity are derived from the validated
-	// `accessToken` and publishable key, and are not accepted as inputs.
+	// Hydrates `ChatState.pastSessions` (PRD §6.4) — the SDK's "your last N conversations" picker.
+	// `@dhaam-ccrm/core` does not call this operation as of this revision — `ChatState.pastSessions` is
+	// declared and initialized empty but nothing in `packages/core` populates it (confirmed gap, contract
+	// audit finding; unchanged by this revision, which corrects the backend response shape this operation
+	// will be consumed against, not the SDK wiring).
 	//
-	// Ordered most-recent-first. Includes closed sessions — a customer reopening an earlier conversation
-	// (PRD §12.5) needs to see them.
+	// Ordered most-recent-first (by last activity, not `createdAt`). Includes closed sessions — a
+	// customer reopening an earlier conversation (PRD §12.5) needs to see them.
 	//
-	// GET /sessions
+	// Guests get `[]`, not an error. A session is returned only for a caller the backend has identified
+	// — see `handledBy`'s sibling note on `ChatSessionSummaryWire` for what "identified" means here and
+	// its documented failure mode. This is a 200 in every case; there is no 403/404 branch on this
+	// operation for an anonymous caller.
+	//
+	// Response shape corrected as of this revision — see `ChatSessionSummaryWire` /
+	// `SessionSummaryPageWire` below. The `sessions[]` item shape is now field-for-field the SDK's
+	// `ChatSessionSummary` (`packages/core/src/state/types.ts:223-240`), plus `handledBy`.
+	//
+	// GET /chat/sessions/customer
 	ListSessions(ctx context.Context, params ListSessionsParams) (ListSessionsRes, error)
 	// MintToken invokes mintToken operation.
 	//
-	// Called by the customer's own backend using their `dhsk_live_...` / `dhsk_test_...` secret key —
+	// Called by the customer's own backend using their `dhk_live_...` / `dhk_test_...` secret key —
 	// never by a browser (PRD §10.3). The customer's frontend calls their own backend endpoint (commonly
 	// one they name `/token` or similar), which in turn calls this endpoint and relays only the resulting
 	// `accessToken` to the frontend, which supplies it to the SDK via `getToken()` (PRD §6.1, §10.4).
@@ -117,58 +214,159 @@ type Invoker interface {
 	//
 	// POST /tokens
 	MintToken(ctx context.Context, request *MintTokenRequest) (MintTokenRes, error)
+	// RecordCommerceEvent invokes recordCommerceEvent operation.
+	//
+	// Called by the merchant's own commerce backend with their tenant secret key — the same credential
+	// and calling pattern `POST /tokens` already uses, never a browser. The target contact is
+	// resolved-or-created from the body's `customerId`; the tenant itself comes from the verified key,
+	// never from the body — there is no `tenantId` field anywhere in this request.
+	//
+	// Six event types, discriminated on `type` — see `CommerceEvent`. The server derives every `Contact`
+	// aggregate (`totalOrders`, `completedOrders`, `totalSpend`, `averageOrderValue`,
+	// `itemsInCart`/`cartValue`, `lastOrderMerchant`/`lastOrderCategory`/ `lastOrderAt`) from the event
+	// stream; this call never sends a computed total.
+	//
+	// `200`, never `201`, for both a first acceptance and a replay of an already-applied event — this is
+	// a command over an event stream, not creation of a REST resource, and using one status code for both
+	// `applied` states avoids a status-code-encodes- idempotency-state trap. See "Idempotency, and
+	// rejection recovery" in this document's top-level description for the full contract, including what
+	// happens when the SAME `eventId` is retried after a `404`/`422` rejection (short answer: it is
+	// processed fresh, not short-circuited — the transaction that rejected it rolled back the
+	// idempotency row along with everything else).
+	//
+	// Request bodies up to 1 MiB are accepted — see "Request size" in the top-level description for why
+	// this is larger than `POST /tokens`'s limit.
+	//
+	// Not reachable via `@dhaam-ccrm/node`'s `UserScopedClient` — only
+	// `ChatServerClient.recordCommerceEvent()`, alongside `mintToken`, holds the secret key this route
+	// requires.
+	//
+	// POST /contacts/commerce-events
+	RecordCommerceEvent(ctx context.Context, request CommerceEvent) (RecordCommerceEventRes, error)
+	// RecordCommerceEventForContact invokes recordCommerceEventForContact operation.
+	//
+	// The human counterpart to `recordCommerceEvent` — a tenant admin in the CRM correcting or
+	// backfilling what the machine feed missed or got wrong (a phone order, a manual backfill), through
+	// the identical event-shaped mechanism. Not a raw field-override: every write, machine or human, is an
+	// event the server derives aggregates from — there is no endpoint that sets e.g. `totalSpend` to an
+	// exact number directly.
+	//
+	// `:id` must already exist for the caller's own tenant — unlike the machine path, this path never
+	// creates a contact. A typo'd or cross-tenant `:id` is `404 CONTACT_NOT_FOUND`, never `403` — see
+	// `ContactsContactNotFound`.
+	//
+	// Same event taxonomy as `CommerceEvent`, minus `customerId` — see `CommerceEventAdmin`. Same
+	// `200`-always response shape, and the identical idempotency/rejection-recovery contract, as the
+	// machine path (see "Idempotency, and rejection recovery" above).
+	//
+	// Every event this path writes records the acting admin's identity for audit — "who corrected this
+	// contact's order history" is a support/compliance question a tenant will ask.
+	//
+	// Not exposed via `@dhaam-ccrm/node` — this is a CRM-console operation, not part of the
+	// merchant-facing SDK surface; `ChatServerClient` gains only the machine-path method.
+	//
+	// POST /contacts/{id}/commerce-events
+	RecordCommerceEventForContact(ctx context.Context, request CommerceEventAdmin, params RecordCommerceEventForContactParams) (RecordCommerceEventForContactRes, error)
 	// ReopenSession invokes reopenSession operation.
 	//
+	// Path corrected: `POST /chat/sessions/{sessionId}/reopen` (`chat.routes.ts:296`).
+	//
 	// Backs `client.reopenSession(sessionId): Promise<ChatSession>` (PRD §6.2). Deliberately bypasses the
-	// AI bot and jumps directly to `status: WAITING_FOR_AGENT`, `mode: HUMAN` — the exact semantics PRD
-	// §12.5 confirms for v1's `reopenSession()`. There is no WebSocket frame type for this action in the
-	// T1 catalog, so it is REST-only, as in v1.
+	// AI bot and jumps directly to `status: WAITING_FOR_AGENT`, `mode: HUMAN`. There is no WebSocket frame
+	// type for this action, so it is REST-only.
 	//
-	// Only a session in `CLOSED` status can be reopened. Reopening a session in any other status returns
-	// `400 VALIDATION_FAILED` — this is a request-validity error given current state, not a
-	// `SESSION_CLOSED` error (which means the opposite: the session is closed and an action requires it
-	// not to be).
+	// No status guard exists. An earlier revision of this document claimed reopening a session that is not
+	// `CLOSED` returns `400 VALIDATION_FAILED`. That is not implemented. `reopenSession`
+	// (`chat-session.service.ts:358-380`) applies no status check at all — it unconditionally applies
+	// the `WAITING_FOR_AGENT`/`HUMAN` transition to whatever status the target session is currently in.
 	//
-	// Idempotency: supports `Idempotency-Key`, since reopening has a real side effect (bypassing the bot,
-	// notifying agent routing) that should not be duplicated by a naive client retry.
+	// Convergence behavior (real, and worth documenting precisely): if the caller's (tenantId, customerId)
+	// already has a different active session, this endpoint does not reopen the requested one at all —
+	// it returns that other, already-active session's `{id, status, mode}` unchanged
+	// (`chat-session.service.ts:364-371`). This is the actual mechanism behind "reopening a stale session
+	// is safe," not a request-level idempotency key.
 	//
-	// POST /sessions/{sessionId}/reopen
+	// `Idempotency-Key` is not implemented — see "Idempotency" above; removed from this operation's
+	// parameters.
+	//
+	// Response shape corrected: the actual `200` body is `SessionMutationResult`
+	// (`{sessionId, status, mode}`, raw integer codes) — not the full `ChatSession` this operation
+	// previously promised (`chat.routes.ts:310-313`).
+	//
+	// `@dhaam-ccrm/rest` performs a follow-up fetch, for the same reason and in the same way documented on
+	// `POST /chat/sessions/{sessionId}/close` above: `SessionActions .reopenSession` needs the full
+	// `ChatSession`, so the adapter calls this endpoint and then `GET /chat/sessions/{sessionId}/full` —
+	// using whichever `id` this response actually returns, which per the convergence behavior above may
+	// not be the `sessionId` the caller requested. This is now implemented, not a proposal.
+	//
+	// POST /chat/sessions/{sessionId}/reopen
 	ReopenSession(ctx context.Context, params ReopenSessionParams) (ReopenSessionRes, error)
-	// UploadSessionAttachment invokes uploadSessionAttachment operation.
+	// UploadAttachment invokes uploadAttachment operation.
 	//
-	// Step 1 of the two-step flow PRD §6.3 and §12.10 generalize from v1: this endpoint uploads and
-	// stores the file and returns its metadata only. It does not create a chat message. The caller (core's
-	// `client.sendAttachment()`) must follow up by sending a WS `message.send` frame (T1) whose
-	// `d.metadata.attachment` carries this response verbatim — exactly as v1's client emits
-	// `chat.message.send` with `metadata.attachment` immediately after this REST call succeeds.
+	// This operation replaces `POST /sessions/{sessionId}/attachments`, which this document previously
+	// modeled and which does not exist on the real backend. The actual route is `POST /upload`
+	// (`upload.routes.ts:82`), mounted directly at the service prefix with no session id in the path at
+	// all.
 	//
-	// `attachment` is the message model's one canonical location for attachment data (see
-	// `Message.attachment`) — v1 read it from either `message.attachment` or
-	// `message.metadata.attachment` interchangeably (`raw.attachment ?? raw.metadata?.attachment`), which
-	// D4's "one canonical name per concept" rule closes for v2.
+	// Step 1 of the two-step flow: this endpoint uploads and stores the file and returns its metadata
+	// only. It does not create a chat message. The caller (core's `client.sendAttachment()`) must follow
+	// up by sending a WS `message.send` frame whose attachment data carries this response's `data`.
 	//
-	// The session is identified by the URL path, not a form field — v1 passed `chatSessionId`
-	// redundantly inside the multipart body even though the REST call already had nowhere else to route
-	// to; this is a deliberate cleanup, not a functional change.
+	// Session identification, and why it's a query parameter, not a path segment or a relied-upon form
+	// field. `chatSessionId` is accepted from either the multipart field `chatSessionId` or the
+	// `?chatSessionId=` query parameter (`upload.routes.ts:144-147`, field checked first). Only the query
+	// form is safe to rely on: the handler reads it via Fastify-multipart's `request.file()` streaming API
+	// (`upload.routes.ts:124`), which per the plugin's own contract only resolves form fields that appear
+	// before the file part in the multipart body (`upload.routes.ts:33-38`). A client whose form writer
+	// places `file` before `chatSessionId` silently loses the field. The query parameter has no such
+	// ordering hazard, which is why `@dhaam-ccrm/rest`'s `createAttachmentUploader` sends it as a query
+	// parameter.
+	//
+	// Tenant is a hint, never authority. `X-Tenant-ID` header first, then `?tenantId=` query, used only to
+	// help verify the presented access token (`upload.routes.ts:94-98`). The tenant actually written to
+	// storage is always `verified.tenantId` off the token itself (`upload.routes.ts:142,158-163`) —
+	// neither header nor query can steer an upload into a different tenant's storage prefix.
+	//
+	// Auth is `accessToken` only — see the top-level Auth model section's documented exception; this
+	// route does not check `X-Publishable-Key`.
+	//
+	// Limits, confirmed from source. Max file size 50 MB (`VALIDATION.MAX_FILE_SIZE_MB = 50`,
+	// `shared/constants/index.ts:129`, enforced by the multipart plugin registration at
+	// `server.ts:181-186`); the plugin additionally caps at 5 files per request (`server.ts:184`), though
+	// this endpoint only ever reads the first file via `request.file()` — the 5-file ceiling is a
+	// plugin-wide setting this single-file endpoint does not exercise. Allowed MIME types, confirmed from
+	// `infrastructure/storage/s3-client.ts:13-32` (codec parameters such as `;codecs=opus` are stripped
+	// before matching, lines 39, 107):
+	//
+	//  - images: `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/svg+xml`
+	//  - videos: `video/mp4`, `video/webm`, `video/quicktime`, `video/x-msvideo`
+	//  - audio: `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/webm`, `audio/mp4`
+	//  - documents: `application/pdf`, `application/msword`,
+	//    `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+	//    `application/vnd.ms-excel`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+	//    `text/plain`, `text/csv`
+	//
+	// `mediaType` in the response is lowercase-plural — `images` / `videos` / `audio` / `documents`
+	// (`s3-client.ts:38-44`'s `getMediaFolder`, echoed straight through as `result.mediaFolder` at
+	// `upload.routes.ts:172`). This is not the upper-snake-case `MediaType` enum
+	// (`IMAGE`/`VIDEO`/`AUDIO`/`DOCUMENT`) that `Attachment.mediaType` documents and that
+	// `@dhaam-ccrm/core`'s `messageTypeFor` switches on
+	// (`packages/core/src/messages/controller.ts:87-97`). See `UploadResponse.mediaType` below for the
+	// exact wire values and the adapter mapping — implemented in `packages/rest/src/media-type.ts`.
 	//
 	// This endpoint models the proxied-upload flow v1 actually uses today (multipart straight to
 	// chat-service). PRD §18 Open Question 7 — whether v2 keeps this proxied shape or moves to
 	// direct-to-S3 presigned URLs minted via REST — is explicitly unresolved and owned by the backend
 	// team. A presigned-URL design would replace this single multipart `POST` with a pair of calls (e.g.
-	// `POST .../attachments/upload-url` returning a presigned PUT target, then a client-side `PUT`
-	// straight to storage) and would change this response shape to include upload-target fields instead of
-	// a final `url`. Do not implement against a presigned flow from this spec — it is not modeled here,
-	// only flagged.
+	// `POST /upload/upload-url` returning a presigned PUT target, then a client-side `PUT` straight to
+	// storage) and would change this response shape to include upload-target fields instead of a final
+	// `url`. Do not implement against a presigned flow from this spec — it is not modeled here, only
+	// flagged.
 	//
-	// Idempotency: supports `Idempotency-Key`. Without it, retrying a timed-out upload may store the file
-	// twice.
+	// `Idempotency-Key` is not implemented — see "Idempotency" above.
 	//
-	// File size and MIME-type limits are enforced server-side; the exact ceiling is not fixed by the PRD
-	// (tracked as an open question in the T2 handoff, not invented here). Violating either returns
-	// `VALIDATION_FAILED` (`413` for size, `415` for an unsupported MIME type).
-	//
-	// POST /sessions/{sessionId}/attachments
-	UploadSessionAttachment(ctx context.Context, request *UploadSessionAttachmentReq, params UploadSessionAttachmentParams) (UploadSessionAttachmentRes, error)
+	// POST /upload
+	UploadAttachment(ctx context.Context, request *UploadAttachmentReq, params UploadAttachmentParams) (UploadAttachmentRes, error)
 }
 
 // Client implements OAS client.
@@ -214,14 +412,36 @@ func (c *Client) requestURL(ctx context.Context) *url.URL {
 
 // CloseSession invokes closeSession operation.
 //
+// Path corrected: `POST /chat/sessions/{sessionId}/close` (`chat.routes.ts:282`).
+//
 // Transitions `status` to `CLOSED`. Backs the core method `client.closeSession(): Promise<void>` (PRD
-// §6.2) — there is no WebSocket frame type for this action in the T1 catalog, so it is a REST-only
-// operation in v2, same as v1.
+// §6.2) — there is no WebSocket frame type for this action, so it is REST-only.
 //
-// Idempotency: naturally idempotent. Calling this on a session that is already `CLOSED` returns `200`
-// with its current state, not an error — repeats are always safe with no `Idempotency-Key` needed.
+// Naturally idempotent: calling this on a session that is already `CLOSED` returns `200` with its
+// current state, not an error.
 //
-// POST /sessions/{sessionId}/close
+// The request body is accepted but entirely ignored. The handler never validates or reads it
+// (`chat.routes.ts:282-293` calls no `validate()` on `request.body` at all), and
+// `chatSessionService.closeSession(sessionId)` takes only the session id — no `reason` parameter
+// exists anywhere in its signature (`chat-session.service.ts:227`). `CloseSessionRequest.reason` below
+// is kept in this schema only because sending it is harmless (it is silently dropped), not because the
+// backend does anything with it.
+//
+// Response shape corrected: the actual `200` body is `SessionCloseResult`
+// (`{sessionId, status, closedAt}`, raw integer `status`) — not the full `ChatSession` this
+// operation previously promised (`chat.routes.ts:289-292`).
+//
+// `@dhaam-ccrm/rest` performs a follow-up fetch. `packages/core`'s `SessionActions.closeSession`
+// contract requires the full `ChatSession` shape (`packages/core/src/client/types.ts:105-108` —
+// "unlike the WebSocket `SessionSnapshot`... carries full `Profile` objects"), which this response
+// cannot satisfy on its own: it has no `createdAt`, `assignedAgent`, `customer`, or `ticket`, and uses
+// `sessionId` where `ChatSession` needs `id`. `@dhaam-ccrm/rest`'s `createSessionActions` adapter
+// calls this endpoint and then immediately issues a follow-up `GET /chat/sessions/{sessionId}/full` to
+// assemble the full `ChatSession` core requires — two HTTP round trips per `closeSession()` call.
+// This is now implemented (see `packages/rest/src/envelope.ts` and the session-actions adapter), not a
+// workaround pending a backend change.
+//
+// POST /chat/sessions/{sessionId}/close
 func (c *Client) CloseSession(ctx context.Context, request OptCloseSessionRequest, params CloseSessionParams) (CloseSessionRes, error) {
 	res, err := c.sendCloseSession(ctx, request, params)
 	return res, err
@@ -231,7 +451,7 @@ func (c *Client) sendCloseSession(ctx context.Context, request OptCloseSessionRe
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
-	pathParts[0] = "/sessions/"
+	pathParts[0] = "/chat/sessions/"
 	{
 		// Encode "sessionId" parameter.
 		e := uri.NewPathEncoder(uri.PathEncoderConfig{
@@ -328,36 +548,41 @@ func (c *Client) sendCloseSession(ctx context.Context, request OptCloseSessionRe
 
 // CreateSession invokes createSession operation.
 //
+// Path corrected: `POST /chat/sessions`, not `POST /sessions` (`chat.routes.ts:190`).
+//
 // Starts a new session, defaulting to `mode: BOT` and `status: OPEN` (PRD §12.5's observed
 // lifecycle). The caller's identity comes entirely from the validated `accessToken` — the request
-// body carries only optional client-side context, never customer identity fields, which fixes v1's
-// pattern of re-sending `customerId`/`customerName`/ `customerEmail` in the body even though the same
-// values were already embedded in the auth token.
+// body carries only optional client-side context, never customer identity fields.
 //
-// Open Question (not resolved by the PRD): PRD §12.3 documents that in v1, explicit REST session
-// creation is a client-orchestrated recovery path — used only when the socket's `connection.ack`
-// resolves to an already-`CLOSED` session — and PRD §8.3 explicitly leaves open whether v2 keeps
-// this client-side responsibility or moves it server-side inside `connection.ack` itself. This
-// endpoint is included because backend (non-WebSocket) SDKs need an explicit, REST-only way to start a
-// session regardless of how that question is resolved for the browser client; whether
-// `@dhaam-ccrm/core` ever calls it directly is exactly the open question above, not something this
-// document can settle.
+// Open Question (not resolved by the PRD): whether `@dhaam-ccrm/core` should ever call this directly,
+// or whether session bootstrap stays entirely WebSocket-driven (`connection.ack`). As of this
+// revision, core does not call it — confirmed by the contract audit that produced this correction.
 //
-// Idempotency: supports `Idempotency-Key`. Without it, retrying after a timeout may create two
-// sessions; with it, a replayed request within the key's 24h window returns the original session
-// unchanged.
+// Response shape corrected: the actual `201` body is `SessionMutationResult`
+// (`{sessionId, status, mode}`, raw integer enum codes) — not the full `ChatSession` this operation
+// previously promised. `chat.routes.ts:215-218` builds the reply from exactly those three fields off
+// `chatSessionService.createSession()`'s return value; no other field is ever included.
 //
-// POST /sessions
-func (c *Client) CreateSession(ctx context.Context, request OptCreateSessionRequest, params CreateSessionParams) (CreateSessionRes, error) {
-	res, err := c.sendCreateSession(ctx, request, params)
+// No `Location` header is set. An earlier revision of this document documented one on the `201`; the
+// handler never calls `reply.header('Location', ...)`, so it has been removed rather than left
+// describing a response the backend does not send.
+//
+// `Idempotency-Key` is not implemented — see "Idempotency" above. What IS true: a customer with an
+// already-active session gets that session back unchanged rather than a second one
+// (`chat-session.service.ts:42-72`), which is a property of the domain (one active session per
+// customer), not of a request replay key.
+//
+// POST /chat/sessions
+func (c *Client) CreateSession(ctx context.Context, request OptCreateSessionRequest) (CreateSessionRes, error) {
+	res, err := c.sendCreateSession(ctx, request)
 	return res, err
 }
 
-func (c *Client) sendCreateSession(ctx context.Context, request OptCreateSessionRequest, params CreateSessionParams) (res CreateSessionRes, err error) {
+func (c *Client) sendCreateSession(ctx context.Context, request OptCreateSessionRequest) (res CreateSessionRes, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
-	pathParts[0] = "/sessions"
+	pathParts[0] = "/chat/sessions"
 	uri.AddPathParts(u, pathParts[:]...)
 
 	r, err := ht.NewRequest(ctx, "POST", u)
@@ -366,22 +591,6 @@ func (c *Client) sendCreateSession(ctx context.Context, request OptCreateSession
 	}
 	if err := encodeCreateSessionRequest(request, r); err != nil {
 		return res, errors.Wrap(err, "encode request")
-	}
-
-	h := uri.NewHeaderEncoder(r.Header)
-	{
-		cfg := uri.HeaderParameterEncodingConfig{
-			Name:    "Idempotency-Key",
-			Explode: false,
-		}
-		if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
-			if val, ok := params.IdempotencyKey.Get(); ok {
-				return e.EncodeValue(conv.StringToString(val))
-			}
-			return nil
-		}); err != nil {
-			return res, errors.Wrap(err, "encode header")
-		}
 	}
 
 	{
@@ -451,16 +660,23 @@ func (c *Client) sendCreateSession(ctx context.Context, request OptCreateSession
 
 // GetSessionFull invokes getSessionFull operation.
 //
-// Generalizes v1's `GET /sessions/{id}/full` (PRD §12.9, §12.10), which this spec confirms is the
-// origin of the read-watermark model: each entry in `participants[]` carries `lastReadAt`, and a
-// customer widget seeds its "seen" UI from the maximum `lastReadAt` across all `AGENT` participants
-// (defending against multi-agent sessions). This is a read-only view of that watermark — see this
-// document's top-level description for why there is no corresponding write endpoint here.
+// Path corrected: `GET /chat/sessions/{sessionId}/full` (`chat.routes.ts:242`).
 //
-// `messages` is the most recent page (see `limit`), returned in ascending chronological order (oldest
-// first). Use `GET /sessions/{sessionId}/messages` with `before` to page further back.
+// Generalizes v1's `GET /sessions/{id}/full` (PRD §12.9, §12.10): each entry in `participants[]`
+// carries `lastReadAt`, and a customer widget seeds its "seen" UI from the maximum `lastReadAt` across
+// all `AGENT` participants (defending against multi-agent sessions).
 //
-// GET /sessions/{sessionId}/full
+// `messages` is the most recent page (see `messageLimit`), returned in ascending chronological order
+// (oldest first). Use `GET /chat/sessions/{sessionId}/messages` with `before` to page further back.
+//
+// Message shape corrected: `messages[]` in the real response is `ChatMessageWire`, not the normalized
+// `ChatMessage` — see that schema for the two concrete deviations (raw integer enum codes, unlifted
+// `metadata.attachment`) and for how `@dhaam-ccrm/rest` normalizes them. `session`'s own
+// `status`/`mode` are also raw integers on this path, and its `assignedAgent`/`customer` profile
+// objects are missing `participantId` (`chat-user.service.ts:189-231`'s enrichment never sets it) —
+// noted here as a known, separately-tracked gap not fully re-modeled in this revision.
+//
+// GET /chat/sessions/{sessionId}/full
 func (c *Client) GetSessionFull(ctx context.Context, params GetSessionFullParams) (GetSessionFullRes, error) {
 	res, err := c.sendGetSessionFull(ctx, params)
 	return res, err
@@ -470,7 +686,7 @@ func (c *Client) sendGetSessionFull(ctx context.Context, params GetSessionFullPa
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
-	pathParts[0] = "/sessions/"
+	pathParts[0] = "/chat/sessions/"
 	{
 		// Encode "sessionId" parameter.
 		e := uri.NewPathEncoder(uri.PathEncoderConfig{
@@ -494,15 +710,15 @@ func (c *Client) sendGetSessionFull(ctx context.Context, params GetSessionFullPa
 
 	q := uri.NewQueryEncoder()
 	{
-		// Encode "limit" parameter.
+		// Encode "messageLimit" parameter.
 		cfg := uri.QueryParameterEncodingConfig{
-			Name:    "limit",
+			Name:    "messageLimit",
 			Style:   uri.QueryStyleForm,
 			Explode: true,
 		}
 
 		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
-			if val, ok := params.Limit.Get(); ok {
+			if val, ok := params.MessageLimit.Get(); ok {
 				return e.EncodeValue(conv.IntToString(val))
 			}
 			return nil
@@ -582,19 +798,368 @@ func (c *Client) sendGetSessionFull(ctx context.Context, params GetSessionFullPa
 	return result, nil
 }
 
+// ListCartsForContact invokes listCartsForContact operation.
+//
+// A support agent looking at one contact's cart history while handling a ticket — every
+// `LIVE`/`ABANDONED`/`CONVERTED` row for that contact, including carts that are NOT the one currently
+// mirrored onto `Contact.itemsInCart`/`cartValue` (that mirror always reflects only the single
+// most-recently-touched `LIVE` cart — see `ContactCartRow`'s description for the full multi-cart
+// mirror rule). Unpaginated; lightly capped rather than truly unbounded, since a contact plausibly has
+// dozens of historical carts, not thousands.
+//
+// Same 404-not-403 rule as `GET /contacts/:id`.
+//
+// GET /contacts/{id}/carts
+func (c *Client) ListCartsForContact(ctx context.Context, params ListCartsForContactParams) (ListCartsForContactRes, error) {
+	res, err := c.sendListCartsForContact(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendListCartsForContact(ctx context.Context, params ListCartsForContactParams) (res ListCartsForContactRes, err error) {
+
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/contacts/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/carts"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+
+			switch err := c.securityStaffToken(ctx, ListCartsForContactOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"StaffToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	result, err := decodeListCartsForContactResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// ListContactCarts invokes listContactCarts operation.
+//
+// The read side of the cart-segmentation use case — e.g. "carts abandoned in the last 7 days worth
+// $100+," to build a win-back audience. Every query, including the total count, carries the caller's
+// own `tenantId` — the same rule `contact-list.service.ts` states for `GET /contacts`: a count that
+// omitted it would leak the size of another tenant's cart segment through a number.
+//
+// `status` defaults to `abandoned` — segmentation, not a live-cart dashboard, is this operation's
+// reason to exist.
+//
+// GET /contacts/carts
+func (c *Client) ListContactCarts(ctx context.Context, params ListContactCartsParams) (ListContactCartsRes, error) {
+	res, err := c.sendListContactCarts(ctx, params)
+	return res, err
+}
+
+func (c *Client) sendListContactCarts(ctx context.Context, params ListContactCartsParams) (res ListContactCartsRes, err error) {
+
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/contacts/carts"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "status" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "status",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Status.Get(); ok {
+				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "minValue" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "minValue",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.MinValue.Get(); ok {
+				return e.EncodeValue(conv.Float64ToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "maxValue" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "maxValue",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.MaxValue.Get(); ok {
+				return e.EncodeValue(conv.Float64ToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "updatedAfter" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "updatedAfter",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.UpdatedAfter.Get(); ok {
+				return e.EncodeValue(conv.DateTimeToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "updatedBefore" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "updatedBefore",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.UpdatedBefore.Get(); ok {
+				return e.EncodeValue(conv.DateTimeToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "page" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "page",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Page.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "pageSize" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "pageSize",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.PageSize.Get(); ok {
+				return e.EncodeValue(conv.IntToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "sort" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "sort",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.Sort.Get(); ok {
+				return e.EncodeValue(conv.StringToString(string(val)))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
+
+	r, err := ht.NewRequest(ctx, "GET", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+
+			switch err := c.securityStaffToken(ctx, ListContactCartsOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"StaffToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	result, err := decodeListContactCartsResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ListSessionMessages invokes listSessionMessages operation.
 //
-// Matches v1's proven pagination shape exactly (PRD §12.10, §6.3): opaque-id backward cursor
-// (`before`), a `limit`, and a `hasMore` boolean in the response. There is no forward cursor — live
-// messages arrive over the WebSocket (`message.new`, T1), not by polling this endpoint. Omit `before`
-// to fetch the most recent page (equivalent to the first page a scroll-up pagination UI would
-// request).
+// Path corrected: `GET /chat/sessions/{sessionId}/messages` (`chat.routes.ts:262`). This is the
+// endpoint at the center of the "message history not appearing after reload" defect this correction
+// pass exists to close — see `ChatMessageWire` below for exactly what it returns and why an earlier
+// version of `@dhaam-ccrm/rest` could not render it correctly even once the path itself was fixed.
 //
-// Returned in ascending chronological order (oldest first) — the oldest message in the response is
-// the one immediately following the given `before` cursor, so a client can prepend the page to its
-// existing message list without re-sorting.
+// Matches v1's proven pagination shape (PRD §12.10, §6.3): opaque-id backward cursor (`before`), a
+// `limit`, and a `hasMore` boolean in the response — confirmed unchanged from this document's
+// original design (`listMessagesQuerySchema`, `chat.validator.ts:39-42`). There is no forward cursor
+// — live messages arrive over the WebSocket (`message.new`), not by polling this endpoint. Omit
+// `before` to fetch the most recent page.
 //
-// GET /sessions/{sessionId}/messages
+// Returned in ascending chronological order (oldest first) — confirmed: the repository queries
+// `createdAt desc` and the service reverses the slice before returning it
+// (`message.repository.ts:174-187`, `message.service.ts:290`) — so the oldest message in the
+// response is the one immediately following the given `before` cursor, and a client can prepend the
+// page without re-sorting.
+//
+// Message shape corrected: the response's `messages[]` is `ChatMessageWire`, not the normalized
+// `ChatMessage`. Two concrete deviations, both confirmed against `message.service.ts:285-296` and
+// `:470-482` (`getMessages`/`getMessagesPaginated`, which return Prisma rows verbatim — neither
+// method touches `metadata` or converts an enum):
+//
+//  1. `senderType` and `messageType` are raw integer codes (`shared/constants/enums.ts:29-44`), not
+//     string enum names. Only the WebSocket path's `projectMessage`
+//     (`api/websocket/v2/projection.ts:81-82,205-206`) converts these; this REST path never does.
+//  2. `attachment` is never present at the top level. When a message carries one, it is nested at
+//     `metadata.attachment` (`api/websocket/v2/projection.ts:213-220`'s own comment: "the database
+//     keeps attachments inside the legacy `metadata` column" — that comment describes the persistence
+//     layer this REST path reads from directly, unprojected).
+//
+// `@dhaam-ccrm/rest`'s `createHistorySource` adapter converts every row of this shape into the
+// normalized `ChatMessage` (int→string lookup, and lifting/stripping `metadata.attachment`) before
+// handing it to `@dhaam-ccrm/core` — this is now implemented (see
+// `packages/rest/src/projection.ts`). This schema exists so that normalization step stays visible and
+// is never "corrected" back out under the assumption that the wire already matches `ChatMessage`.
+//
+// GET /chat/sessions/{sessionId}/messages
 func (c *Client) ListSessionMessages(ctx context.Context, params ListSessionMessagesParams) (ListSessionMessagesRes, error) {
 	res, err := c.sendListSessionMessages(ctx, params)
 	return res, err
@@ -604,7 +1169,7 @@ func (c *Client) sendListSessionMessages(ctx context.Context, params ListSession
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
-	pathParts[0] = "/sessions/"
+	pathParts[0] = "/chat/sessions/"
 	{
 		// Encode "sessionId" parameter.
 		e := uri.NewPathEncoder(uri.PathEncoderConfig{
@@ -735,19 +1300,31 @@ func (c *Client) sendListSessionMessages(ctx context.Context, params ListSession
 
 // ListSessions invokes listSessions operation.
 //
-// Hydrates `ChatState.pastSessions` (PRD §6.4), which the PRD specifies as state but never gave a
-// data source — this endpoint closes that gap.
+// Path corrected: the real route is `GET /chat/sessions/customer`, registered ahead of
+// `/chat/sessions/:sessionId` so Fastify's static route wins (`chat.routes.ts:229`, comment:
+// "registered before /:sessionId (static wins in Fastify)"). An earlier revision of this document
+// modeled this as `GET /sessions`, which does not exist — `chat.routes.ts` has no bare
+// `GET /chat/sessions` handler at all.
 //
-// Replaces v1's `GET /chat/sessions/customer?tenantId=&customerId=` (`src/context.tsx:923`). That
-// shape is not carried forward: taking `customerId` as a query parameter means the endpoint trusts the
-// caller to declare whose sessions to return, so any customer could enumerate another's history by
-// changing one parameter. Here both tenant and customer identity are derived from the validated
-// `accessToken` and publishable key, and are not accepted as inputs.
+// Hydrates `ChatState.pastSessions` (PRD §6.4) — the SDK's "your last N conversations" picker.
+// `@dhaam-ccrm/core` does not call this operation as of this revision — `ChatState.pastSessions` is
+// declared and initialized empty but nothing in `packages/core` populates it (confirmed gap, contract
+// audit finding; unchanged by this revision, which corrects the backend response shape this operation
+// will be consumed against, not the SDK wiring).
 //
-// Ordered most-recent-first. Includes closed sessions — a customer reopening an earlier conversation
-// (PRD §12.5) needs to see them.
+// Ordered most-recent-first (by last activity, not `createdAt`). Includes closed sessions — a
+// customer reopening an earlier conversation (PRD §12.5) needs to see them.
 //
-// GET /sessions
+// Guests get `[]`, not an error. A session is returned only for a caller the backend has identified
+// — see `handledBy`'s sibling note on `ChatSessionSummaryWire` for what "identified" means here and
+// its documented failure mode. This is a 200 in every case; there is no 403/404 branch on this
+// operation for an anonymous caller.
+//
+// Response shape corrected as of this revision — see `ChatSessionSummaryWire` /
+// `SessionSummaryPageWire` below. The `sessions[]` item shape is now field-for-field the SDK's
+// `ChatSessionSummary` (`packages/core/src/state/types.ts:223-240`), plus `handledBy`.
+//
+// GET /chat/sessions/customer
 func (c *Client) ListSessions(ctx context.Context, params ListSessionsParams) (ListSessionsRes, error) {
 	res, err := c.sendListSessions(ctx, params)
 	return res, err
@@ -757,7 +1334,7 @@ func (c *Client) sendListSessions(ctx context.Context, params ListSessionsParams
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [1]string
-	pathParts[0] = "/sessions"
+	pathParts[0] = "/chat/sessions/customer"
 	uri.AddPathParts(u, pathParts[:]...)
 
 	q := uri.NewQueryEncoder()
@@ -852,7 +1429,7 @@ func (c *Client) sendListSessions(ctx context.Context, params ListSessionsParams
 
 // MintToken invokes mintToken operation.
 //
-// Called by the customer's own backend using their `dhsk_live_...` / `dhsk_test_...` secret key —
+// Called by the customer's own backend using their `dhk_live_...` / `dhk_test_...` secret key —
 // never by a browser (PRD §10.3). The customer's frontend calls their own backend endpoint (commonly
 // one they name `/token` or similar), which in turn calls this endpoint and relays only the resulting
 // `accessToken` to the frontend, which supplies it to the SDK via `getToken()` (PRD §6.1, §10.4).
@@ -941,22 +1518,257 @@ func (c *Client) sendMintToken(ctx context.Context, request *MintTokenRequest) (
 	return result, nil
 }
 
+// RecordCommerceEvent invokes recordCommerceEvent operation.
+//
+// Called by the merchant's own commerce backend with their tenant secret key — the same credential
+// and calling pattern `POST /tokens` already uses, never a browser. The target contact is
+// resolved-or-created from the body's `customerId`; the tenant itself comes from the verified key,
+// never from the body — there is no `tenantId` field anywhere in this request.
+//
+// Six event types, discriminated on `type` — see `CommerceEvent`. The server derives every `Contact`
+// aggregate (`totalOrders`, `completedOrders`, `totalSpend`, `averageOrderValue`,
+// `itemsInCart`/`cartValue`, `lastOrderMerchant`/`lastOrderCategory`/ `lastOrderAt`) from the event
+// stream; this call never sends a computed total.
+//
+// `200`, never `201`, for both a first acceptance and a replay of an already-applied event — this is
+// a command over an event stream, not creation of a REST resource, and using one status code for both
+// `applied` states avoids a status-code-encodes- idempotency-state trap. See "Idempotency, and
+// rejection recovery" in this document's top-level description for the full contract, including what
+// happens when the SAME `eventId` is retried after a `404`/`422` rejection (short answer: it is
+// processed fresh, not short-circuited — the transaction that rejected it rolled back the
+// idempotency row along with everything else).
+//
+// Request bodies up to 1 MiB are accepted — see "Request size" in the top-level description for why
+// this is larger than `POST /tokens`'s limit.
+//
+// Not reachable via `@dhaam-ccrm/node`'s `UserScopedClient` — only
+// `ChatServerClient.recordCommerceEvent()`, alongside `mintToken`, holds the secret key this route
+// requires.
+//
+// POST /contacts/commerce-events
+func (c *Client) RecordCommerceEvent(ctx context.Context, request CommerceEvent) (RecordCommerceEventRes, error) {
+	res, err := c.sendRecordCommerceEvent(ctx, request)
+	return res, err
+}
+
+func (c *Client) sendRecordCommerceEvent(ctx context.Context, request CommerceEvent) (res RecordCommerceEventRes, err error) {
+
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [1]string
+	pathParts[0] = "/contacts/commerce-events"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeRecordCommerceEventRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+
+			switch err := c.securitySecretKey(ctx, RecordCommerceEventOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"SecretKey\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	result, err := decodeRecordCommerceEventResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
+// RecordCommerceEventForContact invokes recordCommerceEventForContact operation.
+//
+// The human counterpart to `recordCommerceEvent` — a tenant admin in the CRM correcting or
+// backfilling what the machine feed missed or got wrong (a phone order, a manual backfill), through
+// the identical event-shaped mechanism. Not a raw field-override: every write, machine or human, is an
+// event the server derives aggregates from — there is no endpoint that sets e.g. `totalSpend` to an
+// exact number directly.
+//
+// `:id` must already exist for the caller's own tenant — unlike the machine path, this path never
+// creates a contact. A typo'd or cross-tenant `:id` is `404 CONTACT_NOT_FOUND`, never `403` — see
+// `ContactsContactNotFound`.
+//
+// Same event taxonomy as `CommerceEvent`, minus `customerId` — see `CommerceEventAdmin`. Same
+// `200`-always response shape, and the identical idempotency/rejection-recovery contract, as the
+// machine path (see "Idempotency, and rejection recovery" above).
+//
+// Every event this path writes records the acting admin's identity for audit — "who corrected this
+// contact's order history" is a support/compliance question a tenant will ask.
+//
+// Not exposed via `@dhaam-ccrm/node` — this is a CRM-console operation, not part of the
+// merchant-facing SDK surface; `ChatServerClient` gains only the machine-path method.
+//
+// POST /contacts/{id}/commerce-events
+func (c *Client) RecordCommerceEventForContact(ctx context.Context, request CommerceEventAdmin, params RecordCommerceEventForContactParams) (RecordCommerceEventForContactRes, error) {
+	res, err := c.sendRecordCommerceEventForContact(ctx, request, params)
+	return res, err
+}
+
+func (c *Client) sendRecordCommerceEventForContact(ctx context.Context, request CommerceEventAdmin, params RecordCommerceEventForContactParams) (res RecordCommerceEventForContactRes, err error) {
+
+	u := uri.Clone(c.requestURL(ctx))
+	var pathParts [3]string
+	pathParts[0] = "/contacts/"
+	{
+		// Encode "id" parameter.
+		e := uri.NewPathEncoder(uri.PathEncoderConfig{
+			Param:   "id",
+			Style:   uri.PathStyleSimple,
+			Explode: false,
+		})
+		if err := func() error {
+			return e.EncodeValue(conv.StringToString(params.ID))
+		}(); err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		encoded, err := e.Result()
+		if err != nil {
+			return res, errors.Wrap(err, "encode path")
+		}
+		pathParts[1] = encoded
+	}
+	pathParts[2] = "/commerce-events"
+	uri.AddPathParts(u, pathParts[:]...)
+
+	r, err := ht.NewRequest(ctx, "POST", u)
+	if err != nil {
+		return res, errors.Wrap(err, "create request")
+	}
+	if err := encodeRecordCommerceEventForContactRequest(request, r); err != nil {
+		return res, errors.Wrap(err, "encode request")
+	}
+
+	{
+		type bitset = [1]uint8
+		var satisfied bitset
+		{
+
+			switch err := c.securityStaffToken(ctx, RecordCommerceEventForContactOperation, r); {
+			case err == nil: // if NO error
+				satisfied[0] |= 1 << 0
+			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
+				// Skip this security.
+			default:
+				return res, errors.Wrap(err, "security \"StaffToken\"")
+			}
+		}
+
+		if ok := func() bool {
+		nextRequirement:
+			for _, requirement := range []bitset{
+				{0b00000001},
+			} {
+				for i, mask := range requirement {
+					if satisfied[i]&mask != mask {
+						continue nextRequirement
+					}
+				}
+				return true
+			}
+			return false
+		}(); !ok {
+			return res, ogenerrors.ErrSecurityRequirementIsNotSatisfied
+		}
+	}
+
+	resp, err := c.cfg.Client.Do(r)
+	if err != nil {
+		return res, errors.Wrap(err, "do request")
+	}
+	body := resp.Body
+	defer func() {
+		// Drain the body to EOF before closing, so the underlying
+		// connection can be reused by the Transport regardless of the
+		// response status code. See https://github.com/ogen-go/ogen/issues/1670.
+		_, _ = io.Copy(io.Discard, body)
+		_ = body.Close()
+	}()
+
+	result, err := decodeRecordCommerceEventForContactResponse(resp)
+	if err != nil {
+		return res, errors.Wrap(err, "decode response")
+	}
+
+	return result, nil
+}
+
 // ReopenSession invokes reopenSession operation.
 //
+// Path corrected: `POST /chat/sessions/{sessionId}/reopen` (`chat.routes.ts:296`).
+//
 // Backs `client.reopenSession(sessionId): Promise<ChatSession>` (PRD §6.2). Deliberately bypasses the
-// AI bot and jumps directly to `status: WAITING_FOR_AGENT`, `mode: HUMAN` — the exact semantics PRD
-// §12.5 confirms for v1's `reopenSession()`. There is no WebSocket frame type for this action in the
-// T1 catalog, so it is REST-only, as in v1.
+// AI bot and jumps directly to `status: WAITING_FOR_AGENT`, `mode: HUMAN`. There is no WebSocket frame
+// type for this action, so it is REST-only.
 //
-// Only a session in `CLOSED` status can be reopened. Reopening a session in any other status returns
-// `400 VALIDATION_FAILED` — this is a request-validity error given current state, not a
-// `SESSION_CLOSED` error (which means the opposite: the session is closed and an action requires it
-// not to be).
+// No status guard exists. An earlier revision of this document claimed reopening a session that is not
+// `CLOSED` returns `400 VALIDATION_FAILED`. That is not implemented. `reopenSession`
+// (`chat-session.service.ts:358-380`) applies no status check at all — it unconditionally applies
+// the `WAITING_FOR_AGENT`/`HUMAN` transition to whatever status the target session is currently in.
 //
-// Idempotency: supports `Idempotency-Key`, since reopening has a real side effect (bypassing the bot,
-// notifying agent routing) that should not be duplicated by a naive client retry.
+// Convergence behavior (real, and worth documenting precisely): if the caller's (tenantId, customerId)
+// already has a different active session, this endpoint does not reopen the requested one at all —
+// it returns that other, already-active session's `{id, status, mode}` unchanged
+// (`chat-session.service.ts:364-371`). This is the actual mechanism behind "reopening a stale session
+// is safe," not a request-level idempotency key.
 //
-// POST /sessions/{sessionId}/reopen
+// `Idempotency-Key` is not implemented — see "Idempotency" above; removed from this operation's
+// parameters.
+//
+// Response shape corrected: the actual `200` body is `SessionMutationResult`
+// (`{sessionId, status, mode}`, raw integer codes) — not the full `ChatSession` this operation
+// previously promised (`chat.routes.ts:310-313`).
+//
+// `@dhaam-ccrm/rest` performs a follow-up fetch, for the same reason and in the same way documented on
+// `POST /chat/sessions/{sessionId}/close` above: `SessionActions .reopenSession` needs the full
+// `ChatSession`, so the adapter calls this endpoint and then `GET /chat/sessions/{sessionId}/full` —
+// using whichever `id` this response actually returns, which per the convergence behavior above may
+// not be the `sessionId` the caller requested. This is now implemented, not a proposal.
+//
+// POST /chat/sessions/{sessionId}/reopen
 func (c *Client) ReopenSession(ctx context.Context, params ReopenSessionParams) (ReopenSessionRes, error) {
 	res, err := c.sendReopenSession(ctx, params)
 	return res, err
@@ -966,7 +1778,7 @@ func (c *Client) sendReopenSession(ctx context.Context, params ReopenSessionPara
 
 	u := uri.Clone(c.requestURL(ctx))
 	var pathParts [3]string
-	pathParts[0] = "/sessions/"
+	pathParts[0] = "/chat/sessions/"
 	{
 		// Encode "sessionId" parameter.
 		e := uri.NewPathEncoder(uri.PathEncoderConfig{
@@ -991,22 +1803,6 @@ func (c *Client) sendReopenSession(ctx context.Context, params ReopenSessionPara
 	r, err := ht.NewRequest(ctx, "POST", u)
 	if err != nil {
 		return res, errors.Wrap(err, "create request")
-	}
-
-	h := uri.NewHeaderEncoder(r.Header)
-	{
-		cfg := uri.HeaderParameterEncodingConfig{
-			Name:    "Idempotency-Key",
-			Explode: false,
-		}
-		if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
-			if val, ok := params.IdempotencyKey.Get(); ok {
-				return e.EncodeValue(conv.StringToString(val))
-			}
-			return nil
-		}); err != nil {
-			return res, errors.Wrap(err, "encode header")
-		}
 	}
 
 	{
@@ -1074,87 +1870,136 @@ func (c *Client) sendReopenSession(ctx context.Context, params ReopenSessionPara
 	return result, nil
 }
 
-// UploadSessionAttachment invokes uploadSessionAttachment operation.
+// UploadAttachment invokes uploadAttachment operation.
 //
-// Step 1 of the two-step flow PRD §6.3 and §12.10 generalize from v1: this endpoint uploads and
-// stores the file and returns its metadata only. It does not create a chat message. The caller (core's
-// `client.sendAttachment()`) must follow up by sending a WS `message.send` frame (T1) whose
-// `d.metadata.attachment` carries this response verbatim — exactly as v1's client emits
-// `chat.message.send` with `metadata.attachment` immediately after this REST call succeeds.
+// This operation replaces `POST /sessions/{sessionId}/attachments`, which this document previously
+// modeled and which does not exist on the real backend. The actual route is `POST /upload`
+// (`upload.routes.ts:82`), mounted directly at the service prefix with no session id in the path at
+// all.
 //
-// `attachment` is the message model's one canonical location for attachment data (see
-// `Message.attachment`) — v1 read it from either `message.attachment` or
-// `message.metadata.attachment` interchangeably (`raw.attachment ?? raw.metadata?.attachment`), which
-// D4's "one canonical name per concept" rule closes for v2.
+// Step 1 of the two-step flow: this endpoint uploads and stores the file and returns its metadata
+// only. It does not create a chat message. The caller (core's `client.sendAttachment()`) must follow
+// up by sending a WS `message.send` frame whose attachment data carries this response's `data`.
 //
-// The session is identified by the URL path, not a form field — v1 passed `chatSessionId`
-// redundantly inside the multipart body even though the REST call already had nowhere else to route
-// to; this is a deliberate cleanup, not a functional change.
+// Session identification, and why it's a query parameter, not a path segment or a relied-upon form
+// field. `chatSessionId` is accepted from either the multipart field `chatSessionId` or the
+// `?chatSessionId=` query parameter (`upload.routes.ts:144-147`, field checked first). Only the query
+// form is safe to rely on: the handler reads it via Fastify-multipart's `request.file()` streaming API
+// (`upload.routes.ts:124`), which per the plugin's own contract only resolves form fields that appear
+// before the file part in the multipart body (`upload.routes.ts:33-38`). A client whose form writer
+// places `file` before `chatSessionId` silently loses the field. The query parameter has no such
+// ordering hazard, which is why `@dhaam-ccrm/rest`'s `createAttachmentUploader` sends it as a query
+// parameter.
+//
+// Tenant is a hint, never authority. `X-Tenant-ID` header first, then `?tenantId=` query, used only to
+// help verify the presented access token (`upload.routes.ts:94-98`). The tenant actually written to
+// storage is always `verified.tenantId` off the token itself (`upload.routes.ts:142,158-163`) —
+// neither header nor query can steer an upload into a different tenant's storage prefix.
+//
+// Auth is `accessToken` only — see the top-level Auth model section's documented exception; this
+// route does not check `X-Publishable-Key`.
+//
+// Limits, confirmed from source. Max file size 50 MB (`VALIDATION.MAX_FILE_SIZE_MB = 50`,
+// `shared/constants/index.ts:129`, enforced by the multipart plugin registration at
+// `server.ts:181-186`); the plugin additionally caps at 5 files per request (`server.ts:184`), though
+// this endpoint only ever reads the first file via `request.file()` — the 5-file ceiling is a
+// plugin-wide setting this single-file endpoint does not exercise. Allowed MIME types, confirmed from
+// `infrastructure/storage/s3-client.ts:13-32` (codec parameters such as `;codecs=opus` are stripped
+// before matching, lines 39, 107):
+//
+//   - images: `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/svg+xml`
+//   - videos: `video/mp4`, `video/webm`, `video/quicktime`, `video/x-msvideo`
+//   - audio: `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/webm`, `audio/mp4`
+//   - documents: `application/pdf`, `application/msword`,
+//     `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+//     `application/vnd.ms-excel`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+//     `text/plain`, `text/csv`
+//
+// `mediaType` in the response is lowercase-plural — `images` / `videos` / `audio` / `documents`
+// (`s3-client.ts:38-44`'s `getMediaFolder`, echoed straight through as `result.mediaFolder` at
+// `upload.routes.ts:172`). This is not the upper-snake-case `MediaType` enum
+// (`IMAGE`/`VIDEO`/`AUDIO`/`DOCUMENT`) that `Attachment.mediaType` documents and that
+// `@dhaam-ccrm/core`'s `messageTypeFor` switches on
+// (`packages/core/src/messages/controller.ts:87-97`). See `UploadResponse.mediaType` below for the
+// exact wire values and the adapter mapping — implemented in `packages/rest/src/media-type.ts`.
 //
 // This endpoint models the proxied-upload flow v1 actually uses today (multipart straight to
 // chat-service). PRD §18 Open Question 7 — whether v2 keeps this proxied shape or moves to
 // direct-to-S3 presigned URLs minted via REST — is explicitly unresolved and owned by the backend
 // team. A presigned-URL design would replace this single multipart `POST` with a pair of calls (e.g.
-// `POST .../attachments/upload-url` returning a presigned PUT target, then a client-side `PUT`
-// straight to storage) and would change this response shape to include upload-target fields instead of
-// a final `url`. Do not implement against a presigned flow from this spec — it is not modeled here,
-// only flagged.
+// `POST /upload/upload-url` returning a presigned PUT target, then a client-side `PUT` straight to
+// storage) and would change this response shape to include upload-target fields instead of a final
+// `url`. Do not implement against a presigned flow from this spec — it is not modeled here, only
+// flagged.
 //
-// Idempotency: supports `Idempotency-Key`. Without it, retrying a timed-out upload may store the file
-// twice.
+// `Idempotency-Key` is not implemented — see "Idempotency" above.
 //
-// File size and MIME-type limits are enforced server-side; the exact ceiling is not fixed by the PRD
-// (tracked as an open question in the T2 handoff, not invented here). Violating either returns
-// `VALIDATION_FAILED` (`413` for size, `415` for an unsupported MIME type).
-//
-// POST /sessions/{sessionId}/attachments
-func (c *Client) UploadSessionAttachment(ctx context.Context, request *UploadSessionAttachmentReq, params UploadSessionAttachmentParams) (UploadSessionAttachmentRes, error) {
-	res, err := c.sendUploadSessionAttachment(ctx, request, params)
+// POST /upload
+func (c *Client) UploadAttachment(ctx context.Context, request *UploadAttachmentReq, params UploadAttachmentParams) (UploadAttachmentRes, error) {
+	res, err := c.sendUploadAttachment(ctx, request, params)
 	return res, err
 }
 
-func (c *Client) sendUploadSessionAttachment(ctx context.Context, request *UploadSessionAttachmentReq, params UploadSessionAttachmentParams) (res UploadSessionAttachmentRes, err error) {
+func (c *Client) sendUploadAttachment(ctx context.Context, request *UploadAttachmentReq, params UploadAttachmentParams) (res UploadAttachmentRes, err error) {
 
 	u := uri.Clone(c.requestURL(ctx))
-	var pathParts [3]string
-	pathParts[0] = "/sessions/"
-	{
-		// Encode "sessionId" parameter.
-		e := uri.NewPathEncoder(uri.PathEncoderConfig{
-			Param:   "sessionId",
-			Style:   uri.PathStyleSimple,
-			Explode: false,
-		})
-		if err := func() error {
-			return e.EncodeValue(conv.StringToString(params.SessionID))
-		}(); err != nil {
-			return res, errors.Wrap(err, "encode path")
-		}
-		encoded, err := e.Result()
-		if err != nil {
-			return res, errors.Wrap(err, "encode path")
-		}
-		pathParts[1] = encoded
-	}
-	pathParts[2] = "/attachments"
+	var pathParts [1]string
+	pathParts[0] = "/upload"
 	uri.AddPathParts(u, pathParts[:]...)
+
+	q := uri.NewQueryEncoder()
+	{
+		// Encode "tenantId" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "tenantId",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.TenantID.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	{
+		// Encode "chatSessionId" parameter.
+		cfg := uri.QueryParameterEncodingConfig{
+			Name:    "chatSessionId",
+			Style:   uri.QueryStyleForm,
+			Explode: true,
+		}
+
+		if err := q.EncodeParam(cfg, func(e uri.Encoder) error {
+			if val, ok := params.ChatSessionID.Get(); ok {
+				return e.EncodeValue(conv.StringToString(val))
+			}
+			return nil
+		}); err != nil {
+			return res, errors.Wrap(err, "encode query")
+		}
+	}
+	u.RawQuery = q.Values().Encode()
 
 	r, err := ht.NewRequest(ctx, "POST", u)
 	if err != nil {
 		return res, errors.Wrap(err, "create request")
 	}
-	if err := encodeUploadSessionAttachmentRequest(request, r); err != nil {
+	if err := encodeUploadAttachmentRequest(request, r); err != nil {
 		return res, errors.Wrap(err, "encode request")
 	}
 
 	h := uri.NewHeaderEncoder(r.Header)
 	{
 		cfg := uri.HeaderParameterEncodingConfig{
-			Name:    "Idempotency-Key",
+			Name:    "X-Tenant-ID",
 			Explode: false,
 		}
 		if err := h.EncodeParam(cfg, func(e uri.Encoder) error {
-			if val, ok := params.IdempotencyKey.Get(); ok {
+			if val, ok := params.XTenantID.Get(); ok {
 				return e.EncodeValue(conv.StringToString(val))
 			}
 			return nil
@@ -1168,7 +2013,7 @@ func (c *Client) sendUploadSessionAttachment(ctx context.Context, request *Uploa
 		var satisfied bitset
 		{
 
-			switch err := c.securityAccessToken(ctx, UploadSessionAttachmentOperation, r); {
+			switch err := c.securityAccessToken(ctx, UploadAttachmentOperation, r); {
 			case err == nil: // if NO error
 				satisfied[0] |= 1 << 0
 			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
@@ -1177,22 +2022,11 @@ func (c *Client) sendUploadSessionAttachment(ctx context.Context, request *Uploa
 				return res, errors.Wrap(err, "security \"AccessToken\"")
 			}
 		}
-		{
-
-			switch err := c.securityPublishableKey(ctx, UploadSessionAttachmentOperation, r); {
-			case err == nil: // if NO error
-				satisfied[0] |= 1 << 1
-			case errors.Is(err, ogenerrors.ErrSkipClientSecurity):
-				// Skip this security.
-			default:
-				return res, errors.Wrap(err, "security \"PublishableKey\"")
-			}
-		}
 
 		if ok := func() bool {
 		nextRequirement:
 			for _, requirement := range []bitset{
-				{0b00000011},
+				{0b00000001},
 			} {
 				for i, mask := range requirement {
 					if satisfied[i]&mask != mask {
@@ -1220,7 +2054,7 @@ func (c *Client) sendUploadSessionAttachment(ctx context.Context, request *Uploa
 		_ = body.Close()
 	}()
 
-	result, err := decodeUploadSessionAttachmentResponse(resp)
+	result, err := decodeUploadAttachmentResponse(resp)
 	if err != nil {
 		return res, errors.Wrap(err, "decode response")
 	}

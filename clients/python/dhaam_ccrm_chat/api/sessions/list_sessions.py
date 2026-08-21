@@ -6,13 +6,13 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.error import Error
-from ...models.session_summary_page import SessionSummaryPage
+from ...models.list_sessions_response_200 import ListSessionsResponse200
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
-    limit: Union[Unset, int] = 20,
+    limit: Union[Unset, int] = 5,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {}
 
@@ -22,7 +22,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/sessions",
+        "url": "/chat/sessions/customer",
         "params": params,
     }
 
@@ -31,9 +31,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Optional[Union[Error, SessionSummaryPage]]:
+) -> Optional[Union[Error, ListSessionsResponse200]]:
     if response.status_code == 200:
-        response_200 = SessionSummaryPage.from_dict(response.json())
+        response_200 = ListSessionsResponse200.from_dict(response.json())
 
         return response_200
 
@@ -60,7 +60,7 @@ def _parse_response(
 
 def _build_response(
     *, client: Union[AuthenticatedClient, Client], response: httpx.Response
-) -> Response[Union[Error, SessionSummaryPage]]:
+) -> Response[Union[Error, ListSessionsResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -72,34 +72,50 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient,
-    limit: Union[Unset, int] = 20,
-) -> Response[Union[Error, SessionSummaryPage]]:
-    """List the authenticated customer's recent sessions.
+    limit: Union[Unset, int] = 5,
+) -> Response[Union[Error, ListSessionsResponse200]]:
+    r"""List the authenticated customer's recent sessions.
 
-     Hydrates `ChatState.pastSessions` (PRD §6.4), which the PRD
-    specifies as state but never gave a data source — this endpoint
-    closes that gap.
+     **Path corrected**: the real route is `GET /chat/sessions/customer`,
+    registered ahead of `/chat/sessions/:sessionId` so Fastify's static
+    route wins (`chat.routes.ts:229`, comment: \"registered before
+    /:sessionId (static wins in Fastify)\"). An earlier revision of this
+    document modeled this as `GET /sessions`, which does not exist —
+    `chat.routes.ts` has no bare `GET /chat/sessions` handler at all.
 
-    Replaces v1's `GET /chat/sessions/customer?tenantId=&customerId=`
-    (`src/context.tsx:923`). That shape is not carried forward: taking
-    `customerId` as a query parameter means the endpoint trusts the
-    caller to declare whose sessions to return, so any customer could
-    enumerate another's history by changing one parameter. Here both
-    tenant and customer identity are derived from the validated
-    `accessToken` and publishable key, and are not accepted as inputs.
+    Hydrates `ChatState.pastSessions` (PRD §6.4) — the SDK's \"your last
+    N conversations\" picker. **`@dhaam-ccrm/core` does not call this
+    operation as of this revision** — `ChatState.pastSessions` is
+    declared and initialized empty but nothing in `packages/core`
+    populates it (confirmed gap, contract audit finding; unchanged by
+    this revision, which corrects the backend response shape this
+    operation will be consumed against, not the SDK wiring).
 
-    Ordered most-recent-first. Includes closed sessions — a customer
-    reopening an earlier conversation (PRD §12.5) needs to see them.
+    Ordered most-recent-first (by last activity, not `createdAt`).
+    Includes closed sessions — a customer reopening an earlier
+    conversation (PRD §12.5) needs to see them.
+
+    **Guests get `[]`, not an error.** A session is returned only for a
+    caller the backend has identified — see `handledBy`'s sibling note
+    on `ChatSessionSummaryWire` for what \"identified\" means here and its
+    documented failure mode. This is a 200 in every case; there is no
+    403/404 branch on this operation for an anonymous caller.
+
+    **Response shape corrected as of this revision** — see
+    `ChatSessionSummaryWire` / `SessionSummaryPageWire` below. The
+    `sessions[]` item shape is now field-for-field the SDK's
+    `ChatSessionSummary` (`packages/core/src/state/types.ts:223-240`),
+    plus `handledBy`.
 
     Args:
-        limit (Union[Unset, int]):  Default: 20.
+        limit (Union[Unset, int]):  Default: 5.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Error, SessionSummaryPage]]
+        Response[Union[Error, ListSessionsResponse200]]
     """
 
     kwargs = _get_kwargs(
@@ -116,34 +132,50 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient,
-    limit: Union[Unset, int] = 20,
-) -> Optional[Union[Error, SessionSummaryPage]]:
-    """List the authenticated customer's recent sessions.
+    limit: Union[Unset, int] = 5,
+) -> Optional[Union[Error, ListSessionsResponse200]]:
+    r"""List the authenticated customer's recent sessions.
 
-     Hydrates `ChatState.pastSessions` (PRD §6.4), which the PRD
-    specifies as state but never gave a data source — this endpoint
-    closes that gap.
+     **Path corrected**: the real route is `GET /chat/sessions/customer`,
+    registered ahead of `/chat/sessions/:sessionId` so Fastify's static
+    route wins (`chat.routes.ts:229`, comment: \"registered before
+    /:sessionId (static wins in Fastify)\"). An earlier revision of this
+    document modeled this as `GET /sessions`, which does not exist —
+    `chat.routes.ts` has no bare `GET /chat/sessions` handler at all.
 
-    Replaces v1's `GET /chat/sessions/customer?tenantId=&customerId=`
-    (`src/context.tsx:923`). That shape is not carried forward: taking
-    `customerId` as a query parameter means the endpoint trusts the
-    caller to declare whose sessions to return, so any customer could
-    enumerate another's history by changing one parameter. Here both
-    tenant and customer identity are derived from the validated
-    `accessToken` and publishable key, and are not accepted as inputs.
+    Hydrates `ChatState.pastSessions` (PRD §6.4) — the SDK's \"your last
+    N conversations\" picker. **`@dhaam-ccrm/core` does not call this
+    operation as of this revision** — `ChatState.pastSessions` is
+    declared and initialized empty but nothing in `packages/core`
+    populates it (confirmed gap, contract audit finding; unchanged by
+    this revision, which corrects the backend response shape this
+    operation will be consumed against, not the SDK wiring).
 
-    Ordered most-recent-first. Includes closed sessions — a customer
-    reopening an earlier conversation (PRD §12.5) needs to see them.
+    Ordered most-recent-first (by last activity, not `createdAt`).
+    Includes closed sessions — a customer reopening an earlier
+    conversation (PRD §12.5) needs to see them.
+
+    **Guests get `[]`, not an error.** A session is returned only for a
+    caller the backend has identified — see `handledBy`'s sibling note
+    on `ChatSessionSummaryWire` for what \"identified\" means here and its
+    documented failure mode. This is a 200 in every case; there is no
+    403/404 branch on this operation for an anonymous caller.
+
+    **Response shape corrected as of this revision** — see
+    `ChatSessionSummaryWire` / `SessionSummaryPageWire` below. The
+    `sessions[]` item shape is now field-for-field the SDK's
+    `ChatSessionSummary` (`packages/core/src/state/types.ts:223-240`),
+    plus `handledBy`.
 
     Args:
-        limit (Union[Unset, int]):  Default: 20.
+        limit (Union[Unset, int]):  Default: 5.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Error, SessionSummaryPage]
+        Union[Error, ListSessionsResponse200]
     """
 
     return sync_detailed(
@@ -155,34 +187,50 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
-    limit: Union[Unset, int] = 20,
-) -> Response[Union[Error, SessionSummaryPage]]:
-    """List the authenticated customer's recent sessions.
+    limit: Union[Unset, int] = 5,
+) -> Response[Union[Error, ListSessionsResponse200]]:
+    r"""List the authenticated customer's recent sessions.
 
-     Hydrates `ChatState.pastSessions` (PRD §6.4), which the PRD
-    specifies as state but never gave a data source — this endpoint
-    closes that gap.
+     **Path corrected**: the real route is `GET /chat/sessions/customer`,
+    registered ahead of `/chat/sessions/:sessionId` so Fastify's static
+    route wins (`chat.routes.ts:229`, comment: \"registered before
+    /:sessionId (static wins in Fastify)\"). An earlier revision of this
+    document modeled this as `GET /sessions`, which does not exist —
+    `chat.routes.ts` has no bare `GET /chat/sessions` handler at all.
 
-    Replaces v1's `GET /chat/sessions/customer?tenantId=&customerId=`
-    (`src/context.tsx:923`). That shape is not carried forward: taking
-    `customerId` as a query parameter means the endpoint trusts the
-    caller to declare whose sessions to return, so any customer could
-    enumerate another's history by changing one parameter. Here both
-    tenant and customer identity are derived from the validated
-    `accessToken` and publishable key, and are not accepted as inputs.
+    Hydrates `ChatState.pastSessions` (PRD §6.4) — the SDK's \"your last
+    N conversations\" picker. **`@dhaam-ccrm/core` does not call this
+    operation as of this revision** — `ChatState.pastSessions` is
+    declared and initialized empty but nothing in `packages/core`
+    populates it (confirmed gap, contract audit finding; unchanged by
+    this revision, which corrects the backend response shape this
+    operation will be consumed against, not the SDK wiring).
 
-    Ordered most-recent-first. Includes closed sessions — a customer
-    reopening an earlier conversation (PRD §12.5) needs to see them.
+    Ordered most-recent-first (by last activity, not `createdAt`).
+    Includes closed sessions — a customer reopening an earlier
+    conversation (PRD §12.5) needs to see them.
+
+    **Guests get `[]`, not an error.** A session is returned only for a
+    caller the backend has identified — see `handledBy`'s sibling note
+    on `ChatSessionSummaryWire` for what \"identified\" means here and its
+    documented failure mode. This is a 200 in every case; there is no
+    403/404 branch on this operation for an anonymous caller.
+
+    **Response shape corrected as of this revision** — see
+    `ChatSessionSummaryWire` / `SessionSummaryPageWire` below. The
+    `sessions[]` item shape is now field-for-field the SDK's
+    `ChatSessionSummary` (`packages/core/src/state/types.ts:223-240`),
+    plus `handledBy`.
 
     Args:
-        limit (Union[Unset, int]):  Default: 20.
+        limit (Union[Unset, int]):  Default: 5.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Error, SessionSummaryPage]]
+        Response[Union[Error, ListSessionsResponse200]]
     """
 
     kwargs = _get_kwargs(
@@ -197,34 +245,50 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient,
-    limit: Union[Unset, int] = 20,
-) -> Optional[Union[Error, SessionSummaryPage]]:
-    """List the authenticated customer's recent sessions.
+    limit: Union[Unset, int] = 5,
+) -> Optional[Union[Error, ListSessionsResponse200]]:
+    r"""List the authenticated customer's recent sessions.
 
-     Hydrates `ChatState.pastSessions` (PRD §6.4), which the PRD
-    specifies as state but never gave a data source — this endpoint
-    closes that gap.
+     **Path corrected**: the real route is `GET /chat/sessions/customer`,
+    registered ahead of `/chat/sessions/:sessionId` so Fastify's static
+    route wins (`chat.routes.ts:229`, comment: \"registered before
+    /:sessionId (static wins in Fastify)\"). An earlier revision of this
+    document modeled this as `GET /sessions`, which does not exist —
+    `chat.routes.ts` has no bare `GET /chat/sessions` handler at all.
 
-    Replaces v1's `GET /chat/sessions/customer?tenantId=&customerId=`
-    (`src/context.tsx:923`). That shape is not carried forward: taking
-    `customerId` as a query parameter means the endpoint trusts the
-    caller to declare whose sessions to return, so any customer could
-    enumerate another's history by changing one parameter. Here both
-    tenant and customer identity are derived from the validated
-    `accessToken` and publishable key, and are not accepted as inputs.
+    Hydrates `ChatState.pastSessions` (PRD §6.4) — the SDK's \"your last
+    N conversations\" picker. **`@dhaam-ccrm/core` does not call this
+    operation as of this revision** — `ChatState.pastSessions` is
+    declared and initialized empty but nothing in `packages/core`
+    populates it (confirmed gap, contract audit finding; unchanged by
+    this revision, which corrects the backend response shape this
+    operation will be consumed against, not the SDK wiring).
 
-    Ordered most-recent-first. Includes closed sessions — a customer
-    reopening an earlier conversation (PRD §12.5) needs to see them.
+    Ordered most-recent-first (by last activity, not `createdAt`).
+    Includes closed sessions — a customer reopening an earlier
+    conversation (PRD §12.5) needs to see them.
+
+    **Guests get `[]`, not an error.** A session is returned only for a
+    caller the backend has identified — see `handledBy`'s sibling note
+    on `ChatSessionSummaryWire` for what \"identified\" means here and its
+    documented failure mode. This is a 200 in every case; there is no
+    403/404 branch on this operation for an anonymous caller.
+
+    **Response shape corrected as of this revision** — see
+    `ChatSessionSummaryWire` / `SessionSummaryPageWire` below. The
+    `sessions[]` item shape is now field-for-field the SDK's
+    `ChatSessionSummary` (`packages/core/src/state/types.ts:223-240`),
+    plus `handledBy`.
 
     Args:
-        limit (Union[Unset, int]):  Default: 20.
+        limit (Union[Unset, int]):  Default: 5.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Error, SessionSummaryPage]
+        Union[Error, ListSessionsResponse200]
     """
 
     return (

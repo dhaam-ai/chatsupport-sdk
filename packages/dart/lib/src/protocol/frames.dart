@@ -88,9 +88,27 @@ Map<String, Object?> sessionRequestAgentPayload({String? reason}) =>
 ///
 /// The message's id is NOT in here — it is the envelope's `id` (D1), and it is
 /// the permanent message id.
+///
+/// [sessionId] is the message's own ADDRESS: the session it was composed in,
+/// which is not the same fact as the session this connection last joined. The
+/// two diverge for as long as a send outlives the session it was typed in —
+/// see `ChatClient.sendMessage` for the two ways that happens here.
+///
+///  * ABSENT → exactly the old behaviour. The server files the message under
+///    whatever `session.join` last established on this connection, so a client
+///    built before the field exists keeps working. Pass null when this client
+///    has no session snapshot to name; do NOT substitute `''`, which the
+///    server validates as malformed rather than reading as absent.
+///  * PRESENT → the server runs the same ownership check `session.join` runs,
+///    and accepts a session the connection is not currently joined to as long
+///    as the caller owns it. A failed check is refused outright with
+///    SESSION_NOT_FOUND; there is deliberately no fallback to the joined
+///    session, because writing a message somewhere other than where it was
+///    addressed is the entire bug class this field removes.
 Map<String, Object?> messageSendPayload({
   required String content,
   MessageType type = MessageType.text,
+  String? sessionId,
   String? replyToMessageId,
   AttachmentMetadata? attachment,
   Map<String, Object?>? metadata,
@@ -98,6 +116,7 @@ Map<String, Object?> messageSendPayload({
     <String, Object?>{
       'content': content,
       'type': type.wire,
+      if (sessionId != null) 'sessionId': sessionId,
       if (replyToMessageId != null) 'replyToMessageId': replyToMessageId,
       // Top-level, never nested under `metadata` — one canonical location
       // (D4). v1 read `message.attachment` and `message.metadata.attachment`

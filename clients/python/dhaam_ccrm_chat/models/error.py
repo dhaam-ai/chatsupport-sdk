@@ -19,7 +19,11 @@ T = TypeVar("T", bound="Error")
 class Error:
     """
     Attributes:
-        error (ErrorPayload): Identical shape to the WS protocol's ErrorPayload (PRD §7.2).
+        error (ErrorPayload): Identical shape to the WS protocol's ErrorPayload (PRD §7.2) when emitted by the customer
+            surface's auth/rate-limit layer. **`retryable` is optional, not required** — corrected from an earlier revision.
+            Errors formatted by the global Fastify error handler (`middleware/error-handler.ts:29-38`) and by `POST
+            /upload`'s hand-written error bodies never include it; treat its absence as "unknown," not "false." See "Error
+            taxonomy" in the top-level description.
     """
 
     error: "ErrorPayload"

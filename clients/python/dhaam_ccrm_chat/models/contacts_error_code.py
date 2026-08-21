@@ -1,0 +1,15 @@
+from enum import Enum
+
+
+class ContactsErrorCode(str, Enum):
+    AUTH_INVALID = "AUTH_INVALID"
+    CART_NOT_FOUND = "CART_NOT_FOUND"
+    CONTACT_NOT_FOUND = "CONTACT_NOT_FOUND"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    INVALID_CART_TRANSITION = "INVALID_CART_TRANSITION"
+    RATE_LIMITED = "RATE_LIMITED"
+    UNAUTHORIZED = "UNAUTHORIZED"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+
+    def __str__(self) -> str:
+        return str(self.value)

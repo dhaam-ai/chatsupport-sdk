@@ -14,30 +14,61 @@ type SecuritySource interface {
 	// AccessToken provides accessToken security value.
 	// Short-lived, scoped user JWT minted by `POST /tokens` and supplied to `@dhaam-ccrm/core` via
 	// `getToken()` (PRD §6.1, §10.4). Required, together with `publishableKey`, on every
-	// session/message/attachment endpoint.
+	// session/message/attachment endpoint. Not the same credential as `staffToken` below — this one
+	// identifies an end customer, never a tenant's own staff.
 	AccessToken(ctx context.Context, operationName OperationName) (AccessToken, error)
 	// PublishableKey provides publishableKey security value.
-	// Tenant-identifying key (`dhpk_live_...` / `dhpk_test_...`), safe to ship in a client bundle.
+	// Tenant-identifying key (`dhp_live_...` / `dhp_test_...`), safe to ship in a client bundle.
 	// Identifies a tenant and grants nothing on its own (PRD §10.1) — always required together with
 	// `accessToken`, never as a sole credential. The server rejects a request whose `X-Publishable-Key`
 	// tenant does not match the `accessToken`'s tenant claim with `401 AUTH_INVALID` (PRD §10.2).
 	PublishableKey(ctx context.Context, operationName OperationName) (PublishableKey, error)
 	// SecretKey provides secretKey security value.
-	// Tenant secret key. Valid only as the credential on `POST /tokens` (never on any endpoint a browser
-	// calls) and, separately, as the HMAC-SHA256 signing key for webhook signature verification. Must
-	// never leave the customer's backend (PRD §10.1, §14).
+	// Tenant secret key. Valid as the `Authorization: Bearer` credential on exactly two routes —
+	// `POST /tokens` and, as of this revision, `POST /contacts/commerce-events` — and, separately, as
+	// the HMAC-SHA256 signing key for webhook signature verification. Never valid on any endpoint a
+	// browser calls, and must never leave the customer's own backend (PRD §10.1, §14).
+	//
+	// What the `POST /contacts/commerce-events` grant does NOT unlock. A secret key is not a general
+	// server-to-server admin credential — it is scoped narrowly to that one additional route, and even
+	// there, narrowly within it:
+	//
+	//  - It does not authorize any of the five Contacts CRM routes
+	//    (`src/api/rest/routes/contact.routes.ts`) — `GET /contacts`, `GET /contacts/:id`,
+	//    `POST /contacts`, `GET /contacts/cities`, `GET /contacts/tags`. Those accept only a staff Cognito
+	//    token (`staffToken` below); a secret key presented there is rejected exactly as any other
+	//    malformed `Authorization` header is today — no special-casing was added to recognize it there.
+	//  - On the one route it IS valid for, the request body (`CommerceEvent` schema) is `.strict()` and
+	//    carries only commerce-event fields — `eventId`, `type`, `occurredAt`, `customerId`, and the
+	//    per-`type` order/cart fields below. It has no `name`, `email`, `phone`, `tags`, `consent`,
+	//    `status`, `userType`, `city`, `country`, or any other PII/profile field. A merchant holding a
+	//    secret key can, via `customerId`, find-or-create a minimal contact stub (the identical shape
+	//    `contact-identity.service.ts` already produces for a first chat contact — `externalId`-only, no
+	//    email, no profile) and record commerce events against it. It cannot read any contact, cannot
+	//    write or overwrite PII on one, cannot change `status`, and cannot reach any of the five CRM
+	//    routes above under any circumstance.
 	SecretKey(ctx context.Context, operationName OperationName) (SecretKey, error)
+	// StaffToken provides staffToken security value.
+	// A tenant STAFF member's Cognito-issued access token, verified by `authenticateAgent`
+	// (`src/api/rest/middleware/auth.middleware.ts`, `verifyCognitoToken`). A different credential from
+	// `accessToken` above, not a naming variant of it: `accessToken` is the short-lived customer JWT
+	// minted by `POST /tokens`; this one identifies an agent or admin signed into the CRM/agent console
+	// through the tenant's own staff login flow — out of scope of this document, since no operation here
+	// mints it. The Contacts commerce-events/cart-read routes below additionally require the verified
+	// identity to carry the admin role (`requireAdmin`); a verified-but-non-admin staff token is rejected
+	// with `403`, not `401` — see `ContactsForbidden`.
+	StaffToken(ctx context.Context, operationName OperationName) (StaffToken, error)
 }
 
 // operationRolesAccessToken is a private map storing roles per operation.
 var operationRolesAccessToken = map[string][]string{
-	CloseSessionOperation:            []string{},
-	CreateSessionOperation:           []string{},
-	GetSessionFullOperation:          []string{},
-	ListSessionMessagesOperation:     []string{},
-	ListSessionsOperation:            []string{},
-	ReopenSessionOperation:           []string{},
-	UploadSessionAttachmentOperation: []string{},
+	CloseSessionOperation:        []string{},
+	CreateSessionOperation:       []string{},
+	GetSessionFullOperation:      []string{},
+	ListSessionMessagesOperation: []string{},
+	ListSessionsOperation:        []string{},
+	ReopenSessionOperation:       []string{},
+	UploadAttachmentOperation:    []string{},
 }
 
 // GetRolesForAccessToken returns the required roles for the given operation.
@@ -63,13 +94,12 @@ func GetRolesForAccessToken(operation string) []string {
 
 // operationRolesPublishableKey is a private map storing roles per operation.
 var operationRolesPublishableKey = map[string][]string{
-	CloseSessionOperation:            []string{},
-	CreateSessionOperation:           []string{},
-	GetSessionFullOperation:          []string{},
-	ListSessionMessagesOperation:     []string{},
-	ListSessionsOperation:            []string{},
-	ReopenSessionOperation:           []string{},
-	UploadSessionAttachmentOperation: []string{},
+	CloseSessionOperation:        []string{},
+	CreateSessionOperation:       []string{},
+	GetSessionFullOperation:      []string{},
+	ListSessionMessagesOperation: []string{},
+	ListSessionsOperation:        []string{},
+	ReopenSessionOperation:       []string{},
 }
 
 // GetRolesForPublishableKey returns the required roles for the given operation.
@@ -95,7 +125,8 @@ func GetRolesForPublishableKey(operation string) []string {
 
 // operationRolesSecretKey is a private map storing roles per operation.
 var operationRolesSecretKey = map[string][]string{
-	MintTokenOperation: []string{},
+	MintTokenOperation:           []string{},
+	RecordCommerceEventOperation: []string{},
 }
 
 // GetRolesForSecretKey returns the required roles for the given operation.
@@ -110,6 +141,34 @@ var operationRolesSecretKey = map[string][]string{
 // Returns nil if the operation has no role requirements or if the operation is unknown.
 func GetRolesForSecretKey(operation string) []string {
 	roles, ok := operationRolesSecretKey[operation]
+	if !ok {
+		return nil
+	}
+	// Return a copy to prevent external modification
+	result := make([]string, len(roles))
+	copy(result, roles)
+	return result
+}
+
+// operationRolesStaffToken is a private map storing roles per operation.
+var operationRolesStaffToken = map[string][]string{
+	ListCartsForContactOperation:           []string{},
+	ListContactCartsOperation:              []string{},
+	RecordCommerceEventForContactOperation: []string{},
+}
+
+// GetRolesForStaffToken returns the required roles for the given operation.
+//
+// This is useful for authorization scenarios where you need to know which roles
+// are required for an operation.
+//
+// Example:
+//
+//	requiredRoles := GetRolesForStaffToken(AddPetOperation)
+//
+// Returns nil if the operation has no role requirements or if the operation is unknown.
+func GetRolesForStaffToken(operation string) []string {
+	roles, ok := operationRolesStaffToken[operation]
 	if !ok {
 		return nil
 	}
@@ -139,6 +198,14 @@ func (s *Client) securitySecretKey(ctx context.Context, operationName OperationN
 	t, err := s.sec.SecretKey(ctx, operationName)
 	if err != nil {
 		return errors.Wrap(err, "security source \"SecretKey\"")
+	}
+	req.Header.Set("Authorization", "Bearer "+t.Token)
+	return nil
+}
+func (s *Client) securityStaffToken(ctx context.Context, operationName OperationName, req *http.Request) error {
+	t, err := s.sec.StaffToken(ctx, operationName)
+	if err != nil {
+		return errors.Wrap(err, "security source \"StaffToken\"")
 	}
 	req.Header.Set("Authorization", "Bearer "+t.Token)
 	return nil

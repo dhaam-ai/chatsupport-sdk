@@ -386,3 +386,115 @@ export function createSessionSummarySource<TSessionSummary>(client: RestClient):
     },
   };
 }
+
+/**
+ * Core's `IdentityProfile`, redeclared here rather than imported from
+ * `@dhaam-ccrm/core` — same reasoning as `WireMessagePage` above, and the
+ * frozen contract requires it (`CONTACT_IDENTIFY_CONTRACT.md` §3.3): this
+ * package has no dependency on core, so the two declarations are kept
+ * identical by hand and the structural match is checked where it belongs, at
+ * the consumer's `createChatClient` call.
+ *
+ * Note that every optional here is `string`, not `string | null`, while the
+ * route accepts `string | null` (§1.3). That is deliberate and lossless: §4's
+ * write matrix collapses absent, `null`, and `""` to the same "not present",
+ * so this side only ever needs to omit a field, never to send a null.
+ */
+interface RestIdentityProfile {
+  readonly name?: string;
+  readonly email?: string;
+  readonly phone?: string;
+  readonly city?: string;
+  readonly country?: string;
+  readonly tags?: readonly string[];
+  readonly device?: {
+    readonly deviceId: string;
+    readonly deviceToken?: string;
+    readonly platform?: 'ios' | 'android' | 'web';
+  };
+}
+
+/**
+ * `data` on the 200 (§1.6). `lastLoginAt` stays the ISO 8601 string the server
+ * sent — this package does not parse it into a `Date`, because the value is a
+ * receipt to log rather than a clock to read, and a `Date` here would be the
+ * only place in this package that reinterprets a server timestamp.
+ */
+interface RestIdentityResult {
+  readonly contactId: string;
+  readonly externalId: string;
+  readonly lastLoginAt: string;
+}
+
+/**
+ * Reads one field off the identify receipt, or reports the drift.
+ *
+ * `unwrapEnvelope` guarantees `data` is a non-array object and nothing beyond
+ * that, and these three fields are the entire documented payload (§1.6) — so an
+ * absent one is a contract mismatch, not a partial success. Failing here
+ * matches `createAttachmentUploader`'s missing-`url` branch: loud at the seam
+ * that knows what the route should have returned, rather than handing core an
+ * `undefined` that surfaces later as a confusing log line.
+ *
+ * Safe to fail on: identify is idempotent by construction (§4c — a repeat call
+ * converges on the same contact), so core's one retry costs an extra
+ * round trip and nothing else.
+ */
+function requireIdentityField(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value === '') {
+    throw new RestApiError({
+      code: 'MALFORMED_RESPONSE',
+      message: `POST /identify returned no ${field}`,
+      // The transport succeeded and the server reported no failure; the body
+      // simply is not what the route documents. Same reading as envelope.ts.
+      status: 200,
+      retryable: false,
+    });
+  }
+  return value;
+}
+
+/**
+ * `POST /identify` — upserts the logged-in customer into the CRM as a Contact
+ * (`CONTACT_IDENTIFY_CONTRACT.md`; core's `IdentitySync` seam).
+ *
+ * Unlike the four factories above this one takes no type parameter, because the
+ * seam runs the other way. Those return a core type this package cannot name,
+ * so they are generic and cast on the way out. Here core's type is an
+ * *argument*, and a locally-declared parameter accepts any structurally
+ * compatible profile without a generic. The return type is not core's at all:
+ * `IdentitySync.sync` resolves to `void` and this resolves to the receipt, an
+ * intentional mismatch the widget bridges in one line at the call site (§3.3,
+ * AMENDED). Do not collapse it — core has no use for the receipt, and
+ * discarding it here would throw away the only signal a caller could log.
+ *
+ * Nothing is retried in this adapter. `RestClient` has no backoff by design and
+ * the identify retry lives in core, where the jitter and timer seams are; the
+ * `READ_BACK_ATTEMPTS` loop above is scoped to one specific read-back and is
+ * not a pattern to generalize.
+ */
+export function createIdentitySync(client: RestClient): {
+  sync(profile: RestIdentityProfile): Promise<RestIdentityResult>;
+} {
+  return {
+    async sync(profile) {
+      // The profile goes on the wire verbatim. An optional the caller omitted
+      // is ABSENT from the JSON rather than `null`, because `JSON.stringify`
+      // drops an undefined property — which is what the route wants: both the
+      // body and `device` are `.strict()` (§2), so an unexpected key is a 400,
+      // and §4 reads absent and null identically anyway.
+      const body = await client.request<unknown>('POST', '/identify', { body: profile });
+
+      const data = unwrapEnvelope<Record<string, unknown>>(body, 'POST /identify');
+
+      // Rebuilt rather than cast, matching the other adapters: the caller gets
+      // exactly the three documented fields, defended, and nothing the route
+      // may grow later rides along untyped.
+      return {
+        contactId: requireIdentityField(data['contactId'], 'contactId'),
+        externalId: requireIdentityField(data['externalId'], 'externalId'),
+        lastLoginAt: requireIdentityField(data['lastLoginAt'], 'lastLoginAt'),
+      };
+    },
+  };
+}

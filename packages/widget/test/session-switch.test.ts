@@ -178,6 +178,32 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** Sockets whose `connection.hello` has already been answered. */
+let handshaked = new WeakSet<FakeWebSocket>();
+
+/**
+ * Completes the handshake on every socket the client has opened but nobody has
+ * driven yet, and returns the newest one.
+ *
+ * `switchSession()` is a TEARDOWN and a re-establish (see `switchToSession` in
+ * core's create-chat-client.ts), so picking a row drops the socket the widget
+ * booted on and opens another. The ack deliberately names `resolved` — the
+ * session the SERVER resolves for a hello, which carries no session id — which
+ * is exactly why an explicit `session.join` follows it.
+ */
+async function driveHandshakes(resolved = CURRENT): Promise<FakeWebSocket> {
+  for (const instance of FakeWebSocket.instances) {
+    if (handshaked.has(instance)) continue;
+    handshaked.add(instance);
+    instance.open();
+    instance.ack(resolved);
+    await settle();
+  }
+  const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+  if (socket === undefined) throw new Error('no socket was opened');
+  return socket;
+}
+
 /** Mounts, walks the handshake, and opens the panel. */
 async function boot(
   overrides: Partial<WidgetConfig> = {},
@@ -185,22 +211,23 @@ async function boot(
 ): Promise<{ socket: FakeWebSocket }> {
   const widget = mount(config(overrides));
   await settle();
-  const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
-  if (socket === undefined) throw new Error('no socket was opened');
-  socket.open();
-  socket.ack(ackSession);
-  await settle();
+  const socket = await driveHandshakes(ackSession);
   widget.open();
   await settle();
   return { socket };
 }
 
 /**
- * Answers the join the way the server does: the ack first (which proves
- * nothing about state), then the `session.updated` snapshot it volunteers
- * afterwards (v2/handlers.ts) — which is what core actually waits on.
+ * Answers the join the way the server does: the handshake on whatever socket
+ * the switch opened, then the ack (which proves nothing about state), then the
+ * `session.updated` snapshot the server volunteers afterwards
+ * (v2/handlers.ts) — which is what core actually waits on.
+ *
+ * Resolves with the socket it answered on, which is not necessarily the one
+ * passed in: a switch tears the old connection down.
  */
-async function serverAcceptsJoin(socket: FakeWebSocket, sessionId: string): Promise<void> {
+async function serverAcceptsJoin(_socket: FakeWebSocket, sessionId: string): Promise<FakeWebSocket> {
+  const socket = await driveHandshakes();
   const joins = socket.frames('session.join');
   const join = joins[joins.length - 1];
   if (join === undefined) throw new Error('no session.join frame was sent');
@@ -209,6 +236,7 @@ async function serverAcceptsJoin(socket: FakeWebSocket, sessionId: string): Prom
   await settle();
   socket.push('session.updated', { session: snapshot(sessionId, 'WAITING_FOR_AGENT') });
   await settle();
+  return socket;
 }
 
 beforeEach(() => {
@@ -218,6 +246,7 @@ beforeEach(() => {
   holdNextHistory = false;
   releaseHistory = () => undefined;
   FakeWebSocket.instances = [];
+  handshaked = new WeakSet<FakeWebSocket>();
   localStorage.clear();
   vi.stubGlobal('WebSocket', FakeWebSocket);
   vi.stubGlobal(
@@ -366,10 +395,11 @@ describe('bug 1 — picking a previous session', () => {
     row.click();
     await settle();
 
-    const joins = socket.frames('session.join');
-  const join = joins[joins.length - 1];
+    const live = await driveHandshakes();
+    const joins = live.frames('session.join');
+    const join = joins[joins.length - 1];
     if (join === undefined) throw new Error('no session.join frame was sent');
-    socket.onmessage?.({
+    live.onmessage?.({
       data: JSON.stringify({
         v: 1,
         t: 'ack',

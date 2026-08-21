@@ -9,38 +9,37 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.chat_message import ChatMessage
+    from ..models.message_page_wire import MessagePageWire
 
 
-T = TypeVar("T", bound="MessagePage")
+T = TypeVar("T", bound="ListSessionMessagesResponse200")
 
 
 @_attrs_define
-class MessagePage:
+class ListSessionMessagesResponse200:
     """
     Attributes:
-        messages (list['ChatMessage']):
-        has_more (bool):
+        success (bool):
+        data (MessagePageWire): Actual wire shape of `GET /chat/sessions/{sessionId}/messages`'s `200` body (inside
+            `data`) — replaces the idealized `MessagePage`, which this document previously documented and which is no longer
+            referenced by any operation. See `ChatMessageWire`.
     """
 
-    messages: list["ChatMessage"]
-    has_more: bool
+    success: bool
+    data: "MessagePageWire"
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        messages = []
-        for messages_item_data in self.messages:
-            messages_item = messages_item_data.to_dict()
-            messages.append(messages_item)
+        success = self.success
 
-        has_more = self.has_more
+        data = self.data.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "messages": messages,
-                "hasMore": has_more,
+                "success": success,
+                "data": data,
             }
         )
 
@@ -48,25 +47,20 @@ class MessagePage:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.chat_message import ChatMessage
+        from ..models.message_page_wire import MessagePageWire
 
         d = dict(src_dict)
-        messages = []
-        _messages = d.pop("messages")
-        for messages_item_data in _messages:
-            messages_item = ChatMessage.from_dict(messages_item_data)
+        success = d.pop("success")
 
-            messages.append(messages_item)
+        data = MessagePageWire.from_dict(d.pop("data"))
 
-        has_more = d.pop("hasMore")
-
-        message_page = cls(
-            messages=messages,
-            has_more=has_more,
+        list_session_messages_response_200 = cls(
+            success=success,
+            data=data,
         )
 
-        message_page.additional_properties = d
-        return message_page
+        list_session_messages_response_200.additional_properties = d
+        return list_session_messages_response_200
 
     @property
     def additional_keys(self) -> list[str]:

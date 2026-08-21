@@ -433,6 +433,32 @@ function ackNewSocket(h: Harness, snapshot: SessionSnapshot, seq = 0, idNum = 30
   h.sockets.last.emitJson(ackJson(seq, snapshot, idNum));
 }
 
+/**
+ * Answers the handshake `switchSession()` needs.
+ *
+ * `switchSession` tears the connection down and opens a new one (see
+ * `switchToSession` in create-chat-client.ts), so the fresh socket must be
+ * handshaked before any `session.join` is written. The ack deliberately names
+ * the session the SERVER would resolve — `connection.hello` carries no session
+ * id — which is why an explicit join follows it at all.
+ */
+async function handshakeSwitchSocket(h: Harness, resolved = sessionSnapshot(), idNum = 200): Promise<void> {
+  await tick();
+  h.sockets.last.open();
+  await tick();
+  h.sockets.last.emitJson(ackJson(0, resolved, idNum));
+  await tick();
+}
+
+/** The `session.join` frames written on the newest socket. */
+function joinFrames(h: Harness): { id: string; d: Record<string, unknown> }[] {
+  return h.sockets.last
+    .sentFrames()
+    .filter((frame): frame is { t: string; id: string; d: Record<string, unknown> } =>
+      (frame as { t: string }).t === 'session.join',
+    );
+}
+
 describe('createChatClient — recovering from a closed session', () => {
   it('emits sessionClosed with the reason and stamps closedAt', async () => {
     const h = harness();
@@ -687,15 +713,19 @@ describe('createChatClient — switchSession()', () => {
     const before = client.getState().session;
 
     void client.switchSession('session_2').catch(() => undefined);
-    await tick();
+    await handshakeSwitchSocket(h);
 
-    const sent = h.sockets.last
-      .sentFrames()
-      .find((frame) => (frame as { t: string }).t === 'session.join') as { d: Record<string, unknown> };
-    expect(sent?.d).toEqual({ sessionId: 'session_2' });
-    // Same object — the switch never guesses at a session the server has not
+    expect(joinFrames(h)[0]?.d).toEqual({ sessionId: 'session_2' });
+    // Unchanged — the switch never guesses at a session the server has not
     // confirmed, so `session` still describes the one the client is in.
-    expect(client.getState().session).toBe(before);
+    //
+    // Value equality, not reference: `switchSession` re-establishes the
+    // connection, and the fresh `connection.ack` re-applies a snapshot of the
+    // session the client is still in. `sessionSnapshotToChatSession` mints a
+    // new object each time, so a reference check would be asserting on frame
+    // plumbing rather than on the thing that matters — which conversation the
+    // client claims to be in.
+    expect(client.getState().session).toEqual(before);
   });
 
   it('DOES replace the transcript, rather than leaving the old session\'s messages on screen', async () => {
@@ -712,11 +742,9 @@ describe('createChatClient — switchSession()', () => {
     expect(client.getState().messages).toHaveLength(1);
 
     const switching = client.switchSession('session_2');
-    await tick();
+    await handshakeSwitchSocket(h, sessionSnapshot(), 210);
 
-    const join = h.sockets.last
-      .sentFrames()
-      .find((frame) => (frame as { t: string }).t === 'session.join') as { id: string };
+    const join = joinFrames(h)[0] as { id: string };
     h.sockets.last.emitJson(genericAckJson(join.id, 44));
     await tick();
     h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 45));
@@ -763,11 +791,9 @@ describe('createChatClient — switchSession()', () => {
     client.on('error', (error) => errors.push(error));
 
     const switching = client.switchSession('session_not_owned');
-    await tick();
+    await handshakeSwitchSocket(h, sessionSnapshot(), 220);
 
-    const sent = h.sockets.last
-      .sentFrames()
-      .find((frame) => (frame as { t: string }).t === 'session.join') as { id: string };
+    const sent = joinFrames(h)[0] as { id: string };
     h.sockets.last.emitJson(
       rejectedAckJson(sent.id, 41, { code: 'SESSION_NOT_FOUND', message: 'not yours', retryable: false }),
     );

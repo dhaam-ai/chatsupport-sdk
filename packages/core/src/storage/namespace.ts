@@ -41,6 +41,33 @@ const NAMESPACE_DELIMITER = ':';
  * namespace `a` with key `b:c`, would both produce the key `a:b:c`.
  * @throws {TypeError} if `namespace` is empty or contains `:`.
  */
+/**
+ * Makes an arbitrary string safe to pass to {@link namespaced}.
+ *
+ * `namespaced` rejects a namespace containing `:` — correctly, since that is
+ * what stops two different namespace/key pairs colliding. But some namespace
+ * segments are not ours to choose: a participant id comes from the host
+ * application's own user table and may legitimately contain anything,
+ * including a colon (`auth0:1234` and `urn:user:9` are both real formats).
+ * Passing one straight in throws at construction, taking the whole widget down
+ * over the shape of somebody's user id.
+ *
+ * Percent-encoding rather than replacement, and `%` first so the encoding is
+ * INJECTIVE: mapping `:` to `_` would let `a:b` and `a_b` — two different
+ * identities — resolve to the same namespace and share a send queue, which is
+ * the collision this whole mechanism exists to prevent.
+ *
+ * Empty in, `'_'` out: an empty namespace is also rejected, and there is no
+ * encoding of "nothing" that is not a substitution.
+ */
+export function encodeNamespaceSegment(value: string): string {
+  if (value === '') return '_';
+  // `split`/`join` rather than `replaceAll`: this package targets a lib older
+  // than ES2021 (see tsconfig), and `replaceAll` does not exist there — a
+  // detail worth one line of awkwardness to keep core's browser floor low.
+  return value.split('%').join('%25').split(NAMESPACE_DELIMITER).join('%3A');
+}
+
 export function namespaced(
   adapter: StorageAdapter,
   namespace: string,

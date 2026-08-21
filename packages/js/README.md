@@ -70,6 +70,8 @@ without a binding to core's client factory, so a bundler drops that factory from
 | `store.destroy(opts?)` | Drops every subscription. `{ disconnect: true }` also closes the connection. |
 | `strictEqual` / `shallowEqual` | The two comparators `select` accepts. |
 | `deriveTickState` / `deriveTickStateFromState` / `MESSAGE_TICK_STATES` | Re-exported from core, unchanged. |
+| `isHandledByCurrent(session)` | Re-exported from core, unchanged. The one place "connected to <name>" is allowed to be decided. |
+| `SessionSwitchError` | Re-exported from core as a value, so `catch (e) { if (e instanceof SessionSwitchError) … }` needs no second dependency. |
 
 ### Equality is the whole point
 
@@ -102,6 +104,45 @@ guessed; `null` yields `null` for every message.
 
 `tick(id, …)` is O(n) in `messages`. Rendering a whole list is better served by calling
 `deriveTickState` once per message you are already iterating.
+
+### Every type you can be handed, you can name
+
+PRD §15 requires the binding-exposed `ChatState` to be byte-for-byte core's, "enforced by a
+shared TypeScript import, not hand-copied". This package re-exports that whole shape —
+including the types *inside* it, which is where the rule was previously only half-kept:
+`AttachmentMetadata`, `MessageMetadata`, `SenderType`, `MessageType`, `ChatStatus`,
+`ChatMode`, `HandledBy`, `CloseReason`, `PresenceEntry`, `PresenceStatus`, `ParticipantType`,
+`ErrorCode`, plus `QueuedSend`/`RetryOutcome` for what `client.retryMessage(id)` resolves to.
+All type-only, so none of it reaches your bundle.
+
+Core's runtime *guards* (`isChatStatus`, `isParkedCloseReason`, …) are deliberately not
+forwarded: they validate untrusted input coming off the wire, which core already does on the
+way in.
+
+### Session history and switching
+
+There is no `switchSession` wrapper here, for the same reason there is no `sendMessage` one —
+see [What this package is not](#what-this-package-is-not). `store.client.listSessions({ limit })`,
+`store.client.switchSession(id)` and `store.client.retryMessage(id)` are called directly; what
+this package owns is what you observe afterwards.
+
+Two slices are worth knowing about while a switch is in flight:
+
+- **`state.pagination.initialLoaded`** separates "there is nothing older" from "nothing has
+  been asked for yet" — `hasMore` starts `false` and cannot tell those apart on its own. Gate
+  the empty-transcript copy on it, not on `messages.length === 0`. `select` is generic over the
+  whole snapshot, so this field is never projected away; `test/core-surface.test.ts` keeps that
+  honest.
+- **`state.connectionState`** cycles (`connected → closed → connecting → connected`) during a
+  switch, because a switch tears the connection down and re-establishes it. A reconnect banner
+  driven straight off `connectionState` will therefore flash on every switch — gate it on the
+  `switchSession()` promise still being in flight instead. There is no `switching` flag in
+  `ChatState`.
+
+`session` never becomes `null` mid-switch, and when the new session lands, `session`,
+`messages`, `pagination`, `typing`, `unreadCount`, the watermarks and `presence` all change in
+a single core notification — so one `select` over a composite of them fires once, never twice
+against a half-state.
 
 ## Conformance
 

@@ -69,8 +69,36 @@ func encodeMintTokenRequest(
 	return nil
 }
 
-func encodeUploadSessionAttachmentRequest(
-	req *UploadSessionAttachmentReq,
+func encodeRecordCommerceEventRequest(
+	req CommerceEvent,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeRecordCommerceEventForContactRequest(
+	req CommerceEventAdmin,
+	r *http.Request,
+) error {
+	const contentType = "application/json"
+	e := new(jx.Encoder)
+	{
+		req.Encode(e)
+	}
+	encoded := e.Bytes()
+	ht.SetBody(r, bytes.NewReader(encoded), contentType)
+	return nil
+}
+
+func encodeUploadAttachmentRequest(
+	req *UploadAttachmentReq,
 	r *http.Request,
 ) error {
 	const contentType = "multipart/form-data"

@@ -17,10 +17,14 @@ class Attachment:
         file_name (str):
         mime_type (str):
         size (int): Size in bytes.
-        media_type (MediaType): Attachment category. Normalized to upper-snake-case for consistency with every other
-            enum in this document (D4) — v1's wire value was lower-case-plural (`images`/`videos`/`audio`/`documents`); this
-            is a deliberate v1→v2 casing fix, not a PRD-mandated rename, and should be reconciled with the backend team
-            alongside the other D4 backend work (plan §2, B4).
+        media_type (MediaType): Attachment category, upper-snake-case, for consistency with every other enum in this
+            document (D4). **Confirmed, not merely proposed**: this is the shape `@dhaam-ccrm/core`'s `messageTypeFor`
+            (`packages/core/src/messages/controller.ts:87-97`) requires, and it is never what the wire actually sends —
+            `POST /upload` always returns lowercase-plural values (see `UploadResponse.mediaType`). `@dhaam-ccrm/rest`'s
+            `createAttachmentUploader` adapter performs this exact mapping (`packages/rest/src/media-type.ts`) before
+            handing an `Attachment` to core:
+            | Wire value (`UploadResponse.mediaType`) | This enum | |---|---| | `images` | `IMAGE` | | `videos` | `VIDEO` |
+            | `audio` | `AUDIO` | | `documents` | `DOCUMENT` |
     """
 
     url: str

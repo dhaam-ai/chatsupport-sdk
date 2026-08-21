@@ -27,7 +27,9 @@ class WebhookMessageCreatedEvent:
         type_ (Literal['message.created']):
         created_at (datetime.datetime):
         tenant_id (str):
-        data (ChatMessage):
+        data (ChatMessage): The **normalized** message shape `@dhaam-ccrm/core` consumes. **`GET
+            /chat/sessions/{sessionId}/messages` and `GET /chat/sessions/{sessionId}/full` do NOT return this shape on the
+            wire** — see `ChatMessageWire` for what they actually send and how `@dhaam-ccrm/rest` converts it to this shape.
     """
 
     id: str

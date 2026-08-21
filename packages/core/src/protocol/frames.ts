@@ -39,6 +39,24 @@ export interface ConnectionHelloPayload {
 
   /** Last applied `seq` (D2). Omit on first connect. */
   resumeFrom?: number;
+
+  /**
+   * "Start a new conversation": the server must mint a FRESH session rather
+   * than resume this customer's active one, closing that one with `SWITCHED`
+   * first.
+   *
+   * Set only by `startNewSession()`. Dropping the resume anchor is NOT enough
+   * on its own and never was: chat-service resolves a customer to their one
+   * active session regardless of `resumeFrom` (its schema permits exactly one,
+   * via a partial unique index), so a hello without this flag was handed the
+   * old session back and the customer's "new" conversation silently continued
+   * the previous one.
+   *
+   * Optional and omitted — never `false` — on every ordinary connect and
+   * reconnect: a server that predates the field ignores an absent key, and
+   * §7.2/D4 wants absence rather than a null.
+   */
+  newSession?: boolean;
 }
 
 /**
@@ -64,6 +82,29 @@ export interface SessionRequestAgentPayload {
 
 export interface MessageSendPayload {
   content: string;
+
+  /**
+   * The session this message belongs to — the message's own address.
+   *
+   * OPTIONAL, and the server's fallback when it is absent is exactly the old
+   * behavior: attribute the message to whatever session `session.join` last
+   * established on this connection. That keeps an older client working and
+   * keeps this a non-breaking wire change.
+   *
+   * It exists because "whatever was joined last" is a property of the
+   * CONNECTION, not of the message, and the two diverge for as long as a send
+   * outlives the session it was typed in. A message composed offline in
+   * session B and flushed after the client switched to session A was filed by
+   * the server into session A — the send frame carried no session at all, so
+   * there was nothing for the server to file it under except the connection's
+   * current join. That is cross-conversation delivery of user content, and no
+   * amount of client-side ordering fixes it, because the wire cannot express
+   * the fact being lost.
+   *
+   * Core fills this from the queue entry's own `sessionId` — the session the
+   * message was composed in — never from the currently joined session.
+   */
+  sessionId?: string;
 
   /**
    * Judgment call: required on the wire even though the public

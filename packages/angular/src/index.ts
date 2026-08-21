@@ -105,6 +105,8 @@ export type {
   ChatState,
   ChatTicket,
   ConnectionState,
+  IdentityProfile,
+  IdentitySync,
   MessageDelivery,
   MessageTickState,
   PresenceEntry,

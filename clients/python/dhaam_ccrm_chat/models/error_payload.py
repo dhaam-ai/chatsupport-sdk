@@ -21,21 +21,28 @@ T = TypeVar("T", bound="ErrorPayload")
 
 @_attrs_define
 class ErrorPayload:
-    """Identical shape to the WS protocol's ErrorPayload (PRD §7.2).
+    """Identical shape to the WS protocol's ErrorPayload (PRD §7.2) when emitted by the customer surface's auth/rate-limit
+    layer. **`retryable` is optional, not required** — corrected from an earlier revision. Errors formatted by the
+    global Fastify error handler (`middleware/error-handler.ts:29-38`) and by `POST /upload`'s hand-written error bodies
+    never include it; treat its absence as "unknown," not "false." See "Error taxonomy" in the top-level description.
 
-    Attributes:
-        code (ErrorCode): Identical to the WS protocol's canonical `ErrorCode` (PRD §7.4) — one enum shared by both
-            transports. Not every value can occur on every surface (e.g. `PROTOCOL_VERSION_UNSUPPORTED` is WS-only); see
-            this document's top-level Error Taxonomy table for the REST-specific subset and HTTP status mapping.
-        message (str): Human-readable. Not for programmatic branching — branch on `code`.
-        retryable (bool):
-        details (Union[Unset, ErrorPayloadDetails]): Structured, error-specific context (e.g. which field failed
-            validation).
+        Attributes:
+            code (ErrorCode): Identical to the WS protocol's canonical `ErrorCode` (PRD §7.4) — one enum shared by both
+                transports, and genuinely what the customer surface's auth/rate-limit layer emits (`customer-
+                auth.middleware.ts`, `rate-limit.ts`). It is **not** the only vocabulary a customer-facing REST error can carry
+                — see "Error taxonomy" → "Two vocabularies in practice" in the top-level description for the second, legacy
+                vocabulary the business-logic layer actually throws (e.g. `VALIDATION_ERROR` instead of `VALIDATION_FAILED`,
+                `INTERNAL_ERROR` instead of `INTERNAL`). Not every value here can occur on every surface (e.g.
+                `PROTOCOL_VERSION_UNSUPPORTED` is WS-only).
+            message (str): Human-readable. Not for programmatic branching — branch on `code`.
+            retryable (Union[Unset, bool]):
+            details (Union[Unset, ErrorPayloadDetails]): Structured, error-specific context (e.g. which field failed
+                validation).
     """
 
     code: ErrorCode
     message: str
-    retryable: bool
+    retryable: Union[Unset, bool] = UNSET
     details: Union[Unset, "ErrorPayloadDetails"] = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -56,9 +63,10 @@ class ErrorPayload:
             {
                 "code": code,
                 "message": message,
-                "retryable": retryable,
             }
         )
+        if retryable is not UNSET:
+            field_dict["retryable"] = retryable
         if details is not UNSET:
             field_dict["details"] = details
 
@@ -73,7 +81,7 @@ class ErrorPayload:
 
         message = d.pop("message")
 
-        retryable = d.pop("retryable")
+        retryable = d.pop("retryable", UNSET)
 
         _details = d.pop("details", UNSET)
         details: Union[Unset, ErrorPayloadDetails]

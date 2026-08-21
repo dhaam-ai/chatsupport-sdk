@@ -95,8 +95,6 @@ func (s *Attachment) SetMediaType(val MediaType) {
 	s.MediaType = val
 }
 
-func (*Attachment) uploadSessionAttachmentRes() {}
-
 // BadRequestHeaders wraps Error with response headers.
 type BadRequestHeaders struct {
 	XRequestID OptString
@@ -123,11 +121,421 @@ func (s *BadRequestHeaders) SetResponse(val Error) {
 	s.Response = val
 }
 
-func (*BadRequestHeaders) createSessionRes()           {}
-func (*BadRequestHeaders) mintTokenRes()               {}
-func (*BadRequestHeaders) reopenSessionRes()           {}
-func (*BadRequestHeaders) uploadSessionAttachmentRes() {}
+func (*BadRequestHeaders) createSessionRes() {}
+func (*BadRequestHeaders) mintTokenRes()     {}
 
+// A specific cart is no longer being actively shopped — caller- declared (this event) or
+// server-detected (an idle-cart sweep) both produce the identical state transition. The row must exist
+// (`404 CART_NOT_FOUND` otherwise) and be `LIVE`; transitions to `ABANDONED`. Already `ABANDONED` is a
+// no-op — `200`, `applied: true`, no state change. Already `CONVERTED` is
+// `422 INVALID_CART_TRANSITION` — `CONVERTED` is terminal. See `ContactsCartNotFound` /
+// `ContactsUnprocessableEntity` for the rejection responses and their (non-)effect on this event's
+// `eventId`.
+// Ref: #/components/schemas/CartAbandonedEvent
+type CartAbandonedEvent struct {
+	// Idempotency key — see "Idempotency, and rejection recovery" above.
+	EventID string `json:"eventId"`
+	// Wire STRING, not an integer enum — see `OrderPlacedEvent.type` for the full rationale.
+	Type string `json:"type"`
+	// ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound.
+	OccurredAt time.Time `json:"occurredAt"`
+	// The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+	CustomerID string `json:"customerId"`
+	CartID     string `json:"cartId"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *CartAbandonedEvent) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *CartAbandonedEvent) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *CartAbandonedEvent) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCustomerID returns the value of CustomerID.
+func (s *CartAbandonedEvent) GetCustomerID() string {
+	return s.CustomerID
+}
+
+// GetCartID returns the value of CartID.
+func (s *CartAbandonedEvent) GetCartID() string {
+	return s.CartID
+}
+
+// SetEventID sets the value of EventID.
+func (s *CartAbandonedEvent) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *CartAbandonedEvent) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *CartAbandonedEvent) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCustomerID sets the value of CustomerID.
+func (s *CartAbandonedEvent) SetCustomerID(val string) {
+	s.CustomerID = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *CartAbandonedEvent) SetCartID(val string) {
+	s.CartID = val
+}
+
+// Admin-path variant of `CartAbandonedEvent` — see that schema for the full behavior, including the
+// terminal-`CONVERTED` rejection. No `customerId`.
+// Ref: #/components/schemas/CartAbandonedEventAdmin
+type CartAbandonedEventAdmin struct {
+	EventID    string    `json:"eventId"`
+	Type       string    `json:"type"`
+	OccurredAt time.Time `json:"occurredAt"`
+	CartID     string    `json:"cartId"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *CartAbandonedEventAdmin) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *CartAbandonedEventAdmin) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *CartAbandonedEventAdmin) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCartID returns the value of CartID.
+func (s *CartAbandonedEventAdmin) GetCartID() string {
+	return s.CartID
+}
+
+// SetEventID sets the value of EventID.
+func (s *CartAbandonedEventAdmin) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *CartAbandonedEventAdmin) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *CartAbandonedEventAdmin) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *CartAbandonedEventAdmin) SetCartID(val string) {
+	s.CartID = val
+}
+
+// A specific cart resulted in a checkout. Also triggered as a side effect of `order.placed` carrying
+// the same `cartId` — they describe the same real-world action two ways; use whichever your checkout
+// flow naturally emits. The row must exist and be `LIVE` or `ABANDONED` (a customer may return to an
+// abandoned cart and check out); transitions to `CONVERTED`. Already `CONVERTED` is a no-op — `200`,
+// `applied: true`, no state change. `404 CART_NOT_FOUND` if the row never existed. `orderId`, if
+// supplied, is stored for correlation only — never applied to any aggregate (`order.completed`'s own
+// `value` is what moves `totalSpend`).
+// Ref: #/components/schemas/CartConvertedEvent
+type CartConvertedEvent struct {
+	// Idempotency key — see "Idempotency, and rejection recovery" above.
+	EventID string `json:"eventId"`
+	// Wire STRING, not an integer enum — see `OrderPlacedEvent.type` for the full rationale.
+	Type string `json:"type"`
+	// ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound.
+	OccurredAt time.Time `json:"occurredAt"`
+	// The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+	CustomerID string `json:"customerId"`
+	CartID     string `json:"cartId"`
+	// Correlation only — stored on the cart row, never applied to any aggregate.
+	OrderID OptString `json:"orderId"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *CartConvertedEvent) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *CartConvertedEvent) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *CartConvertedEvent) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCustomerID returns the value of CustomerID.
+func (s *CartConvertedEvent) GetCustomerID() string {
+	return s.CustomerID
+}
+
+// GetCartID returns the value of CartID.
+func (s *CartConvertedEvent) GetCartID() string {
+	return s.CartID
+}
+
+// GetOrderID returns the value of OrderID.
+func (s *CartConvertedEvent) GetOrderID() OptString {
+	return s.OrderID
+}
+
+// SetEventID sets the value of EventID.
+func (s *CartConvertedEvent) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *CartConvertedEvent) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *CartConvertedEvent) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCustomerID sets the value of CustomerID.
+func (s *CartConvertedEvent) SetCustomerID(val string) {
+	s.CustomerID = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *CartConvertedEvent) SetCartID(val string) {
+	s.CartID = val
+}
+
+// SetOrderID sets the value of OrderID.
+func (s *CartConvertedEvent) SetOrderID(val OptString) {
+	s.OrderID = val
+}
+
+// Admin-path variant of `CartConvertedEvent` — see that schema for the full behavior. No
+// `customerId`.
+// Ref: #/components/schemas/CartConvertedEventAdmin
+type CartConvertedEventAdmin struct {
+	EventID    string    `json:"eventId"`
+	Type       string    `json:"type"`
+	OccurredAt time.Time `json:"occurredAt"`
+	CartID     string    `json:"cartId"`
+	OrderID    OptString `json:"orderId"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *CartConvertedEventAdmin) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *CartConvertedEventAdmin) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *CartConvertedEventAdmin) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCartID returns the value of CartID.
+func (s *CartConvertedEventAdmin) GetCartID() string {
+	return s.CartID
+}
+
+// GetOrderID returns the value of OrderID.
+func (s *CartConvertedEventAdmin) GetOrderID() OptString {
+	return s.OrderID
+}
+
+// SetEventID sets the value of EventID.
+func (s *CartConvertedEventAdmin) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *CartConvertedEventAdmin) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *CartConvertedEventAdmin) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *CartConvertedEventAdmin) SetCartID(val string) {
+	s.CartID = val
+}
+
+// SetOrderID sets the value of OrderID.
+func (s *CartConvertedEventAdmin) SetOrderID(val OptString) {
+	s.OrderID = val
+}
+
+// The current, LIVE state of one cart — a full replace of that cart's contents, not a delta. `items`
+// may be empty: an emptied-but-still-open cart is a valid `LIVE` state with 0 items, distinct from
+// `ABANDONED`. A stale arrival — `occurredAt` older than the cart row's current snapshot — is
+// silently ignored: `applied: true`, no state change, NOT treated as a caller error (distinct from the
+// idempotency `applied: false` case, which is about the event having been seen before rather than the
+// state being stale). `Contact.itemsInCart`/`cartValue` are recomputed from whichever `LIVE` cart is
+// now this contact's most-recently-touched one — which may or may not be the cart this event just
+// touched; see `ContactCartRow`'s description for the full mirror rule.
+// Ref: #/components/schemas/CartUpdatedEvent
+type CartUpdatedEvent struct {
+	// Idempotency key — see "Idempotency, and rejection recovery" above.
+	EventID string `json:"eventId"`
+	// Wire STRING, not an integer enum — see `OrderPlacedEvent.type` for the full rationale.
+	Type string `json:"type"`
+	// ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound.
+	OccurredAt time.Time `json:"occurredAt"`
+	// The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+	CustomerID string `json:"customerId"`
+	// The merchant's own cart identifier. Unique per CONTACT, not globally.
+	CartID string `json:"cartId"`
+	// Full replacement of the cart's line items. A 501st entry is refused outright with `400` — reject,
+	// not clamp — never silently truncated to 500.
+	Items []CommerceCartItem `json:"items"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *CartUpdatedEvent) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *CartUpdatedEvent) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *CartUpdatedEvent) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCustomerID returns the value of CustomerID.
+func (s *CartUpdatedEvent) GetCustomerID() string {
+	return s.CustomerID
+}
+
+// GetCartID returns the value of CartID.
+func (s *CartUpdatedEvent) GetCartID() string {
+	return s.CartID
+}
+
+// GetItems returns the value of Items.
+func (s *CartUpdatedEvent) GetItems() []CommerceCartItem {
+	return s.Items
+}
+
+// SetEventID sets the value of EventID.
+func (s *CartUpdatedEvent) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *CartUpdatedEvent) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *CartUpdatedEvent) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCustomerID sets the value of CustomerID.
+func (s *CartUpdatedEvent) SetCustomerID(val string) {
+	s.CustomerID = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *CartUpdatedEvent) SetCartID(val string) {
+	s.CartID = val
+}
+
+// SetItems sets the value of Items.
+func (s *CartUpdatedEvent) SetItems(val []CommerceCartItem) {
+	s.Items = val
+}
+
+// Admin-path variant of `CartUpdatedEvent` — see that schema for the full behavior, including the
+// full-replace and stale-arrival rules. No `customerId`.
+// Ref: #/components/schemas/CartUpdatedEventAdmin
+type CartUpdatedEventAdmin struct {
+	EventID    string             `json:"eventId"`
+	Type       string             `json:"type"`
+	OccurredAt time.Time          `json:"occurredAt"`
+	CartID     string             `json:"cartId"`
+	Items      []CommerceCartItem `json:"items"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *CartUpdatedEventAdmin) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *CartUpdatedEventAdmin) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *CartUpdatedEventAdmin) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCartID returns the value of CartID.
+func (s *CartUpdatedEventAdmin) GetCartID() string {
+	return s.CartID
+}
+
+// GetItems returns the value of Items.
+func (s *CartUpdatedEventAdmin) GetItems() []CommerceCartItem {
+	return s.Items
+}
+
+// SetEventID sets the value of EventID.
+func (s *CartUpdatedEventAdmin) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *CartUpdatedEventAdmin) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *CartUpdatedEventAdmin) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *CartUpdatedEventAdmin) SetCartID(val string) {
+	s.CartID = val
+}
+
+// SetItems sets the value of Items.
+func (s *CartUpdatedEventAdmin) SetItems(val []CommerceCartItem) {
+	s.Items = val
+}
+
+// The normalized message shape `@dhaam-ccrm/core` consumes. `GET /chat/sessions/{sessionId}/messages`
+// and `GET /chat/sessions/{sessionId}/full` do NOT return this shape on the wire — see
+// `ChatMessageWire` for what they actually send and how `@dhaam-ccrm/rest` converts it to this shape.
 // Ref: #/components/schemas/ChatMessage
 type ChatMessage struct {
 	// Opaque message identifier. Under D1, this is the client-generated ULID for customer-sent messages
@@ -283,6 +691,224 @@ func (s *ChatMessageMetadata) init() ChatMessageMetadata {
 	return m
 }
 
+// Actual wire shape returned by `GET /chat/sessions/{sessionId}/messages` and
+// `GET /chat/sessions/{sessionId}/full` — NOT the normalized `ChatMessage` shape above. The REST
+// history handlers (`message.service.ts` `getMessages`/`getMessagesPaginated`,
+// `getSessionWithMessages`) return the Prisma row for `ChatMessage` directly, with none of the wire
+// projection the WebSocket path applies (`api/websocket/v2/projection.ts` `projectMessage`). Two
+// concrete deviations from `ChatMessage`:
+//
+//  1. `senderType` and `messageType` are the backend's internal integer codes, not string enum names.
+//     See `senderType`/ `messageType` below for the exact mapping.
+//  2. `attachment` data is not lifted to top level. When a message carries an attachment it is nested
+//     at `metadata.attachment` (with the same shape as `Attachment` below); `attachment` itself is
+//     absent from the row entirely.
+//
+// `@dhaam-ccrm/rest`'s `createHistorySource` adapter converts every row of this shape into
+// `ChatMessage` before handing it to `@dhaam-ccrm/core` (int→string enum lookup, and
+// lifting/stripping `metadata.attachment` — implemented in `packages/rest/src/projection.ts`). This
+// is where the "message history not appearing after reload" defect actually lived, and this schema
+// exists so that normalization step is never silently reverted.
+// Ref: #/components/schemas/ChatMessageWire
+type ChatMessageWire struct {
+	ID            string `json:"id"`
+	ChatSessionID string `json:"chatSessionId"`
+	// 1=CUSTOMER, 2=AGENT, 3=BOT, 4=SYSTEM (`shared/constants/enums.ts:29-34`).
+	SenderType ChatMessageWireSenderType `json:"senderType"`
+	SenderID   OptNilString              `json:"senderId"`
+	Content    string                    `json:"content"`
+	// 1=TEXT, 2=SYSTEM, 3=FILE, 4=IMAGE, 5=VIDEO, 6=AUDIO, 7=TYPING (`shared/constants/enums.ts:36-44`).
+	MessageType ChatMessageWireMessageType `json:"messageType"`
+	// Free-form context AND, when present, an `attachment` key holding the same shape as `Attachment` —
+	// this is the legacy column v1 used for both purposes; nothing on this REST path splits them.
+	Metadata         OptChatMessageWireMetadata `json:"metadata"`
+	ReplyToMessageID OptNilString               `json:"replyToMessageId"`
+	ReplyToMessage   OptNilMessageReplyPreview  `json:"replyToMessage"`
+	CreatedAt        time.Time                  `json:"createdAt"`
+	Seq              OptNilInt                  `json:"seq"`
+	// MessageVisibility as persisted; PUBLIC by default. Not present in the normalized `ChatMessage`.
+	Visibility OptInt `json:"visibility"`
+}
+
+// GetID returns the value of ID.
+func (s *ChatMessageWire) GetID() string {
+	return s.ID
+}
+
+// GetChatSessionID returns the value of ChatSessionID.
+func (s *ChatMessageWire) GetChatSessionID() string {
+	return s.ChatSessionID
+}
+
+// GetSenderType returns the value of SenderType.
+func (s *ChatMessageWire) GetSenderType() ChatMessageWireSenderType {
+	return s.SenderType
+}
+
+// GetSenderID returns the value of SenderID.
+func (s *ChatMessageWire) GetSenderID() OptNilString {
+	return s.SenderID
+}
+
+// GetContent returns the value of Content.
+func (s *ChatMessageWire) GetContent() string {
+	return s.Content
+}
+
+// GetMessageType returns the value of MessageType.
+func (s *ChatMessageWire) GetMessageType() ChatMessageWireMessageType {
+	return s.MessageType
+}
+
+// GetMetadata returns the value of Metadata.
+func (s *ChatMessageWire) GetMetadata() OptChatMessageWireMetadata {
+	return s.Metadata
+}
+
+// GetReplyToMessageID returns the value of ReplyToMessageID.
+func (s *ChatMessageWire) GetReplyToMessageID() OptNilString {
+	return s.ReplyToMessageID
+}
+
+// GetReplyToMessage returns the value of ReplyToMessage.
+func (s *ChatMessageWire) GetReplyToMessage() OptNilMessageReplyPreview {
+	return s.ReplyToMessage
+}
+
+// GetCreatedAt returns the value of CreatedAt.
+func (s *ChatMessageWire) GetCreatedAt() time.Time {
+	return s.CreatedAt
+}
+
+// GetSeq returns the value of Seq.
+func (s *ChatMessageWire) GetSeq() OptNilInt {
+	return s.Seq
+}
+
+// GetVisibility returns the value of Visibility.
+func (s *ChatMessageWire) GetVisibility() OptInt {
+	return s.Visibility
+}
+
+// SetID sets the value of ID.
+func (s *ChatMessageWire) SetID(val string) {
+	s.ID = val
+}
+
+// SetChatSessionID sets the value of ChatSessionID.
+func (s *ChatMessageWire) SetChatSessionID(val string) {
+	s.ChatSessionID = val
+}
+
+// SetSenderType sets the value of SenderType.
+func (s *ChatMessageWire) SetSenderType(val ChatMessageWireSenderType) {
+	s.SenderType = val
+}
+
+// SetSenderID sets the value of SenderID.
+func (s *ChatMessageWire) SetSenderID(val OptNilString) {
+	s.SenderID = val
+}
+
+// SetContent sets the value of Content.
+func (s *ChatMessageWire) SetContent(val string) {
+	s.Content = val
+}
+
+// SetMessageType sets the value of MessageType.
+func (s *ChatMessageWire) SetMessageType(val ChatMessageWireMessageType) {
+	s.MessageType = val
+}
+
+// SetMetadata sets the value of Metadata.
+func (s *ChatMessageWire) SetMetadata(val OptChatMessageWireMetadata) {
+	s.Metadata = val
+}
+
+// SetReplyToMessageID sets the value of ReplyToMessageID.
+func (s *ChatMessageWire) SetReplyToMessageID(val OptNilString) {
+	s.ReplyToMessageID = val
+}
+
+// SetReplyToMessage sets the value of ReplyToMessage.
+func (s *ChatMessageWire) SetReplyToMessage(val OptNilMessageReplyPreview) {
+	s.ReplyToMessage = val
+}
+
+// SetCreatedAt sets the value of CreatedAt.
+func (s *ChatMessageWire) SetCreatedAt(val time.Time) {
+	s.CreatedAt = val
+}
+
+// SetSeq sets the value of Seq.
+func (s *ChatMessageWire) SetSeq(val OptNilInt) {
+	s.Seq = val
+}
+
+// SetVisibility sets the value of Visibility.
+func (s *ChatMessageWire) SetVisibility(val OptInt) {
+	s.Visibility = val
+}
+
+// 1=TEXT, 2=SYSTEM, 3=FILE, 4=IMAGE, 5=VIDEO, 6=AUDIO, 7=TYPING (`shared/constants/enums.ts:36-44`).
+type ChatMessageWireMessageType int
+
+const (
+	ChatMessageWireMessageType1 ChatMessageWireMessageType = 1
+	ChatMessageWireMessageType2 ChatMessageWireMessageType = 2
+	ChatMessageWireMessageType3 ChatMessageWireMessageType = 3
+	ChatMessageWireMessageType4 ChatMessageWireMessageType = 4
+	ChatMessageWireMessageType5 ChatMessageWireMessageType = 5
+	ChatMessageWireMessageType6 ChatMessageWireMessageType = 6
+	ChatMessageWireMessageType7 ChatMessageWireMessageType = 7
+)
+
+// AllValues returns all ChatMessageWireMessageType values.
+func (ChatMessageWireMessageType) AllValues() []ChatMessageWireMessageType {
+	return []ChatMessageWireMessageType{
+		ChatMessageWireMessageType1,
+		ChatMessageWireMessageType2,
+		ChatMessageWireMessageType3,
+		ChatMessageWireMessageType4,
+		ChatMessageWireMessageType5,
+		ChatMessageWireMessageType6,
+		ChatMessageWireMessageType7,
+	}
+}
+
+// Free-form context AND, when present, an `attachment` key holding the same shape as `Attachment` —
+// this is the legacy column v1 used for both purposes; nothing on this REST path splits them.
+type ChatMessageWireMetadata map[string]jx.Raw
+
+func (s *ChatMessageWireMetadata) init() ChatMessageWireMetadata {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
+// 1=CUSTOMER, 2=AGENT, 3=BOT, 4=SYSTEM (`shared/constants/enums.ts:29-34`).
+type ChatMessageWireSenderType int
+
+const (
+	ChatMessageWireSenderType1 ChatMessageWireSenderType = 1
+	ChatMessageWireSenderType2 ChatMessageWireSenderType = 2
+	ChatMessageWireSenderType3 ChatMessageWireSenderType = 3
+	ChatMessageWireSenderType4 ChatMessageWireSenderType = 4
+)
+
+// AllValues returns all ChatMessageWireSenderType values.
+func (ChatMessageWireSenderType) AllValues() []ChatMessageWireSenderType {
+	return []ChatMessageWireSenderType{
+		ChatMessageWireSenderType1,
+		ChatMessageWireSenderType2,
+		ChatMessageWireSenderType3,
+		ChatMessageWireSenderType4,
+	}
+}
+
 // Ref: #/components/schemas/ChatMode
 type ChatMode string
 
@@ -418,134 +1044,212 @@ func (s *ChatSession) SetTicket(val NilTicket) {
 	s.Ticket = val
 }
 
-func (*ChatSession) closeSessionRes()  {}
-func (*ChatSession) reopenSessionRes() {}
-
-// ChatSessionHeaders wraps ChatSession with response headers.
-type ChatSessionHeaders struct {
-	Location OptString
-	Response ChatSession
-}
-
-// GetLocation returns the value of Location.
-func (s *ChatSessionHeaders) GetLocation() OptString {
-	return s.Location
-}
-
-// GetResponse returns the value of Response.
-func (s *ChatSessionHeaders) GetResponse() ChatSession {
-	return s.Response
-}
-
-// SetLocation sets the value of Location.
-func (s *ChatSessionHeaders) SetLocation(val OptString) {
-	s.Location = val
-}
-
-// SetResponse sets the value of Response.
-func (s *ChatSessionHeaders) SetResponse(val ChatSession) {
-	s.Response = val
-}
-
-func (*ChatSessionHeaders) createSessionRes() {}
-
-// Lightweight session projection for history lists. Deliberately smaller than `ChatSession` — a
-// history panel renders a label, a timestamp, and an unread badge, and should not pay for participant
-// or ticket payloads it will not draw.
-// Ref: #/components/schemas/ChatSessionSummary
-type ChatSessionSummary struct {
+// Wire shape of `GET /chat/sessions/customer`'s `sessions[]` items, as built by `chat.routes.ts`'s
+// `listSessions` handler from `chat-session.repository.ts`'s `findCustomerHistory` +
+// `unreadCountsForCustomer`, plus `chat-user.service.ts`'s `getUsersByExternalIds` for
+// `handledBy.displayName`. As of this revision this is field-for-field the SDK's `ChatSessionSummary`
+// (`packages/core/src/state/types.ts:223-240`) — `status`/`mode` are now the canonical v2 STRING
+// enums (D4), and `lastMessageAt` / `lastMessagePreview` / `unreadCount` replace the earlier nested
+// `lastMessage` object — plus the additive `handledBy` field below. Still unconsumed by
+// `@dhaam-ccrm/core` as of this revision — see the `listSessions` operation's description.
+// Ref: #/components/schemas/ChatSessionSummaryWire
+type ChatSessionSummaryWire struct {
 	// Opaque session identifier.
 	ID        string      `json:"id"`
 	Status    ChatStatus  `json:"status"`
 	Mode      ChatMode    `json:"mode"`
 	CreatedAt time.Time   `json:"createdAt"`
 	ClosedAt  NilDateTime `json:"closedAt"`
-	// Timestamp of the most recent message, or null if the session has none.
+	// Timestamp of the most recent PUBLIC message (§11.2 — INTERNAL agent notes never reach a
+	// customer-facing response), or `null` if the session has no public message yet.
 	LastMessageAt NilDateTime `json:"lastMessageAt"`
-	// Truncated plain-text preview of the most recent message.
+	// Verbatim content of the most recent PUBLIC message. Absent — never an empty string — when the
+	// session has no public message yet; mirror `lastMessageAt: null` to tell "no preview" apart from
+	// "preview happens to be empty".
 	LastMessagePreview OptString `json:"lastMessagePreview"`
-	// Messages after this customer's read watermark (PRD §9.5).
+	// PUBLIC messages not sent by the customer, created after the customer's own read watermark for this
+	// session (or all such messages if they have never read it). `0`, never absent, when nothing is
+	// unread.
 	UnreadCount int `json:"unreadCount"`
+	// Who is/was handling this session. Absent — never `null` or a placeholder — when nobody has
+	// picked it up yet (e.g. freshly escalated and still unassigned): the bot has already handed off and
+	// no agent has taken it, so neither `BOT` nor `AGENT` would be a true answer. See `buildHandledBy` in
+	// `chat.routes.ts` for the exact assigned-agent / still-on-bot / nobody-yet rule.
+	HandledBy OptChatSessionSummaryWireHandledBy `json:"handledBy"`
 }
 
 // GetID returns the value of ID.
-func (s *ChatSessionSummary) GetID() string {
+func (s *ChatSessionSummaryWire) GetID() string {
 	return s.ID
 }
 
 // GetStatus returns the value of Status.
-func (s *ChatSessionSummary) GetStatus() ChatStatus {
+func (s *ChatSessionSummaryWire) GetStatus() ChatStatus {
 	return s.Status
 }
 
 // GetMode returns the value of Mode.
-func (s *ChatSessionSummary) GetMode() ChatMode {
+func (s *ChatSessionSummaryWire) GetMode() ChatMode {
 	return s.Mode
 }
 
 // GetCreatedAt returns the value of CreatedAt.
-func (s *ChatSessionSummary) GetCreatedAt() time.Time {
+func (s *ChatSessionSummaryWire) GetCreatedAt() time.Time {
 	return s.CreatedAt
 }
 
 // GetClosedAt returns the value of ClosedAt.
-func (s *ChatSessionSummary) GetClosedAt() NilDateTime {
+func (s *ChatSessionSummaryWire) GetClosedAt() NilDateTime {
 	return s.ClosedAt
 }
 
 // GetLastMessageAt returns the value of LastMessageAt.
-func (s *ChatSessionSummary) GetLastMessageAt() NilDateTime {
+func (s *ChatSessionSummaryWire) GetLastMessageAt() NilDateTime {
 	return s.LastMessageAt
 }
 
 // GetLastMessagePreview returns the value of LastMessagePreview.
-func (s *ChatSessionSummary) GetLastMessagePreview() OptString {
+func (s *ChatSessionSummaryWire) GetLastMessagePreview() OptString {
 	return s.LastMessagePreview
 }
 
 // GetUnreadCount returns the value of UnreadCount.
-func (s *ChatSessionSummary) GetUnreadCount() int {
+func (s *ChatSessionSummaryWire) GetUnreadCount() int {
 	return s.UnreadCount
 }
 
+// GetHandledBy returns the value of HandledBy.
+func (s *ChatSessionSummaryWire) GetHandledBy() OptChatSessionSummaryWireHandledBy {
+	return s.HandledBy
+}
+
 // SetID sets the value of ID.
-func (s *ChatSessionSummary) SetID(val string) {
+func (s *ChatSessionSummaryWire) SetID(val string) {
 	s.ID = val
 }
 
 // SetStatus sets the value of Status.
-func (s *ChatSessionSummary) SetStatus(val ChatStatus) {
+func (s *ChatSessionSummaryWire) SetStatus(val ChatStatus) {
 	s.Status = val
 }
 
 // SetMode sets the value of Mode.
-func (s *ChatSessionSummary) SetMode(val ChatMode) {
+func (s *ChatSessionSummaryWire) SetMode(val ChatMode) {
 	s.Mode = val
 }
 
 // SetCreatedAt sets the value of CreatedAt.
-func (s *ChatSessionSummary) SetCreatedAt(val time.Time) {
+func (s *ChatSessionSummaryWire) SetCreatedAt(val time.Time) {
 	s.CreatedAt = val
 }
 
 // SetClosedAt sets the value of ClosedAt.
-func (s *ChatSessionSummary) SetClosedAt(val NilDateTime) {
+func (s *ChatSessionSummaryWire) SetClosedAt(val NilDateTime) {
 	s.ClosedAt = val
 }
 
 // SetLastMessageAt sets the value of LastMessageAt.
-func (s *ChatSessionSummary) SetLastMessageAt(val NilDateTime) {
+func (s *ChatSessionSummaryWire) SetLastMessageAt(val NilDateTime) {
 	s.LastMessageAt = val
 }
 
 // SetLastMessagePreview sets the value of LastMessagePreview.
-func (s *ChatSessionSummary) SetLastMessagePreview(val OptString) {
+func (s *ChatSessionSummaryWire) SetLastMessagePreview(val OptString) {
 	s.LastMessagePreview = val
 }
 
 // SetUnreadCount sets the value of UnreadCount.
-func (s *ChatSessionSummary) SetUnreadCount(val int) {
+func (s *ChatSessionSummaryWire) SetUnreadCount(val int) {
 	s.UnreadCount = val
+}
+
+// SetHandledBy sets the value of HandledBy.
+func (s *ChatSessionSummaryWire) SetHandledBy(val OptChatSessionSummaryWireHandledBy) {
+	s.HandledBy = val
+}
+
+// Who is/was handling this session. Absent — never `null` or a placeholder — when nobody has
+// picked it up yet (e.g. freshly escalated and still unassigned): the bot has already handed off and
+// no agent has taken it, so neither `BOT` nor `AGENT` would be a true answer. See `buildHandledBy` in
+// `chat.routes.ts` for the exact assigned-agent / still-on-bot / nobody-yet rule.
+type ChatSessionSummaryWireHandledBy struct {
+	Kind ChatSessionSummaryWireHandledByKind `json:"kind"`
+	// The agent's external id for `kind: AGENT` (falls back to that id as `displayName` too, if the
+	// `ChatUser` display-name cache has no entry). A fixed sentinel (`"bot"`) for `kind: BOT` — there is
+	// no per-tenant bot identity anywhere in the schema today.
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+}
+
+// GetKind returns the value of Kind.
+func (s *ChatSessionSummaryWireHandledBy) GetKind() ChatSessionSummaryWireHandledByKind {
+	return s.Kind
+}
+
+// GetID returns the value of ID.
+func (s *ChatSessionSummaryWireHandledBy) GetID() string {
+	return s.ID
+}
+
+// GetDisplayName returns the value of DisplayName.
+func (s *ChatSessionSummaryWireHandledBy) GetDisplayName() string {
+	return s.DisplayName
+}
+
+// SetKind sets the value of Kind.
+func (s *ChatSessionSummaryWireHandledBy) SetKind(val ChatSessionSummaryWireHandledByKind) {
+	s.Kind = val
+}
+
+// SetID sets the value of ID.
+func (s *ChatSessionSummaryWireHandledBy) SetID(val string) {
+	s.ID = val
+}
+
+// SetDisplayName sets the value of DisplayName.
+func (s *ChatSessionSummaryWireHandledBy) SetDisplayName(val string) {
+	s.DisplayName = val
+}
+
+type ChatSessionSummaryWireHandledByKind string
+
+const (
+	ChatSessionSummaryWireHandledByKindAGENT ChatSessionSummaryWireHandledByKind = "AGENT"
+	ChatSessionSummaryWireHandledByKindBOT   ChatSessionSummaryWireHandledByKind = "BOT"
+)
+
+// AllValues returns all ChatSessionSummaryWireHandledByKind values.
+func (ChatSessionSummaryWireHandledByKind) AllValues() []ChatSessionSummaryWireHandledByKind {
+	return []ChatSessionSummaryWireHandledByKind{
+		ChatSessionSummaryWireHandledByKindAGENT,
+		ChatSessionSummaryWireHandledByKindBOT,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ChatSessionSummaryWireHandledByKind) MarshalText() ([]byte, error) {
+	switch s {
+	case ChatSessionSummaryWireHandledByKindAGENT:
+		return []byte(s), nil
+	case ChatSessionSummaryWireHandledByKindBOT:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ChatSessionSummaryWireHandledByKind) UnmarshalText(data []byte) error {
+	switch ChatSessionSummaryWireHandledByKind(data) {
+	case ChatSessionSummaryWireHandledByKindAGENT:
+		*s = ChatSessionSummaryWireHandledByKindAGENT
+		return nil
+	case ChatSessionSummaryWireHandledByKindBOT:
+		*s = ChatSessionSummaryWireHandledByKindBOT
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
 }
 
 // The full six-value status set (PRD §12.1, D4) — v1's own type system modeled only four of these
@@ -665,6 +1369,36 @@ func (s *CloseReason) UnmarshalText(data []byte) error {
 	}
 }
 
+type CloseSessionOK struct {
+	Success bool               `json:"success"`
+	Data    SessionCloseResult `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *CloseSessionOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *CloseSessionOK) GetData() SessionCloseResult {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *CloseSessionOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *CloseSessionOK) SetData(val SessionCloseResult) {
+	s.Data = val
+}
+
+func (*CloseSessionOK) closeSessionRes() {}
+
+// Accepted but currently ignored by the backend — see the `POST /chat/sessions/{sessionId}/close`
+// operation description for why `reason` has no effect today (`chatSessionService.closeSession` takes
+// only the session id).
 // Ref: #/components/schemas/CloseSessionRequest
 type CloseSessionRequest struct {
 	Reason OptCloseReason `json:"reason"`
@@ -680,33 +1414,948 @@ func (s *CloseSessionRequest) SetReason(val OptCloseReason) {
 	s.Reason = val
 }
 
-// ConflictHeaders wraps Error with response headers.
-type ConflictHeaders struct {
-	XRequestID OptString
-	Response   Error
+// One line item inside a `cart.updated` snapshot.
+// Ref: #/components/schemas/CommerceCartItem
+type CommerceCartItem struct {
+	Sku       OptString `json:"sku"`
+	Name      string    `json:"name"`
+	Quantity  int       `json:"quantity"`
+	UnitPrice float64   `json:"unitPrice"`
 }
 
-// GetXRequestID returns the value of XRequestID.
-func (s *ConflictHeaders) GetXRequestID() OptString {
-	return s.XRequestID
+// GetSku returns the value of Sku.
+func (s *CommerceCartItem) GetSku() OptString {
+	return s.Sku
+}
+
+// GetName returns the value of Name.
+func (s *CommerceCartItem) GetName() string {
+	return s.Name
+}
+
+// GetQuantity returns the value of Quantity.
+func (s *CommerceCartItem) GetQuantity() int {
+	return s.Quantity
+}
+
+// GetUnitPrice returns the value of UnitPrice.
+func (s *CommerceCartItem) GetUnitPrice() float64 {
+	return s.UnitPrice
+}
+
+// SetSku sets the value of Sku.
+func (s *CommerceCartItem) SetSku(val OptString) {
+	s.Sku = val
+}
+
+// SetName sets the value of Name.
+func (s *CommerceCartItem) SetName(val string) {
+	s.Name = val
+}
+
+// SetQuantity sets the value of Quantity.
+func (s *CommerceCartItem) SetQuantity(val int) {
+	s.Quantity = val
+}
+
+// SetUnitPrice sets the value of UnitPrice.
+func (s *CommerceCartItem) SetUnitPrice(val float64) {
+	s.UnitPrice = val
+}
+
+// Discriminated union on `type`, one of the six order/cart events. This is the machine-path
+// (secret-key) request shape — `customerId` is required on every variant. Mirrors
+// `@dhaam-ccrm/node`'s `CommerceEvent` union (`packages/node/src/types.ts`) field-for-field.
+// Ref: #/components/schemas/CommerceEvent
+// CommerceEvent represents sum type.
+type CommerceEvent struct {
+	// Type selects the active sum variant, switch on this field.
+	Type                CommerceEventType
+	OrderPlacedEvent    OrderPlacedEvent
+	OrderCompletedEvent OrderCompletedEvent
+	OrderCancelledEvent OrderCancelledEvent
+	CartUpdatedEvent    CartUpdatedEvent
+	CartAbandonedEvent  CartAbandonedEvent
+	CartConvertedEvent  CartConvertedEvent
+}
+
+// CommerceEventType is oneOf type of CommerceEvent.
+type CommerceEventType string
+
+// Possible values for CommerceEventType.
+const (
+	OrderPlacedEventCommerceEvent    CommerceEventType = "order.placed"
+	OrderCompletedEventCommerceEvent CommerceEventType = "order.completed"
+	OrderCancelledEventCommerceEvent CommerceEventType = "order.cancelled"
+	CartUpdatedEventCommerceEvent    CommerceEventType = "cart.updated"
+	CartAbandonedEventCommerceEvent  CommerceEventType = "cart.abandoned"
+	CartConvertedEventCommerceEvent  CommerceEventType = "cart.converted"
+)
+
+// IsOrderPlacedEvent reports whether CommerceEvent is OrderPlacedEvent.
+func (s CommerceEvent) IsOrderPlacedEvent() bool { return s.Type == OrderPlacedEventCommerceEvent }
+
+// IsOrderCompletedEvent reports whether CommerceEvent is OrderCompletedEvent.
+func (s CommerceEvent) IsOrderCompletedEvent() bool {
+	return s.Type == OrderCompletedEventCommerceEvent
+}
+
+// IsOrderCancelledEvent reports whether CommerceEvent is OrderCancelledEvent.
+func (s CommerceEvent) IsOrderCancelledEvent() bool {
+	return s.Type == OrderCancelledEventCommerceEvent
+}
+
+// IsCartUpdatedEvent reports whether CommerceEvent is CartUpdatedEvent.
+func (s CommerceEvent) IsCartUpdatedEvent() bool { return s.Type == CartUpdatedEventCommerceEvent }
+
+// IsCartAbandonedEvent reports whether CommerceEvent is CartAbandonedEvent.
+func (s CommerceEvent) IsCartAbandonedEvent() bool { return s.Type == CartAbandonedEventCommerceEvent }
+
+// IsCartConvertedEvent reports whether CommerceEvent is CartConvertedEvent.
+func (s CommerceEvent) IsCartConvertedEvent() bool { return s.Type == CartConvertedEventCommerceEvent }
+
+// SetOrderPlacedEvent sets CommerceEvent to OrderPlacedEvent.
+func (s *CommerceEvent) SetOrderPlacedEvent(v OrderPlacedEvent) {
+	s.Type = OrderPlacedEventCommerceEvent
+	s.OrderPlacedEvent = v
+}
+
+// GetOrderPlacedEvent returns OrderPlacedEvent and true boolean if CommerceEvent is OrderPlacedEvent.
+func (s CommerceEvent) GetOrderPlacedEvent() (v OrderPlacedEvent, ok bool) {
+	if !s.IsOrderPlacedEvent() {
+		return v, false
+	}
+	return s.OrderPlacedEvent, true
+}
+
+// NewOrderPlacedEventCommerceEvent returns new CommerceEvent from OrderPlacedEvent.
+func NewOrderPlacedEventCommerceEvent(v OrderPlacedEvent) CommerceEvent {
+	var s CommerceEvent
+	s.SetOrderPlacedEvent(v)
+	return s
+}
+
+// SetOrderCompletedEvent sets CommerceEvent to OrderCompletedEvent.
+func (s *CommerceEvent) SetOrderCompletedEvent(v OrderCompletedEvent) {
+	s.Type = OrderCompletedEventCommerceEvent
+	s.OrderCompletedEvent = v
+}
+
+// GetOrderCompletedEvent returns OrderCompletedEvent and true boolean if CommerceEvent is OrderCompletedEvent.
+func (s CommerceEvent) GetOrderCompletedEvent() (v OrderCompletedEvent, ok bool) {
+	if !s.IsOrderCompletedEvent() {
+		return v, false
+	}
+	return s.OrderCompletedEvent, true
+}
+
+// NewOrderCompletedEventCommerceEvent returns new CommerceEvent from OrderCompletedEvent.
+func NewOrderCompletedEventCommerceEvent(v OrderCompletedEvent) CommerceEvent {
+	var s CommerceEvent
+	s.SetOrderCompletedEvent(v)
+	return s
+}
+
+// SetOrderCancelledEvent sets CommerceEvent to OrderCancelledEvent.
+func (s *CommerceEvent) SetOrderCancelledEvent(v OrderCancelledEvent) {
+	s.Type = OrderCancelledEventCommerceEvent
+	s.OrderCancelledEvent = v
+}
+
+// GetOrderCancelledEvent returns OrderCancelledEvent and true boolean if CommerceEvent is OrderCancelledEvent.
+func (s CommerceEvent) GetOrderCancelledEvent() (v OrderCancelledEvent, ok bool) {
+	if !s.IsOrderCancelledEvent() {
+		return v, false
+	}
+	return s.OrderCancelledEvent, true
+}
+
+// NewOrderCancelledEventCommerceEvent returns new CommerceEvent from OrderCancelledEvent.
+func NewOrderCancelledEventCommerceEvent(v OrderCancelledEvent) CommerceEvent {
+	var s CommerceEvent
+	s.SetOrderCancelledEvent(v)
+	return s
+}
+
+// SetCartUpdatedEvent sets CommerceEvent to CartUpdatedEvent.
+func (s *CommerceEvent) SetCartUpdatedEvent(v CartUpdatedEvent) {
+	s.Type = CartUpdatedEventCommerceEvent
+	s.CartUpdatedEvent = v
+}
+
+// GetCartUpdatedEvent returns CartUpdatedEvent and true boolean if CommerceEvent is CartUpdatedEvent.
+func (s CommerceEvent) GetCartUpdatedEvent() (v CartUpdatedEvent, ok bool) {
+	if !s.IsCartUpdatedEvent() {
+		return v, false
+	}
+	return s.CartUpdatedEvent, true
+}
+
+// NewCartUpdatedEventCommerceEvent returns new CommerceEvent from CartUpdatedEvent.
+func NewCartUpdatedEventCommerceEvent(v CartUpdatedEvent) CommerceEvent {
+	var s CommerceEvent
+	s.SetCartUpdatedEvent(v)
+	return s
+}
+
+// SetCartAbandonedEvent sets CommerceEvent to CartAbandonedEvent.
+func (s *CommerceEvent) SetCartAbandonedEvent(v CartAbandonedEvent) {
+	s.Type = CartAbandonedEventCommerceEvent
+	s.CartAbandonedEvent = v
+}
+
+// GetCartAbandonedEvent returns CartAbandonedEvent and true boolean if CommerceEvent is CartAbandonedEvent.
+func (s CommerceEvent) GetCartAbandonedEvent() (v CartAbandonedEvent, ok bool) {
+	if !s.IsCartAbandonedEvent() {
+		return v, false
+	}
+	return s.CartAbandonedEvent, true
+}
+
+// NewCartAbandonedEventCommerceEvent returns new CommerceEvent from CartAbandonedEvent.
+func NewCartAbandonedEventCommerceEvent(v CartAbandonedEvent) CommerceEvent {
+	var s CommerceEvent
+	s.SetCartAbandonedEvent(v)
+	return s
+}
+
+// SetCartConvertedEvent sets CommerceEvent to CartConvertedEvent.
+func (s *CommerceEvent) SetCartConvertedEvent(v CartConvertedEvent) {
+	s.Type = CartConvertedEventCommerceEvent
+	s.CartConvertedEvent = v
+}
+
+// GetCartConvertedEvent returns CartConvertedEvent and true boolean if CommerceEvent is CartConvertedEvent.
+func (s CommerceEvent) GetCartConvertedEvent() (v CartConvertedEvent, ok bool) {
+	if !s.IsCartConvertedEvent() {
+		return v, false
+	}
+	return s.CartConvertedEvent, true
+}
+
+// NewCartConvertedEventCommerceEvent returns new CommerceEvent from CartConvertedEvent.
+func NewCartConvertedEventCommerceEvent(v CartConvertedEvent) CommerceEvent {
+	var s CommerceEvent
+	s.SetCartConvertedEvent(v)
+	return s
+}
+
+// The admin-path (staff-token) request shape for `POST /contacts/{id}/commerce-events` —
+// field-for-field identical to `CommerceEvent` except `customerId` is absent from every variant. The
+// target contact is named by `:id` in the path instead; supplying `customerId` in the body is a `400`
+// (`.strict()` rejects the unrecognised field — it does not silently ignore it, so a caller cannot
+// believe it retargeted the event and be wrong).
+// Ref: #/components/schemas/CommerceEventAdmin
+// CommerceEventAdmin represents sum type.
+type CommerceEventAdmin struct {
+	// Type selects the active sum variant, switch on this field.
+	Type                     CommerceEventAdminType
+	OrderPlacedEventAdmin    OrderPlacedEventAdmin
+	OrderCompletedEventAdmin OrderCompletedEventAdmin
+	OrderCancelledEventAdmin OrderCancelledEventAdmin
+	CartUpdatedEventAdmin    CartUpdatedEventAdmin
+	CartAbandonedEventAdmin  CartAbandonedEventAdmin
+	CartConvertedEventAdmin  CartConvertedEventAdmin
+}
+
+// CommerceEventAdminType is oneOf type of CommerceEventAdmin.
+type CommerceEventAdminType string
+
+// Possible values for CommerceEventAdminType.
+const (
+	OrderPlacedEventAdminCommerceEventAdmin    CommerceEventAdminType = "order.placed"
+	OrderCompletedEventAdminCommerceEventAdmin CommerceEventAdminType = "order.completed"
+	OrderCancelledEventAdminCommerceEventAdmin CommerceEventAdminType = "order.cancelled"
+	CartUpdatedEventAdminCommerceEventAdmin    CommerceEventAdminType = "cart.updated"
+	CartAbandonedEventAdminCommerceEventAdmin  CommerceEventAdminType = "cart.abandoned"
+	CartConvertedEventAdminCommerceEventAdmin  CommerceEventAdminType = "cart.converted"
+)
+
+// IsOrderPlacedEventAdmin reports whether CommerceEventAdmin is OrderPlacedEventAdmin.
+func (s CommerceEventAdmin) IsOrderPlacedEventAdmin() bool {
+	return s.Type == OrderPlacedEventAdminCommerceEventAdmin
+}
+
+// IsOrderCompletedEventAdmin reports whether CommerceEventAdmin is OrderCompletedEventAdmin.
+func (s CommerceEventAdmin) IsOrderCompletedEventAdmin() bool {
+	return s.Type == OrderCompletedEventAdminCommerceEventAdmin
+}
+
+// IsOrderCancelledEventAdmin reports whether CommerceEventAdmin is OrderCancelledEventAdmin.
+func (s CommerceEventAdmin) IsOrderCancelledEventAdmin() bool {
+	return s.Type == OrderCancelledEventAdminCommerceEventAdmin
+}
+
+// IsCartUpdatedEventAdmin reports whether CommerceEventAdmin is CartUpdatedEventAdmin.
+func (s CommerceEventAdmin) IsCartUpdatedEventAdmin() bool {
+	return s.Type == CartUpdatedEventAdminCommerceEventAdmin
+}
+
+// IsCartAbandonedEventAdmin reports whether CommerceEventAdmin is CartAbandonedEventAdmin.
+func (s CommerceEventAdmin) IsCartAbandonedEventAdmin() bool {
+	return s.Type == CartAbandonedEventAdminCommerceEventAdmin
+}
+
+// IsCartConvertedEventAdmin reports whether CommerceEventAdmin is CartConvertedEventAdmin.
+func (s CommerceEventAdmin) IsCartConvertedEventAdmin() bool {
+	return s.Type == CartConvertedEventAdminCommerceEventAdmin
+}
+
+// SetOrderPlacedEventAdmin sets CommerceEventAdmin to OrderPlacedEventAdmin.
+func (s *CommerceEventAdmin) SetOrderPlacedEventAdmin(v OrderPlacedEventAdmin) {
+	s.Type = OrderPlacedEventAdminCommerceEventAdmin
+	s.OrderPlacedEventAdmin = v
+}
+
+// GetOrderPlacedEventAdmin returns OrderPlacedEventAdmin and true boolean if CommerceEventAdmin is OrderPlacedEventAdmin.
+func (s CommerceEventAdmin) GetOrderPlacedEventAdmin() (v OrderPlacedEventAdmin, ok bool) {
+	if !s.IsOrderPlacedEventAdmin() {
+		return v, false
+	}
+	return s.OrderPlacedEventAdmin, true
+}
+
+// NewOrderPlacedEventAdminCommerceEventAdmin returns new CommerceEventAdmin from OrderPlacedEventAdmin.
+func NewOrderPlacedEventAdminCommerceEventAdmin(v OrderPlacedEventAdmin) CommerceEventAdmin {
+	var s CommerceEventAdmin
+	s.SetOrderPlacedEventAdmin(v)
+	return s
+}
+
+// SetOrderCompletedEventAdmin sets CommerceEventAdmin to OrderCompletedEventAdmin.
+func (s *CommerceEventAdmin) SetOrderCompletedEventAdmin(v OrderCompletedEventAdmin) {
+	s.Type = OrderCompletedEventAdminCommerceEventAdmin
+	s.OrderCompletedEventAdmin = v
+}
+
+// GetOrderCompletedEventAdmin returns OrderCompletedEventAdmin and true boolean if CommerceEventAdmin is OrderCompletedEventAdmin.
+func (s CommerceEventAdmin) GetOrderCompletedEventAdmin() (v OrderCompletedEventAdmin, ok bool) {
+	if !s.IsOrderCompletedEventAdmin() {
+		return v, false
+	}
+	return s.OrderCompletedEventAdmin, true
+}
+
+// NewOrderCompletedEventAdminCommerceEventAdmin returns new CommerceEventAdmin from OrderCompletedEventAdmin.
+func NewOrderCompletedEventAdminCommerceEventAdmin(v OrderCompletedEventAdmin) CommerceEventAdmin {
+	var s CommerceEventAdmin
+	s.SetOrderCompletedEventAdmin(v)
+	return s
+}
+
+// SetOrderCancelledEventAdmin sets CommerceEventAdmin to OrderCancelledEventAdmin.
+func (s *CommerceEventAdmin) SetOrderCancelledEventAdmin(v OrderCancelledEventAdmin) {
+	s.Type = OrderCancelledEventAdminCommerceEventAdmin
+	s.OrderCancelledEventAdmin = v
+}
+
+// GetOrderCancelledEventAdmin returns OrderCancelledEventAdmin and true boolean if CommerceEventAdmin is OrderCancelledEventAdmin.
+func (s CommerceEventAdmin) GetOrderCancelledEventAdmin() (v OrderCancelledEventAdmin, ok bool) {
+	if !s.IsOrderCancelledEventAdmin() {
+		return v, false
+	}
+	return s.OrderCancelledEventAdmin, true
+}
+
+// NewOrderCancelledEventAdminCommerceEventAdmin returns new CommerceEventAdmin from OrderCancelledEventAdmin.
+func NewOrderCancelledEventAdminCommerceEventAdmin(v OrderCancelledEventAdmin) CommerceEventAdmin {
+	var s CommerceEventAdmin
+	s.SetOrderCancelledEventAdmin(v)
+	return s
+}
+
+// SetCartUpdatedEventAdmin sets CommerceEventAdmin to CartUpdatedEventAdmin.
+func (s *CommerceEventAdmin) SetCartUpdatedEventAdmin(v CartUpdatedEventAdmin) {
+	s.Type = CartUpdatedEventAdminCommerceEventAdmin
+	s.CartUpdatedEventAdmin = v
+}
+
+// GetCartUpdatedEventAdmin returns CartUpdatedEventAdmin and true boolean if CommerceEventAdmin is CartUpdatedEventAdmin.
+func (s CommerceEventAdmin) GetCartUpdatedEventAdmin() (v CartUpdatedEventAdmin, ok bool) {
+	if !s.IsCartUpdatedEventAdmin() {
+		return v, false
+	}
+	return s.CartUpdatedEventAdmin, true
+}
+
+// NewCartUpdatedEventAdminCommerceEventAdmin returns new CommerceEventAdmin from CartUpdatedEventAdmin.
+func NewCartUpdatedEventAdminCommerceEventAdmin(v CartUpdatedEventAdmin) CommerceEventAdmin {
+	var s CommerceEventAdmin
+	s.SetCartUpdatedEventAdmin(v)
+	return s
+}
+
+// SetCartAbandonedEventAdmin sets CommerceEventAdmin to CartAbandonedEventAdmin.
+func (s *CommerceEventAdmin) SetCartAbandonedEventAdmin(v CartAbandonedEventAdmin) {
+	s.Type = CartAbandonedEventAdminCommerceEventAdmin
+	s.CartAbandonedEventAdmin = v
+}
+
+// GetCartAbandonedEventAdmin returns CartAbandonedEventAdmin and true boolean if CommerceEventAdmin is CartAbandonedEventAdmin.
+func (s CommerceEventAdmin) GetCartAbandonedEventAdmin() (v CartAbandonedEventAdmin, ok bool) {
+	if !s.IsCartAbandonedEventAdmin() {
+		return v, false
+	}
+	return s.CartAbandonedEventAdmin, true
+}
+
+// NewCartAbandonedEventAdminCommerceEventAdmin returns new CommerceEventAdmin from CartAbandonedEventAdmin.
+func NewCartAbandonedEventAdminCommerceEventAdmin(v CartAbandonedEventAdmin) CommerceEventAdmin {
+	var s CommerceEventAdmin
+	s.SetCartAbandonedEventAdmin(v)
+	return s
+}
+
+// SetCartConvertedEventAdmin sets CommerceEventAdmin to CartConvertedEventAdmin.
+func (s *CommerceEventAdmin) SetCartConvertedEventAdmin(v CartConvertedEventAdmin) {
+	s.Type = CartConvertedEventAdminCommerceEventAdmin
+	s.CartConvertedEventAdmin = v
+}
+
+// GetCartConvertedEventAdmin returns CartConvertedEventAdmin and true boolean if CommerceEventAdmin is CartConvertedEventAdmin.
+func (s CommerceEventAdmin) GetCartConvertedEventAdmin() (v CartConvertedEventAdmin, ok bool) {
+	if !s.IsCartConvertedEventAdmin() {
+		return v, false
+	}
+	return s.CartConvertedEventAdmin, true
+}
+
+// NewCartConvertedEventAdminCommerceEventAdmin returns new CommerceEventAdmin from CartConvertedEventAdmin.
+func NewCartConvertedEventAdminCommerceEventAdmin(v CartConvertedEventAdmin) CommerceEventAdmin {
+	var s CommerceEventAdmin
+	s.SetCartConvertedEventAdmin(v)
+	return s
+}
+
+// Response `data` for both write operations, first application or replay alike.
+// Ref: #/components/schemas/CommerceEventResult
+type CommerceEventResult struct {
+	EventID string                  `json:"eventId"`
+	Type    CommerceEventResultType `json:"type"`
+	// The resolved (machine path) or path-supplied (admin path) contact's opaque id — same identifier
+	// `GET /contacts/:id` returns as `id`.
+	ContactID string `json:"contactId"`
+	// `false` only when this `eventId` had already been accepted and processed before — a replay. The
+	// mutation is not re-applied; these fields are read back from the original stored event, not
+	// recomputed. `true` on first acceptance AND on an accepted no-op (e.g. `cart.abandoned` repeated
+	// against an already- `ABANDONED` cart, or a stale out-of-order `cart.updated`) — `applied`
+	// distinguishes "have I seen this `eventId` before," not "did this event change any state.".
+	Applied bool `json:"applied"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *CommerceEventResult) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *CommerceEventResult) GetType() CommerceEventResultType {
+	return s.Type
+}
+
+// GetContactID returns the value of ContactID.
+func (s *CommerceEventResult) GetContactID() string {
+	return s.ContactID
+}
+
+// GetApplied returns the value of Applied.
+func (s *CommerceEventResult) GetApplied() bool {
+	return s.Applied
+}
+
+// SetEventID sets the value of EventID.
+func (s *CommerceEventResult) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *CommerceEventResult) SetType(val CommerceEventResultType) {
+	s.Type = val
+}
+
+// SetContactID sets the value of ContactID.
+func (s *CommerceEventResult) SetContactID(val string) {
+	s.ContactID = val
+}
+
+// SetApplied sets the value of Applied.
+func (s *CommerceEventResult) SetApplied(val bool) {
+	s.Applied = val
+}
+
+type CommerceEventResultType string
+
+const (
+	CommerceEventResultTypeOrderPlaced    CommerceEventResultType = "order.placed"
+	CommerceEventResultTypeOrderCompleted CommerceEventResultType = "order.completed"
+	CommerceEventResultTypeOrderCancelled CommerceEventResultType = "order.cancelled"
+	CommerceEventResultTypeCartUpdated    CommerceEventResultType = "cart.updated"
+	CommerceEventResultTypeCartAbandoned  CommerceEventResultType = "cart.abandoned"
+	CommerceEventResultTypeCartConverted  CommerceEventResultType = "cart.converted"
+)
+
+// AllValues returns all CommerceEventResultType values.
+func (CommerceEventResultType) AllValues() []CommerceEventResultType {
+	return []CommerceEventResultType{
+		CommerceEventResultTypeOrderPlaced,
+		CommerceEventResultTypeOrderCompleted,
+		CommerceEventResultTypeOrderCancelled,
+		CommerceEventResultTypeCartUpdated,
+		CommerceEventResultTypeCartAbandoned,
+		CommerceEventResultTypeCartConverted,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s CommerceEventResultType) MarshalText() ([]byte, error) {
+	switch s {
+	case CommerceEventResultTypeOrderPlaced:
+		return []byte(s), nil
+	case CommerceEventResultTypeOrderCompleted:
+		return []byte(s), nil
+	case CommerceEventResultTypeOrderCancelled:
+		return []byte(s), nil
+	case CommerceEventResultTypeCartUpdated:
+		return []byte(s), nil
+	case CommerceEventResultTypeCartAbandoned:
+		return []byte(s), nil
+	case CommerceEventResultTypeCartConverted:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *CommerceEventResultType) UnmarshalText(data []byte) error {
+	switch CommerceEventResultType(data) {
+	case CommerceEventResultTypeOrderPlaced:
+		*s = CommerceEventResultTypeOrderPlaced
+		return nil
+	case CommerceEventResultTypeOrderCompleted:
+		*s = CommerceEventResultTypeOrderCompleted
+		return nil
+	case CommerceEventResultTypeOrderCancelled:
+		*s = CommerceEventResultTypeOrderCancelled
+		return nil
+	case CommerceEventResultTypeCartUpdated:
+		*s = CommerceEventResultTypeCartUpdated
+		return nil
+	case CommerceEventResultTypeCartAbandoned:
+		*s = CommerceEventResultTypeCartAbandoned
+		return nil
+	case CommerceEventResultTypeCartConverted:
+		*s = CommerceEventResultTypeCartConverted
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// One row from `contact_carts`, as returned by both cart-read operations. `status` is a raw integer
+// code — this feature follows the same wire convention every other Contacts CRM enum already uses
+// (`GET /contacts`'s `status`/`userType`/`channel` fields), not the lowercase string the `status`
+// QUERY parameter on `GET /contacts/carts` accepts. The two are intentionally different shapes for the
+// same concept: the query parameter is a human-typed filter value, the response field is the
+// established typed-enum wire contract. `Contact.itemsInCart`/`cartValue` mirror only the contact's
+// single most-recently-touched `LIVE` row (by `lastEventAt`) — a contact can have more than one
+// `LIVE` row here at once (two browser tabs, a guest cart merged into a signed-in one), and this
+// operation is the only way to see the rest.
+// Ref: #/components/schemas/ContactCartRow
+type ContactCartRow struct {
+	// Opaque contact id — same value as `GET /contacts/:id`'s `id`.
+	ContactID string `json:"contactId"`
+	// The contact's customer-facing reference — what an agent building a win-back campaign wants to see,
+	// not the opaque id.
+	ContactRef string `json:"contactRef"`
+	// The merchant's own cart identifier, as supplied on `cart.*` events. Unique per contact, not
+	// globally.
+	CartID string `json:"cartId"`
+	// `ContactCartStatus`: 1=LIVE, 2=ABANDONED, 3=CONVERTED (`shared/constants/enums.ts`).
+	Status ContactCartRowStatus `json:"status"`
+	// Sum of `quantity` across the cart's line items as of the most recently applied `cart.updated`.
+	ItemsCount int `json:"itemsCount"`
+	// Sum of `unitPrice × quantity` across the cart's line items.
+	CartValue float64 `json:"cartValue"`
+	// Line-item snapshot as of the most recently applied `cart.updated`.
+	Items       []CommerceCartItem `json:"items"`
+	AbandonedAt NilDateTime        `json:"abandonedAt"`
+	ConvertedAt NilDateTime        `json:"convertedAt"`
+	UpdatedAt   time.Time          `json:"updatedAt"`
+}
+
+// GetContactID returns the value of ContactID.
+func (s *ContactCartRow) GetContactID() string {
+	return s.ContactID
+}
+
+// GetContactRef returns the value of ContactRef.
+func (s *ContactCartRow) GetContactRef() string {
+	return s.ContactRef
+}
+
+// GetCartID returns the value of CartID.
+func (s *ContactCartRow) GetCartID() string {
+	return s.CartID
+}
+
+// GetStatus returns the value of Status.
+func (s *ContactCartRow) GetStatus() ContactCartRowStatus {
+	return s.Status
+}
+
+// GetItemsCount returns the value of ItemsCount.
+func (s *ContactCartRow) GetItemsCount() int {
+	return s.ItemsCount
+}
+
+// GetCartValue returns the value of CartValue.
+func (s *ContactCartRow) GetCartValue() float64 {
+	return s.CartValue
+}
+
+// GetItems returns the value of Items.
+func (s *ContactCartRow) GetItems() []CommerceCartItem {
+	return s.Items
+}
+
+// GetAbandonedAt returns the value of AbandonedAt.
+func (s *ContactCartRow) GetAbandonedAt() NilDateTime {
+	return s.AbandonedAt
+}
+
+// GetConvertedAt returns the value of ConvertedAt.
+func (s *ContactCartRow) GetConvertedAt() NilDateTime {
+	return s.ConvertedAt
+}
+
+// GetUpdatedAt returns the value of UpdatedAt.
+func (s *ContactCartRow) GetUpdatedAt() time.Time {
+	return s.UpdatedAt
+}
+
+// SetContactID sets the value of ContactID.
+func (s *ContactCartRow) SetContactID(val string) {
+	s.ContactID = val
+}
+
+// SetContactRef sets the value of ContactRef.
+func (s *ContactCartRow) SetContactRef(val string) {
+	s.ContactRef = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *ContactCartRow) SetCartID(val string) {
+	s.CartID = val
+}
+
+// SetStatus sets the value of Status.
+func (s *ContactCartRow) SetStatus(val ContactCartRowStatus) {
+	s.Status = val
+}
+
+// SetItemsCount sets the value of ItemsCount.
+func (s *ContactCartRow) SetItemsCount(val int) {
+	s.ItemsCount = val
+}
+
+// SetCartValue sets the value of CartValue.
+func (s *ContactCartRow) SetCartValue(val float64) {
+	s.CartValue = val
+}
+
+// SetItems sets the value of Items.
+func (s *ContactCartRow) SetItems(val []CommerceCartItem) {
+	s.Items = val
+}
+
+// SetAbandonedAt sets the value of AbandonedAt.
+func (s *ContactCartRow) SetAbandonedAt(val NilDateTime) {
+	s.AbandonedAt = val
+}
+
+// SetConvertedAt sets the value of ConvertedAt.
+func (s *ContactCartRow) SetConvertedAt(val NilDateTime) {
+	s.ConvertedAt = val
+}
+
+// SetUpdatedAt sets the value of UpdatedAt.
+func (s *ContactCartRow) SetUpdatedAt(val time.Time) {
+	s.UpdatedAt = val
+}
+
+// `ContactCartStatus`: 1=LIVE, 2=ABANDONED, 3=CONVERTED (`shared/constants/enums.ts`).
+type ContactCartRowStatus int
+
+const (
+	ContactCartRowStatus1 ContactCartRowStatus = 1
+	ContactCartRowStatus2 ContactCartRowStatus = 2
+	ContactCartRowStatus3 ContactCartRowStatus = 3
+)
+
+// AllValues returns all ContactCartRowStatus values.
+func (ContactCartRowStatus) AllValues() []ContactCartRowStatus {
+	return []ContactCartRowStatus{
+		ContactCartRowStatus1,
+		ContactCartRowStatus2,
+		ContactCartRowStatus3,
+	}
+}
+
+// Ref: #/components/schemas/ContactsError
+type ContactsError struct {
+	Success bool                 `json:"success"`
+	Error   ContactsErrorPayload `json:"error"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *ContactsError) GetSuccess() bool {
+	return s.Success
+}
+
+// GetError returns the value of Error.
+func (s *ContactsError) GetError() ContactsErrorPayload {
+	return s.Error
+}
+
+// SetSuccess sets the value of Success.
+func (s *ContactsError) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetError sets the value of Error.
+func (s *ContactsError) SetError(val ContactsErrorPayload) {
+	s.Error = val
+}
+
+// The legacy `ERROR_CODES` vocabulary (`shared/constants/index.ts`), thrown as `AppError` and
+// formatted by the global Fastify error handler — see "Contacts / commerce-events surface" above for
+// why this, and not `ErrorCode`, is what these four operations actually emit, and for `AUTH_INVALID`'s
+// deliberate name-sharing across both vocabularies.
+// Ref: #/components/schemas/ContactsErrorCode
+type ContactsErrorCode string
+
+const (
+	ContactsErrorCodeVALIDATIONERROR       ContactsErrorCode = "VALIDATION_ERROR"
+	ContactsErrorCodeAUTHINVALID           ContactsErrorCode = "AUTH_INVALID"
+	ContactsErrorCodeUNAUTHORIZED          ContactsErrorCode = "UNAUTHORIZED"
+	ContactsErrorCodeCONTACTNOTFOUND       ContactsErrorCode = "CONTACT_NOT_FOUND"
+	ContactsErrorCodeCARTNOTFOUND          ContactsErrorCode = "CART_NOT_FOUND"
+	ContactsErrorCodeINVALIDCARTTRANSITION ContactsErrorCode = "INVALID_CART_TRANSITION"
+	ContactsErrorCodeRATELIMITED           ContactsErrorCode = "RATE_LIMITED"
+	ContactsErrorCodeINTERNALERROR         ContactsErrorCode = "INTERNAL_ERROR"
+)
+
+// AllValues returns all ContactsErrorCode values.
+func (ContactsErrorCode) AllValues() []ContactsErrorCode {
+	return []ContactsErrorCode{
+		ContactsErrorCodeVALIDATIONERROR,
+		ContactsErrorCodeAUTHINVALID,
+		ContactsErrorCodeUNAUTHORIZED,
+		ContactsErrorCodeCONTACTNOTFOUND,
+		ContactsErrorCodeCARTNOTFOUND,
+		ContactsErrorCodeINVALIDCARTTRANSITION,
+		ContactsErrorCodeRATELIMITED,
+		ContactsErrorCodeINTERNALERROR,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ContactsErrorCode) MarshalText() ([]byte, error) {
+	switch s {
+	case ContactsErrorCodeVALIDATIONERROR:
+		return []byte(s), nil
+	case ContactsErrorCodeAUTHINVALID:
+		return []byte(s), nil
+	case ContactsErrorCodeUNAUTHORIZED:
+		return []byte(s), nil
+	case ContactsErrorCodeCONTACTNOTFOUND:
+		return []byte(s), nil
+	case ContactsErrorCodeCARTNOTFOUND:
+		return []byte(s), nil
+	case ContactsErrorCodeINVALIDCARTTRANSITION:
+		return []byte(s), nil
+	case ContactsErrorCodeRATELIMITED:
+		return []byte(s), nil
+	case ContactsErrorCodeINTERNALERROR:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ContactsErrorCode) UnmarshalText(data []byte) error {
+	switch ContactsErrorCode(data) {
+	case ContactsErrorCodeVALIDATIONERROR:
+		*s = ContactsErrorCodeVALIDATIONERROR
+		return nil
+	case ContactsErrorCodeAUTHINVALID:
+		*s = ContactsErrorCodeAUTHINVALID
+		return nil
+	case ContactsErrorCodeUNAUTHORIZED:
+		*s = ContactsErrorCodeUNAUTHORIZED
+		return nil
+	case ContactsErrorCodeCONTACTNOTFOUND:
+		*s = ContactsErrorCodeCONTACTNOTFOUND
+		return nil
+	case ContactsErrorCodeCARTNOTFOUND:
+		*s = ContactsErrorCodeCARTNOTFOUND
+		return nil
+	case ContactsErrorCodeINVALIDCARTTRANSITION:
+		*s = ContactsErrorCodeINVALIDCARTTRANSITION
+		return nil
+	case ContactsErrorCodeRATELIMITED:
+		*s = ContactsErrorCodeRATELIMITED
+		return nil
+	case ContactsErrorCodeINTERNALERROR:
+		*s = ContactsErrorCodeINTERNALERROR
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// No `retryable` field — the global error handler never sets one. Its absence means "unknown," not
+// "false"; apply your own default retry policy for `429`/`500` rather than reading it from the body.
+// Ref: #/components/schemas/ContactsErrorPayload
+type ContactsErrorPayload struct {
+	Code ContactsErrorCode `json:"code"`
+	// Human-readable. Not for programmatic branching — branch on `code`.
+	Message string `json:"message"`
+	// Structured, error-specific context. Frequently absent.
+	Details OptContactsErrorPayloadDetails `json:"details"`
+}
+
+// GetCode returns the value of Code.
+func (s *ContactsErrorPayload) GetCode() ContactsErrorCode {
+	return s.Code
+}
+
+// GetMessage returns the value of Message.
+func (s *ContactsErrorPayload) GetMessage() string {
+	return s.Message
+}
+
+// GetDetails returns the value of Details.
+func (s *ContactsErrorPayload) GetDetails() OptContactsErrorPayloadDetails {
+	return s.Details
+}
+
+// SetCode sets the value of Code.
+func (s *ContactsErrorPayload) SetCode(val ContactsErrorCode) {
+	s.Code = val
+}
+
+// SetMessage sets the value of Message.
+func (s *ContactsErrorPayload) SetMessage(val string) {
+	s.Message = val
+}
+
+// SetDetails sets the value of Details.
+func (s *ContactsErrorPayload) SetDetails(val OptContactsErrorPayloadDetails) {
+	s.Details = val
+}
+
+// Structured, error-specific context. Frequently absent.
+type ContactsErrorPayloadDetails map[string]jx.Raw
+
+func (s *ContactsErrorPayloadDetails) init() ContactsErrorPayloadDetails {
+	m := *s
+	if m == nil {
+		m = map[string]jx.Raw{}
+		*s = m
+	}
+	return m
+}
+
+// ContactsTooManyRequestsHeaders wraps ContactsError with response headers.
+type ContactsTooManyRequestsHeaders struct {
+	RateLimitLimit     OptInt
+	RateLimitRemaining OptInt
+	RateLimitReset     OptInt
+	RetryAfter         OptInt
+	Response           ContactsError
+}
+
+// GetRateLimitLimit returns the value of RateLimitLimit.
+func (s *ContactsTooManyRequestsHeaders) GetRateLimitLimit() OptInt {
+	return s.RateLimitLimit
+}
+
+// GetRateLimitRemaining returns the value of RateLimitRemaining.
+func (s *ContactsTooManyRequestsHeaders) GetRateLimitRemaining() OptInt {
+	return s.RateLimitRemaining
+}
+
+// GetRateLimitReset returns the value of RateLimitReset.
+func (s *ContactsTooManyRequestsHeaders) GetRateLimitReset() OptInt {
+	return s.RateLimitReset
+}
+
+// GetRetryAfter returns the value of RetryAfter.
+func (s *ContactsTooManyRequestsHeaders) GetRetryAfter() OptInt {
+	return s.RetryAfter
 }
 
 // GetResponse returns the value of Response.
-func (s *ConflictHeaders) GetResponse() Error {
+func (s *ContactsTooManyRequestsHeaders) GetResponse() ContactsError {
 	return s.Response
 }
 
-// SetXRequestID sets the value of XRequestID.
-func (s *ConflictHeaders) SetXRequestID(val OptString) {
-	s.XRequestID = val
+// SetRateLimitLimit sets the value of RateLimitLimit.
+func (s *ContactsTooManyRequestsHeaders) SetRateLimitLimit(val OptInt) {
+	s.RateLimitLimit = val
+}
+
+// SetRateLimitRemaining sets the value of RateLimitRemaining.
+func (s *ContactsTooManyRequestsHeaders) SetRateLimitRemaining(val OptInt) {
+	s.RateLimitRemaining = val
+}
+
+// SetRateLimitReset sets the value of RateLimitReset.
+func (s *ContactsTooManyRequestsHeaders) SetRateLimitReset(val OptInt) {
+	s.RateLimitReset = val
+}
+
+// SetRetryAfter sets the value of RetryAfter.
+func (s *ContactsTooManyRequestsHeaders) SetRetryAfter(val OptInt) {
+	s.RetryAfter = val
 }
 
 // SetResponse sets the value of Response.
-func (s *ConflictHeaders) SetResponse(val Error) {
+func (s *ContactsTooManyRequestsHeaders) SetResponse(val ContactsError) {
 	s.Response = val
 }
 
-func (*ConflictHeaders) uploadSessionAttachmentRes() {}
+func (*ContactsTooManyRequestsHeaders) recordCommerceEventRes() {}
+
+type CreateSessionCreated struct {
+	Success bool                  `json:"success"`
+	Data    SessionMutationResult `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *CreateSessionCreated) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *CreateSessionCreated) GetData() SessionMutationResult {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *CreateSessionCreated) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *CreateSessionCreated) SetData(val SessionMutationResult) {
+	s.Data = val
+}
+
+func (*CreateSessionCreated) createSessionRes() {}
 
 // Customer identity is derived entirely from the validated `accessToken` — this body never repeats
 // it.
@@ -754,9 +2403,12 @@ func (s *Error) SetError(val ErrorPayload) {
 }
 
 // Identical to the WS protocol's canonical `ErrorCode` (PRD §7.4) — one enum shared by both
-// transports. Not every value can occur on every surface (e.g. `PROTOCOL_VERSION_UNSUPPORTED` is
-// WS-only); see this document's top-level Error Taxonomy table for the REST-specific subset and HTTP
-// status mapping.
+// transports, and genuinely what the customer surface's auth/rate-limit layer emits
+// (`customer-auth.middleware.ts`, `rate-limit.ts`). It is not the only vocabulary a customer-facing
+// REST error can carry — see "Error taxonomy" → "Two vocabularies in practice" in the top-level
+// description for the second, legacy vocabulary the business-logic layer actually throws (e.g.
+// `VALIDATION_ERROR` instead of `VALIDATION_FAILED`, `INTERNAL_ERROR` instead of `INTERNAL`). Not
+// every value here can occur on every surface (e.g. `PROTOCOL_VERSION_UNSUPPORTED` is WS-only).
 // Ref: #/components/schemas/ErrorCode
 type ErrorCode string
 
@@ -841,13 +2493,17 @@ func (s *ErrorCode) UnmarshalText(data []byte) error {
 	}
 }
 
-// Identical shape to the WS protocol's ErrorPayload (PRD §7.2).
+// Identical shape to the WS protocol's ErrorPayload (PRD §7.2) when emitted by the customer surface's
+// auth/rate-limit layer. `retryable` is optional, not required — corrected from an earlier revision.
+// Errors formatted by the global Fastify error handler (`middleware/error-handler.ts:29-38`) and by
+// `POST /upload`'s hand-written error bodies never include it; treat its absence as "unknown," not
+// "false." See "Error taxonomy" in the top-level description.
 // Ref: #/components/schemas/ErrorPayload
 type ErrorPayload struct {
 	Code ErrorCode `json:"code"`
 	// Human-readable. Not for programmatic branching — branch on `code`.
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
+	Message   string  `json:"message"`
+	Retryable OptBool `json:"retryable"`
 	// Structured, error-specific context (e.g. which field failed validation).
 	Details OptErrorPayloadDetails `json:"details"`
 }
@@ -863,7 +2519,7 @@ func (s *ErrorPayload) GetMessage() string {
 }
 
 // GetRetryable returns the value of Retryable.
-func (s *ErrorPayload) GetRetryable() bool {
+func (s *ErrorPayload) GetRetryable() OptBool {
 	return s.Retryable
 }
 
@@ -883,7 +2539,7 @@ func (s *ErrorPayload) SetMessage(val string) {
 }
 
 // SetRetryable sets the value of Retryable.
-func (s *ErrorPayload) SetRetryable(val bool) {
+func (s *ErrorPayload) SetRetryable(val OptBool) {
 	s.Retryable = val
 }
 
@@ -903,6 +2559,33 @@ func (s *ErrorPayloadDetails) init() ErrorPayloadDetails {
 	}
 	return m
 }
+
+type GetSessionFullOK struct {
+	Success bool            `json:"success"`
+	Data    SessionFullWire `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *GetSessionFullOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *GetSessionFullOK) GetData() SessionFullWire {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *GetSessionFullOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *GetSessionFullOK) SetData(val SessionFullWire) {
+	s.Data = val
+}
+
+func (*GetSessionFullOK) getSessionFullRes() {}
 
 // InternalErrorHeaders wraps Error with response headers.
 type InternalErrorHeaders struct {
@@ -941,19 +2624,299 @@ func (s *InternalErrorHeaders) SetResponse(val Error) {
 	s.Response = val
 }
 
-func (*InternalErrorHeaders) closeSessionRes()            {}
-func (*InternalErrorHeaders) createSessionRes()           {}
-func (*InternalErrorHeaders) getSessionFullRes()          {}
-func (*InternalErrorHeaders) listSessionMessagesRes()     {}
-func (*InternalErrorHeaders) listSessionsRes()            {}
-func (*InternalErrorHeaders) mintTokenRes()               {}
-func (*InternalErrorHeaders) reopenSessionRes()           {}
-func (*InternalErrorHeaders) uploadSessionAttachmentRes() {}
+func (*InternalErrorHeaders) closeSessionRes()        {}
+func (*InternalErrorHeaders) createSessionRes()       {}
+func (*InternalErrorHeaders) getSessionFullRes()      {}
+func (*InternalErrorHeaders) listSessionMessagesRes() {}
+func (*InternalErrorHeaders) listSessionsRes()        {}
+func (*InternalErrorHeaders) mintTokenRes()           {}
+func (*InternalErrorHeaders) reopenSessionRes()       {}
 
-// Attachment category. Normalized to upper-snake-case for consistency with every other enum in this
-// document (D4) — v1's wire value was lower-case-plural (`images`/`videos`/`audio`/`documents`);
-// this is a deliberate v1→v2 casing fix, not a PRD-mandated rename, and should be reconciled with
-// the backend team alongside the other D4 backend work (plan §2, B4).
+type ListCartsForContactForbidden ContactsError
+
+func (*ListCartsForContactForbidden) listCartsForContactRes() {}
+
+type ListCartsForContactInternalServerError ContactsError
+
+func (*ListCartsForContactInternalServerError) listCartsForContactRes() {}
+
+type ListCartsForContactNotFound ContactsError
+
+func (*ListCartsForContactNotFound) listCartsForContactRes() {}
+
+type ListCartsForContactOK struct {
+	Success bool             `json:"success"`
+	Data    []ContactCartRow `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *ListCartsForContactOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *ListCartsForContactOK) GetData() []ContactCartRow {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *ListCartsForContactOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *ListCartsForContactOK) SetData(val []ContactCartRow) {
+	s.Data = val
+}
+
+func (*ListCartsForContactOK) listCartsForContactRes() {}
+
+type ListCartsForContactUnauthorized ContactsError
+
+func (*ListCartsForContactUnauthorized) listCartsForContactRes() {}
+
+type ListContactCartsBadRequest ContactsError
+
+func (*ListContactCartsBadRequest) listContactCartsRes() {}
+
+type ListContactCartsForbidden ContactsError
+
+func (*ListContactCartsForbidden) listContactCartsRes() {}
+
+type ListContactCartsInternalServerError ContactsError
+
+func (*ListContactCartsInternalServerError) listContactCartsRes() {}
+
+type ListContactCartsOK struct {
+	Success bool             `json:"success"`
+	Data    []ContactCartRow `json:"data"`
+	// Tenant-scoped count matching the same filters as `data` — never a cross-tenant total.
+	Total    int `json:"total"`
+	Page     int `json:"page"`
+	PageSize int `json:"pageSize"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *ListContactCartsOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *ListContactCartsOK) GetData() []ContactCartRow {
+	return s.Data
+}
+
+// GetTotal returns the value of Total.
+func (s *ListContactCartsOK) GetTotal() int {
+	return s.Total
+}
+
+// GetPage returns the value of Page.
+func (s *ListContactCartsOK) GetPage() int {
+	return s.Page
+}
+
+// GetPageSize returns the value of PageSize.
+func (s *ListContactCartsOK) GetPageSize() int {
+	return s.PageSize
+}
+
+// SetSuccess sets the value of Success.
+func (s *ListContactCartsOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *ListContactCartsOK) SetData(val []ContactCartRow) {
+	s.Data = val
+}
+
+// SetTotal sets the value of Total.
+func (s *ListContactCartsOK) SetTotal(val int) {
+	s.Total = val
+}
+
+// SetPage sets the value of Page.
+func (s *ListContactCartsOK) SetPage(val int) {
+	s.Page = val
+}
+
+// SetPageSize sets the value of PageSize.
+func (s *ListContactCartsOK) SetPageSize(val int) {
+	s.PageSize = val
+}
+
+func (*ListContactCartsOK) listContactCartsRes() {}
+
+type ListContactCartsSort string
+
+const (
+	ListContactCartsSortUpdatedAtAsc  ListContactCartsSort = "updatedAt:asc"
+	ListContactCartsSortUpdatedAtDesc ListContactCartsSort = "updatedAt:desc"
+	ListContactCartsSortCartValueAsc  ListContactCartsSort = "cartValue:asc"
+	ListContactCartsSortCartValueDesc ListContactCartsSort = "cartValue:desc"
+)
+
+// AllValues returns all ListContactCartsSort values.
+func (ListContactCartsSort) AllValues() []ListContactCartsSort {
+	return []ListContactCartsSort{
+		ListContactCartsSortUpdatedAtAsc,
+		ListContactCartsSortUpdatedAtDesc,
+		ListContactCartsSortCartValueAsc,
+		ListContactCartsSortCartValueDesc,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ListContactCartsSort) MarshalText() ([]byte, error) {
+	switch s {
+	case ListContactCartsSortUpdatedAtAsc:
+		return []byte(s), nil
+	case ListContactCartsSortUpdatedAtDesc:
+		return []byte(s), nil
+	case ListContactCartsSortCartValueAsc:
+		return []byte(s), nil
+	case ListContactCartsSortCartValueDesc:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ListContactCartsSort) UnmarshalText(data []byte) error {
+	switch ListContactCartsSort(data) {
+	case ListContactCartsSortUpdatedAtAsc:
+		*s = ListContactCartsSortUpdatedAtAsc
+		return nil
+	case ListContactCartsSortUpdatedAtDesc:
+		*s = ListContactCartsSortUpdatedAtDesc
+		return nil
+	case ListContactCartsSortCartValueAsc:
+		*s = ListContactCartsSortCartValueAsc
+		return nil
+	case ListContactCartsSortCartValueDesc:
+		*s = ListContactCartsSortCartValueDesc
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type ListContactCartsStatus string
+
+const (
+	ListContactCartsStatusLive      ListContactCartsStatus = "live"
+	ListContactCartsStatusAbandoned ListContactCartsStatus = "abandoned"
+	ListContactCartsStatusConverted ListContactCartsStatus = "converted"
+)
+
+// AllValues returns all ListContactCartsStatus values.
+func (ListContactCartsStatus) AllValues() []ListContactCartsStatus {
+	return []ListContactCartsStatus{
+		ListContactCartsStatusLive,
+		ListContactCartsStatusAbandoned,
+		ListContactCartsStatusConverted,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s ListContactCartsStatus) MarshalText() ([]byte, error) {
+	switch s {
+	case ListContactCartsStatusLive:
+		return []byte(s), nil
+	case ListContactCartsStatusAbandoned:
+		return []byte(s), nil
+	case ListContactCartsStatusConverted:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *ListContactCartsStatus) UnmarshalText(data []byte) error {
+	switch ListContactCartsStatus(data) {
+	case ListContactCartsStatusLive:
+		*s = ListContactCartsStatusLive
+		return nil
+	case ListContactCartsStatusAbandoned:
+		*s = ListContactCartsStatusAbandoned
+		return nil
+	case ListContactCartsStatusConverted:
+		*s = ListContactCartsStatusConverted
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+type ListContactCartsUnauthorized ContactsError
+
+func (*ListContactCartsUnauthorized) listContactCartsRes() {}
+
+type ListSessionMessagesOK struct {
+	Success bool            `json:"success"`
+	Data    MessagePageWire `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *ListSessionMessagesOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *ListSessionMessagesOK) GetData() MessagePageWire {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *ListSessionMessagesOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *ListSessionMessagesOK) SetData(val MessagePageWire) {
+	s.Data = val
+}
+
+func (*ListSessionMessagesOK) listSessionMessagesRes() {}
+
+type ListSessionsOK struct {
+	Success bool                   `json:"success"`
+	Data    SessionSummaryPageWire `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *ListSessionsOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *ListSessionsOK) GetData() SessionSummaryPageWire {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *ListSessionsOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *ListSessionsOK) SetData(val SessionSummaryPageWire) {
+	s.Data = val
+}
+
+func (*ListSessionsOK) listSessionsRes() {}
+
+// Attachment category, upper-snake-case, for consistency with every other enum in this document (D4).
+// Confirmed, not merely proposed: this is the shape `@dhaam-ccrm/core`'s `messageTypeFor`
+// (`packages/core/src/messages/controller.ts:87-97`) requires, and it is never what the wire actually
+// sends — `POST /upload` always returns lowercase-plural values (see `UploadResponse.mediaType`).
+// `@dhaam-ccrm/rest`'s `createAttachmentUploader` adapter performs this exact mapping
+// (`packages/rest/src/media-type.ts`) before handing an `Attachment` to core: | Wire value
+// (`UploadResponse.mediaType`) | This enum | |---|---| | `images` | `IMAGE` | | `videos` | `VIDEO` | |
+// `audio` | `AUDIO` | | `documents` | `DOCUMENT` |.
 // Ref: #/components/schemas/MediaType
 type MediaType string
 
@@ -1010,33 +2973,34 @@ func (s *MediaType) UnmarshalText(data []byte) error {
 	}
 }
 
-// Ref: #/components/schemas/MessagePage
-type MessagePage struct {
-	Messages []ChatMessage `json:"messages"`
-	HasMore  bool          `json:"hasMore"`
+// Actual wire shape of `GET /chat/sessions/{sessionId}/messages`'s `200` body (inside `data`) —
+// replaces the idealized `MessagePage`, which this document previously documented and which is no
+// longer referenced by any operation. See `ChatMessageWire`.
+// Ref: #/components/schemas/MessagePageWire
+type MessagePageWire struct {
+	Messages []ChatMessageWire `json:"messages"`
+	HasMore  bool              `json:"hasMore"`
 }
 
 // GetMessages returns the value of Messages.
-func (s *MessagePage) GetMessages() []ChatMessage {
+func (s *MessagePageWire) GetMessages() []ChatMessageWire {
 	return s.Messages
 }
 
 // GetHasMore returns the value of HasMore.
-func (s *MessagePage) GetHasMore() bool {
+func (s *MessagePageWire) GetHasMore() bool {
 	return s.HasMore
 }
 
 // SetMessages sets the value of Messages.
-func (s *MessagePage) SetMessages(val []ChatMessage) {
+func (s *MessagePageWire) SetMessages(val []ChatMessageWire) {
 	s.Messages = val
 }
 
 // SetHasMore sets the value of HasMore.
-func (s *MessagePage) SetHasMore(val bool) {
+func (s *MessagePageWire) SetHasMore(val bool) {
 	s.HasMore = val
 }
-
-func (*MessagePage) listSessionMessagesRes() {}
 
 // Denormalized preview of the message being replied to.
 // Ref: #/components/schemas/MessageReplyPreview
@@ -1521,11 +3485,56 @@ func (s *NotFoundHeaders) SetResponse(val Error) {
 	s.Response = val
 }
 
-func (*NotFoundHeaders) closeSessionRes()            {}
-func (*NotFoundHeaders) getSessionFullRes()          {}
-func (*NotFoundHeaders) listSessionMessagesRes()     {}
-func (*NotFoundHeaders) reopenSessionRes()           {}
-func (*NotFoundHeaders) uploadSessionAttachmentRes() {}
+func (*NotFoundHeaders) closeSessionRes()        {}
+func (*NotFoundHeaders) getSessionFullRes()      {}
+func (*NotFoundHeaders) listSessionMessagesRes() {}
+func (*NotFoundHeaders) reopenSessionRes()       {}
+
+// NewOptBool returns new OptBool with value set to v.
+func NewOptBool(v bool) OptBool {
+	return OptBool{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptBool is optional bool.
+type OptBool struct {
+	Value bool
+	Set   bool
+}
+
+// IsSet returns true if OptBool was set.
+func (o OptBool) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptBool) Reset() {
+	var v bool
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptBool) SetTo(v bool) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptBool) Get() (v bool, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptBool) Or(d bool) bool {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
 
 // NewOptChatMessageMetadata returns new OptChatMessageMetadata with value set to v.
 func NewOptChatMessageMetadata(v ChatMessageMetadata) OptChatMessageMetadata {
@@ -1567,6 +3576,98 @@ func (o OptChatMessageMetadata) Get() (v ChatMessageMetadata, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptChatMessageMetadata) Or(d ChatMessageMetadata) ChatMessageMetadata {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptChatMessageWireMetadata returns new OptChatMessageWireMetadata with value set to v.
+func NewOptChatMessageWireMetadata(v ChatMessageWireMetadata) OptChatMessageWireMetadata {
+	return OptChatMessageWireMetadata{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatMessageWireMetadata is optional ChatMessageWireMetadata.
+type OptChatMessageWireMetadata struct {
+	Value ChatMessageWireMetadata
+	Set   bool
+}
+
+// IsSet returns true if OptChatMessageWireMetadata was set.
+func (o OptChatMessageWireMetadata) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatMessageWireMetadata) Reset() {
+	var v ChatMessageWireMetadata
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatMessageWireMetadata) SetTo(v ChatMessageWireMetadata) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatMessageWireMetadata) Get() (v ChatMessageWireMetadata, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatMessageWireMetadata) Or(d ChatMessageWireMetadata) ChatMessageWireMetadata {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptChatSessionSummaryWireHandledBy returns new OptChatSessionSummaryWireHandledBy with value set to v.
+func NewOptChatSessionSummaryWireHandledBy(v ChatSessionSummaryWireHandledBy) OptChatSessionSummaryWireHandledBy {
+	return OptChatSessionSummaryWireHandledBy{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptChatSessionSummaryWireHandledBy is optional ChatSessionSummaryWireHandledBy.
+type OptChatSessionSummaryWireHandledBy struct {
+	Value ChatSessionSummaryWireHandledBy
+	Set   bool
+}
+
+// IsSet returns true if OptChatSessionSummaryWireHandledBy was set.
+func (o OptChatSessionSummaryWireHandledBy) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptChatSessionSummaryWireHandledBy) Reset() {
+	var v ChatSessionSummaryWireHandledBy
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptChatSessionSummaryWireHandledBy) SetTo(v ChatSessionSummaryWireHandledBy) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptChatSessionSummaryWireHandledBy) Get() (v ChatSessionSummaryWireHandledBy, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptChatSessionSummaryWireHandledBy) Or(d ChatSessionSummaryWireHandledBy) ChatSessionSummaryWireHandledBy {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -1665,6 +3766,52 @@ func (o OptCloseSessionRequest) Or(d CloseSessionRequest) CloseSessionRequest {
 	return d
 }
 
+// NewOptContactsErrorPayloadDetails returns new OptContactsErrorPayloadDetails with value set to v.
+func NewOptContactsErrorPayloadDetails(v ContactsErrorPayloadDetails) OptContactsErrorPayloadDetails {
+	return OptContactsErrorPayloadDetails{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptContactsErrorPayloadDetails is optional ContactsErrorPayloadDetails.
+type OptContactsErrorPayloadDetails struct {
+	Value ContactsErrorPayloadDetails
+	Set   bool
+}
+
+// IsSet returns true if OptContactsErrorPayloadDetails was set.
+func (o OptContactsErrorPayloadDetails) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptContactsErrorPayloadDetails) Reset() {
+	var v ContactsErrorPayloadDetails
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptContactsErrorPayloadDetails) SetTo(v ContactsErrorPayloadDetails) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptContactsErrorPayloadDetails) Get() (v ContactsErrorPayloadDetails, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptContactsErrorPayloadDetails) Or(d ContactsErrorPayloadDetails) ContactsErrorPayloadDetails {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptCreateSessionRequest returns new OptCreateSessionRequest with value set to v.
 func NewOptCreateSessionRequest(v CreateSessionRequest) OptCreateSessionRequest {
 	return OptCreateSessionRequest{
@@ -1757,6 +3904,52 @@ func (o OptCreateSessionRequestMetadata) Or(d CreateSessionRequestMetadata) Crea
 	return d
 }
 
+// NewOptDateTime returns new OptDateTime with value set to v.
+func NewOptDateTime(v time.Time) OptDateTime {
+	return OptDateTime{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptDateTime is optional time.Time.
+type OptDateTime struct {
+	Value time.Time
+	Set   bool
+}
+
+// IsSet returns true if OptDateTime was set.
+func (o OptDateTime) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptDateTime) Reset() {
+	var v time.Time
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptDateTime) SetTo(v time.Time) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptDateTime) Get() (v time.Time, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptDateTime) Or(d time.Time) time.Time {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptErrorPayloadDetails returns new OptErrorPayloadDetails with value set to v.
 func NewOptErrorPayloadDetails(v ErrorPayloadDetails) OptErrorPayloadDetails {
 	return OptErrorPayloadDetails{
@@ -1803,6 +3996,52 @@ func (o OptErrorPayloadDetails) Or(d ErrorPayloadDetails) ErrorPayloadDetails {
 	return d
 }
 
+// NewOptFloat64 returns new OptFloat64 with value set to v.
+func NewOptFloat64(v float64) OptFloat64 {
+	return OptFloat64{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptFloat64 is optional float64.
+type OptFloat64 struct {
+	Value float64
+	Set   bool
+}
+
+// IsSet returns true if OptFloat64 was set.
+func (o OptFloat64) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptFloat64) Reset() {
+	var v float64
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptFloat64) SetTo(v float64) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptFloat64) Get() (v float64, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptFloat64) Or(d float64) float64 {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
 // NewOptInt returns new OptInt with value set to v.
 func NewOptInt(v int) OptInt {
 	return OptInt{
@@ -1843,6 +4082,98 @@ func (o OptInt) Get() (v int, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptInt) Or(d int) int {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptListContactCartsSort returns new OptListContactCartsSort with value set to v.
+func NewOptListContactCartsSort(v ListContactCartsSort) OptListContactCartsSort {
+	return OptListContactCartsSort{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptListContactCartsSort is optional ListContactCartsSort.
+type OptListContactCartsSort struct {
+	Value ListContactCartsSort
+	Set   bool
+}
+
+// IsSet returns true if OptListContactCartsSort was set.
+func (o OptListContactCartsSort) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptListContactCartsSort) Reset() {
+	var v ListContactCartsSort
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptListContactCartsSort) SetTo(v ListContactCartsSort) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptListContactCartsSort) Get() (v ListContactCartsSort, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptListContactCartsSort) Or(d ListContactCartsSort) ListContactCartsSort {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptListContactCartsStatus returns new OptListContactCartsStatus with value set to v.
+func NewOptListContactCartsStatus(v ListContactCartsStatus) OptListContactCartsStatus {
+	return OptListContactCartsStatus{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptListContactCartsStatus is optional ListContactCartsStatus.
+type OptListContactCartsStatus struct {
+	Value ListContactCartsStatus
+	Set   bool
+}
+
+// IsSet returns true if OptListContactCartsStatus was set.
+func (o OptListContactCartsStatus) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptListContactCartsStatus) Reset() {
+	var v ListContactCartsStatus
+	o.Value = v
+	o.Set = false
+}
+
+// SetTo sets value to v.
+func (o *OptListContactCartsStatus) SetTo(v ListContactCartsStatus) {
+	o.Set = true
+	o.Value = v
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptListContactCartsStatus) Get() (v ListContactCartsStatus, ok bool) {
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptListContactCartsStatus) Or(d ListContactCartsStatus) ListContactCartsStatus {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -1957,6 +4288,74 @@ func (o OptNilAttachment) Get() (v Attachment, ok bool) {
 
 // Or returns value if set, or given parameter if does not.
 func (o OptNilAttachment) Or(d Attachment) Attachment {
+	if v, ok := o.Get(); ok {
+		return v
+	}
+	return d
+}
+
+// NewOptNilInt returns new OptNilInt with value set to v.
+func NewOptNilInt(v int) OptNilInt {
+	return OptNilInt{
+		Value: v,
+		Set:   true,
+	}
+}
+
+// OptNilInt is optional nullable int.
+type OptNilInt struct {
+	Value int
+	Set   bool
+	Null  bool
+}
+
+// IsSet returns true if OptNilInt was set.
+func (o OptNilInt) IsSet() bool { return o.Set }
+
+// Reset unsets value.
+func (o *OptNilInt) Reset() {
+	var v int
+	o.Value = v
+	o.Set = false
+	o.Null = false
+}
+
+// SetTo sets value to v.
+func (o *OptNilInt) SetTo(v int) {
+	o.Set = true
+	o.Null = false
+	o.Value = v
+}
+
+// IsNull returns true if value is Null.
+func (o OptNilInt) IsNull() bool { return o.Null }
+
+// SetToNull sets value to null.
+func (o *OptNilInt) SetToNull() {
+	o.Set = true
+	o.Null = true
+	var v int
+	o.Value = v
+}
+
+// IsEmpty returns true if the field was omitted from the payload (not Set and not Null).
+func (o OptNilInt) IsEmpty() bool {
+	return !o.Set && !o.Null
+}
+
+// Get returns value and boolean that denotes whether value was set.
+func (o OptNilInt) Get() (v int, ok bool) {
+	if o.Null {
+		return v, false
+	}
+	if !o.Set {
+		return v, false
+	}
+	return o.Value, true
+}
+
+// Or returns value if set, or given parameter if does not.
+func (o OptNilInt) Or(d int) int {
 	if v, ok := o.Get(); ok {
 		return v
 	}
@@ -2213,6 +4612,537 @@ func (o OptString) Or(d string) string {
 	return d
 }
 
+// An order was cancelled or failed. Increments `cancelledOrders` only. Deliberately does not touch
+// `lastOrderMerchant`/ `lastOrderCategory`/`lastOrderAt` — a cancellation is real activity but not,
+// in a support agent's reading of "last order," an order that actually happened; keeping it out of the
+// latest-wins comparison means "last order" always names a placed-or-completed order, never a
+// cancelled one that happens to be the most recent event.
+// Ref: #/components/schemas/OrderCancelledEvent
+type OrderCancelledEvent struct {
+	// Idempotency key — see "Idempotency, and rejection recovery" above.
+	EventID string `json:"eventId"`
+	// Wire STRING, not an integer enum — see `OrderPlacedEvent.type` for the full rationale.
+	Type string `json:"type"`
+	// ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound.
+	OccurredAt time.Time `json:"occurredAt"`
+	// The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+	CustomerID string `json:"customerId"`
+	OrderID    string `json:"orderId"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *OrderCancelledEvent) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *OrderCancelledEvent) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *OrderCancelledEvent) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCustomerID returns the value of CustomerID.
+func (s *OrderCancelledEvent) GetCustomerID() string {
+	return s.CustomerID
+}
+
+// GetOrderID returns the value of OrderID.
+func (s *OrderCancelledEvent) GetOrderID() string {
+	return s.OrderID
+}
+
+// SetEventID sets the value of EventID.
+func (s *OrderCancelledEvent) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *OrderCancelledEvent) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *OrderCancelledEvent) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCustomerID sets the value of CustomerID.
+func (s *OrderCancelledEvent) SetCustomerID(val string) {
+	s.CustomerID = val
+}
+
+// SetOrderID sets the value of OrderID.
+func (s *OrderCancelledEvent) SetOrderID(val string) {
+	s.OrderID = val
+}
+
+// Admin-path variant of `OrderCancelledEvent` — see that schema for the full behavior. No
+// `customerId`.
+// Ref: #/components/schemas/OrderCancelledEventAdmin
+type OrderCancelledEventAdmin struct {
+	EventID    string    `json:"eventId"`
+	Type       string    `json:"type"`
+	OccurredAt time.Time `json:"occurredAt"`
+	OrderID    string    `json:"orderId"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *OrderCancelledEventAdmin) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *OrderCancelledEventAdmin) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *OrderCancelledEventAdmin) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetOrderID returns the value of OrderID.
+func (s *OrderCancelledEventAdmin) GetOrderID() string {
+	return s.OrderID
+}
+
+// SetEventID sets the value of EventID.
+func (s *OrderCancelledEventAdmin) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *OrderCancelledEventAdmin) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *OrderCancelledEventAdmin) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetOrderID sets the value of OrderID.
+func (s *OrderCancelledEventAdmin) SetOrderID(val string) {
+	s.OrderID = val
+}
+
+// An order finished successfully (paid, fulfilled — the merchant's own definition of "done").
+// Increments `completedOrders`; adds `value` to `totalSpend`; recomputes
+// `averageOrderValue = totalSpend / completedOrders` in the same transaction (`0` when
+// `completedOrders` is `0` — never a division-by-zero error). Updates
+// `lastOrderMerchant`/`lastOrderCategory`/`lastOrderAt` under the identical latest-wins rule
+// `order.placed` uses — a completed order is evidence of "last order" activity too.
+// Ref: #/components/schemas/OrderCompletedEvent
+type OrderCompletedEvent struct {
+	// Idempotency key — see "Idempotency, and rejection recovery" above.
+	EventID string `json:"eventId"`
+	// Wire STRING, not an integer enum — see `OrderPlacedEvent.type` for the full rationale (this is an
+	// open event tag, not closed-cardinality state).
+	Type string `json:"type"`
+	// ISO-8601, UTC. Rejected with `400` if more than 5 minutes in the future; no lower bound. See
+	// `OrderPlacedEvent.occurredAt`.
+	OccurredAt time.Time `json:"occurredAt"`
+	// The caller's own identifier for the shopper. See `OrderPlacedEvent.customerId`.
+	CustomerID string `json:"customerId"`
+	OrderID    string `json:"orderId"`
+	// Applied to `totalSpend` and folded into `averageOrderValue` — the only event type whose `value`
+	// moves an aggregate.
+	Value    float64   `json:"value"`
+	Merchant OptString `json:"merchant"`
+	Category OptString `json:"category"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *OrderCompletedEvent) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *OrderCompletedEvent) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *OrderCompletedEvent) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCustomerID returns the value of CustomerID.
+func (s *OrderCompletedEvent) GetCustomerID() string {
+	return s.CustomerID
+}
+
+// GetOrderID returns the value of OrderID.
+func (s *OrderCompletedEvent) GetOrderID() string {
+	return s.OrderID
+}
+
+// GetValue returns the value of Value.
+func (s *OrderCompletedEvent) GetValue() float64 {
+	return s.Value
+}
+
+// GetMerchant returns the value of Merchant.
+func (s *OrderCompletedEvent) GetMerchant() OptString {
+	return s.Merchant
+}
+
+// GetCategory returns the value of Category.
+func (s *OrderCompletedEvent) GetCategory() OptString {
+	return s.Category
+}
+
+// SetEventID sets the value of EventID.
+func (s *OrderCompletedEvent) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *OrderCompletedEvent) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *OrderCompletedEvent) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCustomerID sets the value of CustomerID.
+func (s *OrderCompletedEvent) SetCustomerID(val string) {
+	s.CustomerID = val
+}
+
+// SetOrderID sets the value of OrderID.
+func (s *OrderCompletedEvent) SetOrderID(val string) {
+	s.OrderID = val
+}
+
+// SetValue sets the value of Value.
+func (s *OrderCompletedEvent) SetValue(val float64) {
+	s.Value = val
+}
+
+// SetMerchant sets the value of Merchant.
+func (s *OrderCompletedEvent) SetMerchant(val OptString) {
+	s.Merchant = val
+}
+
+// SetCategory sets the value of Category.
+func (s *OrderCompletedEvent) SetCategory(val OptString) {
+	s.Category = val
+}
+
+// Admin-path variant of `OrderCompletedEvent` — see that schema for the full behavior. No
+// `customerId`.
+// Ref: #/components/schemas/OrderCompletedEventAdmin
+type OrderCompletedEventAdmin struct {
+	EventID    string    `json:"eventId"`
+	Type       string    `json:"type"`
+	OccurredAt time.Time `json:"occurredAt"`
+	OrderID    string    `json:"orderId"`
+	Value      float64   `json:"value"`
+	Merchant   OptString `json:"merchant"`
+	Category   OptString `json:"category"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *OrderCompletedEventAdmin) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *OrderCompletedEventAdmin) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *OrderCompletedEventAdmin) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetOrderID returns the value of OrderID.
+func (s *OrderCompletedEventAdmin) GetOrderID() string {
+	return s.OrderID
+}
+
+// GetValue returns the value of Value.
+func (s *OrderCompletedEventAdmin) GetValue() float64 {
+	return s.Value
+}
+
+// GetMerchant returns the value of Merchant.
+func (s *OrderCompletedEventAdmin) GetMerchant() OptString {
+	return s.Merchant
+}
+
+// GetCategory returns the value of Category.
+func (s *OrderCompletedEventAdmin) GetCategory() OptString {
+	return s.Category
+}
+
+// SetEventID sets the value of EventID.
+func (s *OrderCompletedEventAdmin) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *OrderCompletedEventAdmin) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *OrderCompletedEventAdmin) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetOrderID sets the value of OrderID.
+func (s *OrderCompletedEventAdmin) SetOrderID(val string) {
+	s.OrderID = val
+}
+
+// SetValue sets the value of Value.
+func (s *OrderCompletedEventAdmin) SetValue(val float64) {
+	s.Value = val
+}
+
+// SetMerchant sets the value of Merchant.
+func (s *OrderCompletedEventAdmin) SetMerchant(val OptString) {
+	s.Merchant = val
+}
+
+// SetCategory sets the value of Category.
+func (s *OrderCompletedEventAdmin) SetCategory(val OptString) {
+	s.Category = val
+}
+
+// An order was submitted; fulfillment/payment outcome not yet known. Increments `totalOrders`. Updates
+// `lastOrderMerchant`/ `lastOrderCategory`/`lastOrderAt` only if `occurredAt` is strictly newer than
+// the contact's stored `lastOrderAt` AND the corresponding field was supplied. `value`, if supplied,
+// is recorded for audit only — never applied to `totalSpend` (only `order.completed`'s own `value`
+// does that). If `cartId` matches a `LIVE` cart, that cart is transitioned to `CONVERTED` as a side
+// effect — the identical transition an explicit `cart.converted` for the same `cartId` would
+// produce. A `cartId` with no matching row is a silent no-op, not a `404` — only a `cart.*` event
+// 404s on an unknown `cartId`.
+// Ref: #/components/schemas/OrderPlacedEvent
+type OrderPlacedEvent struct {
+	// Idempotency key — see "Idempotency, and rejection recovery" above.
+	EventID string `json:"eventId"`
+	// An open, additive tag for "a kind of thing that happened," not a closed-cardinality state field —
+	// deliberately a wire STRING rather than an integer enum, mirroring `@dhaam-ccrm/node`'s own webhook
+	// `type` field (see `WebhookMessageCreatedEvent.type` etc. above) rather than this codebase's usual
+	// "enums are integers on the wire" rule. That rule governs closed- cardinality state (e.g.
+	// `ContactCartRow.status` below); `type` here is the same kind of open catalog
+	// `message.created`/`session.updated` already are — new event types are additive, and nothing
+	// downstream switches on it as a fixed-size set.
+	Type string `json:"type"`
+	// When this actually happened, not when the caller calls this endpoint. ISO-8601, UTC. Rejected with
+	// `400` if more than 5 minutes in the future (clock-skew tolerance). No lower bound — a backdated
+	// admin correction is legitimate.
+	OccurredAt time.Time `json:"occurredAt"`
+	// The caller's own identifier for the shopper — the same value passed as `userId` to `POST /tokens`.
+	// The server resolves-or- creates a `Contact` for `(tenantId, externalId = customerId)`. This is the
+	// ONLY field that may bind an event to a contact; nothing else in this body is ever used for identity
+	// matching.
+	CustomerID string    `json:"customerId"`
+	OrderID    string    `json:"orderId"`
+	Merchant   OptString `json:"merchant"`
+	Category   OptString `json:"category"`
+	// If this order completed a cart checkout, the cart's id — triggers the `cart.converted` side effect
+	// described above.
+	CartID OptString `json:"cartId"`
+	// Audit-only on this event type. Never applied to `totalSpend` — see the schema description.
+	Value OptFloat64 `json:"value"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *OrderPlacedEvent) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *OrderPlacedEvent) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *OrderPlacedEvent) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetCustomerID returns the value of CustomerID.
+func (s *OrderPlacedEvent) GetCustomerID() string {
+	return s.CustomerID
+}
+
+// GetOrderID returns the value of OrderID.
+func (s *OrderPlacedEvent) GetOrderID() string {
+	return s.OrderID
+}
+
+// GetMerchant returns the value of Merchant.
+func (s *OrderPlacedEvent) GetMerchant() OptString {
+	return s.Merchant
+}
+
+// GetCategory returns the value of Category.
+func (s *OrderPlacedEvent) GetCategory() OptString {
+	return s.Category
+}
+
+// GetCartID returns the value of CartID.
+func (s *OrderPlacedEvent) GetCartID() OptString {
+	return s.CartID
+}
+
+// GetValue returns the value of Value.
+func (s *OrderPlacedEvent) GetValue() OptFloat64 {
+	return s.Value
+}
+
+// SetEventID sets the value of EventID.
+func (s *OrderPlacedEvent) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *OrderPlacedEvent) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *OrderPlacedEvent) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetCustomerID sets the value of CustomerID.
+func (s *OrderPlacedEvent) SetCustomerID(val string) {
+	s.CustomerID = val
+}
+
+// SetOrderID sets the value of OrderID.
+func (s *OrderPlacedEvent) SetOrderID(val string) {
+	s.OrderID = val
+}
+
+// SetMerchant sets the value of Merchant.
+func (s *OrderPlacedEvent) SetMerchant(val OptString) {
+	s.Merchant = val
+}
+
+// SetCategory sets the value of Category.
+func (s *OrderPlacedEvent) SetCategory(val OptString) {
+	s.Category = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *OrderPlacedEvent) SetCartID(val OptString) {
+	s.CartID = val
+}
+
+// SetValue sets the value of Value.
+func (s *OrderPlacedEvent) SetValue(val OptFloat64) {
+	s.Value = val
+}
+
+// Admin-path variant of `OrderPlacedEvent` — see that schema for the full behavior. No `customerId`;
+// the target contact is named by `:id` in the path, and supplying `customerId` here is a `400`
+// (`.strict()` rejects the unrecognised field).
+// Ref: #/components/schemas/OrderPlacedEventAdmin
+type OrderPlacedEventAdmin struct {
+	EventID    string     `json:"eventId"`
+	Type       string     `json:"type"`
+	OccurredAt time.Time  `json:"occurredAt"`
+	OrderID    string     `json:"orderId"`
+	Merchant   OptString  `json:"merchant"`
+	Category   OptString  `json:"category"`
+	CartID     OptString  `json:"cartId"`
+	Value      OptFloat64 `json:"value"`
+}
+
+// GetEventID returns the value of EventID.
+func (s *OrderPlacedEventAdmin) GetEventID() string {
+	return s.EventID
+}
+
+// GetType returns the value of Type.
+func (s *OrderPlacedEventAdmin) GetType() string {
+	return s.Type
+}
+
+// GetOccurredAt returns the value of OccurredAt.
+func (s *OrderPlacedEventAdmin) GetOccurredAt() time.Time {
+	return s.OccurredAt
+}
+
+// GetOrderID returns the value of OrderID.
+func (s *OrderPlacedEventAdmin) GetOrderID() string {
+	return s.OrderID
+}
+
+// GetMerchant returns the value of Merchant.
+func (s *OrderPlacedEventAdmin) GetMerchant() OptString {
+	return s.Merchant
+}
+
+// GetCategory returns the value of Category.
+func (s *OrderPlacedEventAdmin) GetCategory() OptString {
+	return s.Category
+}
+
+// GetCartID returns the value of CartID.
+func (s *OrderPlacedEventAdmin) GetCartID() OptString {
+	return s.CartID
+}
+
+// GetValue returns the value of Value.
+func (s *OrderPlacedEventAdmin) GetValue() OptFloat64 {
+	return s.Value
+}
+
+// SetEventID sets the value of EventID.
+func (s *OrderPlacedEventAdmin) SetEventID(val string) {
+	s.EventID = val
+}
+
+// SetType sets the value of Type.
+func (s *OrderPlacedEventAdmin) SetType(val string) {
+	s.Type = val
+}
+
+// SetOccurredAt sets the value of OccurredAt.
+func (s *OrderPlacedEventAdmin) SetOccurredAt(val time.Time) {
+	s.OccurredAt = val
+}
+
+// SetOrderID sets the value of OrderID.
+func (s *OrderPlacedEventAdmin) SetOrderID(val string) {
+	s.OrderID = val
+}
+
+// SetMerchant sets the value of Merchant.
+func (s *OrderPlacedEventAdmin) SetMerchant(val OptString) {
+	s.Merchant = val
+}
+
+// SetCategory sets the value of Category.
+func (s *OrderPlacedEventAdmin) SetCategory(val OptString) {
+	s.Category = val
+}
+
+// SetCartID sets the value of CartID.
+func (s *OrderPlacedEventAdmin) SetCartID(val OptString) {
+	s.CartID = val
+}
+
+// SetValue sets the value of Value.
+func (s *OrderPlacedEventAdmin) SetValue(val OptFloat64) {
+	s.Value = val
+}
+
 // Ref: #/components/schemas/Participant
 type Participant struct {
 	ParticipantType ParticipantType `json:"participantType"`
@@ -2380,6 +5310,131 @@ func (s *PublishableKey) SetRoles(val []string) {
 	s.Roles = val
 }
 
+type RecordCommerceEventBadRequest ContactsError
+
+func (*RecordCommerceEventBadRequest) recordCommerceEventRes() {}
+
+type RecordCommerceEventForContactBadRequest ContactsError
+
+func (*RecordCommerceEventForContactBadRequest) recordCommerceEventForContactRes() {}
+
+type RecordCommerceEventForContactForbidden ContactsError
+
+func (*RecordCommerceEventForContactForbidden) recordCommerceEventForContactRes() {}
+
+type RecordCommerceEventForContactInternalServerError ContactsError
+
+func (*RecordCommerceEventForContactInternalServerError) recordCommerceEventForContactRes() {}
+
+type RecordCommerceEventForContactNotFound ContactsError
+
+func (*RecordCommerceEventForContactNotFound) recordCommerceEventForContactRes() {}
+
+type RecordCommerceEventForContactOK struct {
+	Success bool                `json:"success"`
+	Data    CommerceEventResult `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *RecordCommerceEventForContactOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *RecordCommerceEventForContactOK) GetData() CommerceEventResult {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *RecordCommerceEventForContactOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *RecordCommerceEventForContactOK) SetData(val CommerceEventResult) {
+	s.Data = val
+}
+
+func (*RecordCommerceEventForContactOK) recordCommerceEventForContactRes() {}
+
+type RecordCommerceEventForContactUnauthorized ContactsError
+
+func (*RecordCommerceEventForContactUnauthorized) recordCommerceEventForContactRes() {}
+
+type RecordCommerceEventForContactUnprocessableEntity ContactsError
+
+func (*RecordCommerceEventForContactUnprocessableEntity) recordCommerceEventForContactRes() {}
+
+type RecordCommerceEventInternalServerError ContactsError
+
+func (*RecordCommerceEventInternalServerError) recordCommerceEventRes() {}
+
+type RecordCommerceEventNotFound ContactsError
+
+func (*RecordCommerceEventNotFound) recordCommerceEventRes() {}
+
+type RecordCommerceEventOK struct {
+	Success bool                `json:"success"`
+	Data    CommerceEventResult `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *RecordCommerceEventOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *RecordCommerceEventOK) GetData() CommerceEventResult {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *RecordCommerceEventOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *RecordCommerceEventOK) SetData(val CommerceEventResult) {
+	s.Data = val
+}
+
+func (*RecordCommerceEventOK) recordCommerceEventRes() {}
+
+type RecordCommerceEventUnauthorized ContactsError
+
+func (*RecordCommerceEventUnauthorized) recordCommerceEventRes() {}
+
+type RecordCommerceEventUnprocessableEntity ContactsError
+
+func (*RecordCommerceEventUnprocessableEntity) recordCommerceEventRes() {}
+
+type ReopenSessionOK struct {
+	Success bool                  `json:"success"`
+	Data    SessionMutationResult `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *ReopenSessionOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *ReopenSessionOK) GetData() SessionMutationResult {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *ReopenSessionOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *ReopenSessionOK) SetData(val SessionMutationResult) {
+	s.Data = val
+}
+
+func (*ReopenSessionOK) reopenSessionRes() {}
+
 type SecretKey struct {
 	Token string
 	Roles []string
@@ -2461,86 +5516,192 @@ func (s *SenderType) UnmarshalText(data []byte) error {
 	}
 }
 
-// Ref: #/components/schemas/SessionFull
-type SessionFull struct {
+// Actual `data` payload of `POST /chat/sessions/{sessionId}/close`'s `200` response
+// (`chat.routes.ts:289-292`).
+// Ref: #/components/schemas/SessionCloseResult
+type SessionCloseResult struct {
+	SessionID string `json:"sessionId"`
+	// Raw integer `ChatStatus` code — will be 4 (CLOSED) on a fresh close, but reflects whatever the
+	// row's current status is on the naturally-idempotent repeat-call path.
+	Status   int         `json:"status"`
+	ClosedAt NilDateTime `json:"closedAt"`
+}
+
+// GetSessionID returns the value of SessionID.
+func (s *SessionCloseResult) GetSessionID() string {
+	return s.SessionID
+}
+
+// GetStatus returns the value of Status.
+func (s *SessionCloseResult) GetStatus() int {
+	return s.Status
+}
+
+// GetClosedAt returns the value of ClosedAt.
+func (s *SessionCloseResult) GetClosedAt() NilDateTime {
+	return s.ClosedAt
+}
+
+// SetSessionID sets the value of SessionID.
+func (s *SessionCloseResult) SetSessionID(val string) {
+	s.SessionID = val
+}
+
+// SetStatus sets the value of Status.
+func (s *SessionCloseResult) SetStatus(val int) {
+	s.Status = val
+}
+
+// SetClosedAt sets the value of ClosedAt.
+func (s *SessionCloseResult) SetClosedAt(val NilDateTime) {
+	s.ClosedAt = val
+}
+
+// Actual wire shape of `GET /chat/sessions/{sessionId}/full`'s `200` body (inside `data`) — replaces
+// the idealized `SessionFull`, which this document previously documented and which is no longer
+// referenced by any operation. Only `messages` differs structurally from what `SessionFull` modeled
+// — see `ChatMessageWire`. `session`'s own `status`/`mode` are also raw integers on this path (reuse
+// `ChatSession`'s `status`/`mode` field names but expect the same integer codes documented on
+// `ChatMessageWire.senderType`'s sibling table, i.e. `ChatStatus`/`ChatMode`'s backend ints), and its
+// `assignedAgent`/`customer` are missing `participantId` — a smaller, separately-tracked accuracy
+// gap not fully re-modeled in this revision.
+// Ref: #/components/schemas/SessionFullWire
+type SessionFullWire struct {
 	Session      ChatSession   `json:"session"`
 	Participants []Participant `json:"participants"`
 	// Most recent page, ascending chronological order (oldest first).
-	Messages []ChatMessage `json:"messages"`
+	Messages []ChatMessageWire `json:"messages"`
 	// Whether older messages exist beyond this page. Page further back with
-	// `GET /sessions/{sessionId}/messages`.
+	// `GET /chat/sessions/{sessionId}/messages`.
 	HasMore bool `json:"hasMore"`
 }
 
 // GetSession returns the value of Session.
-func (s *SessionFull) GetSession() ChatSession {
+func (s *SessionFullWire) GetSession() ChatSession {
 	return s.Session
 }
 
 // GetParticipants returns the value of Participants.
-func (s *SessionFull) GetParticipants() []Participant {
+func (s *SessionFullWire) GetParticipants() []Participant {
 	return s.Participants
 }
 
 // GetMessages returns the value of Messages.
-func (s *SessionFull) GetMessages() []ChatMessage {
+func (s *SessionFullWire) GetMessages() []ChatMessageWire {
 	return s.Messages
 }
 
 // GetHasMore returns the value of HasMore.
-func (s *SessionFull) GetHasMore() bool {
+func (s *SessionFullWire) GetHasMore() bool {
 	return s.HasMore
 }
 
 // SetSession sets the value of Session.
-func (s *SessionFull) SetSession(val ChatSession) {
+func (s *SessionFullWire) SetSession(val ChatSession) {
 	s.Session = val
 }
 
 // SetParticipants sets the value of Participants.
-func (s *SessionFull) SetParticipants(val []Participant) {
+func (s *SessionFullWire) SetParticipants(val []Participant) {
 	s.Participants = val
 }
 
 // SetMessages sets the value of Messages.
-func (s *SessionFull) SetMessages(val []ChatMessage) {
+func (s *SessionFullWire) SetMessages(val []ChatMessageWire) {
 	s.Messages = val
 }
 
 // SetHasMore sets the value of HasMore.
-func (s *SessionFull) SetHasMore(val bool) {
+func (s *SessionFullWire) SetHasMore(val bool) {
 	s.HasMore = val
 }
 
-func (*SessionFull) getSessionFullRes() {}
+// Actual `data` payload of `POST /chat/sessions`'s `201` response and
+// `POST /chat/sessions/{sessionId}/reopen`'s `200` response (`chat.routes.ts:217-218,312-313`) —
+// both build their reply from exactly these three fields and nothing else. `status`/`mode` are raw
+// integer codes, and the id field is named `sessionId`, not `id` — unlike `ChatSession`.
+// Ref: #/components/schemas/SessionMutationResult
+type SessionMutationResult struct {
+	SessionID string `json:"sessionId"`
+	// 1=OPEN, 2=WAITING_FOR_AGENT, 3=ASSIGNED, 4=CLOSED, 5=RESOLVED, 6=ON_HOLD
+	// (`shared/constants/enums.ts:15-22`).
+	Status int `json:"status"`
+	// 1=BOT, 2=HUMAN (`shared/constants/enums.ts:24-27`).
+	Mode int `json:"mode"`
+}
 
-// Ref: #/components/schemas/SessionSummaryPage
-type SessionSummaryPage struct {
-	Sessions []ChatSessionSummary `json:"sessions"`
-	HasMore  bool                 `json:"hasMore"`
+// GetSessionID returns the value of SessionID.
+func (s *SessionMutationResult) GetSessionID() string {
+	return s.SessionID
+}
+
+// GetStatus returns the value of Status.
+func (s *SessionMutationResult) GetStatus() int {
+	return s.Status
+}
+
+// GetMode returns the value of Mode.
+func (s *SessionMutationResult) GetMode() int {
+	return s.Mode
+}
+
+// SetSessionID sets the value of SessionID.
+func (s *SessionMutationResult) SetSessionID(val string) {
+	s.SessionID = val
+}
+
+// SetStatus sets the value of Status.
+func (s *SessionMutationResult) SetStatus(val int) {
+	s.Status = val
+}
+
+// SetMode sets the value of Mode.
+func (s *SessionMutationResult) SetMode(val int) {
+	s.Mode = val
+}
+
+// Actual wire shape of `GET /chat/sessions/customer`'s `200` body (inside `data`) — replaces the
+// idealized `SessionSummaryPage`. No `hasMore` field at all — `chat.routes.ts:238` replies
+// `{ success: true, data: { sessions } }` and nothing else.
+// Ref: #/components/schemas/SessionSummaryPageWire
+type SessionSummaryPageWire struct {
+	Sessions []ChatSessionSummaryWire `json:"sessions"`
 }
 
 // GetSessions returns the value of Sessions.
-func (s *SessionSummaryPage) GetSessions() []ChatSessionSummary {
+func (s *SessionSummaryPageWire) GetSessions() []ChatSessionSummaryWire {
 	return s.Sessions
 }
 
-// GetHasMore returns the value of HasMore.
-func (s *SessionSummaryPage) GetHasMore() bool {
-	return s.HasMore
-}
-
 // SetSessions sets the value of Sessions.
-func (s *SessionSummaryPage) SetSessions(val []ChatSessionSummary) {
+func (s *SessionSummaryPageWire) SetSessions(val []ChatSessionSummaryWire) {
 	s.Sessions = val
 }
 
-// SetHasMore sets the value of HasMore.
-func (s *SessionSummaryPage) SetHasMore(val bool) {
-	s.HasMore = val
+type StaffToken struct {
+	Token string
+	Roles []string
 }
 
-func (*SessionSummaryPage) listSessionsRes() {}
+// GetToken returns the value of Token.
+func (s *StaffToken) GetToken() string {
+	return s.Token
+}
+
+// GetRoles returns the value of Roles.
+func (s *StaffToken) GetRoles() []string {
+	return s.Roles
+}
+
+// SetToken sets the value of Token.
+func (s *StaffToken) SetToken(val string) {
+	s.Token = val
+}
+
+// SetRoles sets the value of Roles.
+func (s *StaffToken) SetRoles(val []string) {
+	s.Roles = val
+}
 
 // A linked CRM/support ticket (see the `ticket.linked` WS frame and webhook).
 // Ref: #/components/schemas/Ticket
@@ -2640,14 +5801,13 @@ func (s *TooManyRequestsHeaders) SetResponse(val Error) {
 	s.Response = val
 }
 
-func (*TooManyRequestsHeaders) closeSessionRes()            {}
-func (*TooManyRequestsHeaders) createSessionRes()           {}
-func (*TooManyRequestsHeaders) getSessionFullRes()          {}
-func (*TooManyRequestsHeaders) listSessionMessagesRes()     {}
-func (*TooManyRequestsHeaders) listSessionsRes()            {}
-func (*TooManyRequestsHeaders) mintTokenRes()               {}
-func (*TooManyRequestsHeaders) reopenSessionRes()           {}
-func (*TooManyRequestsHeaders) uploadSessionAttachmentRes() {}
+func (*TooManyRequestsHeaders) closeSessionRes()        {}
+func (*TooManyRequestsHeaders) createSessionRes()       {}
+func (*TooManyRequestsHeaders) getSessionFullRes()      {}
+func (*TooManyRequestsHeaders) listSessionMessagesRes() {}
+func (*TooManyRequestsHeaders) listSessionsRes()        {}
+func (*TooManyRequestsHeaders) mintTokenRes()           {}
+func (*TooManyRequestsHeaders) reopenSessionRes()       {}
 
 // UnauthorizedHeaders wraps Error with response headers.
 type UnauthorizedHeaders struct {
@@ -2675,39 +5835,312 @@ func (s *UnauthorizedHeaders) SetResponse(val Error) {
 	s.Response = val
 }
 
-func (*UnauthorizedHeaders) closeSessionRes()            {}
-func (*UnauthorizedHeaders) createSessionRes()           {}
-func (*UnauthorizedHeaders) getSessionFullRes()          {}
-func (*UnauthorizedHeaders) listSessionMessagesRes()     {}
-func (*UnauthorizedHeaders) listSessionsRes()            {}
-func (*UnauthorizedHeaders) mintTokenRes()               {}
-func (*UnauthorizedHeaders) reopenSessionRes()           {}
-func (*UnauthorizedHeaders) uploadSessionAttachmentRes() {}
+func (*UnauthorizedHeaders) closeSessionRes()        {}
+func (*UnauthorizedHeaders) createSessionRes()       {}
+func (*UnauthorizedHeaders) getSessionFullRes()      {}
+func (*UnauthorizedHeaders) listSessionMessagesRes() {}
+func (*UnauthorizedHeaders) listSessionsRes()        {}
+func (*UnauthorizedHeaders) mintTokenRes()           {}
+func (*UnauthorizedHeaders) reopenSessionRes()       {}
 
-type UploadSessionAttachmentReq struct {
-	// The file to upload. Accepted categories map to `mediaType` in the response: images, video, audio,
-	// and common document formats (pdf, doc/docx, xls/xlsx, csv, txt, zip). Exact allow-list and max size
-	// are server-enforced and not fixed by this spec.
+type UploadAttachmentBadRequest UploadError
+
+func (*UploadAttachmentBadRequest) uploadAttachmentRes() {}
+
+type UploadAttachmentInternalServerError UploadError
+
+func (*UploadAttachmentInternalServerError) uploadAttachmentRes() {}
+
+type UploadAttachmentOK struct {
+	Success bool           `json:"success"`
+	Data    UploadResponse `json:"data"`
+}
+
+// GetSuccess returns the value of Success.
+func (s *UploadAttachmentOK) GetSuccess() bool {
+	return s.Success
+}
+
+// GetData returns the value of Data.
+func (s *UploadAttachmentOK) GetData() UploadResponse {
+	return s.Data
+}
+
+// SetSuccess sets the value of Success.
+func (s *UploadAttachmentOK) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetData sets the value of Data.
+func (s *UploadAttachmentOK) SetData(val UploadResponse) {
+	s.Data = val
+}
+
+func (*UploadAttachmentOK) uploadAttachmentRes() {}
+
+type UploadAttachmentReq struct {
+	// The file to upload. See the allow-list above.
 	File string `json:"file"`
 }
 
 // GetFile returns the value of File.
-func (s *UploadSessionAttachmentReq) GetFile() string {
+func (s *UploadAttachmentReq) GetFile() string {
 	return s.File
 }
 
 // SetFile sets the value of File.
-func (s *UploadSessionAttachmentReq) SetFile(val string) {
+func (s *UploadAttachmentReq) SetFile(val string) {
 	s.File = val
 }
 
-type UploadSessionAttachmentRequestEntityTooLarge Error
+type UploadAttachmentUnauthorized UploadError
 
-func (*UploadSessionAttachmentRequestEntityTooLarge) uploadSessionAttachmentRes() {}
+func (*UploadAttachmentUnauthorized) uploadAttachmentRes() {}
 
-type UploadSessionAttachmentUnsupportedMediaType Error
+// Ref: #/components/schemas/UploadError
+type UploadError struct {
+	Success bool               `json:"success"`
+	Error   UploadErrorPayload `json:"error"`
+}
 
-func (*UploadSessionAttachmentUnsupportedMediaType) uploadSessionAttachmentRes() {}
+// GetSuccess returns the value of Success.
+func (s *UploadError) GetSuccess() bool {
+	return s.Success
+}
+
+// GetError returns the value of Error.
+func (s *UploadError) GetError() UploadErrorPayload {
+	return s.Error
+}
+
+// SetSuccess sets the value of Success.
+func (s *UploadError) SetSuccess(val bool) {
+	s.Success = val
+}
+
+// SetError sets the value of Error.
+func (s *UploadError) SetError(val UploadErrorPayload) {
+	s.Error = val
+}
+
+// `POST /upload`'s hand-written error shape (`upload.routes.ts:88-91,109-111,118-120,127-130,197-203`)
+// — not the shared `ErrorPayload`. Only four codes are ever emitted, and `retryable` is never
+// present.
+// Ref: #/components/schemas/UploadErrorPayload
+type UploadErrorPayload struct {
+	Code    UploadErrorPayloadCode `json:"code"`
+	Message string                 `json:"message"`
+}
+
+// GetCode returns the value of Code.
+func (s *UploadErrorPayload) GetCode() UploadErrorPayloadCode {
+	return s.Code
+}
+
+// GetMessage returns the value of Message.
+func (s *UploadErrorPayload) GetMessage() string {
+	return s.Message
+}
+
+// SetCode sets the value of Code.
+func (s *UploadErrorPayload) SetCode(val UploadErrorPayloadCode) {
+	s.Code = val
+}
+
+// SetMessage sets the value of Message.
+func (s *UploadErrorPayload) SetMessage(val string) {
+	s.Message = val
+}
+
+type UploadErrorPayloadCode string
+
+const (
+	UploadErrorPayloadCodeUNAUTHORIZED    UploadErrorPayloadCode = "UNAUTHORIZED"
+	UploadErrorPayloadCodeNOFILE          UploadErrorPayloadCode = "NO_FILE"
+	UploadErrorPayloadCodeVALIDATIONERROR UploadErrorPayloadCode = "VALIDATION_ERROR"
+	UploadErrorPayloadCodeUPLOADERROR     UploadErrorPayloadCode = "UPLOAD_ERROR"
+)
+
+// AllValues returns all UploadErrorPayloadCode values.
+func (UploadErrorPayloadCode) AllValues() []UploadErrorPayloadCode {
+	return []UploadErrorPayloadCode{
+		UploadErrorPayloadCodeUNAUTHORIZED,
+		UploadErrorPayloadCodeNOFILE,
+		UploadErrorPayloadCodeVALIDATIONERROR,
+		UploadErrorPayloadCodeUPLOADERROR,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s UploadErrorPayloadCode) MarshalText() ([]byte, error) {
+	switch s {
+	case UploadErrorPayloadCodeUNAUTHORIZED:
+		return []byte(s), nil
+	case UploadErrorPayloadCodeNOFILE:
+		return []byte(s), nil
+	case UploadErrorPayloadCodeVALIDATIONERROR:
+		return []byte(s), nil
+	case UploadErrorPayloadCodeUPLOADERROR:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *UploadErrorPayloadCode) UnmarshalText(data []byte) error {
+	switch UploadErrorPayloadCode(data) {
+	case UploadErrorPayloadCodeUNAUTHORIZED:
+		*s = UploadErrorPayloadCodeUNAUTHORIZED
+		return nil
+	case UploadErrorPayloadCodeNOFILE:
+		*s = UploadErrorPayloadCodeNOFILE
+		return nil
+	case UploadErrorPayloadCodeVALIDATIONERROR:
+		*s = UploadErrorPayloadCodeVALIDATIONERROR
+		return nil
+	case UploadErrorPayloadCodeUPLOADERROR:
+		*s = UploadErrorPayloadCodeUPLOADERROR
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
+
+// Actual `data` payload of `POST /upload`'s `200` response (`upload.routes.ts:166-175`). Distinct from
+// the idealized `Attachment` schema above — most notably `mediaType` is lowercase-plural here, not
+// the `IMAGE`/`VIDEO`/`AUDIO`/`DOCUMENT` enum `Attachment.mediaType` documents. See `MediaType`'s
+// description for the adapter's mapping between the two.
+// Ref: #/components/schemas/UploadResponse
+type UploadResponse struct {
+	URL      url.URL `json:"url"`
+	FileName string  `json:"fileName"`
+	MimeType string  `json:"mimeType"`
+	// Size in bytes.
+	Size int `json:"size"`
+	// The S3 storage folder the file was categorized into (`s3-client.ts:38-44`), echoed back verbatim.
+	// Lowercase, plural — see this schema's top-level description.
+	MediaType UploadResponseMediaType `json:"mediaType"`
+	// Echoes the request's `chatSessionId` query parameter, or absent if none was supplied.
+	ChatSessionID OptNilString `json:"chatSessionId"`
+}
+
+// GetURL returns the value of URL.
+func (s *UploadResponse) GetURL() url.URL {
+	return s.URL
+}
+
+// GetFileName returns the value of FileName.
+func (s *UploadResponse) GetFileName() string {
+	return s.FileName
+}
+
+// GetMimeType returns the value of MimeType.
+func (s *UploadResponse) GetMimeType() string {
+	return s.MimeType
+}
+
+// GetSize returns the value of Size.
+func (s *UploadResponse) GetSize() int {
+	return s.Size
+}
+
+// GetMediaType returns the value of MediaType.
+func (s *UploadResponse) GetMediaType() UploadResponseMediaType {
+	return s.MediaType
+}
+
+// GetChatSessionID returns the value of ChatSessionID.
+func (s *UploadResponse) GetChatSessionID() OptNilString {
+	return s.ChatSessionID
+}
+
+// SetURL sets the value of URL.
+func (s *UploadResponse) SetURL(val url.URL) {
+	s.URL = val
+}
+
+// SetFileName sets the value of FileName.
+func (s *UploadResponse) SetFileName(val string) {
+	s.FileName = val
+}
+
+// SetMimeType sets the value of MimeType.
+func (s *UploadResponse) SetMimeType(val string) {
+	s.MimeType = val
+}
+
+// SetSize sets the value of Size.
+func (s *UploadResponse) SetSize(val int) {
+	s.Size = val
+}
+
+// SetMediaType sets the value of MediaType.
+func (s *UploadResponse) SetMediaType(val UploadResponseMediaType) {
+	s.MediaType = val
+}
+
+// SetChatSessionID sets the value of ChatSessionID.
+func (s *UploadResponse) SetChatSessionID(val OptNilString) {
+	s.ChatSessionID = val
+}
+
+// The S3 storage folder the file was categorized into (`s3-client.ts:38-44`), echoed back verbatim.
+// Lowercase, plural — see this schema's top-level description.
+type UploadResponseMediaType string
+
+const (
+	UploadResponseMediaTypeImages    UploadResponseMediaType = "images"
+	UploadResponseMediaTypeVideos    UploadResponseMediaType = "videos"
+	UploadResponseMediaTypeAudio     UploadResponseMediaType = "audio"
+	UploadResponseMediaTypeDocuments UploadResponseMediaType = "documents"
+)
+
+// AllValues returns all UploadResponseMediaType values.
+func (UploadResponseMediaType) AllValues() []UploadResponseMediaType {
+	return []UploadResponseMediaType{
+		UploadResponseMediaTypeImages,
+		UploadResponseMediaTypeVideos,
+		UploadResponseMediaTypeAudio,
+		UploadResponseMediaTypeDocuments,
+	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s UploadResponseMediaType) MarshalText() ([]byte, error) {
+	switch s {
+	case UploadResponseMediaTypeImages:
+		return []byte(s), nil
+	case UploadResponseMediaTypeVideos:
+		return []byte(s), nil
+	case UploadResponseMediaTypeAudio:
+		return []byte(s), nil
+	case UploadResponseMediaTypeDocuments:
+		return []byte(s), nil
+	default:
+		return nil, errors.Errorf("invalid value: %q", s)
+	}
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *UploadResponseMediaType) UnmarshalText(data []byte) error {
+	switch UploadResponseMediaType(data) {
+	case UploadResponseMediaTypeImages:
+		*s = UploadResponseMediaTypeImages
+		return nil
+	case UploadResponseMediaTypeVideos:
+		*s = UploadResponseMediaTypeVideos
+		return nil
+	case UploadResponseMediaTypeAudio:
+		*s = UploadResponseMediaTypeAudio
+		return nil
+	case UploadResponseMediaTypeDocuments:
+		*s = UploadResponseMediaTypeDocuments
+		return nil
+	default:
+		return errors.Errorf("invalid value: %q", data)
+	}
+}
 
 // Ref: #/components/schemas/WebhookMessageCreatedEvent
 type WebhookMessageCreatedEvent struct {

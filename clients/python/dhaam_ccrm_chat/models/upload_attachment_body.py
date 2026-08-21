@@ -5,16 +5,14 @@ from attrs import define as _attrs_define
 
 from .. import types
 
-T = TypeVar("T", bound="UploadSessionAttachmentBody")
+T = TypeVar("T", bound="UploadAttachmentBody")
 
 
 @_attrs_define
-class UploadSessionAttachmentBody:
+class UploadAttachmentBody:
     """
     Attributes:
-        file (str): The file to upload. Accepted categories map to `mediaType` in the response: images, video, audio,
-            and common document formats (pdf, doc/docx, xls/xlsx, csv, txt, zip). Exact allow-list and max size are server-
-            enforced and not fixed by this spec.
+        file (str): The file to upload. See the allow-list above.
     """
 
     file: str
@@ -44,8 +42,8 @@ class UploadSessionAttachmentBody:
         d = dict(src_dict)
         file = d.pop("file")
 
-        upload_session_attachment_body = cls(
+        upload_attachment_body = cls(
             file=file,
         )
 
-        return upload_session_attachment_body
+        return upload_attachment_body

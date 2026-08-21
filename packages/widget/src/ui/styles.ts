@@ -384,6 +384,32 @@ button {
 .dh-reconnect[hidden] { display: none; }
 .dh-reconnect[disabled] { opacity: 0.45; cursor: not-allowed; }
 
+/* ── Human hand-off ───────────────────────────────────────────────────── */
+
+/*
+ * Sits on the seam between the transcript and the composer. flex: none for
+ * the same reason .dh-composer has it: the log is the only element in the
+ * panel column allowed to absorb the spare height, and a growable strip here
+ * would take it from the conversation.
+ */
+.dh-handoff {
+  flex: none;
+  align-self: stretch;
+  margin: 0 calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
+  border-radius: 999px;
+  border: 1px solid var(--dh-accent);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dh-accent);
+  background: transparent;
+}
+.dh-handoff:hover { background: var(--dh-surface-sunken); }
+/* An explicit rule, not the UA default: display here is set by this sheet,
+ * and a stylesheet declaration beats the UA's [hidden] rule. */
+.dh-handoff[hidden] { display: none; }
+.dh-handoff[disabled] { opacity: 0.45; cursor: not-allowed; }
+
 /* ── Message list ─────────────────────────────────────────────────────── */
 
 .dh-log {
@@ -424,6 +450,16 @@ button {
   background: var(--dh-bubble-in);
   border-bottom-left-radius: 4px;
 }
+
+/* Who is speaking. Only the first bubble of a run carries one, so this is a
+   heading for the run rather than a label repeated on every line. */
+.dh-msg-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dh-text-muted);
+  margin-bottom: calc(var(--dh-space) * 0.5);
+}
+.dh-msg-author[hidden] { display: none; }
 .dh-msg[data-mine="true"] {
   align-self: flex-end;
   background: var(--dh-accent);

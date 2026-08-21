@@ -34,8 +34,15 @@ async function tick(): Promise<void> {
 const CUSTOMER_ID = 'participant_customer_1';
 const AGENT_ID = 'participant_agent_1';
 const PUBLISHABLE_KEY = 'dhp' + '_test_switch1';
-/** Exactly the key `createChatClient` namespaces its durable state under. */
-const SELECTED_SESSION_KEY = `chatsdk:${PUBLISHABLE_KEY}:selectedSession`;
+/**
+ * Exactly the key `createChatClient` namespaces its durable state under.
+ *
+ * Three levels, and the third is load-bearing: the publishable key identifies
+ * the TENANT, so without the local participant one browser's guest identity
+ * and its signed-in identity shared a remembered session and a send queue. See
+ * the namespace comment in create-chat-client.ts.
+ */
+const SELECTED_SESSION_KEY = `chatsdk:${PUBLISHABLE_KEY}:${CUSTOMER_ID}:selectedSession`;
 
 function sessionSnapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
   return {
@@ -202,6 +209,118 @@ function ackJoins(h: Harness, startIdNum = 60): void {
   }
 }
 
+/**
+ * Drives the wire through a `switchSession()`.
+ *
+ * `switchSession` is a TEARDOWN and a re-establish, not an in-place join (see
+ * `switchToSession` in create-chat-client.ts), so a test has to answer two
+ * things rather than one:
+ *
+ *   1. the fresh socket's `connection.ack` — `connection.hello` carries no
+ *      session id, so the server resolves the customer's most-recently-updated
+ *      ACTIVE session on its own, which for a picked CLOSED/RESOLVED session is
+ *      a DIFFERENT conversation. `resolved` is that answer;
+ *   2. the one explicit `session.join` that corrects it, and the
+ *      `session.updated` snapshot the server volunteers after acking it.
+ *
+ * Deliberately driven step by step rather than in one call, so a test can stop
+ * the wire at any point and release a parked history read into the gap.
+ */
+interface SwitchWireOptions {
+  /** What the server resolves for the fresh hello. Defaults to session_1. */
+  readonly resolved?: SessionSnapshot;
+  /** Refuse `session.join` for these ids instead of acking them. */
+  readonly refuse?: readonly string[];
+  /** Ack the join but withhold the `session.updated` snapshot. */
+  readonly withhold?: readonly string[];
+  /** The snapshot pushed for an acked join. */
+  readonly snapshotFor?: (sessionId: string) => SessionSnapshot;
+}
+
+function switchWire(h: Harness, options: SwitchWireOptions = {}) {
+  let idNum = 300;
+  const handshaked = new Set<StubWebSocket>();
+  const answered = new Set<string>();
+  const announced = new Set<string>();
+  const joined: string[] = [];
+  const refuse = new Set(options.refuse ?? []);
+  const withhold = new Set(options.withhold ?? []);
+  const snapshotFor = options.snapshotFor ?? ((id: string): SessionSnapshot => sessionSnapshot({ sessionId: id }));
+
+  /** Completes the handshake on any socket the client opened but nobody drove. */
+  const handshake = async (): Promise<boolean> => {
+    let acted = false;
+    await tick();
+    for (const socket of h.sockets.sockets) {
+      if (handshaked.has(socket)) continue;
+      handshaked.add(socket);
+      socket.open();
+      await tick();
+      socket.emitJson(ackJson(0, options.resolved ?? sessionSnapshot(), (idNum += 1)));
+      await tick();
+      acted = true;
+    }
+    return acted;
+  };
+
+  /** Acks (or refuses) every unanswered `session.join`, then pushes its snapshot. */
+  const answerJoins = async (): Promise<boolean> => {
+    let acted = false;
+    await tick();
+    for (const socket of h.sockets.sockets) {
+      for (const frame of framesOfType(socket, 'session.join')) {
+        if (answered.has(frame.id)) continue;
+        answered.add(frame.id);
+        acted = true;
+        const sessionId = String(frame.d.sessionId);
+        if (refuse.has(sessionId)) {
+          socket.emitJson(
+            rejectedAckJson(frame.id, (idNum += 1), {
+              code: 'SESSION_NOT_FOUND',
+              message: 'not yours',
+              retryable: false,
+            }),
+          );
+          await tick();
+          continue;
+        }
+        socket.emitJson(genericAckJson(frame.id, (idNum += 1)));
+        joined.push(sessionId);
+        await tick();
+        if (!withhold.has(sessionId) && !announced.has(sessionId)) {
+          announced.add(sessionId);
+          socket.emitJson(sessionUpdatedJson(snapshotFor(sessionId), (idNum += 1)));
+          await tick();
+        }
+      }
+    }
+    return acted;
+  };
+
+  /** Pushes a withheld snapshot by hand. */
+  const announce = async (sessionId: string): Promise<void> => {
+    announced.add(sessionId);
+    h.sockets.last.emitJson(sessionUpdatedJson(snapshotFor(sessionId), (idNum += 1)));
+    await tick();
+  };
+
+  return {
+    handshake,
+    answerJoins,
+    announce,
+    joined,
+    /** Runs handshakes and joins until the wire goes quiet. */
+    settle: async (max = 6): Promise<void> => {
+      for (let i = 0; i < max; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const acted = (await handshake()) || (await answerJoins());
+        if (!acted) return;
+      }
+      await tick();
+    },
+  };
+}
+
 async function connected(h: Harness, snapshot = sessionSnapshot()): Promise<ReturnType<typeof createChatClient>> {
   const client = createChatClient(h.config);
   const promise = client.connect();
@@ -255,12 +374,9 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
 
     const pastSessions = client.getState().pastSessions;
 
+    const wire = switchWire(h, { snapshotFor: (id) => sessionSnapshot({ sessionId: id, status: 'CLOSED' }) });
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2', status: 'CLOSED' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
 
@@ -286,12 +402,9 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     const client = await connected(h);
     await tick();
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
 
     const calls = h.history.callsFor('session_2');
@@ -316,42 +429,67 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
       if (foreign.length > 0) torn.push(`${state.session?.id ?? 'null'}<-${foreign[0]?.sessionId ?? '?'}`);
     });
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
 
     expect(torn).toEqual([]);
   });
 
-  it('abandons the outgoing session\'s queued sends BEFORE the session.join frame is written', async () => {
+  it('PRESERVES the outgoing session\'s queued sends, and never puts them on a wire joined elsewhere', async () => {
+    // This reverses what this file used to assert, deliberately.
+    //
+    // `switchSession` used to `abandonSession(previous)`, because
+    // `message.send` carried no `sessionId` and an entry that outlived its
+    // session would be filed under whichever session was joined next. That
+    // hazard is now closed twice over and independently: every entry is
+    // stamped with the session it was COMPOSED in
+    // (`MessageSendPayload.sessionId`), and the queue's `joinedSession`
+    // scoping refuses to pump any session but the joined one — so the frame
+    // cannot be misdelivered even against a server that ignores the field.
+    //
+    // What abandoning still cost was real and unrecoverable: it failed the
+    // customer's own unsent words with `sessionClosed` for a session that had
+    // not closed, and `retryMessage` then REFUSES them for belonging to a
+    // session that is no longer current. There is no public call that gets
+    // that message back. Preserved, it waits — never on the wire, never lost
+    // — and drains the moment its session is joined again.
     const h = harness();
     const client = await connected(h);
 
-    let joinFramesAtFailure: number | null = null;
-    client.on('sendFailed', () => {
-      joinFramesAtFailure = framesOfType(h.sockets.last, 'session.join').length;
-    });
+    const failures: unknown[] = [];
+    client.on('sendFailed', (failure) => failures.push(failure));
 
     // Never acked, so it is still queued when the switch begins.
     await client.sendMessage('about the old conversation');
     await tick();
 
+    const wire = switchWire(h, { resolved: sessionSnapshot({ sessionId: 'session_1' }) });
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
+    await tick();
 
-    // `message.send` carries no sessionId on the wire, so an entry that
-    // outlived its session would be filed under the session just joined.
-    expect(joinFramesAtFailure).toBe(0);
+    // Not failed, not deleted — the user's words survive the switch.
+    expect(failures).toEqual([]);
+
+    // And not written into session_2 either: the only `message.send` on the
+    // new connection would be a cross-conversation delivery.
+    const sends = framesOfType(h.sockets.last, 'message.send');
+    expect(sends.filter((frame) => frame.d.sessionId === 'session_2')).toHaveLength(0);
+
+    // It goes out only when its own session is joined again.
+    const back = switchWire(h, { resolved: sessionSnapshot({ sessionId: 'session_2' }) });
+    const returning = client.switchSession('session_1');
+    await back.settle();
+    await returning;
+    await tick();
+
+    const delivered = framesOfType(h.sockets.last, 'message.send');
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.d.sessionId).toBe('session_1');
   });
 
   it('forgets the resume anchor, so the hello after a switch omits resumeFrom', async () => {
@@ -361,12 +499,9 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     h.sockets.last.emitJson(messageNewJson(50, 7));
     await tick();
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
 
@@ -389,19 +524,23 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     h.history.pages.set('session_2', { messages: [historyMessage('hist_a', 'session_2', 1)], hasMore: false });
     const client = await connected(h);
 
+    const wire = switchWire(h, { withhold: ['session_2'] });
+
     let settled = false;
     const switching = client.switchSession('session_2').then(() => {
       settled = true;
     });
 
     await tick();
-    expect(settled).toBe(false);
-    ackJoins(h);
-    await tick();
-    expect(settled).toBe(false); // the ack is EmptyAckData — it proves nothing about state
+    expect(settled).toBe(false); // the socket has not even handshaked yet
 
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.handshake();
+    expect(settled).toBe(false); // ...and the ack names whatever the SERVER resolved
+
+    await wire.answerJoins();
+    expect(settled).toBe(false); // the join ack is EmptyAckData — it proves nothing about state
+
+    await wire.announce('session_2');
     await switching;
 
     expect(settled).toBe(true);
@@ -414,16 +553,12 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     h.history.pages.set('session_3', { messages: [historyMessage('from_3', 'session_3', 1)], hasMore: false });
     const client = await connected(h);
 
+    const wire = switchWire(h);
+    // The loser's own teardown is aborted by the winner's, so it resolves
+    // quietly rather than reporting a failure nobody asked about.
     const second = client.switchSession('session_2');
     const third = client.switchSession('session_3');
-    await tick();
-    ackJoins(h);
-    await tick();
-
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_3' }), 71));
-    await tick();
+    await wire.settle();
 
     await second;
     await third;
@@ -441,13 +576,9 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     const errors: unknown[] = [];
     client.on('error', (error) => errors.push(error));
 
+    const wire = switchWire(h, { refuse: ['session_not_owned'] });
     const switching = client.switchSession('session_not_owned');
-    await tick();
-
-    const join = framesOfType(h.sockets.last, 'session.join')[0];
-    h.sockets.last.emitJson(
-      rejectedAckJson(join?.id ?? '', 71, { code: 'SESSION_NOT_FOUND', message: 'not yours', retryable: false }),
-    );
+    await wire.settle();
 
     await expect(switching).rejects.toThrow();
     await tick();
@@ -458,41 +589,73 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     expect(client.getState().session?.id).toBe('session_1');
   });
 
-  it('rejects when the socket is closed, instead of writing nothing and resolving', async () => {
+  it('does not silently resolve while the connection it needs is still down', async () => {
+    // The teardown rebuild changed what a dead socket MEANS here. The
+    // in-place version wrote `session.join` onto whatever socket it had and
+    // failed outright when that socket was closed; this one opens its own
+    // connection, so a dead socket is something it recovers from rather than
+    // something it reports. What must not change is the half this test was
+    // written for: it must never resolve having accomplished nothing.
     const h = harness();
     const client = await connected(h);
 
     h.sockets.last.emitClose({ code: CLOSE_CODE.ABNORMAL, reason: '', wasClean: false });
     await tick();
 
-    await expect(client.switchSession('session_2')).rejects.toThrow();
+    let settled: 'resolved' | 'rejected' | null = null;
+    const switching = client.switchSession('session_2').then(
+      () => {
+        settled = 'resolved';
+      },
+      () => {
+        settled = 'rejected';
+      },
+    );
+
+    await tick();
+    h.timers.advance(60_000);
+    await tick();
+    expect(settled).toBeNull();
+    // The customer is still looking at the conversation they have not left.
+    expect(client.getState().session?.id).toBe('session_1');
+
+    // An explicit disconnect aborts the connect the switch is waiting on, and
+    // THAT is reported rather than swallowed.
+    client.disconnect();
+    await switching;
+    expect(settled).toBe('rejected');
   });
 
-  it('puts the transcript back when the join is refused, rather than leaving a blank pane', async () => {
+  it('never takes the transcript away in the first place when the join is refused', async () => {
     const h = harness();
     h.history.pages.set('session_1', { messages: [historyMessage('mine', 'session_1', 1)], hasMore: false });
     const client = await connected(h);
     await tick();
     expect(client.getState().messages.map((m) => m.id)).toEqual(['mine']);
 
+    const wire = switchWire(h, { refuse: ['session_not_owned'] });
     const switching = client.switchSession('session_not_owned');
+
+    // Mid-switch, before the wire has answered anything: the outgoing session
+    // is still whole. The old design reset here and had to ROLL BACK on
+    // failure — a rollback is a second write, and every probe that beat the
+    // earlier rounds landed in the gap between the two.
     await tick();
-    const join = framesOfType(h.sockets.last, 'session.join')[0];
-    h.sockets.last.emitJson(
-      rejectedAckJson(join?.id ?? '', 71, { code: 'SESSION_NOT_FOUND', message: 'not yours', retryable: false }),
-    );
+    expect(client.getState().session?.id).toBe('session_1');
+    expect(client.getState().messages.map((m) => m.id)).toEqual(['mine']);
+
+    await wire.settle();
     await expect(switching).rejects.toThrow();
     await tick();
 
-    // The reset has to happen BEFORE the join (the snapshot can land in the
-    // same tick as the ack), so a refusal must undo it — otherwise the
-    // customer is left looking at nothing for the session they never left.
     expect(client.getState().session?.id).toBe('session_1');
     expect(client.getState().messages.map((m) => m.id)).toEqual(['mine']);
     expect(client.getState().lastError?.code).toBe('SESSION_NOT_FOUND');
+    // No recovery read was needed, because nothing was destroyed.
+    expect(h.history.callsFor('session_1')).toHaveLength(1);
   });
 
-  it('puts the transcript back when the socket was not open', async () => {
+  it('keeps the transcript on screen for the whole of a switch that never completes', async () => {
     const h = harness();
     h.history.pages.set('session_1', { messages: [historyMessage('mine', 'session_1', 1)], hasMore: false });
     const client = await connected(h);
@@ -501,9 +664,20 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     h.sockets.last.emitClose({ code: CLOSE_CODE.ABNORMAL, reason: '', wasClean: false });
     await tick();
 
-    await expect(client.switchSession('session_2')).rejects.toThrow();
+    const switching = client.switchSession('session_2').catch(() => undefined);
+    await tick();
+    h.timers.advance(60_000);
     await tick();
 
+    // Never a blank pane, at any point — not while it is in flight...
+    expect(client.getState().messages.map((m) => m.id)).toEqual(['mine']);
+
+    client.disconnect();
+    await switching;
+    await tick();
+
+    // ...and not after it gives up.
+    expect(client.getState().session?.id).toBe('session_1');
     expect(client.getState().messages.map((m) => m.id)).toEqual(['mine']);
   });
 
@@ -511,18 +685,22 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     const h = harness();
     const client = await connected(h);
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
     await tick();
 
     // Nulling `session` during the window would make this reject with
-    // NoActiveSessionError and blank a binding's header.
+    // NoActiveSessionError and blank a binding's header. The teardown rebuild
+    // strengthens this rather than weakening it: the outgoing session is not
+    // merely non-null, it is UNCHANGED — header, transcript and all — until
+    // the incoming one replaces it in a single write.
     expect(client.getState().session?.id).toBe('session_1');
     await expect(client.sendMessage('typed mid-switch')).resolves.toBeUndefined();
+    // And the message is addressed to the conversation it was composed in.
+    const composed = client.getState().messages;
+    expect(composed[composed.length - 1]?.sessionId).toBe('session_1');
 
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
   });
 
@@ -533,12 +711,9 @@ describe('bug 1: switchSession replaces the session rather than only sending a f
     const changes: unknown[] = [];
     client.on('statusChange', (payload) => changes.push(payload));
 
+    const wire = switchWire(h, { snapshotFor: (id) => sessionSnapshot({ sessionId: id, status: 'CLOSED' }) });
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2', status: 'CLOSED' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
 
@@ -662,12 +837,9 @@ describe('bug 2: the selected session is durable across a reload', () => {
     const h = harness();
     const client = await connected(h);
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
 
@@ -708,12 +880,9 @@ describe('bug 2: the selected session is durable across a reload', () => {
     const h = harness();
     const client = await connected(h);
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
     await expect(h.storage.get(SELECTED_SESSION_KEY)).resolves.toBe('session_2');
@@ -735,12 +904,9 @@ describe('bug 2: the selected session is durable across a reload', () => {
     const h = harness();
     const client = await connected(h);
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
-    await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
     await expect(h.storage.get(SELECTED_SESSION_KEY)).resolves.toBe('session_2');
@@ -852,18 +1018,16 @@ describe('a page-one read for the outgoing session cannot survive a switch', () 
     expect(h.history.callsFor('session_1')).toHaveLength(1);
     expect(client.getState().pagination.initialLoaded).toBe(false); // still parked
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
     await tick();
 
-    // The old session's page answers DURING the join round trip — after the
-    // per-session reset, before `session.updated` moves `ChatState.session`.
+    // The old session's page answers DURING the switch — after it began,
+    // before the incoming session's snapshot has landed.
     h.history.release('session_1');
     await tick();
 
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
 
@@ -888,14 +1052,12 @@ describe('a page-one read for the outgoing session cannot survive a switch', () 
 
     const client = await connected(h);
 
+    const wire = switchWire(h);
     const switching = client.switchSession('session_2');
     await tick();
     h.history.release('session_1');
     await tick();
-    ackJoins(h);
-    await tick();
-    h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
-    await tick();
+    await wire.settle();
     await switching;
     await tick();
 
@@ -914,24 +1076,35 @@ describe('a page-one read for the outgoing session cannot survive a switch', () 
     h.history.pages.set('session_2', { messages: [historyMessage('new_1', 'session_2', 1)], hasMore: true });
 
     const client = await connected(h);
+    expect(h.history.callsFor('session_1')).toHaveLength(1); // parked
 
-    const switching = client.switchSession('session_2');
-    await tick();
-    h.history.release('session_1');
+    // The raw frame API, NOT switchSession: this replaces the session with no
+    // per-session reset and no switch generation bump, so the parked read is
+    // stale purely because the session id moved underneath it. Nothing else
+    // will clear `loadingMore` on its behalf.
+    client.joinSession('session_2');
     await tick();
     ackJoins(h);
     await tick();
     h.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 70));
     await tick();
-    await switching;
+    expect(client.getState().session?.id).toBe('session_2');
+
+    h.history.release('session_1');
     await tick();
 
-    // A discarded read must not leave `loadingMore` latched — that would jam
-    // the reentrancy guard and make every later page request a silent no-op.
+    // The stale page belongs to a conversation nobody is reading.
+    expect(client.getState().messages).toHaveLength(0);
+    // ...but the read it discarded must not leave `loadingMore` latched, or
+    // the reentrancy guard jams and every later page request is a silent
+    // no-op — the transcript would never appear at all.
     expect(client.getState().pagination.loadingMore).toBe(false);
+
     await client.loadOlderMessages();
     await tick();
-    expect(h.history.callsFor('session_2')).toHaveLength(2);
+
+    expect(h.history.callsFor('session_2')).toHaveLength(1);
+    expect(client.getState().messages.map((m) => m.id)).toEqual(['new_1']);
   });
 });
 
@@ -1033,5 +1206,308 @@ describe('the session the connection established is remembered too', () => {
     // would override that resolution on the next reload and drop the customer
     // back into a conversation that cannot be continued.
     await expect(h.storage.get(SELECTED_SESSION_KEY)).resolves.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ROOT A — during a switch there was no representation of "the session this
+// client is now committed to".
+//
+// `performSwitch` bumps the epoch, resets per-session state, then awaits the
+// join round trip. For that whole window `ChatState.session` STILL NAMES THE
+// OUTGOING SESSION (deliberately — nulling it would make a concurrent
+// `sendMessage` throw). So a history read ISSUED inside the window resolved
+// its target from `ChatState.session?.id` and got the session being LEFT, and
+// `#isStale` then compared that target against the same stale value and
+// answered "fresh". The epoch half cannot save it either: the epoch is bumped
+// once, up front, so a read issued after the bump samples the already-current
+// value.
+//
+// The trigger is ordinary public API: the widget wires
+// `onLoadOlder: () => client.loadOlderMessages()` to its scroll handler, and
+// the switch's own `resetPerSessionState()` empties `messages` — which is
+// exactly the list mutation a scroll handler reacts to.
+// ---------------------------------------------------------------------------
+
+describe('a history read issued DURING the switch window belongs to the INCOMING session', () => {
+  it('pages the incoming session when the read answers before the join ack', async () => {
+    const h = harness();
+    h.history.pages.set('session_1', { messages: [historyMessage('old_1', 'session_1', 1)], hasMore: true });
+    h.history.pages.set('session_2', { messages: [historyMessage('new_1', 'session_2', 1)], hasMore: false });
+
+    const client = await connected(h);
+    await tick();
+    expect(client.getState().messages.map((m) => m.id)).toEqual(['old_1']);
+    expect(h.history.callsFor('session_1')).toHaveLength(1);
+
+    const wire = switchWire(h);
+    const switching = client.switchSession('session_2');
+    await tick();
+
+    // Mid-window, through the public surface the widget itself wires.
+    // `ChatState.session` still names session_1 and still holds session_1's
+    // rows, so this read is unambiguously session_1's — and is discarded on
+    // the switch generation rather than being allowed to latch `initialLoaded`
+    // under the incoming session.
+    await client.loadOlderMessages();
+    await tick();
+
+    await wire.settle();
+    await switching;
+    await tick();
+
+    const state = client.getState();
+    expect(state.session?.id).toBe('session_2');
+    // Two reads for the session being LEFT at most — the connect-time seed and
+    // the mid-switch scroll — and NEITHER of them may survive into session_2.
+    expect(h.history.callsFor('session_2')).toHaveLength(1);
+    expect(state.messages.map((m) => m.id)).toEqual(['new_1']);
+    expect(state.messages.every((m) => m.sessionId === 'session_2')).toBe(true);
+    expect(state.pagination.loadingMore).toBe(false);
+    expect(state.pagination.initialLoaded).toBe(true);
+  });
+
+  it('pages the incoming session when the read answers between the ack and session.updated', async () => {
+    const h = harness();
+    h.history.pages.set('session_1', { messages: [historyMessage('old_1', 'session_1', 1)], hasMore: true });
+    h.history.pages.set('session_2', { messages: [historyMessage('new_1', 'session_2', 1)], hasMore: false });
+
+    const client = await connected(h);
+    await tick();
+
+    // Both parked, so the read is held whichever session it went to — the
+    // assertion cannot be smuggled in by the parking itself.
+    h.history.held.add('session_1');
+    h.history.held.add('session_2');
+
+    const wire = switchWire(h, { withhold: ['session_2'] });
+    const switching = client.switchSession('session_2');
+    await tick();
+    void client.loadOlderMessages();
+    await tick();
+
+    await wire.handshake();
+    await wire.answerJoins();
+
+    // The gap the ack does NOT close: `session.join`'s ack is EmptyAckData, so
+    // `ChatState.session` still names session_1 right here — together with
+    // session_1's transcript, which is the point.
+    expect(client.getState().session?.id).toBe('session_1');
+    h.history.release('session_1');
+    h.history.release('session_2');
+    await tick();
+
+    await wire.announce('session_2');
+    await switching;
+    await tick();
+
+    const state = client.getState();
+    expect(state.session?.id).toBe('session_2');
+    expect(state.messages.map((m) => m.id)).toEqual(['new_1']);
+    expect(state.pagination.loadingMore).toBe(false);
+    expect(state.pagination.initialLoaded).toBe(true);
+  });
+
+  it('still ends up with the incoming transcript when the read answers after the seed started', async () => {
+    const h = harness();
+    h.history.pages.set('session_1', { messages: [historyMessage('old_1', 'session_1', 1)], hasMore: true });
+    h.history.pages.set('session_2', { messages: [historyMessage('new_1', 'session_2', 1)], hasMore: false });
+
+    const client = await connected(h);
+    await tick();
+
+    h.history.held.add('session_1');
+    h.history.held.add('session_2');
+
+    const wire = switchWire(h);
+    const switching = client.switchSession('session_2');
+    await tick();
+    void client.loadOlderMessages();
+    await tick();
+
+    await wire.settle(); // the seed for session_2 is issued in here
+
+    h.history.release('session_1');
+    await tick();
+    h.history.release('session_2');
+    await tick();
+    await switching;
+    await tick();
+
+    const state = client.getState();
+    expect(state.session?.id).toBe('session_2');
+    // Whichever read wins the `loadingMore` slot, the transcript on screen is
+    // the incoming session's — never a blank pane, never the outgoing one's.
+    expect(state.messages.map((m) => m.id)).toEqual(['new_1']);
+    expect(state.pagination.initialLoaded).toBe(true);
+    expect(state.pagination.loadingMore).toBe(false);
+  });
+
+  it('follows the LAST target through a double switch', async () => {
+    const h = harness();
+    h.history.pages.set('session_2', { messages: [historyMessage('two_1', 'session_2', 1)], hasMore: false });
+    h.history.pages.set('session_3', { messages: [historyMessage('three_1', 'session_3', 1)], hasMore: false });
+
+    const client = await connected(h);
+    await tick();
+
+    const wire = switchWire(h);
+    const first = client.switchSession('session_2').catch(() => undefined);
+    await tick();
+    const second = client.switchSession('session_3').catch(() => undefined);
+    await tick();
+
+    await client.loadOlderMessages();
+    await tick();
+
+    await wire.settle();
+    await first;
+    await second;
+    await tick();
+
+    const state = client.getState();
+    expect(state.session?.id).toBe('session_3');
+    expect(state.messages.map((m) => m.id)).toEqual(['three_1']);
+    // Never the abandoned intermediate target, never the session left behind.
+    expect(h.history.callsFor('session_2')).toHaveLength(0);
+    expect(h.history.callsFor('session_1')).toHaveLength(1);
+    expect(state.pagination.loadingMore).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ROOT B (client half) — a send is addressed by the session it was TYPED in,
+// and the queue only ever pumps the session the connection is actually joined
+// to.
+// ---------------------------------------------------------------------------
+
+describe('the send queue addresses its own session', () => {
+  it('stamps every message.send with the queue entry\'s own sessionId', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    await client.sendMessage('addressed');
+    await tick();
+
+    const sends = framesOfType(h.sockets.last, 'message.send');
+    expect(sends).toHaveLength(1);
+    expect(sends[0]?.d.sessionId).toBe('session_1');
+  });
+
+  it('does not pump a THIRD session\'s entries over a connection joined elsewhere', async () => {
+    const storage = new MemoryStorageAdapter();
+
+    // Process one: the customer types in session_3 with the socket down.
+    const h1 = harness({}, storage);
+    const client1 = await connected(h1, sessionSnapshot({ sessionId: 'session_3' }));
+    h1.sockets.last.emitClose({ code: CLOSE_CODE.ABNORMAL, reason: '', wasClean: false });
+    await tick();
+    void client1.sendMessage('about my session_3 order').catch(() => undefined);
+    await tick();
+    client1.disconnect();
+
+    // The remembered session is session_1, so nothing re-joins session_3 —
+    // `performSwitch`'s `abandonSession(previous)` never sees it either.
+    await storage.set(SELECTED_SESSION_KEY, 'session_1');
+
+    const h2 = harness({}, storage);
+    const client2 = createChatClient(h2.config);
+    const connecting = client2.connect();
+    await tick();
+    h2.sockets.last.open();
+    h2.sockets.last.emitJson(ackJson(0, sessionSnapshot({ sessionId: 'session_1' }), 90));
+    await connecting;
+    await tick();
+    await tick();
+
+    expect(client2.getState().session?.id).toBe('session_1');
+    // A frame here is cross-conversation delivery of the customer's words.
+    expect(framesOfType(h2.sockets.last, 'message.send')).toHaveLength(0);
+    // Not destroyed either — still theirs, still queued.
+    expect(client2.getState().messages.map((m) => m.content)).toContain('about my session_3 order');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COLLATERAL — the flush gate.
+// ---------------------------------------------------------------------------
+
+describe('the flush gate opens on the join decision, not on the history read', () => {
+  it('flushes once the re-join is acked, even while page one is still hanging', async () => {
+    const storage = new MemoryStorageAdapter();
+
+    const h1 = harness({}, storage);
+    const client1 = await connected(h1, sessionSnapshot({ sessionId: 'session_2' }));
+    h1.sockets.last.emitClose({ code: CLOSE_CODE.ABNORMAL, reason: '', wasClean: false });
+    await tick();
+    void client1.sendMessage('typed in session_2').catch(() => undefined);
+    await tick();
+    client1.disconnect();
+    await storage.set(SELECTED_SESSION_KEY, 'session_2');
+
+    const h2 = harness({}, storage);
+    // `packages/rest` has no deadline anywhere and `loadMore` never rejects,
+    // so a hung history endpoint is indefinite.
+    h2.history.held.add('session_2');
+
+    const client2 = createChatClient(h2.config);
+    const connecting = client2.connect();
+    await tick();
+    h2.sockets.last.open();
+    h2.sockets.last.emitJson(ackJson(0, sessionSnapshot({ sessionId: 'session_1' }), 90));
+    await connecting;
+    await tick();
+
+    ackJoins(h2, 91);
+    await tick();
+    h2.sockets.last.emitJson(sessionUpdatedJson(sessionSnapshot({ sessionId: 'session_2' }), 95));
+    await tick();
+
+    // Page one has still not answered...
+    expect(h2.history.callsFor('session_2').length).toBeGreaterThan(0);
+    expect(client2.getState().pagination.initialLoaded).toBe(false);
+    // ...but the join IS decided, so the queue must not still be stranded.
+    const sends = framesOfType(h2.sockets.last, 'message.send');
+    expect(sends).toHaveLength(1);
+    expect(sends[0]?.d.sessionId).toBe('session_2');
+  });
+
+  it('writes no message.send when the server REFUSES the re-join', async () => {
+    const storage = new MemoryStorageAdapter();
+
+    const h1 = harness({}, storage);
+    const client1 = await connected(h1, sessionSnapshot({ sessionId: 'session_2' }));
+    h1.sockets.last.emitClose({ code: CLOSE_CODE.ABNORMAL, reason: '', wasClean: false });
+    await tick();
+    void client1.sendMessage('typed in session_2').catch(() => undefined);
+    await tick();
+    client1.disconnect();
+    await storage.set(SELECTED_SESSION_KEY, 'session_2');
+
+    const h2 = harness({}, storage);
+    const client2 = createChatClient(h2.config);
+    const connecting = client2.connect();
+    await tick();
+    h2.sockets.last.open();
+    h2.sockets.last.emitJson(ackJson(0, sessionSnapshot({ sessionId: 'session_1' }), 90));
+    await connecting;
+    await tick();
+
+    const join = framesOfType(h2.sockets.last, 'session.join')[0];
+    expect(join?.d).toEqual({ sessionId: 'session_2' });
+    h2.sockets.last.emitJson(
+      rejectedAckJson(join?.id as string, 91, {
+        code: 'SESSION_NOT_FOUND',
+        message: 'Session not found',
+        retryable: false,
+      }),
+    );
+    await tick();
+    await tick();
+
+    // The client never joined session_2, so its queued send has no address
+    // this connection can honour.
+    expect(client2.getState().session?.id).toBe('session_1');
+    expect(framesOfType(h2.sockets.last, 'message.send')).toHaveLength(0);
   });
 });

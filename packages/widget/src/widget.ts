@@ -57,6 +57,25 @@ export interface ChatWidget {
  */
 const TERMINAL_CONNECTION_STATES: ReadonlySet<ConnectionState> = new Set(['suspended', 'closed']);
 
+/**
+ * How long a session switch waits for core's connect-time history work before
+ * going ahead without it.
+ *
+ * A deadline is not optional here. {@link createWidget}'s `whenHistorySettles`
+ * resolves on a `pagination` transition, and `pagination` only ever moves
+ * because a connection reached `connected` and core seeded page one. A socket
+ * that never gets there — a connect that keeps failing, or a `suspended`
+ * client core has deliberately stopped retrying — produces no transition at
+ * all, so an unbounded wait turns every row in the picker into a click that
+ * navigates nowhere, reports nothing, and leaves one live subscription behind
+ * per press on a widget that lives as long as the tab does.
+ *
+ * Shorter than core's own `SESSION_SNAPSHOT_TIMEOUT_MS` (10s) on purpose. This
+ * wait is an optimisation in front of the real operation, not a step of it,
+ * so it must not be the larger half of the customer's worst case.
+ */
+export const HISTORY_SETTLE_TIMEOUT_MS = 5_000;
+
 /** Words for the states in which nothing is being attempted. */
 const SETTLED_CONNECTION_LABEL = {
   idle: 'Not connected',
@@ -278,6 +297,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   let destroyed = false;
 
   /**
+   * Every {@link whenHistorySettles} wait still in flight, keyed by its own
+   * cancel function.
+   *
+   * `destroy()` cannot reach into a pending promise, and the `store.select`
+   * teardown the store does on its own way out settles nothing — the promise
+   * would simply stay pending forever with the whole `selectSession` frame
+   * behind it. So each wait registers the one call that releases it, and
+   * teardown drains the set.
+   */
+  const pendingHistorySettles = new Set<() => void>();
+
+  /**
    * The id of the session an agent closed, or `null` while the conversation
    * is live.
    *
@@ -293,6 +324,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   let closedSessionId: string | null = null;
   let startingNewConversation = false;
+  /** One escalation in flight at a time — see {@link requestHumanAgent}. */
+  let requestingAgent = false;
+  /** Incremented by every `showConversation()`. See {@link maybeShowPreChat}. */
+  let conversationShownEpoch = 0;
   let reconnecting = false;
   let lastAutoReconnectAt = 0;
 
@@ -377,6 +412,26 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     attrs: { class: 'dh-icon-button', type: 'button', 'aria-label': 'Close chat' },
     children: [icon(ICONS.close, 18)],
     on: { click: () => close() },
+  });
+
+  /**
+   * "Talk to a human" — the customer's way off the bot.
+   *
+   * Core has had `requestAgent()` since the protocol was written and
+   * chat-service has always handled `session.requestAgent`, but no surface in
+   * this package ever called either: the ONLY route out of a bot conversation
+   * was to phrase a sentence the bot's own intent classifier happened to
+   * recognise. A customer who could not find those words could not reach a
+   * person at all, which is the reported bug.
+   *
+   * Shown only while the bot is actually handling the conversation — see
+   * {@link syncHandoff} for the exact rule. Offering it beside a human agent
+   * would ask the customer to escalate to the person already typing to them.
+   */
+  const handoffButton = el('button', {
+    attrs: { class: 'dh-handoff', type: 'button', hidden: true },
+    text: 'Talk to a human',
+    on: { click: () => requestHumanAgent() },
   });
 
   /**
@@ -485,6 +540,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // are alternatives, not a stack.
       preChat.node,
       messageList.log,
+      // Between the transcript and the composer: the customer looks here when
+      // the bot's last answer did not help, which is exactly when they want
+      // it. In the header it would compete with the conversation switcher for
+      // a glance, and inside the log it would scroll away.
+      handoffButton,
       composer.node,
       messageList.liveRegion,
       // Its own channel, deliberately not folded into `status` or the message
@@ -661,6 +721,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       (session) => identityHeader.update(session),
       { immediate: true },
     ),
+    // Same `state.session` reference trigger, its own subscription: the
+    // header renders an identity and this renders an action, and folding two
+    // unrelated jobs into one listener is how the second one gets forgotten
+    // the day the first is changed.
+    store.select(
+      (state) => state.session,
+      () => syncHandoff(store.getState()),
+      { immediate: true },
+    ),
     store.select(
       (state) => state.pastSessions,
       (sessions) => renderSessionPicker(sessions),
@@ -735,7 +804,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         // Revealing the chooser is deliberately tied to the DATA arriving
         // rather than to the open, so the panel never flashes an empty picker
         // on its way to the conversation.
-        maybeShowPreChat();
+        //
+        // `void` with its own `.catch`: `maybeShowPreChat` now waits on
+        // core's history load before it can tell an empty conversation from
+        // one that has simply not loaded yet, and an unhandled rejection from
+        // this branch would surface on the HOST's window.
+        void maybeShowPreChat().catch(report);
       })
       .catch((error: unknown) => {
         // An embed whose client has no `sessionSummarySource` is a
@@ -780,10 +854,64 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     preChat.render(sessions);
   }
 
-  /** Reveals the chooser, if this widget is allowed one and has anything to offer. */
-  function maybeShowPreChat(): void {
+  /**
+   * Reveals the chooser — but never in front of a conversation the customer is
+   * already in.
+   *
+   * ── The bug this rule exists to fix ──────────────────────────────────────
+   *
+   * The only gate used to be `pastSessions.length > 0`, and the picker is a
+   * FULL REPLACEMENT for the log and the composer. So any customer with
+   * history — which, after their second conversation, is every customer —
+   * opened the widget onto a list instead of onto the chat they were having.
+   * Reload the page mid-conversation and the transcript was fetched, applied
+   * to state, and then covered up: "my chat history is gone" from where the
+   * customer sits, with the messages sitting behind the pane the whole time.
+   *
+   * The chooser is worth showing only when there is nothing to interrupt:
+   *
+   *   - NO session at all — nothing to land in.
+   *   - A TERMINAL session (`CLOSED`/`RESOLVED`) — that conversation is over,
+   *     so a list of others, plus "Start a new conversation", is exactly the
+   *     right screen.
+   *   - A live session with an EMPTY transcript — nothing has been said yet,
+   *     so replacing it costs the customer nothing and reaching an older
+   *     conversation is the likelier intent.
+   *
+   * Anything else means a live conversation with words in it, and the
+   * customer's own history stays one click away in the header switcher, which
+   * is a popover rather than a replacement precisely so it can be reached
+   * from inside a conversation.
+   *
+   * `whenHistorySettles` first: "empty transcript" is only a fact once core's
+   * page-one load has finished. Read too early it is true of every session,
+   * which is the same bug again with an extra step.
+   */
+  async function maybeShowPreChat(): Promise<void> {
     if (destroyed || preChatOpen || !preChatAllowed) return;
     if (store.getState().pastSessions.length === 0) return;
+
+    // Snapshotted BEFORE the await, checked after: waiting is what makes the
+    // "empty transcript" test meaningful, and it is also a window in which the
+    // customer can pick a row (or start a new conversation) and be put on the
+    // conversation pane. Re-covering it with the chooser they just dismissed
+    // would be this function undoing their click.
+    const shownAt = conversationShownEpoch;
+
+    await whenHistorySettles();
+    if (destroyed || preChatOpen || !preChatAllowed) return;
+    if (conversationShownEpoch !== shownAt) return;
+
+    const state = store.getState();
+    if (state.pastSessions.length === 0) return;
+
+    const session = state.session;
+    const inLiveConversation =
+      session !== null &&
+      session.status !== 'CLOSED' &&
+      session.status !== 'RESOLVED' &&
+      state.messages.length > 0;
+    if (inLiveConversation) return;
 
     preChatOpen = true;
     setPaneVisible(preChat.node, true);
@@ -794,6 +922,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   /** Puts the conversation back on screen. Idempotent. */
   function showConversation(): void {
+    // Bumped unconditionally, including on the idempotent re-call: it is a
+    // "the conversation pane has been asserted since you looked" marker for
+    // {@link maybeShowPreChat}'s pending reveal, not a state change counter.
+    conversationShownEpoch += 1;
     preChatOpen = false;
     setPaneVisible(preChat.node, false);
     setPaneVisible(messageList.log, true);
@@ -867,22 +999,96 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * landed; a `loadingMore` that has gone true and back to false means one was
    * attempted and failed. Either way nothing is in flight any more and the
    * switch's own load is free to run.
+   *
+   * ── Why the deadline PROCEEDS rather than refuses ────────────────────────
+   *
+   * `pagination` only moves because a connection reached `connected`. It never
+   * does on a socket that cannot get there, so without
+   * {@link HISTORY_SETTLE_TIMEOUT_MS} this waits forever and the picker row
+   * the customer pressed does nothing, says nothing, and leaves a live
+   * subscription behind.
+   *
+   * When the deadline passes the switch goes AHEAD, and the timeout is
+   * reported. Refusing was the other option and is now the worse one:
+   *
+   *   - Core epoch-stamps in-flight loads and abandons superseded ones, so
+   *     an overlapping seed no longer corrupts a switch. This wait went from
+   *     the correctness barrier it was written as to an optimisation that
+   *     saves a duplicate fetch — and an optimisation must not be able to
+   *     veto the operation it is optimising.
+   *   - Proceeding is what produces the customer-visible answer. On a dead
+   *     socket `switchSession` fails immediately and audibly — core's
+   *     `joinSessionAwaited` answers `disconnected` with "session.join was not
+   *     sent: the socket is not open" — and `selectSession` reports it. On a
+   *     merely slow one the switch simply works. Refusing would have produced
+   *     the same nothing the deadline exists to remove.
    */
   function whenHistorySettles(): Promise<void> {
     if (destroyed || store.getState().pagination.initialLoaded) return Promise.resolve();
 
     return new Promise<void>((resolve) => {
       let attempted = false;
-      const unsubscribe = store.select(
+      let settled = false;
+      let unsubscribe: (() => void) | null = null;
+
+      /**
+       * The one exit. Every path out of the wait goes through it, so the
+       * timer, the subscription and the registry entry are released exactly
+       * once no matter which of the three fires first.
+       */
+      const finish = (reason: 'seeded' | 'timeout' | 'destroyed'): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        pendingHistorySettles.delete(cancel);
+        unsubscribe?.();
+
+        // The switch goes ahead either way — see the deadline note above — but
+        // a deadline that passed is still a fault, and the whole point of
+        // bounding this was that the failure stops being invisible. `report`
+        // is the only channel this package has to the host, and a host with no
+        // `onError` gets config.ts's default, which writes to the console.
+        if (reason === 'timeout') {
+          report(
+            new Error(
+              `chat widget waited ${HISTORY_SETTLE_TIMEOUT_MS}ms for the connection to load history ` +
+                `and gave up; the session switch is going ahead unsequenced ` +
+                `(connection: ${store.getState().connectionState})`,
+            ),
+          );
+        }
+
+        resolve();
+      };
+
+      /** What {@link ChatWidget.destroy} calls to settle a wait mid-flight. */
+      const cancel = (): void => finish('destroyed');
+
+      const timer = setTimeout(() => finish('timeout'), HISTORY_SETTLE_TIMEOUT_MS);
+      pendingHistorySettles.add(cancel);
+
+      unsubscribe = store.select(
         (state) => state.pagination,
         (pagination) => {
+          // Re-checked INSIDE the promise, not only at the top: teardown can
+          // land between the two, and a wait that outlives the widget holding
+          // it is the leak this registry exists to close.
+          if (destroyed) {
+            finish('destroyed');
+            return;
+          }
           attempted ||= pagination.loadingMore;
           if (pagination.loadingMore) return;
           if (!attempted && !pagination.initialLoaded) return;
-          unsubscribe();
-          resolve();
+          finish('seeded');
         },
       );
+
+      // `store.select` does not fire synchronously without `immediate`, but
+      // the state it reads can still have moved while this promise was being
+      // built. Cheaper to re-read than to reason about it.
+      if (destroyed) finish('destroyed');
+      else if (store.getState().pagination.initialLoaded) finish('seeded');
     });
   }
 
@@ -1047,6 +1253,76 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
+   * Should the "Talk to a human" control be on screen, and what should it say?
+   *
+   * Visible only while the BOT holds the conversation and it is still live:
+   *
+   *   - `mode: 'HUMAN'` already means the hand-off happened. Whether an agent
+   *     has picked it up yet (`WAITING_FOR_AGENT`) or is already replying
+   *     (`ASSIGNED`), asking again escalates nothing — the server would answer
+   *     the same session snapshot back.
+   *   - `CLOSED`/`RESOLVED` is not a conversation to escalate; the way out of
+   *     one of those is "Start a new conversation", which the log already
+   *     offers.
+   *   - No session at all (pre-connect, or mid `startNewSession`) has nothing
+   *     to escalate.
+   *
+   * Driven off `mode`/`status` rather than `handledBy` on purpose:
+   * `handledBy` is presentation-only and documented as able to lag `status`
+   * on a reactivated session (core's `isHandledByCurrent`), so gating a real
+   * ACTION on it would show this button to someone already talking to a
+   * person.
+   */
+  function syncHandoff(state: ChatState): void {
+    const session = state.session;
+    const live =
+      session !== null &&
+      session.mode === 'BOT' &&
+      session.status !== 'CLOSED' &&
+      session.status !== 'RESOLVED';
+
+    handoffButton.hidden = !live;
+    if (!live) {
+      // Reset, so a session that comes back round does not inherit the busy
+      // label from the last time it was escalated.
+      requestingAgent = false;
+      handoffButton.disabled = false;
+      handoffButton.textContent = 'Talk to a human';
+    }
+  }
+
+  /**
+   * Ask for a human.
+   *
+   * `requestAgent` is fire-and-forget on the wire (core writes the frame and
+   * returns), so there is no promise to await and no ack to hang the UI on.
+   * What settles this is the server's own `session.updated` — the session
+   * flips to `HUMAN`, and {@link syncHandoff} hides the button in response.
+   * Until then it stays disabled with a "Connecting you…" label, because a
+   * control that looks pressable after a press invites a second escalation of
+   * a session that is already queued.
+   *
+   * The throw path is real: core rejects a send with no session or no open
+   * socket. Reported, and the button re-armed — leaving it disabled would
+   * strand the customer with a dead control and no way to try again.
+   */
+  function requestHumanAgent(): void {
+    if (requestingAgent) return;
+    requestingAgent = true;
+    handoffButton.disabled = true;
+    handoffButton.textContent = 'Connecting you to an agent…';
+
+    try {
+      store.client.requestAgent();
+    } catch (error) {
+      report(error);
+      requestingAgent = false;
+      handoffButton.disabled = false;
+      handoffButton.textContent = 'Talk to a human';
+    }
+  }
+
+  /**
    * The way out of a closed conversation.
    *
    * Explicit rather than automatic — see the widget's README note: an agent
@@ -1205,6 +1481,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       window.removeEventListener('offline', onOffline);
       trap?.release();
       restoreFocus?.();
+      // Before `store.destroy()`: these settle by unsubscribing from the
+      // store, and `select`'s unsubscribe on an already-destroyed store is a
+      // no-op rather than an error, but draining first keeps the ordering
+      // obvious. A copy, because `finish` deletes from the set it walks.
+      for (const cancel of [...pendingHistorySettles]) cancel();
       for (const unsubscribe of unsubscribers) unsubscribe();
       composer.destroy();
       // The switcher owns a document-level `pointerdown` listener for its

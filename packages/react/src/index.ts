@@ -123,6 +123,8 @@ export type {
   ChatTicket,
   ConnectionState,
   HandledBy,
+  IdentityProfile,
+  IdentitySync,
   MessageDelivery,
   QueuedSend,
   RetryOutcome,

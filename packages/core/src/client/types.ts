@@ -64,6 +64,7 @@
 
 import { ConnectionAbortedError, ConnectionSuspendedError } from '../connection/index.js';
 import type { AuthToken, TokenProvider } from '../connection/index.js';
+import type { IdentityProfile, IdentitySync } from '../identity/index.js';
 import type {
   AttachmentUploader,
   LocalSender,
@@ -167,12 +168,18 @@ export class ChatClientConfigError extends Error {
 /**
  * Thrown by {@link ChatClient.switchSession} when the switch did not complete.
  *
- * `switchSession` is a composite operation — abandon, reset, join, wait for
- * the snapshot, load page one — and every one of those steps can fail for a
- * reason the caller can act on: the server refused the join (not your
- * session), the socket was not open when the frame was written, or the
- * snapshot never arrived. Before this existed all three failed the same way:
- * silently, with the picker row highlighted and the transcript unchanged.
+ * `switchSession` is a composite operation — tear the connection down,
+ * re-establish it, join the chosen session, wait for its snapshot, load page
+ * one — and every one of those steps can fail for a reason the caller can act
+ * on: the server refused the join (not your session), the snapshot never
+ * arrived, or the reconnect was aborted out from under it. Before this existed
+ * they all failed the same way: silently, with the picker row highlighted and
+ * the transcript unchanged.
+ *
+ * A connection that is merely DOWN is not one of them. The switch opens its
+ * own connection, so a dead socket is something it recovers from rather than
+ * something it reports; the promise stays pending until the connection comes
+ * up or is explicitly abandoned.
  *
  * `cause` carries the same {@link ChatError} that was written to
  * `ChatState.lastError` and emitted as `error`, so a caller may handle this
@@ -285,6 +292,22 @@ export interface ChatClientConfig {
   /** Backs `listSessions()` (T10). Optional — throws {@link ChatClientConfigError} if omitted and called. */
   readonly sessionSummarySource?: SessionSummarySource;
 
+  /**
+   * The logged-in user's CRM profile, synced through `identitySync`. The pair
+   * — not either half — is the switch: a guest has no profile to send, and a
+   * host that supplies one but no transport should be inert rather than a
+   * construction error, so core does nothing unless both are set.
+   */
+  readonly identityProfile?: IdentityProfile;
+
+  /**
+   * Transport for the above. Core does no HTTP of its own, same as
+   * `history`/`uploader` (`packages/rest`'s `createIdentitySync` implements
+   * this one). Unlike those, omitting it never throws from anywhere: the sync
+   * is fire-and-forget CRM bookkeeping and no user-visible path waits on it.
+   */
+  readonly identitySync?: IdentitySync;
+
   /** Advanced: overrides the platform `WebSocket` global (§11 — React Native, tests). Defaults to the ambient global, probed lazily at connect time. */
   readonly webSocketFactory?: WebSocketFactory;
 
@@ -329,12 +352,20 @@ export interface ChatClient {
    * silently vanish either.
    *
    * **This is the protocol primitive, not "switch to this conversation".** It
-   * changes nothing about `ChatState` on its own: the transcript, watermarks,
-   * presence, unread count and resume anchor all still describe the session
-   * you were in, and no history is fetched for the session you named. Sending
-   * this frame and then rendering the resulting `session.updated` is exactly
-   * how a session picker used to show a NEW session's header above the OLD
-   * session's messages.
+   * writes one frame and returns. It fetches no history for the session it
+   * names, does not drop the resume anchor (a position in a *per-session*
+   * history — carrying it across is what strands a client in `suspended`), and
+   * does not wait for, or report on, the outcome.
+   *
+   * What it does NOT leave behind is a torn view: when the server's
+   * `session.updated` for the joined session arrives, `ChatState.session` and
+   * every per-session projection are replaced in one write, so the transcript
+   * on screen always belongs to the session named above it. That is a property
+   * of how snapshots are applied, not of this method — it holds for a
+   * reconnect the server resolves elsewhere too. The result is an EMPTY
+   * transcript for the newly-joined session until somebody asks for its
+   * history, which is the honest rendering of "you joined a conversation and
+   * did not load it".
    *
    * Use {@link ChatClient.switchSession} to actually change conversations.
    * This method remains for callers that genuinely want the bare frame — an
@@ -346,13 +377,12 @@ export interface ChatClient {
    * Switches the client to a different session — the session-picker's action.
    *
    * The composite operation, and the counterpart to {@link
-   * ChatClient.startNewSession}: where that one abandons the current session
-   * for a brand-new one, this one abandons it for an EXISTING one. In order:
+   * ChatClient.startNewSession}: where that one leaves the current session for
+   * a brand-new one, this one leaves it for an EXISTING one — and, like that
+   * one, it does so by TEARING DOWN and re-establishing rather than by
+   * transitioning in place. In order:
    *
-   *   1. the outgoing session's still-queued sends are failed rather than
-   *      carried over — `message.send` has no `sessionId` on the wire
-   *      (protocol/frames.ts), so an entry that outlived its session would be
-   *      attributed to whichever session is joined next;
+   *   1. the connection is dropped, along with everything it had in flight;
    *   2. typing timers and presence — both descriptions of a conversation no
    *      longer on screen — are cleared;
    *   3. the resume anchor is dropped: it is a position in a *per-session*
@@ -360,14 +390,34 @@ export interface ChatClient {
    *      `connection.hello` ask to resume from a `seq` the new session has
    *      never reached, which the v2 endpoint refuses NON-RETRYABLY and which
    *      strands the client in `suspended`;
-   *   4. every per-session projection — `messages`, `pagination`, `typing`,
-   *      `unreadCount`, `readWatermarks`, `deliveredWatermarks`, `presence`,
-   *      `lastError` — is cleared in ONE `setState`, so no subscriber ever
-   *      observes the new session's id against the old session's transcript.
-   *      `pastSessions` is deliberately kept: it is a list *about* other
-   *      sessions, not state *of* this one;
-   *   5. `session.join` is sent and its ack awaited;
+   *   4. the chosen session is recorded durably, and a fresh connection is
+   *      opened;
+   *   5. `session.join` is sent on it and its ack awaited — one join, with
+   *      nothing else in flight to race it. It is needed because
+   *      `connection.hello` carries no session id, so the server resolves the
+   *      customer's most-recently-updated ACTIVE session on its own, which for
+   *      a picked CLOSED/RESOLVED conversation is a different one;
    *   6. and page one of the new session's history is loaded.
+   *
+   * **The session on screen does not change until step 6's snapshot lands, and
+   * when it does, it changes completely.** `ChatState.session` and every
+   * per-session projection — `messages`, `pagination`, `typing`,
+   * `unreadCount`, `readWatermarks`, `deliveredWatermarks`, `presence`,
+   * `lastError` — move in ONE `setState`. For the whole of the operation the
+   * outgoing conversation stays intact and self-consistent: the header keeps
+   * naming it, the transcript keeps showing it, `sendMessage` keeps composing
+   * into it. There is no interval in which one conversation's identity is
+   * readable against another's data, in either direction. `pastSessions` is
+   * deliberately kept across the change: it is a list *about* other sessions,
+   * not state *of* this one.
+   *
+   * **Queued sends for the outgoing session are PRESERVED, not failed.** Each
+   * one carries the session it was composed in
+   * (`MessageSendPayload.sessionId`) and the queue refuses to pump any session
+   * but the joined one, so an entry cannot be misdelivered into the
+   * conversation being opened. It waits instead, goes out the moment its own
+   * session is joined again, and is still bounded by §9.6 retention. (Contrast
+   * `startNewSession`, which fails them: there the session really is ending.)
    *
    * **Resolves only once that first page is in `ChatState.messages`**, so a
    * caller can show a spinner for exactly the duration of the switch and know
@@ -376,15 +426,30 @@ export interface ChatClient {
    * protocol/frames.ts) and carries no snapshot — the session itself arrives
    * as a separate `session.updated` push the server volunteers afterwards.
    *
-   * **Rejects with {@link SessionSwitchError}** if the server refused the
-   * join, the socket was not open when the frame was written, or the snapshot
-   * never arrived. The same failure is also written to `ChatState.lastError`
-   * and emitted as `error`, so either style of handling works — but the
-   * promise is the one that tells a picker that *this particular row* did not
-   * open. Do not call it and drop the promise on the floor.
+   * **Costs one extra round trip** — the handshake on the new connection —
+   * versus an in-place join. That is the price of the guarantee above, paid
+   * deliberately.
    *
-   * Switching to the session already joined is a no-op that resolves
-   * immediately: no frame, no reset, no refetch.
+   * **Rejects with {@link SessionSwitchError}** if the server refused the
+   * join, the snapshot never arrived, or the reconnect it needs was aborted
+   * (by `disconnect()`, `startNewSession()`, or a newer switch that is not
+   * this one). The same failure is also written to `ChatState.lastError` and
+   * emitted as `error`, so either style of handling works — but the promise is
+   * the one that tells a picker that *this particular row* did not open. Do
+   * not call it and drop the promise on the floor.
+   *
+   * **A failed switch changes nothing.** Nothing was torn down in state to
+   * begin with, so there is no rollback and no recovery fetch: the customer is
+   * still looking at the conversation they never left, with its transcript
+   * intact and its `lastError` naming what went wrong.
+   *
+   * **Two rapid switches**: the later one wins outright. It aborts the
+   * earlier one's reconnect, so that one resolves quietly rather than
+   * reporting a failure nobody asked about, and no page it fetched can reach
+   * the winner's transcript.
+   *
+   * Switching to the session already on screen is a no-op that resolves
+   * immediately: no teardown, no frame, no refetch.
    *
    * The chosen session is remembered through `ChatClientConfig.storage`, so a
    * page reload re-joins it rather than falling back to whatever session the

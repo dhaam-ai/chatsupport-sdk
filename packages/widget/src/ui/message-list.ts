@@ -167,6 +167,9 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   let announcedUpTo: string | null = null;
   let seenAnyState = false;
   let closedReason: CloseReason | null = null;
+  /** The bot's name for the session in {@link lastBotNameSessionId}. See `render`. */
+  let lastBotName: string | null = null;
+  let lastBotNameSessionId: string | null = null;
 
   function render(state: ChatState, localParticipantId: string | null): void {
     // Captured BEFORE mutating: reading `scrollTop` after an append gives the
@@ -187,8 +190,22 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       ? 'Loading…'
       : 'Load earlier messages';
 
+    // The bot's name is only on the wire while the BOT still holds the
+    // session; after a hand-off it is gone and its earlier bubbles would go
+    // back to the generic word. Remembered per session, and dropped the moment
+    // the session changes so one conversation's bot name can never be printed
+    // over another's messages.
+    const sessionId = state.session?.id ?? null;
+    if (sessionId !== lastBotNameSessionId) {
+      lastBotNameSessionId = sessionId;
+      lastBotName = null;
+    }
+    lastBotName = botNameFrom(state) ?? lastBotName;
+
     const live = new Set<string>();
     let previous: Node = loadOlder;
+    // Names the FIRST message of each run only — see `MessageRow.update`.
+    let previousAuthor: string | null = null;
 
     for (const message of state.messages) {
       live.add(message.id);
@@ -197,12 +214,20 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
         row = createRow(message, callbacks);
         rows.set(message.id, row);
       }
+
+      // Only incoming messages are named. "You" over the customer's own
+      // bubble tells them nothing they do not already know, and the bubble is
+      // already aligned and coloured as theirs.
+      const author = isOutgoing(message) ? null : senderLabel(message, state, lastBotName);
+      const showAuthor = author !== null && author !== previousAuthor ? author : null;
+      previousAuthor = author;
+
       row.update(message, deriveTickState({
         message,
         localParticipantId,
         deliveredWatermarks: state.deliveredWatermarks,
         readWatermarks: state.readWatermarks,
-      }));
+      }), showAuthor);
 
       // Keeps DOM order equal to core's array order without a full rebuild.
       // Core may reorder on a `seq` arriving late (D2), so position is
@@ -226,7 +251,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // Typing bubble stays last so it reads as "someone is composing the next
     // message", not as an interruption in the middle of history.
     log.appendChild(typing.node);
-    typing.update(state);
+    typing.update(state, handlerName(state, lastBotName));
 
     announce(state, localParticipantId);
 
@@ -258,7 +283,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     announcedUpTo = newest.id;
     if (localParticipantId !== null && newest.senderId === localParticipantId) return;
 
-    const who = senderLabel(newest, state);
+    const who = senderLabel(newest, state, lastBotName);
     liveRegion.textContent = `${who}: ${describeContent(newest)}`;
   }
 
@@ -298,10 +323,16 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
 
 interface MessageRow {
   readonly node: HTMLElement;
-  update(message: ChatMessage, tick: MessageTickState | null): void;
+  /** @param authorName the name to show above the bubble, or `null` for none. */
+  update(message: ChatMessage, tick: MessageTickState | null, authorName: string | null): void;
 }
 
 function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): MessageRow {
+  // Who wrote this. Above the text rather than in `meta` alongside the
+  // timestamp: the customer needs to know who is speaking BEFORE they read
+  // the words, and a name discovered underneath them arrives too late to
+  // frame what they just read.
+  const author = el('span', { attrs: { class: 'dh-msg-author', hidden: true } });
   const body = el('span', { attrs: { class: 'dh-msg-body' } });
   const time = el('time', { attrs: { class: 'dh-msg-time' } });
   const tickGlyph = el('span', { attrs: { class: 'dh-tick', 'aria-hidden': 'true' } });
@@ -319,7 +350,7 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
     children: [time, tickGlyph, tickLabel, failureText, retry],
   });
 
-  const node = el('div', { attrs: { class: 'dh-msg' }, children: [body, meta] });
+  const node = el('div', { attrs: { class: 'dh-msg' }, children: [author, body, meta] });
 
   let current = initial;
   retry.addEventListener('click', () => callbacks.onRetry(current));
@@ -328,8 +359,21 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
 
   return {
     node,
-    update(message, tick) {
+    update(message, tick, authorName) {
       current = message;
+
+      // `null` means "do not name this one" — the customer's own messages,
+      // and every message after the first in a run from the same sender.
+      // Repeating the name on each of five consecutive bot replies is noise
+      // that pushes the words themselves off the screen.
+      if (authorName === null) {
+        author.hidden = true;
+        author.textContent = '';
+      } else {
+        author.hidden = false;
+        // `textContent`: a display name is another party's data.
+        if (author.textContent !== authorName) author.textContent = authorName;
+      }
 
       node.setAttribute('data-mine', String(isOutgoing(message)));
       node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
@@ -429,8 +473,16 @@ function renderAttachment(attachment: AttachmentMetadata): HTMLElement {
   });
 }
 
-function createTypingIndicator(): { node: HTMLElement; update(state: ChatState): void } {
+function createTypingIndicator(): {
+  node: HTMLElement;
+  /** @param who the name of whoever is typing — see `handlerName`. */
+  update(state: ChatState, who: string): void;
+} {
   const dots = [0, 1, 2].map(() => el('span', { attrs: { class: 'dh-typing-dot' } }));
+  // Screen-reader-only, and named: the three animated dots say SOMEONE is
+  // composing, and this is the only channel that can say who. It used to be
+  // the fixed word "Agent", which named a human on a session being handled by
+  // the bot.
   const label = el('span', { attrs: { class: 'dh-sr' }, text: 'Agent is typing' });
   const node = el('div', {
     attrs: {
@@ -446,23 +498,81 @@ function createTypingIndicator(): { node: HTMLElement; update(state: ChatState):
 
   return {
     node,
-    update(state) {
+    update(state, who) {
       node.hidden = !state.typing.isTyping;
+      const text = `${who} is typing`;
+      if (label.textContent !== text) label.textContent = text;
     },
   };
+}
+
+/**
+ * The name of whoever is handling the conversation right now — an agent if one
+ * is on it, otherwise the bot, falling back to the generic word only when
+ * neither has a resolved name.
+ *
+ * Same sources as {@link senderLabel}, kept separate because this answers "who
+ * holds the session" (for the typing indicator) rather than "who wrote this
+ * message" (for a bubble), and a transcript can contain both.
+ */
+function handlerName(state: ChatState, lastBotName: string | null): string {
+  const handledBy = state.session?.handledBy;
+  if (handledBy !== undefined) return handledBy.displayName;
+  return state.session?.assignedAgent?.displayName ?? lastBotName ?? 'Agent';
 }
 
 function isOutgoing(message: ChatMessage): boolean {
   return message.senderType === 'CUSTOMER';
 }
 
-function senderLabel(message: ChatMessage, state: ChatState): string {
+/**
+ * The name to put on one incoming message.
+ *
+ * Every name here comes from `ChatState.session`, because that is the only
+ * place a name exists: `ChatMessage` carries `senderId` and no display name at
+ * all (core's state/types.ts), so a bubble cannot name its own author.
+ *
+ * ── The BOT branch was a hardcoded string ────────────────────────────────
+ *
+ * It returned the literal `'Assistant'` for every deployment, which threw away
+ * the per-tenant bot name the backend resolves and sends
+ * (`Tenant.config.botDisplayName` → `resolveBotDisplayName` →
+ * `SessionSnapshot.handledBy`). A tenant who names their bot "Kai" got
+ * "Assistant" on every bubble regardless.
+ *
+ * `lastBotName` covers the case `handledBy` cannot: once a session escalates
+ * to a human, `handledBy` names the AGENT, and the bot's earlier messages —
+ * still in the transcript, right above the agent's — would fall back to the
+ * generic word. The name is remembered per session (cleared when the session
+ * id changes, see `render`) rather than re-derived, because nothing else on
+ * the wire still carries it at that point.
+ *
+ * AGENT prefers `assignedAgent` and falls back to a `handledBy` that names an
+ * agent: on a session the customer has just joined from history, `participants`
+ * may be empty (everyone has left) while `handledBy` still names who had it.
+ */
+function senderLabel(message: ChatMessage, state: ChatState, lastBotName: string | null): string {
+  const handledBy = state.session?.handledBy;
+
   if (message.senderType === 'AGENT') {
-    return state.session?.assignedAgent?.displayName ?? 'Agent';
+    return (
+      state.session?.assignedAgent?.displayName ??
+      (handledBy?.kind === 'AGENT' ? handledBy.displayName : undefined) ??
+      'Agent'
+    );
   }
   if (message.senderType === 'SYSTEM') return 'System';
-  if (message.senderType === 'BOT') return 'Assistant';
+  if (message.senderType === 'BOT') {
+    if (handledBy?.kind === 'BOT') return handledBy.displayName;
+    return lastBotName ?? 'Assistant';
+  }
   return 'You';
+}
+
+/** The bot's name as this session currently reports it, or `null`. */
+function botNameFrom(state: ChatState): string | null {
+  const handledBy = state.session?.handledBy;
+  return handledBy?.kind === 'BOT' ? handledBy.displayName : null;
 }
 
 /**

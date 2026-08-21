@@ -343,7 +343,8 @@ function validateConnectionHello(d: unknown, path: string, frameType: string): F
     requireField(d, 'token', isNonEmptyString, path, 'a non-empty string', frameType) ??
     requireField(d, 'publishableKey', isNonEmptyString, path, 'a non-empty string', frameType) ??
     requireField(d, 'protocolVersion', isInteger, path, 'an integer', frameType) ??
-    optionalField(d, 'resumeFrom', isInteger, path, 'an integer', frameType)
+    optionalField(d, 'resumeFrom', isInteger, path, 'an integer', frameType) ??
+    optionalField(d, 'newSession', isBoolean, path, 'a boolean', frameType)
   );
 }
 
@@ -372,6 +373,12 @@ function validateMessageSend(d: unknown, path: string, frameType: string): Frame
   return (
     requireField(d, 'content', isString, path, 'a string', frameType) ??
     requireField(d, 'type', isMessageType, path, 'a valid MessageType', frameType) ??
+    // Optional (older clients omit it and the server falls back to the joined
+    // session) but shape-checked when present: an empty or non-string address
+    // is malformed, and tolerating it would collapse back to "file it under
+    // whatever this connection last joined" — the behavior the field exists to
+    // replace. Refuse it at the edge instead.
+    optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType) ??
     optionalField(d, 'replyToMessageId', isNonEmptyString, path, 'a non-empty string', frameType) ??
     optionalObject(d, 'attachment', path, validateAttachmentMetadata, frameType) ??
     optionalObject(d, 'metadata', path, validateMessageMetadata, frameType)

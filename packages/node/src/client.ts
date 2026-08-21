@@ -8,8 +8,9 @@
 //
 // ── Why the credential model shapes the object model ─────────────────────
 //
-// The secret key is valid on `POST /tokens` AND NOWHERE ELSE — never on any
-// endpoint a browser calls. Every session and message route requires an
+// The secret key is valid on a small, closed set of server-to-server routes:
+// `POST /tokens` and `POST /contacts/commerce-events`. It is never valid on
+// any endpoint a browser calls. Every session and message route requires an
 // `accessToken` plus the publishable key instead. A client that held the
 // secret key and also exposed `listMessages()` would therefore be lying about
 // what it can do, and the natural way to make that lie true is to start
@@ -17,8 +18,9 @@
 //
 // So the surface is split to match the credentials:
 //
-//   ChatServerClient          holds the secret key. Mints tokens. Verifies
-//                             webhooks. Cannot read a session.
+//   ChatServerClient          holds the secret key. Mints tokens. Records
+//                             commerce events. Verifies webhooks. Cannot read
+//                             a session.
 //   ChatServerClient.asUser() takes an access token and returns a reader
 //                             scoped to that user. Never sees the secret key.
 //

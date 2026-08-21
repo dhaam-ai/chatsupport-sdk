@@ -7,9 +7,9 @@
 #              change is a content change.
 #   tree       a digest over the contents AND the layout of each generated
 #              package, so a hand-edit of generated code fails too.
-spec	749e36a5dd156a0fa94dc2c14a06f28b577b067d2b4e7e6a9c7a26cfb5ca5c69	openapi/chat-api.yaml
+spec	d923c1e46e8038c42e08dfbedb331cefb2c40a9d8232346fb7fec79dbefeadfe	openapi/chat-api.yaml
 generator	v1.24.0	ogen
 generator	0.26.1	openapi-python-client
 generator	0.13.3	ruff
-tree	e5010865533a0863782a41678edf4e63bb94e1f8bea13f61de0bc57a1dd997f4	go/chatapi
-tree	37229e414ec8738d37fbe9ef7ed739b4d54dcdd4b3f9336198cbf5f710baf736	python/dhaam_ccrm_chat
+tree	04bb838b5c80f9c277a65e41eb44c011911a033fb10446923335cb882c99eb0a	go/chatapi
+tree	c61b27724da62ca8f37f37a8a0b5d063cb0c588e3af6489dca91552a315cc90e	python/dhaam_ccrm_chat

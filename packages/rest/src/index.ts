@@ -15,6 +15,7 @@ export {
   createAttachmentUploader,
   createSessionActions,
   createSessionSummarySource,
+  createIdentitySync,
 } from './adapters.js';
 
 // The pieces the adapters are built from, exported because writing a fourth

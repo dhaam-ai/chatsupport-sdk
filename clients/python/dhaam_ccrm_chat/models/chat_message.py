@@ -27,25 +27,28 @@ T = TypeVar("T", bound="ChatMessage")
 
 @_attrs_define
 class ChatMessage:
-    """
-    Attributes:
-        id (str): Opaque message identifier. Under D1, this is the client-generated ULID for customer-sent messages — it
-            never changes after creation; there is no separate server-assigned id to swap in later.
-        chat_session_id (str):
-        sender_type (SenderType):
-        content (str):
-        message_type (MessageType):
-        created_at (datetime.datetime): The one canonical timestamp field for this concept (D4) — v1 aliased this across
-            four different field names (`timestamp`/`createdAt`/`created_at`/`sentAt`) depending on endpoint and rollout
-            era.
-        sender_id (Union[None, Unset, str]):
-        sender_name (Union[None, Unset, str]):
-        attachment (Union['Attachment', None, Unset]): The **one** canonical location for attachment data (D4) — v1 read
-            this from either `message.attachment` or `message.metadata.attachment` interchangeably.
-        reply_to_message_id (Union[None, Unset, str]):
-        reply_to_message (Union['MessageReplyPreview', None, Unset]):
-        metadata (Union[Unset, ChatMessageMetadata]): Free-form additional context. Never used for attachment data — see
-            `attachment`.
+    """The **normalized** message shape `@dhaam-ccrm/core` consumes. **`GET /chat/sessions/{sessionId}/messages` and `GET
+    /chat/sessions/{sessionId}/full` do NOT return this shape on the wire** — see `ChatMessageWire` for what they
+    actually send and how `@dhaam-ccrm/rest` converts it to this shape.
+
+        Attributes:
+            id (str): Opaque message identifier. Under D1, this is the client-generated ULID for customer-sent messages — it
+                never changes after creation; there is no separate server-assigned id to swap in later.
+            chat_session_id (str):
+            sender_type (SenderType):
+            content (str):
+            message_type (MessageType):
+            created_at (datetime.datetime): The one canonical timestamp field for this concept (D4) — v1 aliased this across
+                four different field names (`timestamp`/`createdAt`/`created_at`/`sentAt`) depending on endpoint and rollout
+                era.
+            sender_id (Union[None, Unset, str]):
+            sender_name (Union[None, Unset, str]):
+            attachment (Union['Attachment', None, Unset]): The **one** canonical location for attachment data (D4) — v1 read
+                this from either `message.attachment` or `message.metadata.attachment` interchangeably.
+            reply_to_message_id (Union[None, Unset, str]):
+            reply_to_message (Union['MessageReplyPreview', None, Unset]):
+            metadata (Union[Unset, ChatMessageMetadata]): Free-form additional context. Never used for attachment data — see
+                `attachment`.
     """
 
     id: str

@@ -34,6 +34,7 @@ client.sendMessage('Hello');   // returns the optimistic echo synchronously
 | D2 resume: `resumeFrom`, inline replay, gap detection | Done |
 | D1 optimistic send, client ULID as permanent id | Done |
 | Retry replaying the ORIGINAL envelope id (`ChatClient.retry`) | Done — in memory, not durable |
+| `message.send.d.sessionId` — a message addresses its OWN session | Done |
 | v2 identity contract: `HandledBy`, `handledBy`, `displayName` | Done |
 | Connect deadline — every attempt terminates into the one retry path | Done |
 | §10 publishable key + `getToken` callback | Done |
@@ -43,6 +44,63 @@ client.sendMessage('Hello');   // returns the optimistic echo synchronously
 | Attachments upload | **Out of scope** — inbound metadata decodes |
 | Voice | **Out of scope** |
 | REST (pagination, history, `pastSessions`) | **Out of scope** — `gaps` names the span to refetch |
+
+## A message is addressed to the session it was composed in
+
+`message.send` carries `d.sessionId`: the session the message was typed into,
+which is not the same fact as the session the CONNECTION last joined. The two
+diverge for as long as a send outlives the session it was composed in, and the
+server used to have nothing to file the message under except the connection's
+current join — so a message typed in one conversation was delivered into
+another, acked as success.
+
+This package has no offline queue, so it does not reach that state the way the
+TypeScript core did (compose in B, flush after switching to A). It reaches it
+through the two places where a frame built at one moment goes on the wire at
+another, and both are ordinary:
+
+1. **`ChatClient.retry`.** Replaying a frame built arbitrarily long ago is the
+   entire purpose of the method. Anything that repointed the session in between
+   silently redirected the replay.
+2. **A reconnect.** `connection.ack` carries a session this client never asked
+   for (drift #5 below), so a reconnect can hand it a *different* session than
+   the one a still-failed send was composed in — and the sends orphaned by that
+   same drop are exactly the ones a host renders a Retry button for.
+
+The address is stamped once, in `sendMessage`, into the frame that is then kept
+as sent. A retry therefore replays the address along with the id and the
+payload; there is no path that re-derives it.
+
+The field is **optional on the wire**: absent means precisely the old
+behaviour, so an older client and an older server are both unaffected. Present,
+the server runs the same ownership check `session.join` runs and refuses the
+frame outright on failure — there is no fallback to the joined session, because
+writing a message somewhere other than where it was addressed is the whole bug
+class the field removes. A client with no session to name must OMIT the key;
+`''` is `VALIDATION_FAILED` at the server's edge, not a synonym for absent.
+
+### Behaviour change: `joinSession` commits on the snapshot, not on the call
+
+`joinSession` used to point this client at the new session immediately, before
+the server had answered. That opened a window in which the client was committed
+to the incoming session while `sessions` — the only thing a host renders off —
+still named the outgoing one, so a message typed against the conversation on
+screen was addressed to a different one. It was also unrecoverable when the
+join was *refused*: nothing rolled the pointer back, so every later send named
+a session this client was not in.
+
+Which conversation this client is in is now written by the authoritative
+snapshot and by nothing else (`connection.ack` and `session.updated`, §9.4),
+which is the same moment `sessions` tells the host to repaint. For a host that
+awaits the snapshot before repainting — the shape `sessions` already pushes it
+into — nothing changes. For one that called `joinSession` and immediately sent,
+that send now goes to the conversation still on screen rather than to one the
+server has not confirmed. This is the same commit rule the TypeScript core's
+session switch was rebuilt around.
+
+`leaveSession` still clears it, deliberately: leaving names no incoming session,
+so there is nothing to be wrong about, and a send composed afterwards is
+unaddressed rather than addressed to a conversation the host has left.
 
 ### Seams left for the out-of-scope work
 
@@ -65,6 +123,15 @@ client.sendMessage('Hello');   // returns the optimistic echo synchronously
   an HTTP dependency and the base-path, envelope-unwrapping and auth-header
   layer that goes with it. `ResumeGap` is the existing trigger for the same
   missing surface.
+
+  **Still true, and restated rather than quietly re-opened.** Adding the HTTP
+  dependency to get the picker was considered and declined, and nothing since
+  has changed that: `message.send.d.sessionId` lets a Flutter host address a
+  message to a session it already knows the id of, but it does not tell the
+  host which sessions exist. **A multi-session picker cannot be built on this
+  package.** A host that has its own backend can list sessions there and pass
+  an id to `joinSession`; a host that cannot is limited to the one session
+  `connection.ack` resolves.
 - **Storage.** No `StorageAdapter` yet, because nothing here persists. The
   queue is what will need one.
 
@@ -268,7 +335,7 @@ arm64):
 ```
 dart pub get
 dart analyze     # No issues found!
-dart test        # 177 passed, 0 failed
+dart test        # 188 passed, 0 failed
 dart format --output=none --set-exit-if-changed lib test
 ```
 

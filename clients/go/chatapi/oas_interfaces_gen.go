@@ -13,6 +13,14 @@ type GetSessionFullRes interface {
 	getSessionFullRes()
 }
 
+type ListCartsForContactRes interface {
+	listCartsForContactRes()
+}
+
+type ListContactCartsRes interface {
+	listContactCartsRes()
+}
+
 type ListSessionMessagesRes interface {
 	listSessionMessagesRes()
 }
@@ -25,10 +33,18 @@ type MintTokenRes interface {
 	mintTokenRes()
 }
 
+type RecordCommerceEventForContactRes interface {
+	recordCommerceEventForContactRes()
+}
+
+type RecordCommerceEventRes interface {
+	recordCommerceEventRes()
+}
+
 type ReopenSessionRes interface {
 	reopenSessionRes()
 }
 
-type UploadSessionAttachmentRes interface {
-	uploadSessionAttachmentRes()
+type UploadAttachmentRes interface {
+	uploadAttachmentRes()
 }

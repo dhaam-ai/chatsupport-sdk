@@ -57,18 +57,22 @@ export interface MessageControllerOptions {
    *
    * This is not a second, parallel staleness mechanism — it is a read of the
    * one `createChatClient` already keeps for exactly this purpose
-   * (`switchEpoch`, whose `stale()` checks gate every step of
-   * `performSwitch`). A history read has no other way to learn that the
-   * session moved underneath it: `ChatState.session` still names the OUTGOING
-   * session for the whole window between the switch's per-session reset and
-   * the server's `session.updated` push, so "compare against whatever is
-   * current" answers "yes, still mine" for precisely the interval in which it
-   * is wrong.
+   * (`switchEpoch`, whose `stale()` checks gate every step of a switch).
+   *
+   * It expresses the one thing an id comparison cannot. A read ISSUED for the
+   * session on screen, resolving while a switch to another session is under
+   * way but has not yet landed, still matches `ChatState.session?.id` — the
+   * store is not wrong, it simply has not moved yet — and would write a page
+   * into a conversation the customer has already navigated away from,
+   * latching `initialLoaded` and disarming the incoming session's own seed.
+   * The epoch is bumped the instant a switch starts, so such a read is stale
+   * from the moment it can no longer matter.
    *
    * Omitted outside `createChatClient` (there is no switch to be stale
    * against), where it reads as a constant.
    */
   readonly generation?: () => number;
+
 }
 
 /**
@@ -178,6 +182,7 @@ export class MessageController {
 
   readonly #generation: () => number;
 
+
   /** Uploads currently in flight. See `#setUploading`. */
   #uploads = 0;
 
@@ -206,6 +211,20 @@ export class MessageController {
    * the sends currently between `enqueue` resolving and their own insert.
    */
   readonly #settledEarly = new Map<string, SendOutcome>();
+
+  /**
+   * Sends whose optimistic echo was NOT rendered, because it belonged to a
+   * different conversation than the one on screen (see `#applyOutgoing`).
+   *
+   * Needed because `onAck`/`onFailed` reach for the bubble by id and treat
+   * "not in state yet" as "it has not been inserted yet", parking the outcome
+   * in `#settledEarly` for an insert that is now never coming. Without this
+   * every suppressed send would strand one entry there for the life of the
+   * client — and would emit `messageAck`/`sendFailed` about a row no app has
+   * ever seen. An id is added at suppression and removed by the first outcome
+   * that names it, so this holds at most the suppressed sends still in flight.
+   */
+  readonly #suppressed = new Set<string>();
 
   constructor(options: MessageControllerOptions) {
     this.#store = options.store;
@@ -298,17 +317,22 @@ export class MessageController {
       this.#setUploading(-1);
     }
 
-    await this.#send({
-      // §12.10's confirmed shape: the attachment URL travels as the message
-      // content, with the metadata alongside it.
-      content: attachment.url,
-      type: messageTypeFor(attachment.mediaType),
-      attachment,
-      ...(opts.replyToMessageId === undefined
-        ? {}
-        : { replyToMessageId: opts.replyToMessageId }),
-      ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
-    });
+    await this.#send(
+      {
+        // §12.10's confirmed shape: the attachment URL travels as the message
+        // content, with the metadata alongside it.
+        content: attachment.url,
+        type: messageTypeFor(attachment.mediaType),
+        attachment,
+        ...(opts.replyToMessageId === undefined
+          ? {}
+          : { replyToMessageId: opts.replyToMessageId }),
+        ...(opts.metadata === undefined ? {} : { metadata: opts.metadata }),
+      },
+      // The session captured BEFORE the upload — the one whose storage path
+      // now holds this file. A switch during the upload must not redirect it.
+      sessionId,
+    );
   }
 
   /**
@@ -335,6 +359,11 @@ export class MessageController {
    */
   async loadMore(sessionId?: string): Promise<void> {
     const state = this.#store.getState();
+    // `ChatState.session` is the authority again, and safely so:
+    // `createChatClient` moves the session id and every per-session projection
+    // in ONE `setState`, so the id this resolves and the `before` cursor taken
+    // from `state.messages` below can never describe two different
+    // conversations.
     const target = sessionId ?? state.session?.id;
     if (target === undefined) throw new NoActiveSessionError('loadMore');
 
@@ -448,14 +477,20 @@ export class MessageController {
   /**
    * Whether the session this read was issued for is still the one on screen.
    *
-   * The generation check is the load-bearing half. `ChatState.session` keeps
-   * naming the OUTGOING session across the whole window between
-   * `performSwitch`'s per-session reset and the server's `session.updated`
-   * push, so a read issued for that session before the switch began looks
-   * perfectly current if all you compare is the id — which is exactly the
-   * window the reported bug lives in. The id check catches the other
-   * direction: a session replaced without a switch at all (a reconnect the
-   * server resolves onto a different conversation).
+   * Two checks, neither of which subsumes the other.
+   *
+   * The GENERATION check catches a read issued BEFORE a switch started. Its
+   * target is the session that was on screen then, and — until the switch's
+   * target lands — still is, so an id comparison alone calls it current for
+   * precisely the interval in which acting on it would disarm the incoming
+   * session's seed.
+   *
+   * The ID check catches a session replaced with no switch at all: a raw
+   * `joinSession`, or a reconnect the server resolves onto a different
+   * conversation. It compares against `ChatState.session` directly, which is
+   * sound because identity and transcript are committed together in one write
+   * — there is no interval in which the store names one conversation while
+   * holding another's rows.
    */
   #isStale(target: string, generation: number): boolean {
     if (this.#generation() !== generation) return true;
@@ -540,6 +575,8 @@ export class MessageController {
    * straight to `new SendQueue({ onAck: controller.onAck })`.
    */
   readonly onAck = (entry: QueuedSend, seq: number | undefined): void => {
+    // Never rendered, so there is nothing to confirm and nothing to announce.
+    if (this.#suppressed.delete(entry.id)) return;
     const patched = this.#patch(entry.id, (message) => confirmed(message, seq));
     if (!patched) {
       this.#settledEarly.set(entry.id, { kind: 'acked', seq });
@@ -561,6 +598,9 @@ export class MessageController {
    */
   readonly onFailed = (failure: FailedSend & { readonly retryable?: boolean }): void => {
     const { entry, reason } = failure;
+    // Same reasoning as `onAck`: a send whose echo was suppressed has no row
+    // to fail and no `sendFailed` to report against a session nobody is in.
+    if (this.#suppressed.delete(entry.id)) return;
     const code = resolveCode(failure.code);
     const retryable = failure.retryable ?? DEFAULT_RETRYABLE_FALLBACK;
     const patched = this.#patch(entry.id, (message) => failed(message, reason, code, retryable));
@@ -576,13 +616,28 @@ export class MessageController {
   // -----------------------------------------------------------------------
 
   /** Queues one frame and applies its optimistic message. */
-  async #send(payload: MessageSendPayload): Promise<void> {
-    const sessionId = this.#store.getState().session?.id;
+  async #send(payload: MessageSendPayload, forSessionId?: string): Promise<void> {
+    const sessionId = forSessionId ?? this.#store.getState().session?.id;
     if (sessionId === undefined) throw new NoActiveSessionError('sendMessage');
+
+    // Address the frame to the session it was COMPOSED in, not to whichever
+    // session happens to be joined when it finally goes out.
+    //
+    // Without this the two can differ, and the gap is not theoretical: a
+    // `sendAttachment` uploads a file, awaits a network round trip, and only
+    // then sends — a switch landing inside that window produced a frame whose
+    // content was session A's storage URL and whose destination was session B.
+    // The server authorizes it (the customer owns B), files it under B, and
+    // broadcasts it to B's agent: one of the customer's own conversations
+    // leaking into another.
+    //
+    // `sessionId` on the wire is what makes this expressible; the server
+    // ownership-checks it and never falls back on a failed check.
+    const addressed: MessageSendPayload = { ...payload, sessionId };
 
     let entry: QueuedSend;
     try {
-      entry = await this.#enqueue(sessionId, payload);
+      entry = await this.#enqueue(sessionId, addressed);
     } catch (error) {
       // The send was never queued, so no optimistic message will ever be
       // inserted to consume an outcome recorded against its id. Dropping it
@@ -603,6 +658,28 @@ export class MessageController {
    * reading a different one here would let the two disagree.
    */
   #applyOutgoing(entry: QueuedSend): void {
+    // The echo belongs to the session the send was COMPOSED in, exactly as the
+    // frame does (`#send` stamps `payload.sessionId`). Addressing the WIRE was
+    // only half of it: this insert ran against whatever session happened to be
+    // on screen when the enqueue resolved, and for `sendAttachment` the
+    // content is a signed storage URL for the OTHER conversation — so the
+    // customer reading session B saw a private file from session A rendered in
+    // B's transcript, and every `message` subscriber was handed a row for a
+    // session it is not in. Same rule, same reason, as `applyIncoming`'s
+    // guard: rendering it would splice two conversations together.
+    //
+    // Suppressed rather than redirected: `ChatState` describes one
+    // conversation, and there is nowhere else to put it. The send itself is
+    // untouched — it stays queued, addressed to its own session, and lands
+    // there whenever that session is joined again; re-opening it re-reads the
+    // transcript from history.
+    const current = this.#store.getState().session?.id;
+    if (current !== undefined && entry.sessionId !== current) {
+      this.#settledEarly.delete(entry.id);
+      this.#suppressed.add(entry.id);
+      return;
+    }
+
     const { senderId, senderType } = this.#sender();
     const { payload } = entry;
 

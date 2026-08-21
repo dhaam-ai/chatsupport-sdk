@@ -8,19 +8,43 @@ type CloseSessionParams struct {
 	SessionID string
 }
 
-// CreateSessionParams is parameters of createSession operation.
-type CreateSessionParams struct {
-	// Client-generated opaque token (UUID recommended). A replayed request with the same key within 24h
-	// returns the original response instead of repeating the side effect.
-	IdempotencyKey OptString `json:",omitempty,omitzero"`
-}
-
 // GetSessionFullParams is parameters of getSessionFull operation.
 type GetSessionFullParams struct {
 	// Opaque session identifier. Do not parse or rely on its internal structure.
 	SessionID string
-	// Maximum number of items to return.
-	Limit OptInt `json:",omitempty,omitzero"`
+	// Parameter name and bounds corrected — the real query parameter is `messageLimit`, not `limit`
+	// (`fullSessionQuerySchema`, `chat.validator.ts:44-46`), capped at 200 with a default of 50.
+	MessageLimit OptInt `json:",omitempty,omitzero"`
+}
+
+// ListCartsForContactParams is parameters of listCartsForContact operation.
+type ListCartsForContactParams struct {
+	// Opaque contact identifier (`Contact.id`). Do not parse or rely on its internal structure. A contact
+	// in another tenant, or that never existed, is `404`, never `403` — see each operation's
+	// description.
+	ID string
+}
+
+// ListContactCartsParams is parameters of listContactCarts operation.
+type ListContactCartsParams struct {
+	// Lowercase only — `LIVE` or `1` are `400`, not silently accepted. This is the query-parameter form;
+	// the equivalent response field (`ContactCartRow.status`) is the integer `ContactCartStatus` code, not
+	// this string — see that schema's description for why the two intentionally differ.
+	Status OptListContactCartsStatus `json:",omitempty,omitzero"`
+	// Inclusive lower bound on `cartValue`.
+	MinValue OptFloat64 `json:",omitempty,omitzero"`
+	// Inclusive upper bound on `cartValue`.
+	MaxValue OptFloat64 `json:",omitempty,omitzero"`
+	// ISO-8601. Filters on the cart row's `updatedAt`.
+	UpdatedAfter OptDateTime `json:",omitempty,omitzero"`
+	// ISO-8601. Filters on the cart row's `updatedAt`.
+	UpdatedBefore OptDateTime `json:",omitempty,omitzero"`
+	Page          OptInt      `json:",omitempty,omitzero"`
+	// Reject, not clamp — a request above the max is `400`, never silently truncated. Same bound as
+	// `GET /contacts`.
+	PageSize OptInt `json:",omitempty,omitzero"`
+	// `<column>:<asc|desc>`. Only these two columns are sortable here.
+	Sort OptListContactCartsSort `json:",omitempty,omitzero"`
 }
 
 // ListSessionMessagesParams is parameters of listSessionMessages operation.
@@ -30,38 +54,53 @@ type ListSessionMessagesParams struct {
 	// Opaque message id cursor. Returns the page of messages immediately preceding this message. Omit to
 	// fetch the most recent page.
 	Before OptString `json:",omitempty,omitzero"`
-	// Maximum number of items to return.
+	// Default corrected — `listMessagesQuerySchema` (`chat.validator.ts:39-42`) defaults to 30, not the
+	// generic 20 an earlier revision of this document applied here. The 100 ceiling was already correct.
 	Limit OptInt `json:",omitempty,omitzero"`
 }
 
 // ListSessionsParams is parameters of listSessions operation.
 type ListSessionsParams struct {
-	// Maximum number of items to return.
+	// Maximum number of sessions to return. Default corrected to 5 (was 6) as of this revision —
+	// `customerSessionsQuerySchema` (`chat.validator.ts:52-58`). BREAKING for anything hardcoding the old
+	// default, but this operation has zero callers (see above), so there is no consumer to coordinate the
+	// change with. The cap stays 20, unrelated to the default and unchanged.
 	Limit OptInt `json:",omitempty,omitzero"`
+}
+
+// RecordCommerceEventForContactParams is parameters of recordCommerceEventForContact operation.
+type RecordCommerceEventForContactParams struct {
+	// Opaque contact identifier (`Contact.id`). Do not parse or rely on its internal structure. A contact
+	// in another tenant, or that never existed, is `404`, never `403` — see each operation's
+	// description.
+	ID string
 }
 
 // ReopenSessionParams is parameters of reopenSession operation.
 type ReopenSessionParams struct {
 	// Opaque session identifier. Do not parse or rely on its internal structure.
 	SessionID string
-	// Client-generated opaque token (UUID recommended). A replayed request with the same key within 24h
-	// returns the original response instead of repeating the side effect.
-	IdempotencyKey OptString `json:",omitempty,omitzero"`
 }
 
-// UploadSessionAttachmentParams is parameters of uploadSessionAttachment operation.
-type UploadSessionAttachmentParams struct {
-	// Opaque session identifier. Do not parse or rely on its internal structure.
-	SessionID string
-	// Client-generated opaque token (UUID recommended). A replayed request with the same key within 24h
-	// returns the original response instead of repeating the side effect.
-	IdempotencyKey OptString `json:",omitempty,omitzero"`
+// UploadAttachmentParams is parameters of uploadAttachment operation.
+type UploadAttachmentParams struct {
+	// Tenant verification hint, checked before the `tenantId` query parameter. Never authoritative — see
+	// description above.
+	XTenantID OptString `json:",omitempty,omitzero"`
+	// Tenant verification hint, used only if `X-Tenant-ID` is absent. Never authoritative — see
+	// description above.
+	TenantID OptString `json:",omitempty,omitzero"`
+	// The session this attachment belongs to. Optional at the HTTP layer (the route does not verify the
+	// session exists or that the caller owns it) — the caller is expected to supply it so the value can
+	// be echoed back into the follow-up `message.send` frame. See "Session identification" above for why
+	// this must be a query parameter, not a multipart field.
+	ChatSessionID OptString `json:",omitempty,omitzero"`
 }
 
 // WebhookMessageCreatedParams is parameters of webhookMessageCreated operation.
 type WebhookMessageCreatedParams struct {
 	// `t=<unix-seconds>,v1=<hex-encoded HMAC-SHA256>`. The signed payload is `${t}.${rawRequestBody}`,
-	// HMAC-SHA256'd with the tenant's secret key (`dhsk_live_...` / `dhsk_test_...`) as the key. Verify by
+	// HMAC-SHA256'd with the tenant's secret key (`dhk_live_...` / `dhk_test_...`) as the key. Verify by
 	// recomputing the HMAC over the raw, unparsed body and comparing with constant-time comparison; reject
 	// if `t` is more than 5 minutes from the receiver's clock (replay protection). `@dhaam-ccrm/node`
 	// (T16) implements this verification so consumers never hand-roll it.
@@ -79,7 +118,7 @@ type WebhookMessageCreatedParams struct {
 // WebhookSessionClosedParams is parameters of webhookSessionClosed operation.
 type WebhookSessionClosedParams struct {
 	// `t=<unix-seconds>,v1=<hex-encoded HMAC-SHA256>`. The signed payload is `${t}.${rawRequestBody}`,
-	// HMAC-SHA256'd with the tenant's secret key (`dhsk_live_...` / `dhsk_test_...`) as the key. Verify by
+	// HMAC-SHA256'd with the tenant's secret key (`dhk_live_...` / `dhk_test_...`) as the key. Verify by
 	// recomputing the HMAC over the raw, unparsed body and comparing with constant-time comparison; reject
 	// if `t` is more than 5 minutes from the receiver's clock (replay protection). `@dhaam-ccrm/node`
 	// (T16) implements this verification so consumers never hand-roll it.
@@ -97,7 +136,7 @@ type WebhookSessionClosedParams struct {
 // WebhookSessionUpdatedParams is parameters of webhookSessionUpdated operation.
 type WebhookSessionUpdatedParams struct {
 	// `t=<unix-seconds>,v1=<hex-encoded HMAC-SHA256>`. The signed payload is `${t}.${rawRequestBody}`,
-	// HMAC-SHA256'd with the tenant's secret key (`dhsk_live_...` / `dhsk_test_...`) as the key. Verify by
+	// HMAC-SHA256'd with the tenant's secret key (`dhk_live_...` / `dhk_test_...`) as the key. Verify by
 	// recomputing the HMAC over the raw, unparsed body and comparing with constant-time comparison; reject
 	// if `t` is more than 5 minutes from the receiver's clock (replay protection). `@dhaam-ccrm/node`
 	// (T16) implements this verification so consumers never hand-roll it.
@@ -115,7 +154,7 @@ type WebhookSessionUpdatedParams struct {
 // WebhookTicketLinkedParams is parameters of webhookTicketLinked operation.
 type WebhookTicketLinkedParams struct {
 	// `t=<unix-seconds>,v1=<hex-encoded HMAC-SHA256>`. The signed payload is `${t}.${rawRequestBody}`,
-	// HMAC-SHA256'd with the tenant's secret key (`dhsk_live_...` / `dhsk_test_...`) as the key. Verify by
+	// HMAC-SHA256'd with the tenant's secret key (`dhk_live_...` / `dhk_test_...`) as the key. Verify by
 	// recomputing the HMAC over the raw, unparsed body and comparing with constant-time comparison; reject
 	// if `t` is more than 5 minutes from the receiver's clock (replay protection). `@dhaam-ccrm/node`
 	// (T16) implements this verification so consumers never hand-roll it.

@@ -59,6 +59,20 @@ export { MESSAGE_TICK_STATES, deriveTickState, deriveTickStateFromState } from '
 export type { MessageTickState } from '@dhaam-ccrm/core';
 
 // ---------------------------------------------------------------------------
+// Core's `handledBy` staleness derivation, re-exported for exactly the reason
+// the tick block above is.
+//
+// "Connected to Ada" is a claim about a *current* handler, and `handledBy`
+// alone cannot support it: a reactivated session keeps the name of whoever
+// last held it while `status` goes back to WAITING_FOR_AGENT. That rule lives
+// in core (`isHandledByCurrent`) so every binding gates the same copy on the
+// same condition. It was reachable from React but not from here, which is why
+// the widget — this package's own first consumer — imports it straight from
+// core today (packages/widget/src/ui/identity-header.ts).
+// ---------------------------------------------------------------------------
+export { isHandledByCurrent } from '@dhaam-ccrm/core';
+
+// ---------------------------------------------------------------------------
 // Re-exported from @dhaam-ccrm/core so a consumer never needs a second
 // import specifier (or a hand-copied shape) just to type a variable as
 // `ChatState`/`ChatMessage`/etc. PRD §15 requires the binding-exposed
@@ -68,7 +82,18 @@ export type { MessageTickState } from '@dhaam-ccrm/core';
 // block in @dhaam-ccrm/react's barrel.
 // ---------------------------------------------------------------------------
 export { createChatClient } from '@dhaam-ccrm/core';
-export { ChatClientConfigError, ConnectionAbortedError, ConnectionSuspendedError } from '@dhaam-ccrm/core';
+export {
+  ChatClientConfigError,
+  ConnectionAbortedError,
+  ConnectionSuspendedError,
+  // What `store.client.switchSession()` rejects with. A value, not just a
+  // type, because the only useful thing to do with it is `instanceof` it and
+  // read `.sessionId`/`.cause` — and a consumer who had to add
+  // `@dhaam-ccrm/core` as a second dependency to do that would instead branch
+  // on `error.name`, which is a string comparison against a field nothing
+  // stops a bundler from mangling.
+  SessionSwitchError,
+} from '@dhaam-ccrm/core';
 export type {
   ChatClient,
   ChatClientConfig,
@@ -83,9 +108,68 @@ export type {
   ChatState,
   ChatTicket,
   ConnectionState,
+  IdentityProfile,
+  IdentitySync,
   MessageDelivery,
   SendAttachmentOptions,
   SendFailureReason,
   SendMessageOptions,
   Unsubscribe,
 } from '@dhaam-ccrm/core';
+
+// ---------------------------------------------------------------------------
+// The rest of `ChatState`'s shape.
+//
+// The block above re-exported the top-level types and stopped, which left the
+// §15 claim it is written to satisfy — a consumer never needs a second import
+// specifier to name what this binding hands them — true of `ChatMessage` and
+// false of `ChatMessage.attachment`. The widget hit that and worked around it
+// in its own source rather than here (`packages/widget/src/ui/message-list.ts`
+// on `AttachmentMetadata`/`CloseReason`, `session-picker.ts` and
+// `identity-header.ts` on `ChatStatus`/`HandledBy`). Every name below is a
+// type of a field reachable from a `ChatState` this store hands out, or from
+// a §6.5 event payload `store.on` delivers:
+//
+//   ChatMessage.attachment               AttachmentMetadata
+//   ChatMessage.metadata                 MessageMetadata
+//   ChatMessage.senderType               SenderType
+//   ChatMessage.type                     MessageType
+//   ChatSession.status                   ChatStatus    (and ChatSessionSummary)
+//   ChatSession.mode                     ChatMode      (and ChatSessionSummary)
+//   ChatSession.handledBy                HandledBy     (and ChatSessionSummary)
+//   ChatState.presence[participantId]    PresenceEntry -> PresenceStatus
+//   ChatState.lastError.code             ErrorCode
+//   ChatEventMap['sessionClosed']        CloseReason
+//   ParticipantSnapshot.type             ParticipantType
+//
+// Type-only, so this whole block costs nothing at runtime and nothing in the
+// bundle. The runtime guards that live beside these in core (`isChatStatus`,
+// `isParkedCloseReason`, ...) are deliberately NOT forwarded: they exist to
+// validate untrusted input off the wire, which is core's job on the way in,
+// not a binding consumer's on the way out.
+// ---------------------------------------------------------------------------
+export type {
+  AttachmentMetadata,
+  ChatMode,
+  ChatStatus,
+  CloseReason,
+  ErrorCode,
+  HandledBy,
+  MessageMetadata,
+  MessageType,
+  ParticipantType,
+  PresenceEntry,
+  PresenceStatus,
+  SenderType,
+} from '@dhaam-ccrm/core';
+
+// ---------------------------------------------------------------------------
+// What `store.client.retryMessage(id)` resolves to.
+//
+// `RetryOutcome` is `{ status: 'retried'; entry: QueuedSend }` or
+// `{ status: 'refused'; reason: 'not-found' | 'not-retryable' }` — a union a
+// caller must narrow to decide whether to keep the retry affordance on screen.
+// Without both names it cannot annotate the result at all, and core's single
+// "." exports entry blocks any deep-import workaround.
+// ---------------------------------------------------------------------------
+export type { QueuedSend, RetryOutcome } from '@dhaam-ccrm/core';

@@ -145,6 +145,35 @@ export interface SendQueueOptions {
 
   /** §9.6 bounds. Both have documented defaults. */
   readonly retention?: SendQueueRetention;
+
+  /**
+   * Which session this connection is currently JOINED to, read fresh on every
+   * drain. Supplying it makes the queue *session-scoped*: only that session's
+   * entries are ever put on the wire.
+   *
+   * This is the second of the two independent guards against a send being
+   * filed under the wrong conversation, and it is the one that survives an
+   * old server. `MessageSendPayload.sessionId` (protocol/frames.ts) is an
+   * OPTIONAL wire field, so a server that predates it ignores the extra key
+   * and files the frame under whatever `session.join` last set — which is the
+   * exact cross-conversation delivery the field exists to prevent. Not writing
+   * the frame at all is the only guard that does not depend on the peer's
+   * version. Both are implemented; neither alone is sufficient.
+   *
+   * Entries for any other session WAIT rather than being failed: they are the
+   * customer's own words, typed into a real conversation, and they become
+   * deliverable again the moment that session is joined. Destroying them here
+   * would be silent data loss dressed up as a safety check. The two explicit
+   * ends they can still reach are unchanged — {@link SendQueue.abandonSession}
+   * (a session that genuinely ended) and §9.6 retention (they age out and are
+   * reported through `onFailed`), so "waiting" is bounded, not forever.
+   *
+   * `null` means "joined to nothing", and nothing drains. Omitting the option
+   * entirely leaves the queue UNSCOPED — every session it holds is pumped,
+   * which is the right behavior for an embedder that owns no notion of joining
+   * (and is what this module's own unit tests exercise).
+   */
+  readonly joinedSession?: () => string | null;
 }
 
 /** Whether a session's pump ran out of work, or stopped because the peer did. */
@@ -166,6 +195,9 @@ export class SendQueue {
   readonly #retention: ResolvedRetention;
   readonly #onFailed: ((failure: FailedSend) => void) | undefined;
   readonly #onAck: ((entry: QueuedSend, seq: number | undefined) => void) | undefined;
+
+  /** See {@link SendQueueOptions.joinedSession}. Absent = unscoped. */
+  readonly #joinedSession: (() => string | null) | undefined;
 
   /**
    * Every undelivered entry, in global insertion order across all sessions.
@@ -217,6 +249,7 @@ export class SendQueue {
     this.#retention = resolveRetention(options.retention);
     this.#onFailed = options.onFailed;
     this.#onAck = options.onAck;
+    this.#joinedSession = options.joinedSession;
   }
 
   /**
@@ -467,7 +500,7 @@ export class SendQueue {
     for (;;) {
       if (!this.#transport.isOpen) return;
 
-      for (const sessionId of new Set(this.#entries.map((entry) => entry.sessionId))) {
+      for (const sessionId of this.#drainable()) {
         if (this.#pumps.has(sessionId) || this.#stalled.has(sessionId)) continue;
 
         const pump = this.#pump(sessionId)
@@ -490,6 +523,22 @@ export class SendQueue {
   }
 
   /**
+   * Which sessions this drain is allowed to put on the wire.
+   *
+   * Unscoped (no `joinedSession`), that is every session holding an entry —
+   * the original behavior. Scoped, it is AT MOST the joined session: pumping
+   * any other one hands the server a frame it can only file under the
+   * connection's current join. See {@link SendQueueOptions.joinedSession}.
+   */
+  #drainable(): readonly string[] {
+    const queued = new Set(this.#entries.map((entry) => entry.sessionId));
+    if (this.#joinedSession === undefined) return [...queued];
+
+    const joined = this.#joinedSession();
+    return joined !== null && queued.has(joined) ? [joined] : [];
+  }
+
+  /**
    * Delivers one session's entries head-first, one at a time.
    *
    * Stops — rather than spins — on `timeout` and `disconnected`. Both mean the
@@ -509,7 +558,19 @@ export class SendQueue {
       }
 
       this.#bumpAttempts(head);
-      const outcome = await this.#transport.sendWithId(head.id, head.payload);
+      // The address is stamped HERE, from the entry's own `sessionId` — the
+      // session the message was composed in — and never from "the session we
+      // are joined to now". Reading it from current state at flush time is
+      // precisely the bug: a message typed offline in session B and flushed
+      // after a switch to session A would address itself to A.
+      //
+      // Stamped at write time rather than stored on the payload so that an
+      // entry restored from a pre-upgrade storage record is addressed too, and
+      // so the two can never drift apart.
+      const outcome = await this.#transport.sendWithId(head.id, {
+        ...head.payload,
+        sessionId: head.sessionId,
+      });
 
       if (outcome.status === 'acked') {
         if (!(await this.#settle(head, { ack: outcome }))) return 'stalled';
