@@ -75,6 +75,13 @@ export type { ChatWidget } from './widget.js';
 export type { WidgetConfig, WidgetAuth, WidgetIdentity, ResolvedConfig } from './config.js';
 export type { PresentationMode, ResolvedPresentation } from './ui/presentation.js';
 
+// Re-exported because a host cannot fill in `WidgetIdentity.profile` without
+// being able to name its type, and making them take a second dependency on
+// @dhaam-ccrm/core to type one config field would defeat the point of a
+// drop-in package. `IdentitySync` is deliberately NOT here: the widget builds
+// that one itself, and a host has no slot to put its own in.
+export type { IdentityProfile } from '@dhaam-ccrm/core';
+
 // Re-exported so a host typing a `getToken` or reading `store.getState()` has
 // one import specifier rather than three.
 export type { ChatState, ChatMessage, ChatStore, MessageTickState } from '@dhaam-ccrm/js';

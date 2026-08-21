@@ -15,6 +15,7 @@ import type {
   ChatMessage,
   ChatSession,
   ChatSessionSummary,
+  IdentitySync,
 } from '@dhaam-ccrm/core';
 import {
   MemoryStorageAdapter,
@@ -25,6 +26,7 @@ import {
   RestClient,
   createAttachmentUploader,
   createHistorySource,
+  createIdentitySync,
   createSessionActions,
   createSessionSummarySource,
 } from '@dhaam-ccrm/rest';
@@ -50,6 +52,29 @@ export function createWidgetStore(config: ResolvedConfig): ChatStore {
     getAccessToken: tokens.getAccessToken,
   });
 
+  // The one place the identify seam is bridged (CONTACT_IDENTIFY_CONTRACT.md
+  // §3.3, AMENDED). The two return types differ ON PURPOSE: core's
+  // `IdentitySync.sync` resolves to `void` because core has no use for the
+  // receipt, while `createIdentitySync` resolves to it because discarding it
+  // inside packages/rest would throw away the only signal a caller could log.
+  //
+  // The wrapper is not ceremony. `Promise<T>` is INVARIANT in `T`, so
+  // `Promise<RestIdentityResult>` is not assignable to `Promise<void>` even
+  // with zero drift between the two shapes — TypeScript's assignable-to-void
+  // special case covers a bare `void` return, not a `Promise<void>` one. So
+  // the receipt is awaited and dropped here, on the only side that can see
+  // both types.
+  //
+  // Note what is NOT here: a try/catch. A rejection propagates to core, which
+  // owns the retry and the give-up (it has the jitter and timer seams); a
+  // `.catch(() => {})` at this line would silently disarm both.
+  const syncer = createIdentitySync(rest);
+  const identitySync: IdentitySync = {
+    sync: async (p) => {
+      await syncer.sync(p);
+    },
+  };
+
   const clientConfig: ChatClientConfig = {
     publishableKey,
     getToken: tokens.getToken,
@@ -60,6 +85,19 @@ export function createWidgetStore(config: ResolvedConfig): ChatStore {
     // a different product with a different token, and guessing wrong here
     // mislabels every optimistic echo the user sees.
     localSender: { senderId: config.identity.userId, senderType: 'CUSTOMER' },
+
+    // Identify, for a logged-in user only. A guest has a `userId` too, so
+    // `profile` — and nothing else — is the discriminator.
+    //
+    // Spread, because `identityProfile: config.identity.profile` does not
+    // compile under `exactOptionalPropertyTypes` (TS2375). So the real choice
+    // is spread vs. one of the escapes from that error — a cast, a `!`, or
+    // widening core's field — and each of those compiles while putting an
+    // identity-shaped KEY holding `undefined` on every guest's config. Only
+    // the spread makes `'identityProfile' in cfg === false` true for a guest.
+    ...(config.identity.profile === undefined
+      ? {}
+      : { identityProfile: config.identity.profile, identitySync }),
 
     // Durable, not in-memory. Core's default is `MemoryStorageAdapter`, which
     // by its own doc "survives a network blip, not a reload" — and two things
