@@ -58,6 +58,7 @@ Every `data-*` attribute has a JS-API equivalent via `mount()`.
 | `data-accent` | no | `#1f2937` |
 | `data-font` | no | `isolate` |
 | `data-open` | no | `false` |
+| `data-open-on-agent-initiated` | no | `false` |
 | `data-session-id` | no | — |
 | `data-auto="false"` | no | installs the API without mounting |
 
@@ -74,6 +75,48 @@ const widget = window.DhaamChat.mount({
 widget.open();
 widget.store.client.sendMessage('Hello');   // the full §6.2/§6.3 surface
 ```
+
+### The `window.DhaamChat` API
+
+| Method | What it does |
+|---|---|
+| `mount(config)` | Mounts the widget and returns it. Idempotent — a second call returns the first widget. |
+| `open()` / `close()` / `toggle()` | Drives the panel. |
+| `on(event, handler)` | Subscribes to core's §6.5 event catalog. Returns an unsubscribe. |
+| `destroy()` | Removes every node, listener, timer, and the socket. |
+| `widget()` | The mounted widget, or `null` — the escape hatch to `store.client`. |
+
+`on` is safe to call before the widget has mounted. A `<script>` tag mounts on
+`DOMContentLoaded`, so the inline script next to it runs first; registrations
+are held and attached at mount rather than dropped.
+
+## When an agent starts the conversation
+
+An agent can open a chat with a customer who has no open session. The server
+creates it, moves that customer's connection into it, and pushes the session
+snapshot; the widget swaps the transcript and emits `conversationStarted`.
+
+Opening the panel for it is **opt-in**:
+
+```html
+<script src="https://cdn…/widget.js"
+        data-publishable-key="dhp_live_…"
+        data-open-on-agent-initiated></script>
+```
+
+or, to decide for yourself:
+
+```js
+DhaamChat.on('conversationStarted', () => DhaamChat.open());
+```
+
+The default is `false` on purpose. A panel that opens itself covers the page
+the customer is actually using, moves focus into a composer they did not ask
+for, and on `sheet` takes the whole viewport — so it is your call, per site.
+
+Left off, nothing is lost: the launcher shows its unread indicator and says so
+in its accessible name, and the conversation is waiting when the customer opens
+it. The panel's open transition already honours `prefers-reduced-motion`.
 
 ## Auth: the browser never holds a secret
 

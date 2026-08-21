@@ -212,6 +212,8 @@ interface ChatState {
 
 **Amendment (2026-08-18, during T12):** `presence` was added as an eleventh field. As originally written this section specified ten fields with no home for presence, while the only presence-shaped field in the model — `isOnline` on the participant profile — sat on a type with no id, so a `presence.update` frame (keyed by `participantId`) could not be correlated to anyone. `ChatParticipantProfile` now carries `participantId`, and `isOnline` is removed: presence has exactly one canonical location (D4), rather than the two-locations-for-one-fact mistake v1 made with attachments (§12.2). A participant absent from the map has *unknown* presence, which is not the same as offline.
 
+**Amendment (2026-08-21, agent-initiated conversations):** §6.5 gained a `conversationStarted` event. A support agent can now open a chat with a customer who has no open session; the server creates it, moves that customer's connection into it, and pushes the **existing** `session.updated` frame carrying the new snapshot. No wire change was made or needed — `SERVER_PUSH_FRAME_TYPES` is a closed catalog and `validate.ts` rejects anything outside it, so a new frame type would mean a protocol version bump plus a coordinated server release. Core already replaced the conversation wholesale on that frame; what was missing was any way for an app to KNOW, so a closed chat panel had no reason to open. Disjoint from `statusChange` by construction — same session id vs different — so exactly one of the two fires per snapshot and no existing subscriber sees an extra occurrence. Emitted for `session.updated` only: a `connection.ack` resolving a different session is an ordinary reconnect and would fire on nearly every page load.
+
 `subscribe` fires synchronously (microtask-batched, not per-internal-mutation) on any change to any field of `ChatState`. Bindings are responsible for their framework's fine-grained-vs-coarse re-render tradeoff (e.g., React may want `useSyncExternalStore` with a selector) — core only guarantees the full, consistent snapshot is available on every notification; it does not do field-level diffing itself.
 
 ### 6.5 Event catalog (discrete, not state)
@@ -228,6 +230,7 @@ interface ChatState {
 | `agentJoined` / `agentLeft` | `{ agentId: string, agentName?: string }` | — |
 | `statusChange` | `{ status: ChatStatus, mode: ChatMode }` | — |
 | `sessionClosed` | `{ closeReason: CloseReason }` | — |
+| `conversationStarted` | `{ session: ChatSession, previousSessionId: string }` | A server-pushed `session.updated` replaced the session on screen with a different one — an agent starting the conversation |
 | `presenceUpdate` | `{ participantId: string, status: PresenceStatus, lastSeen?: string }` | — |
 | `ticketLinked` | `{ ticketId: string, ticketUrl?: string }` | — |
 | `tokenRefreshed` | `{}` | `getToken()` successfully re-invoked (§10.3) |
