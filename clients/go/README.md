@@ -206,6 +206,29 @@ const (
 )
 ```
 
+### Cart Segmentation: Win-Back Campaigns
+
+Once you've recorded abandoned carts, retrieve them for win-back campaigns via REST:
+
+- `GET /contacts/carts?status=abandoned&minValue=100` — tenant-wide segmentation (staff token, admin role)
+- `GET /contacts/:id/carts?status=abandoned` — one contact's history (staff token, admin role)
+
+See the full guide for query parameters, filtering, and response shape.
+
+**Note:** The commerce package does not wrap these read endpoints — they require a staff token and admin role, not a secret key. Your admin backend or CRM UI calls them directly over REST.
+
+### Secret Key Scope
+
+The secret key is valid on **exactly two routes:**
+- `POST /tokens` — minting access tokens
+- `POST /contacts/commerce-events` — recording events
+
+It grants nothing on the Contacts CRM routes, cart read routes, or any browser-facing endpoint. See the full guide for the complete scope statement.
+
+### Idle Sweeper
+
+Carts can be automatically marked `ABANDONED` after sitting idle (default: 24 hours). This is controlled by `COMMERCE_CART_SWEEP_ENABLED` (off by default) and `COMMERCE_CART_ABANDON_IDLE_HOURS` (default: 24). Swept carts appear in `GET /contacts/carts` alongside those explicitly marked abandoned by your backend.
+
 ### Full Guide
 
 See [`../../docs/commerce-events-guide.md`](../../docs/commerce-events-guide.md) for:
@@ -213,9 +236,12 @@ See [`../../docs/commerce-events-guide.md`](../../docs/commerce-events-guide.md)
 - Complete business context (what commerce events solve)
 - Eight properties and what moves each one
 - Order and cart state machines with examples
+- **Secret key scope** — exactly what it unlocks
+- **Idle sweeper** — automatic abandoned-cart detection
+- **Cart read APIs** — `GET /contacts/carts` for win-back segmentation
 - Worked lifecycle example (cart → abandoned → order → completed)
 - Error codes and retryability matrix
-- API reference for both TypeScript and Go
+- API reference for both TypeScript and Go, including the Value field divergence
 
 ## Tests
 

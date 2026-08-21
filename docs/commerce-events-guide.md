@@ -14,8 +14,9 @@ Record order and cart activity from your e-commerce backend to populate contact 
 8. [Idempotency and Release-on-Reject](#idempotency-and-release-on-reject)
 9. [Error Handling](#error-handling)
 10. [Caps and Constraints](#caps-and-constraints)
-11. [Worked Example](#worked-example)
-12. [API Reference](#api-reference)
+11. [Cart Segmentation and Win-Back Campaigns](#cart-segmentation-and-win-back-campaigns-get-contactscarts)
+12. [Worked Example](#worked-example)
+13. [API Reference](#api-reference)
 
 ---
 
@@ -108,6 +109,22 @@ if err != nil {
 ```
 
 **Never log your secret key.** Both SDKs redact it from their string representations.
+
+### Secret Key Scope: What It Unlocks
+
+The secret key (`dhk_live_…` / `dhk_test_…`) is valid on **exactly two routes**:
+
+- **`POST /tokens`** — Mints short-lived access tokens for customers
+- **`POST /contacts/commerce-events`** — Records order and cart events
+
+**It grants nothing on any other endpoint**, including:
+
+- The five Contacts CRM routes (`GET /contacts`, `GET /contacts/:id`, `POST /contacts`, `GET /contacts/cities`, `GET /contacts/tags`)
+- The cart segmentation reads (`GET /contacts/carts`, `GET /contacts/:id/carts`)
+
+Those routes require a **staff token** (a tenant admin's Cognito access token) plus the **admin role**. A secret key presented at those routes is rejected exactly as any other malformed `Authorization` header is — no special handling.
+
+This scope is deliberate: a merchant holding a secret key can record commerce events against their own customers, but cannot read, create, modify, or profile any contact, and cannot access the CRM or win-back query surfaces.
 
 ---
 
@@ -325,6 +342,25 @@ _, err = client.RecordCommerceEvent(ctx, commerce.CartConverted{
 
 **Important:** Once a cart is `CONVERTED`, it is terminal. Any further `cart.updated` or `cart.abandoned` for that cart will be rejected with `422 INVALID_CART_TRANSITION`. The exception is re-converting an already-converted cart, which is a no-op (`200`, `applied: true`, no state change). An `ABANDONED` cart **can** transition to `CONVERTED` (customer came back and checked out).
 
+### Automatic Abandonment: The Idle Sweeper
+
+Carts don't always need an explicit `cart.abandoned` event. The server runs a background job — the **idle sweeper** — that automatically marks `LIVE` carts as `ABANDONED` after a configurable idle period (default: 24 hours since the last event on that cart).
+
+The sweeper:
+
+- Runs on a background schedule (tick interval has a 60-second floor)
+- **Is off by default** — enable it with `COMMERCE_CART_SWEEP_ENABLED=true` (environment variable)
+- Checks each `LIVE` cart's `lastEventAt` timestamp against `COMMERCE_CART_ABANDON_IDLE_HOURS` (default: 24)
+- When a cart exceeds the threshold, transitions it to `ABANDONED` and records a `ContactCommerceEvent` row with `actorType = SYSTEM` for audit parity
+- Recomputes the contact's `itemsInCart`/`cartValue` mirror (same as a caller-declared `cart.abandoned`)
+
+**Two paths to `ABANDONED` — same result:**
+
+1. **Caller-declared:** Your backend explicitly sends a `cart.abandoned` event
+2. **Server-detected:** The sweeper automatically marks it abandoned after idle time
+
+Either way, the cart then appears in `GET /contacts/carts?status=abandoned` for win-back campaigns. A merchant does not have to emit `cart.abandoned` if they only care about the eventual state — the sweeper handles it. That said, if a merchant's UI should immediately show the cart as abandoned when a customer closes the browser, an explicit event is the right call.
+
 ---
 
 ## Idempotency and Release-on-Reject
@@ -498,6 +534,122 @@ Every other per-field constraint is validated only server-side:
 ### Request Size
 
 A maximal cart is approximately 210 KiB in ASCII but ~567 KiB with CJK product names. The server's body limit is 1 MiB to accommodate these worst-case scenarios comfortably.
+
+---
+
+## Cart Segmentation and Win-Back Campaigns: `GET /contacts/carts`
+
+The whole point of abandoned-cart data is to retrieve it for win-back campaigns — querying all customers with $500+ in abandoned carts, or abandoned carts from the last 7 days. Two read endpoints serve this:
+
+### Tenant-Wide Segmentation: `GET /contacts/carts`
+
+**Auth:** Staff token + admin role (NOT the secret key)
+
+List and filter all carts across the tenant for campaign segmentation.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Notes |
+|---|---|---|---|
+| `status` | string | `abandoned` | Filter: `live`, `abandoned`, or `converted`. Defaults to `abandoned` because win-back is the point. |
+| `minValue` | number | — | Filter: carts with `cartValue >= minValue` |
+| `maxValue` | number | — | Filter: carts with `cartValue <= maxValue` |
+| `updatedAfter` | ISO-8601 | — | Filter: carts updated after this timestamp |
+| `updatedBefore` | ISO-8601 | — | Filter: carts updated before this timestamp |
+| `page` | number | 1 | Pagination: which page to return (1-indexed) |
+| `pageSize` | number | 25 | Pagination: rows per page (default 25, max 100) |
+| `sort` | string | `updatedAt:desc` | Sort order: `updatedAt:asc` or `updatedAt:desc` only. **`cartValue:asc\|desc` is deliberately rejected** (no index for it; row count is the tenant's whole cart table). |
+
+**Example:**
+
+```
+GET /contacts/carts?status=abandoned&minValue=100&updatedAfter=2024-08-14T00:00:00Z&pageSize=50
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "contactId": "cid_xyz...",
+      "contactRef": "ext_cust_5847",
+      "cartId": "cart_abc123",
+      "status": 2,
+      "itemsCount": 3,
+      "cartValue": 149.99,
+      "abandonedAt": "2024-08-20T15:32:00Z",
+      "convertedAt": null,
+      "updatedAt": "2024-08-20T15:32:00Z"
+    }
+  ],
+  "total": 127,
+  "page": 1,
+  "pageSize": 50
+}
+```
+
+**Important details:**
+
+- Each row has a **`status` integer** (1=LIVE, 2=ABANDONED, 3=CONVERTED), **not** the lowercase string used in the query parameter. This distinction exists because the query parameter is a human-typed filter while the response carries the typed-enum wire contract.
+- Rows **deliberately omit** the `items` array here (too much data at tenant scale). To see line items, use the per-contact endpoint below.
+- The tenant-wide endpoint scopes `total` to the tenant, not globally.
+
+### Single-Contact History: `GET /contacts/:id/carts`
+
+**Auth:** Staff token + admin role (NOT the secret key)
+
+View one contact's complete cart history while handling a support ticket.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Notes |
+|---|---|---|---|
+| `status` | string | — | Filter: `live`, `abandoned`, or `converted`. Omit to return all statuses. |
+| `limit` | number | 100 | Maximum rows (default 100, max 200) |
+| `sort` | string | `updatedAt:desc` | Sort order: **`cartValue:asc\|desc` is accepted here** (row count is bounded to one contact's history) or `updatedAt:asc\|desc` |
+
+**Example:**
+
+```
+GET /contacts/cid_xyz.../carts?status=abandoned&limit=20
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "contactId": "cid_xyz...",
+      "contactRef": "ext_cust_5847",
+      "cartId": "cart_abc123",
+      "status": 2,
+      "itemsCount": 3,
+      "cartValue": 149.99,
+      "items": [
+        {"name": "Wireless Headphones", "quantity": 1, "unitPrice": 79.99, "sku": "WH-1000XM4"},
+        {"name": "Audio Cable", "quantity": 2, "unitPrice": 12.99}
+      ],
+      "abandonedAt": "2024-08-20T15:32:00Z",
+      "convertedAt": null,
+      "updatedAt": "2024-08-20T15:32:00Z"
+    }
+  ]
+}
+```
+
+**Important details:**
+
+- Rows **include** the full `items` array (line-item snapshot as of the most recent `cart.updated`)
+- The endpoint is **unpaginated** (capped at `limit`; a contact typically has tens of carts, not thousands)
+- It returns a 404 if the `:id` belongs to another tenant or doesn't exist (404-not-403, same as `GET /contacts/:id`)
+
+### Note on SDK Coverage
+
+Neither SDK wraps these read endpoints because they require a staff token, not a secret key. These are CRM-admin queries, not something a merchant's backend calls during event recording. If you're building a win-back campaign UI, your frontend or admin backend calls these directly over REST with staff credentials.
 
 ---
 
@@ -712,6 +864,23 @@ if (isRetryableContactsError(error)) {
 }
 ```
 
+**Event Type Notes:**
+
+In TypeScript, `OrderPlaced.value` and `OrderCompleted.value` are both optional `number | undefined`. You control optionality through truthiness in the request:
+
+```ts
+await chat.recordCommerceEvent({
+  type: 'order.placed',
+  value: 39.99,        // Send it
+  // or omit: value not sent
+});
+
+await chat.recordCommerceEvent({
+  type: 'order.completed',
+  value: 39.99,        // Required; required here
+});
+```
+
 ### Go
 
 **Import:**
@@ -761,6 +930,29 @@ if commerce.IsRetryableContactsError(err) {
 - Caps: `MaxItems`, `MaxItemNameLength`, `MaxItemSKULength`
 - Errors: `*InvalidEventError`, `*APIError`, `*TransportError`
 - Functions: `IsRetryableContactsError`
+
+**Event Type Divergence (TypeScript vs. Go):**
+
+Go's stricter type system exposes an important difference:
+
+- **`OrderPlaced.Value`** is `*float64` (pointer, optional) — Go cannot take the address of a literal `0.0`, so you must use the `commerce.Float64(39.99)` helper. Omit the field entirely to send nothing.
+- **`OrderCompleted.Value`** is `float64` (not pointer, required) — Go enforces that this field must always be supplied (no pointer, no zero-value ambiguity).
+
+```go
+// ✅ Correct: use Float64 helper for optional
+result, err := client.RecordCommerceEvent(ctx, commerce.OrderPlaced{
+  Value: commerce.Float64(39.99), // Optional; could omit entirely
+  // ...
+})
+
+// ✅ Correct: required field, no helper needed
+result, err := client.RecordCommerceEvent(ctx, commerce.OrderCompleted{
+  Value: 39.99,  // Required
+  // ...
+})
+```
+
+TypeScript draws the same required/optional line — `OrderCompletedEvent.value` is a required `number`, `OrderPlacedEvent.value` is an optional `number?`. What differs is only the mechanics: Go expresses "optional" as a pointer, so the optional one needs `commerce.Float64(...)` while TypeScript just omits the key. If you're porting between the two, that's the first surprise you'll hit.
 
 ---
 
