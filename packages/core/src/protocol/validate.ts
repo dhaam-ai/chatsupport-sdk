@@ -341,7 +341,18 @@ function validateConnectionHello(d: unknown, path: string, frameType: string): F
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
   return (
     requireField(d, 'token', isNonEmptyString, path, 'a non-empty string', frameType) ??
-    requireField(d, 'publishableKey', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    // Optional, because ABSENCE is what selects the server's staff flow — a
+    // staff client has no publishable key to send. Present means the customer
+    // flow, unchanged.
+    //
+    // Shape-checked when present, for the same reason `message.send.sessionId`
+    // is: the two states this field distinguishes are "absent" and "a real
+    // key", and a blank string is neither. Letting `''` through would make it
+    // a SECOND way to reach the branch that absence selects — a customer
+    // client whose key resolved to empty would silently arrive as staff — so
+    // it is refused at the edge, where "this is malformed" is still knowable,
+    // rather than downstream where it is only a failed tenant lookup.
+    optionalField(d, 'publishableKey', isNonEmptyString, path, 'a non-empty string', frameType) ??
     requireField(d, 'protocolVersion', isInteger, path, 'an integer', frameType) ??
     optionalField(d, 'resumeFrom', isInteger, path, 'an integer', frameType) ??
     optionalField(d, 'newSession', isBoolean, path, 'a boolean', frameType)

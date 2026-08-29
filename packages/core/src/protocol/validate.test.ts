@@ -796,3 +796,42 @@ describe('message.send addresses its own session (ROOT B)', () => {
     }
   });
 });
+
+describe('connection.hello selects a flow by the PRESENCE of publishableKey (WS v2 STAFF)', () => {
+  const hello = (d: Record<string, unknown>) => ({ v: 1, t: 'connection.hello', id: ULID_A, ts: TS, d });
+
+  it('accepts a hello WITH a publishableKey — the customer flow, unchanged', () => {
+    expect(validateFrame(hello({ token: 'tok', publishableKey: 'dhp_test_1', protocolVersion: 1 })).ok).toBe(true);
+  });
+
+  it('accepts a hello WITHOUT a publishableKey — the staff flow, which has no key to send', () => {
+    expect(validateFrame(hello({ token: 'tok', protocolVersion: 1 })).ok).toBe(true);
+  });
+
+  it('accepts an explicitly-undefined publishableKey as absent, matching every other optional field', () => {
+    expect(validateFrame(hello({ token: 'tok', publishableKey: undefined, protocolVersion: 1 })).ok).toBe(true);
+  });
+
+  // The privilege boundary. A blank key must NOT be a second route into the
+  // branch that absence selects: a customer client whose key resolved to empty
+  // would otherwise arrive as staff, silently. Reject it at the edge.
+  it.each([
+    ['an empty string', ''],
+    ['a number', 7],
+    ['null', null],
+    ['a boolean', false],
+    ['an object', { key: 'dhp_test_1' }],
+  ])('rejects a hello whose publishableKey is %s', (_label, publishableKey) => {
+    const result = validateFrame(hello({ token: 'tok', publishableKey, protocolVersion: 1 }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.path).toBe('d.publishableKey');
+      expect(result.frameType).toBe('connection.hello');
+    }
+  });
+
+  it('still requires token and protocolVersion when publishableKey is absent', () => {
+    expect(validateFrame(hello({ protocolVersion: 1 })).ok).toBe(false);
+    expect(validateFrame(hello({ token: 'tok' })).ok).toBe(false);
+  });
+});

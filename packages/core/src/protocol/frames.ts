@@ -32,7 +32,28 @@ export type EmptyPayload = Record<string, never>;
  */
 export interface ConnectionHelloPayload {
   token: string;
-  publishableKey: string;
+
+  /**
+   * The tenant this connection belongs to — and, by its PRESENCE, which of the
+   * server's two flows the hello selects.
+   *
+   * Present ⇒ the customer flow, byte-for-byte what it has always been.
+   * Absent ⇒ the STAFF flow, where the tenant is resolved from the staff token
+   * itself rather than from a key a browser was handed.
+   *
+   * Optional rather than removed-and-replaced because absence is the whole
+   * signal: a staff client has no publishable key to send, and inventing a
+   * sentinel value for it (`''`, `'STAFF'`) would put the routing decision in
+   * a STRING the server has to interpret instead of in the shape of the frame,
+   * which every non-TypeScript client would then have to discover.
+   *
+   * Still shape-checked when present — see validate.ts. A blank key is
+   * REJECTED rather than treated as absent: tolerating it would open a second,
+   * undocumented route into the staff flow for a customer client whose key
+   * happened to resolve to empty, which is a privilege boundary and not a
+   * formatting detail.
+   */
+  publishableKey?: string;
 
   /** Highest protocol version this client supports (§7.5). */
   protocolVersion: number;
