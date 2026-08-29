@@ -909,13 +909,20 @@ describe('connection.ack — the STAFF flow, which resolves no session', () => {
     // FIRST connection — `resumeFrom` absent — rather than resuming from a
     // fabricated 0, which would ask the server to replay from the beginning
     // of time.
-    h.transport.close({ code: CLOSE_CODE.GOING_AWAY, reason: 'bye', wasClean: false });
-    // `advance`, not a non-existent `runAll` — ManualTimers only knows how to
-    // move a clock. 60s is the same span the backoff tests above use to drain
-    // a scheduled retry.
+    // `drop`, not `close`: `close()` is the LOCAL disconnect and takes no
+    // arguments, and the controller deliberately discards its own closes
+    // rather than reconnecting from them — so this assertion passed vacuously
+    // against the connect that had already happened. `drop` is the peer-side
+    // close that actually schedules a retry.
+    h.transport.drop({ code: CLOSE_CODE.GOING_AWAY, reason: 'bye', wasClean: false });
+    // 60s is the same span the backoff tests above use to drain a retry.
     h.timers.advance(60_000);
     await tick();
 
+    // Two connects: the original and the reconnect this test is about. Without
+    // it the assertion below is about the first hello, which never had a
+    // `resumeFrom` to begin with.
+    expect(h.transport.connects.length).toBeGreaterThan(1);
     expect('resumeFrom' in h.transport.lastConnect.hello).toBe(false);
   });
 });
