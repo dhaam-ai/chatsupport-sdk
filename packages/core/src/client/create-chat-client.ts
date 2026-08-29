@@ -343,6 +343,16 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
 
     // frame: ServerPushFrame from here on.
     if (frame.t === 'connection.ack') {
+      // A session-less `connection.ack` is the STAFF handshake
+      // (protocol/frames.ts). It cannot arrive here: this client is
+      // customer-only — `ChatClientConfig.publishableKey` is required — and
+      // `ConnectionController` rejects a session-less ack on a customer
+      // connection before it is ever delivered. Handled rather than asserted
+      // because the alternative is seeding the whole state tree from
+      // `undefined`, and there is nothing this client could usefully do with a
+      // handshake that resolved no conversation.
+      if (frame.d.session === undefined) return;
+
       // The handshake IS a join: chat-service resolves the customer's session
       // and sets `conn.sessionId` from it without any `session.join` frame
       // being written, so this is the only place that transition is visible.
@@ -350,8 +360,13 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     }
 
     if (frame.t === 'connection.ack' || frame.t === 'session.updated') {
+      // Narrowed above for `connection.ack`; always present on
+      // `session.updated`, whose validator still REQUIRES it.
+      const snapshot = frame.d.session;
+      if (snapshot === undefined) return;
+
       const previous = store.getState().session;
-      const next = sessionSnapshotToChatSession(frame.d.session, previous);
+      const next = sessionSnapshotToChatSession(snapshot, previous);
       // Whether this snapshot REPLACES the conversation on screen, rather than
       // refreshing the one already there.
       const replacing = previous !== null && previous.id !== next.id;

@@ -462,12 +462,41 @@ function validatePresenceQuery(d: unknown, path: string, frameType: string): Fra
   return optionalField(d, 'participantIds', isStringArray, path, 'an array of strings', frameType);
 }
 
+/**
+ * `session` and `seq` are OPTIONAL here, and shape-checked when present.
+ *
+ * A STAFF hello resolves no session — it never auto-creates and never
+ * auto-joins one — so a staff `connection.ack` has nothing truthful to put in
+ * either field (chat-service-node-integ
+ * src/api/websocket/v2/protocol/types.ts:403). Requiring them made every staff
+ * connection fail validation at the handshake, which put the entire WS v2
+ * staff surface out of reach of this SDK.
+ *
+ * This is deliberately the same additive-optionality change already made for
+ * `connection.hello.publishableKey`, and it has the same shape: absence is a
+ * signal, and a present-but-malformed value is still a hard failure.
+ *
+ * WHAT THIS DOES NOT DO — and where the missing half lives.
+ *
+ * Loosening a SHARED validator cannot be the whole story: a buggy server that
+ * omitted `session` for a CUSTOMER would now pass here silently, which is
+ * strictly worse than the bug being fixed, because it fails deep in the state
+ * tree instead of at the wire.
+ *
+ * The customer guarantee is therefore enforced at the CALL SITE rather than
+ * here, in `ConnectionController.#handleConnectionAck`
+ * (connection/controller.ts). That is the only place that knows which flow
+ * this connection is — it wrote the `connection.hello` itself, so it knows
+ * whether it sent a `publishableKey` — and a validator that is shared by both
+ * flows structurally cannot know it. A customer ack missing either field is
+ * rejected there as the protocol violation it is.
+ */
 function validateConnectionAck(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
   return (
     requireField(d, 'protocolVersion', isInteger, path, 'an integer', frameType) ??
-    requireObject(d, 'session', path, validateSessionSnapshot, frameType) ??
-    requireField(d, 'seq', isInteger, path, 'an integer', frameType) ??
+    optionalObject(d, 'session', path, validateSessionSnapshot, frameType) ??
+    optionalField(d, 'seq', isInteger, path, 'an integer', frameType) ??
     optionalArray(d, 'replay', path, validateReplayFrame, frameType)
   );
 }

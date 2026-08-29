@@ -65,8 +65,15 @@ interface Harness {
   readonly events: Array<{ name: string; payload: unknown }>;
 }
 
+/**
+ * @param overrides `staff: true` builds a STAFF controller — one constructed
+ *   with no `publishableKey` at all. Expressed as a flag rather than as
+ *   `publishableKey: undefined` because under `exactOptionalPropertyTypes`
+ *   those are different things, and it is precisely the ABSENT one that
+ *   selects the staff flow.
+ */
 function harness(
-  overrides: Partial<ConnectionControllerOptions> & { token?: TokenProvider } = {},
+  overrides: Partial<ConnectionControllerOptions> & { token?: TokenProvider; staff?: true } = {},
 ): Harness {
   const store = new ChatStore({ initialState: createInitialChatState() });
   const timers = new ManualTimers();
@@ -79,11 +86,11 @@ function harness(
   const getToken = vi.fn(overrides.token ?? (async () => 'tok_abc'));
   let transport!: FakeTransport;
 
-  const { token: _token, ...rest } = overrides;
+  const { token: _token, staff, ...rest } = overrides;
   const controller = new ConnectionController({
     store,
     url: 'wss://example.test/chat-services/v2/ws',
-    publishableKey: 'dhp_test_1',
+    ...(staff === true ? {} : { publishableKey: 'dhp_test_1' }),
     getToken: getToken as TokenProvider,
     schedule: timers.schedule,
     // rng=1 pins full jitter to its ceiling, so the delay sequence is exact.
@@ -811,5 +818,167 @@ describe('getToken() failure reporting (§14)', () => {
     for (const e of errors) {
       expect(JSON.stringify(e.payload)).not.toContain(LIVE_TOKEN);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The `connection.ack` contract: optional in the validator, enforced per flow
+// ---------------------------------------------------------------------------
+//
+// `session` and `seq` are optional in protocol/validate.ts so a STAFF ack —
+// which resolves no session and so holds no anchor — can be admitted at all.
+// That loosening is shared by both flows, so on its own it would also let a
+// buggy server omit `session` for a CUSTOMER and pass silently.
+//
+// The customer half is therefore enforced HERE, in the one place that knows
+// which flow this connection is: this controller wrote the `connection.hello`,
+// so it knows whether a publishableKey went out. Both directions are pinned
+// below — the staff ack must pass, the customer ack must not.
+
+/** A staff ack: `session` and `seq` ABSENT, not set to `undefined`. */
+function staffAckFrame(): ServerFrame {
+  return { v: 1, t: 'connection.ack', id: 'srv_ack', ts: 0, d: { protocolVersion: 1 } };
+}
+
+/** A `connection.ack` with `seq` but no `session` — the half-formed customer case. */
+function ackFrameWithoutSession(): ServerFrame {
+  return { v: 1, t: 'connection.ack', id: 'srv_ack', ts: 0, d: { protocolVersion: 1, seq: 0 } };
+}
+
+/** A `connection.ack` with `session` but no `seq`. */
+function ackFrameWithoutSeq(): ServerFrame {
+  return {
+    v: 1,
+    t: 'connection.ack',
+    id: 'srv_ack',
+    ts: 0,
+    d: { protocolVersion: 1, session: SESSION_SNAPSHOT },
+  };
+}
+
+describe('connection.ack — the STAFF flow, which resolves no session', () => {
+  it('omits publishableKey from the hello entirely when none was configured', async () => {
+    const h = harness({ staff: true });
+    const promise = h.controller.connect();
+    await tick();
+    h.transport.open();
+    h.transport.emitFrame(staffAckFrame());
+    await promise;
+
+    // Absent, not present-and-undefined: the server selects its flow on the
+    // key's PRESENCE, so an explicit `undefined` key would be a different
+    // thing on the wire.
+    expect(h.transport.lastConnect.hello).toEqual({ token: 'tok_abc' });
+    expect('publishableKey' in h.transport.lastConnect.hello).toBe(false);
+  });
+
+  it('accepts an ack with neither session nor seq and reaches connected', async () => {
+    const h = harness({ staff: true });
+    const promise = h.controller.connect();
+    await tick();
+    h.transport.open();
+    h.transport.emitFrame(staffAckFrame());
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(h.controller.state).toBe('connected');
+    expect(eventNames(h)).not.toContain('suspended');
+    expect(h.store.getState().lastError).toBeNull();
+  });
+
+  it('delivers the staff ack downstream rather than swallowing it', async () => {
+    const frames: ServerFrame[] = [];
+    const h = harness({ staff: true, onFrame: (f) => frames.push(f) });
+    const promise = h.controller.connect();
+    await tick();
+    h.transport.open();
+    h.transport.emitFrame(staffAckFrame());
+    await promise;
+
+    expect(frames.map((f) => f.t)).toEqual(['connection.ack']);
+  });
+
+  it('leaves the resume anchor untouched, so the next hello does not claim a seq it never had', async () => {
+    const h = harness({ staff: true });
+    const promise = h.controller.connect();
+    await tick();
+    h.transport.open();
+    h.transport.emitFrame(staffAckFrame());
+    await promise;
+
+    // A staff ack carries no anchor. Reconnecting must therefore read as a
+    // FIRST connection — `resumeFrom` absent — rather than resuming from a
+    // fabricated 0, which would ask the server to replay from the beginning
+    // of time.
+    h.transport.close({ code: CLOSE_CODE.GOING_AWAY, reason: 'bye', wasClean: false });
+    // `advance`, not a non-existent `runAll` — ManualTimers only knows how to
+    // move a clock. 60s is the same span the backoff tests above use to drain
+    // a scheduled retry.
+    h.timers.advance(60_000);
+    await tick();
+
+    expect('resumeFrom' in h.transport.lastConnect.hello).toBe(false);
+  });
+});
+
+describe('connection.ack — the CUSTOMER guarantee, enforced at the call site', () => {
+  it.each([
+    ['session', ackFrameWithoutSession],
+    ['seq', ackFrameWithoutSeq],
+    ['session and seq', staffAckFrame],
+  ])('rejects a customer ack missing %s as a protocol violation', async (_label, build) => {
+    const frames: ServerFrame[] = [];
+    // `harness` configures a publishableKey, so this IS a customer connection.
+    const h = harness({ onFrame: (f) => frames.push(f) });
+    const promise = h.controller.connect();
+    await tick();
+    h.transport.open();
+    h.transport.emitFrame(build());
+
+    await expect(promise).rejects.toBeInstanceOf(ConnectionSuspendedError);
+
+    // Suspended, not retried: backoff cannot fix a server that answers a
+    // customer hello with a staff-shaped ack, and retrying forever would leave
+    // the widget stuck "connecting" with no conversation and no explanation.
+    expect(h.controller.state).toBe('suspended');
+    expect(eventNames(h)).toContain('suspended');
+
+    // NEVER applied. This is the whole point of the check: a session-less ack
+    // that reached the state tree would seed the conversation from `undefined`
+    // and fail later, somewhere else, for a reason nobody could trace back.
+    expect(frames).toHaveLength(0);
+    expect(h.store.getState().session).toBeNull();
+    expect(h.store.getState().connectionState).toBe('suspended');
+  });
+
+  it('reports the violation with a structured code, not just prose', async () => {
+    const h = harness();
+    const promise = h.controller.connect();
+    await tick();
+    h.transport.open();
+    h.transport.emitFrame(ackFrameWithoutSession());
+    await promise.catch(() => undefined);
+
+    const error = h.store.getState().lastError;
+    expect(error?.source).toBe('protocol');
+    expect(error?.code).toBe('VALIDATION_FAILED');
+    expect(error?.retryable).toBe(false);
+    expect(error?.message).toContain('missing session');
+  });
+
+  it('names both missing fields when both are absent', async () => {
+    const h = harness();
+    const promise = h.controller.connect();
+    await tick();
+    h.transport.open();
+    h.transport.emitFrame(staffAckFrame());
+    await promise.catch(() => undefined);
+
+    expect(h.store.getState().lastError?.message).toContain('missing session and seq');
+  });
+
+  it('still accepts a well-formed customer ack — the guard costs the happy path nothing', async () => {
+    const h = await connected();
+    expect(h.controller.state).toBe('connected');
+    expect(h.store.getState().lastError).toBeNull();
   });
 });

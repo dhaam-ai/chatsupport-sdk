@@ -699,8 +699,13 @@ describe('HandledBy — SessionSnapshot.handledBy, ParticipantSnapshot.displayNa
     });
     expect(result.ok).toBe(true);
     if (result.ok && result.frame.t === 'connection.ack') {
-      expect(result.frame.d.session.handledBy).toBeUndefined();
-      expect(result.frame.d.session.participants[0]?.displayName).toBeUndefined();
+      // Asserted present before the optional-field checks below: `session` is
+      // optional on the TYPE now (a staff ack carries none), so a bare
+      // `session?.handledBy` would also pass if the validator had dropped the
+      // whole snapshot — which is the opposite of what this test is for.
+      expect(result.frame.d.session).toBeDefined();
+      expect(result.frame.d.session?.handledBy).toBeUndefined();
+      expect(result.frame.d.session?.participants[0]?.displayName).toBeUndefined();
     }
   });
 });

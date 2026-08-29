@@ -122,7 +122,12 @@ export class PresenceCoordinator {
       // Both carry the same authoritative snapshot and are treated identically
       // (§9.4, and protocol/domain.ts's note on SessionSnapshot).
       case 'connection.ack':
-        this.#applySessionSnapshot(frame.d.session);
+        // A STAFF ack resolves no session, so there is no snapshot to
+        // reconcile watermarks against. Still `true`: the frame WAS handled —
+        // there was simply nothing in it for this coordinator. Returning
+        // `false` would let it fall through to the caller's switch as if it
+        // were an unrecognised frame type.
+        if (frame.d.session !== undefined) this.#applySessionSnapshot(frame.d.session);
         return true;
 
       case 'session.updated':

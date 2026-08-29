@@ -132,7 +132,8 @@ export class ConnectionController {
   readonly #authBackoff: AuthBackoffPolicy;
   readonly #getToken: TokenProvider;
   readonly #url: string;
-  readonly #publishableKey: string;
+  /** Absent on a STAFF connection — see `ConnectionControllerOptions.publishableKey`. */
+  readonly #publishableKey: string | undefined;
   readonly #onFrame: ((frame: ServerFrame) => void) | undefined;
   readonly #onResumeGap: ((gap: ResumeGap) => void) | undefined;
   readonly #refreshAtFraction: number;
@@ -364,7 +365,12 @@ export class ConnectionController {
 
     const hello: Omit<ConnectionHelloPayload, 'protocolVersion'> = {
       token,
-      publishableKey: this.#publishableKey,
+      // Omitted entirely, not sent as `undefined`, on a staff connection. The
+      // server selects its flow on the key's PRESENCE, and under
+      // `exactOptionalPropertyTypes` an explicit `undefined` is a different
+      // thing from an absent key — the same absence rule `resumeFrom` follows
+      // below.
+      ...(this.#publishableKey === undefined ? {} : { publishableKey: this.#publishableKey }),
       // D2 §8.3: sent on *any* transition into `authenticating`, reconnect and
       // first connect alike. Omitted entirely on a first connection — under
       // `exactOptionalPropertyTypes` an explicit `undefined` is a different
@@ -484,7 +490,68 @@ export class ConnectionController {
   // Handshake
   // -------------------------------------------------------------------------
 
+  /**
+   * The CUSTOMER half of the `connection.ack` contract, enforced here because
+   * here is the only place that knows which half applies.
+   *
+   * `session` and `seq` are optional in the shared validator
+   * (protocol/validate.ts) so that a STAFF ack — which resolves no session and
+   * therefore holds no anchor — can be admitted at all. But optionality in a
+   * validator shared by both flows would, on its own, let a buggy server omit
+   * `session` for a CUSTOMER and have it pass silently. That is a worse bug
+   * than the one being fixed: instead of a loud rejection at the wire, the
+   * customer gets a client that connected successfully and has no
+   * conversation, failing later and somewhere else.
+   *
+   * This controller wrote the `connection.hello` itself, so it alone knows
+   * whether a `publishableKey` went out — which is exactly the bit the server
+   * switches its own flow on (protocol/frames.ts on
+   * `ConnectionHelloPayload.publishableKey`). A key was sent ⇒ this is a
+   * customer connection ⇒ the server guarantees both fields ⇒ their absence is
+   * a protocol violation and is reported as one.
+   *
+   * Returns the violation message, or `null` when the ack is well-formed for
+   * this connection's flow.
+   */
+  #customerAckViolation(payload: ConnectionAckPayload): string | null {
+    // A staff connection sends no key and promises neither field.
+    if (this.#publishableKey === undefined) return null;
+
+    const missing: string[] = [];
+    if (payload.session === undefined) missing.push('session');
+    if (payload.seq === undefined) missing.push('seq');
+    if (missing.length === 0) return null;
+
+    return (
+      `connection.ack from a customer connection is missing ${missing.join(' and ')}: ` +
+      'a hello carrying a publishableKey always resolves a session, so this ack ' +
+      'violates the protocol and cannot be applied'
+    );
+  }
+
   #handleConnectionAck(frame: ConnectionAckFrame): void {
+    // BEFORE anything else — before the attempt counter resets, before the
+    // frame is delivered, and before the machine reaches `connected`. A
+    // violating ack must not be applied to the state tree at all, and must not
+    // be able to report the connection as healthy on its way past.
+    const violation = this.#customerAckViolation(frame.d);
+    if (violation !== null) {
+      // Suspends rather than retries. A server answering a customer hello with
+      // a staff-shaped ack is broken in a way backoff cannot fix, and the
+      // alternative — reconnecting forever against it — leaves the widget
+      // stuck "connecting" with no conversation and no explanation, which is
+      // the silent failure this check exists to prevent. Suspending settles
+      // the pending `connect()` promise with the reason, so a caller awaiting
+      // it learns immediately instead of hanging.
+      this.#suspend('protocol', {
+        source: 'protocol',
+        code: 'VALIDATION_FAILED',
+        message: violation,
+        retryable: false,
+      });
+      return;
+    }
+
     this.#attempt = 0;
     this.#authBackoff.recordSuccess();
     // The server has answered the "start a new conversation" request — with a
@@ -522,22 +589,34 @@ export class ConnectionController {
    * reordering it would hide the only evidence of it.
    */
   #applyReplay(payload: ConnectionAckPayload): void {
+    const ackSeq = payload.seq;
+
     for (const replayed of payload.replay ?? []) {
       // A nested `connection.ack` is not replayable — it is a handshake, not
       // history — and recursing on one would re-run this whole method.
       if (replayed.t === 'connection.ack') continue;
 
-      if (this.#deliver(replayed)) this.#noteSeqDuringReplay(replayed, payload.seq);
+      if (this.#deliver(replayed)) this.#noteSeqDuringReplay(replayed, ackSeq);
     }
+
+    // A STAFF ack carries no `seq` (protocol/frames.ts): an anchor is a
+    // property of a session, and staff has resolved none. There is nothing to
+    // settle against, so the anchor is left exactly where it was rather than
+    // being moved to a fabricated value. Staff anchors arrive per-session on
+    // each `session.join` ack instead.
+    //
+    // Reached only on a staff connection: a CUSTOMER ack missing `seq` is
+    // rejected in `#handleConnectionAck` before this runs.
+    if (ackSeq === undefined) return;
 
     // The case walking the array alone cannot see: an ack claiming to be
     // current at a `seq` past everything it actually replayed. An empty
     // `replay` against a moved-on anchor is that same bug at its starkest.
-    const tail = this.#resume.settleAck(payload.seq);
-    if (tail !== null) this.#reportResumeGap(tail, payload.seq);
+    const tail = this.#resume.settleAck(ackSeq);
+    if (tail !== null) this.#reportResumeGap(tail, ackSeq);
   }
 
-  #noteSeqDuringReplay(frame: ServerFrame, ackSeq: number): void {
+  #noteSeqDuringReplay(frame: ServerFrame, ackSeq: number | undefined): void {
     const seq = frameSeq(frame);
     if (seq === null) return;
 

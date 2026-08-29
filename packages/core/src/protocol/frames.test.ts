@@ -103,7 +103,7 @@ function describeFrame(frame: AnyFrame): string {
     case 'system.heartbeat':
       return 'heartbeat';
     case 'connection.ack':
-      return `ack:${frame.d.seq}:${frame.d.session.sessionId}`;
+      return `ack:${frame.d.seq}:${frame.d.session?.sessionId}`;
     case 'session.updated':
       return `sessionUpdated:${frame.d.session.status}`;
     case 'session.closed':

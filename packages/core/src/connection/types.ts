@@ -138,8 +138,19 @@ export interface ConnectionControllerOptions {
   /** Full WebSocket URL. No credential belongs in it — see `TransportConnectOptions`. */
   readonly url: string;
 
-  /** Tenant identification (§10.2). Sent in `connection.hello`. */
-  readonly publishableKey: string;
+  /**
+   * Tenant identification (§10.2). Sent in `connection.hello`.
+   *
+   * OMITTED for a STAFF connection, where the tenant is resolved from the
+   * staff token instead. Its presence is what selects the server's flow, so
+   * absence is the signal and not a defaulting opportunity — see
+   * `ConnectionHelloPayload.publishableKey` (protocol/frames.ts).
+   *
+   * It is also what lets the controller hold the customer side of the
+   * `connection.ack` contract: a connection that sent a key is guaranteed a
+   * `session` and a `seq` back. See `#customerAckViolation`.
+   */
+  readonly publishableKey?: string;
 
   /** Credentials (§10.4). */
   readonly getToken: TokenProvider;

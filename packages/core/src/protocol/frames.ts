@@ -274,10 +274,33 @@ export interface ConnectionAckPayload {
   /** Negotiated version = min(client max, server max) — §7.5. */
   protocolVersion: number;
 
-  session: SessionSnapshot;
+  /**
+   * The session this connection resolved, when it resolved one.
+   *
+   * OPTIONAL only because a STAFF hello resolves no session at all. Staff
+   * never auto-creates and never auto-joins, so there is nothing truthful to
+   * put here; staff reaches its sessions through explicit `session.join`
+   * instead. Every CUSTOMER hello still carries it.
+   *
+   * ABSENCE MEANS "no session was resolved" — never "one was resolved and
+   * omitted". That distinction is the whole contract: it is what lets a
+   * customer client treat a missing `session` as a server defect rather than
+   * as a shrug, which `ConnectionController` does (connection/controller.ts).
+   *
+   * Source: chat-service-node-integ
+   * src/api/websocket/v2/protocol/types.ts:403.
+   */
+  session?: SessionSnapshot;
 
-  /** The `seq` this ack is current as of — the client's new resume anchor. */
-  seq: number;
+  /**
+   * The `seq` this ack is current as of — the client's new resume anchor.
+   *
+   * Optional for the same reason as `session`, and not an independent knob: a
+   * resume anchor is a property of a SESSION, and a staff hello holds none
+   * yet. Staff anchors are per-session and arrive on each `session.join` ack
+   * instead (see {@link SessionJoinAckData}).
+   */
+  seq?: number;
 
   /**
    * Frames after the client's `resumeFrom`, replayed inline (D2, §0.5).
