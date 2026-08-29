@@ -120,6 +120,24 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/**
+ * Waits for a rendered value to become what it is expected to become.
+ *
+ * The same reasoning `failAttempts` gives for watching the socket COUNT
+ * instead of advancing a fixed span, applied to the DOM: a fixed number of
+ * `settle()` ticks is a guess about how many microtasks the widget needs, and
+ * any async work at mount — the published-config fetch, for one — shifts that
+ * number. Waiting for the condition is stable no matter how many promise
+ * chains the widget is running.
+ *
+ * Returns the final value so the caller still asserts on it explicitly; a
+ * timeout here is a real failure, not a pass.
+ */
+async function waitForText(read: () => string, expected: string): Promise<string> {
+  for (let step = 0; step < 40 && read() !== expected; step += 1) await settle();
+  return read();
+}
+
 function setOnline(value: boolean): void {
   Object.defineProperty(window.navigator, 'onLine', { value, configurable: true });
   window.dispatchEvent(new Event(value ? 'online' : 'offline'));
@@ -400,7 +418,7 @@ describe('the composer keeps its side of the bargain', () => {
     await settle();
     await succeed(widget, 'sess_2');
 
-    expect(statusText()).toBe('Online');
+    expect(await waitForText(statusText, 'Online')).toBe('Online');
     expect(composerInput().placeholder).toBe(normal);
   });
 });
