@@ -67,13 +67,23 @@ export const isChatMode = enumGuard(CHAT_MODE_VALUES);
 // ---------------------------------------------------------------------------
 
 /**
- * Not currently referenced by any §7.3 frame payload in this module. v2
- * keeps v1's confirmed watermark-based read model — per-participant
- * `lastReadAt`, not per-message receipts (§9.5, Open Question 8) — so
- * per-message delivery status has no wire carrier yet. Modeled here
- * because it is a real, confirmed backend enum (§12.1) and Open Question 8
- * leaves per-message receipts open as a possible future direction; do not
- * wire this into a frame payload without a corresponding PRD update.
+ * The three states a message passes through, as the backend enumerates them
+ * (§12.1).
+ *
+ * ── Correction: this DOES have a wire carrier ────────────────────────────
+ *
+ * This comment used to say per-message delivery status "has no wire carrier
+ * yet" and warned against wiring it into a frame payload. That stopped being
+ * true when the delivery watermark pair landed: `message.markDelivered`
+ * (client→server) and `message.delivered` (server→client) both exist in
+ * frames.ts, chat-service dispatches the former, and the widget renders all
+ * four tick states off it.
+ *
+ * What remains true is the SHAPE. v2 keeps v1's watermark model — one
+ * `deliveredUpToSeq` per participant, not a receipt per message — so this
+ * enum describes a message's status as DERIVED from a watermark, and is
+ * still not itself a field on any frame. Deriving it is the binding's job;
+ * see `@dhaam-ccrm/js`'s tick derivation and its conformance oracle.
  */
 export const DELIVERY_STATUS_VALUES = ['SENT', 'DELIVERED', 'READ'] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUS_VALUES)[number];

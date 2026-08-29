@@ -620,7 +620,7 @@ type FramesOf<M> = { [K in keyof M]: Frame<M[K]> & { t: K } }[keyof M];
 /** Every client→server frame, discriminated on `t`. */
 export type ClientFrame = FramesOf<ClientFramePayloadMap>;
 
-/** The 12 plain-envelope server→client push frames, discriminated on `t`. */
+/** The 13 plain-envelope server→client push frames, discriminated on `t`. */
 export type ServerPushFrame = FramesOf<ServerPushFramePayloadMap>;
 
 /** Every server→client frame, including the two special-cased envelope shapes. */
