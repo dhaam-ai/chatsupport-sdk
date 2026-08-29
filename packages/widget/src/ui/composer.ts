@@ -10,6 +10,8 @@
 // without a `.catch` in front of it.
 
 import { ICONS, el, icon } from './dom.js';
+import { createEmojiPicker, insertAtCaret } from './emoji.js';
+import type { EmojiPickerView } from './emoji.js';
 import { createVoiceRecorder } from './voice.js';
 import type { VoiceRecorder } from './voice.js';
 
@@ -93,6 +95,22 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     on: { click: () => { void toggleRecording(); } },
   });
 
+  // Declared before `input` only because the row below needs both; the picker
+  // reaches the textarea through the closure, which is initialised by the time
+  // any click can happen.
+  const emojiPicker: EmojiPickerView = createEmojiPicker({
+    onSelect: (emoji) => {
+      insertAtCaret(input, emoji);
+      // Same three effects a keystroke has. Skipping any one of them is a
+      // real bug: without `syncSendState` an emoji-only message leaves Send
+      // disabled, and without `onTyping` the agent's typing indicator stops
+      // for as long as the customer is picking glyphs.
+      autoGrow();
+      syncSendState();
+      callbacks.onTyping();
+    },
+  });
+
   const input = el('textarea', {
     attrs: {
       class: 'dh-input',
@@ -139,7 +157,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       recording,
       el('div', {
         attrs: { class: 'dh-composer-row' },
-        children: [attachButton, micButton, input, sendButton, fileInput],
+        children: [attachButton, emojiPicker.node, micButton, input, sendButton, fileInput],
       }),
     ],
   });
@@ -165,6 +183,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     const hasContent = input.value.trim() !== '' || pendingFile !== null;
     sendButton.disabled = !enabled || uploading || !hasContent;
     attachButton.disabled = !enabled || uploading;
+    emojiPicker.setEnabled(enabled && !uploading);
     micButton.disabled = !enabled || uploading;
     input.disabled = !enabled;
   }
@@ -307,6 +326,9 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       // before anything else can throw.
       recorder?.dispose();
       recorder = null;
+      // Holds document-level listeners while open — releasing it here is what
+      // keeps a destroyed widget from leaving them on the host's document.
+      emojiPicker.destroy();
       clearAttachment();
     },
   };

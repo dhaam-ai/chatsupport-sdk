@@ -755,6 +755,39 @@ button {
   align-items: flex-end;
   gap: calc(var(--dh-space) * 2);
 }
+/* The emoji picker: same self-contained wrapper shape as .dh-switcher —
+   position: relative on the wrapper, so the popover anchors to the trigger
+   wherever the composer row places it. Opens UPWARD (bottom: 100%) because the
+   composer already sits at the bottom of the panel. */
+.dh-emoji { position: relative; display: inline-flex; }
+.dh-emoji-glyph { font-size: 18px; line-height: 1; }
+.dh-emoji-popover {
+  position: absolute;
+  bottom: calc(100% + var(--dh-space) * 2);
+  inset-inline-start: 0;
+  z-index: 3;
+  padding: calc(var(--dh-space) * 2);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  box-shadow: var(--dh-shadow);
+}
+.dh-emoji-popover[hidden] { display: none; }
+.dh-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+}
+.dh-emoji-cell {
+  width: 30px; height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 17px;
+  line-height: 1;
+}
+.dh-emoji-cell:hover { background: var(--dh-surface-sunken); }
+
 .dh-input {
   flex: 1;
   min-height: 38px;
