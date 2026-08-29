@@ -755,6 +755,117 @@ button {
   align-items: flex-end;
   gap: calc(var(--dh-space) * 2);
 }
+/* The slot a product surface occupies — same "stands in for the conversation"
+   role as .dh-prechat, so it takes the same remaining height. */
+.dh-surface-host { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow-y: auto; }
+
+/* ── Data-collecting surfaces: pre-chat, out-of-hours, CSAT ────────────── */
+.dh-form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 2);
+  padding: calc(var(--dh-space) * 4);
+  overflow-y: auto;
+}
+.dh-form-heading { font-size: 15px; font-weight: 600; color: var(--dh-text); margin: 0; }
+.dh-form-subtitle { font-size: 13px; line-height: 1.5; color: var(--dh-text-muted); margin: 0; }
+.dh-field { display: flex; flex-direction: column; gap: calc(var(--dh-space)); }
+.dh-field-label { font-size: 12px; font-weight: 500; color: var(--dh-text-muted); }
+.dh-field-optional { font-weight: 400; opacity: 0.75; }
+.dh-field-input {
+  width: 100%;
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: 10px;
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text);
+  font: inherit;
+  /* 16px on touch, same reason as .dh-input: anything smaller makes iOS
+     Safari zoom the whole page on focus. */
+  font-size: 16px;
+}
+.dh-field-input:focus-visible { border-color: var(--dh-accent); }
+.dh-offline-message { resize: none; }
+.dh-form-error { font-size: 12.5px; color: var(--dh-danger, #b91c1c); margin: 0; }
+.dh-form-error[hidden] { display: none; }
+.dh-form-submit {
+  min-height: 44px;
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 4);
+  border-radius: 10px;
+  background: var(--dh-accent);
+  color: var(--dh-on-accent, #fff);
+  font: inherit;
+  font-weight: 600;
+}
+.dh-form-submit[disabled] { opacity: 0.6; cursor: not-allowed; }
+.dh-form-skip {
+  min-height: 36px;
+  color: var(--dh-text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dh-offline { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.dh-offline-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dh-space);
+  padding: calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface-sunken);
+}
+.dh-offline-sent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dh-space);
+  padding: calc(var(--dh-space) * 8);
+  text-align: center;
+}
+.dh-offline-sent[hidden], .dh-csat-thanks[hidden], .dh-csat-comment[hidden] { display: none; }
+
+.dh-csat-card { padding: calc(var(--dh-space) * 2); }
+.dh-csat-scale { display: flex; justify-content: center; gap: var(--dh-space); }
+.dh-csat-option {
+  /* 44px: the same touch target every other control in this widget uses. */
+  width: 44px; height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-size: 22px;
+  line-height: 1;
+}
+.dh-csat-option:hover { background: var(--dh-surface-sunken); }
+.dh-csat-stars .dh-csat-option { color: var(--dh-border); }
+.dh-csat-stars .dh-csat-lit { color: var(--dh-accent); }
+/* Emoji cannot be recoloured, so the unchosen faces recede by desaturating
+   rather than by changing colour. */
+.dh-csat-emoji .dh-csat-option { filter: grayscale(1); opacity: 0.45; }
+.dh-csat-emoji .dh-csat-lit { filter: none; opacity: 1; }
+.dh-csat-label {
+  min-height: 16px;
+  margin: 0;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--dh-text-muted);
+}
+.dh-csat-comment { display: flex; flex-direction: column; gap: calc(var(--dh-space) * 2); }
+.dh-csat-thanks {
+  margin: 0;
+  padding: calc(var(--dh-space) * 4);
+  border-radius: var(--dh-radius);
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dh-text);
+  background: var(--dh-surface-sunken);
+}
+
 /* The emoji picker: same self-contained wrapper shape as .dh-switcher —
    position: relative on the wrapper, so the popover anchors to the trigger
    wherever the composer row places it. Opens UPWARD (bottom: 100%) because the

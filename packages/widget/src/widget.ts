@@ -29,7 +29,15 @@ import { createWidgetRoot } from './ui/root.js';
 import { createPreChatScreen, createSessionSwitcher } from './ui/session-picker.js';
 import type { SessionPickerCallbacks } from './ui/session-picker.js';
 import { STYLES, cssColor, themeCss } from './ui/styles.js';
-import { DEFAULT_REMOTE_CONFIG, fetchRemoteConfig, shouldMount } from './remote-config.js';
+import { createCsatSurvey } from './ui/csat.js';
+import { createOfflineForm } from './ui/offline-form.js';
+import { createPreChatForm } from './ui/pre-chat-form.js';
+import {
+  DEFAULT_REMOTE_CONFIG,
+  fetchRemoteConfig,
+  shouldCollectOffline,
+  shouldMount,
+} from './remote-config.js';
 import type { RemoteConfig } from './remote-config.js';
 
 /** How the host drives the widget after mounting it. */
@@ -283,6 +291,16 @@ function workingConnectionStatus(
   };
 }
 
+/** Which of the three data-collecting surfaces is standing in for the chat. */
+type SurfaceKind = 'preChat' | 'offline' | 'csat';
+
+/** The shape all three surfaces share, so one slot can hold any of them. */
+interface ProductSurface {
+  readonly node: HTMLElement;
+  focus?(): void;
+  destroy(): void;
+}
+
 export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const config = resolveConfig(rawConfig);
   const store = createWidgetStore(config);
@@ -420,6 +438,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       launcherLabel.textContent = next.title;
       identityHeader.setFallbackTitle(next.title);
     }
+
+    // Config is what decides whether a pre-chat gate or an out-of-hours form
+    // exists at all, so it is also what first puts one on screen.
+    syncProductSurfaces();
 
     // `enabled: false` and out-of-hours HIDE_WIDGET both mean "no launcher on
     // this page". Handled by hiding rather than by tearing the widget down:
@@ -573,6 +595,21 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   };
 
   const preChat = createPreChatScreen(pickerCallbacks);
+
+  /** Slot for whichever product surface is standing in for the conversation. */
+  const surfaceHost = el('div', { attrs: { class: 'dh-surface-host', hidden: true } });
+
+  // Declared HERE, beside the node they drive, rather than next to the
+  // functions that read them: `showConversation()` runs during mount, well
+  // before those functions appear, and consults `activeSurface` — so a
+  // declaration further down leaves it in the temporal dead zone and every
+  // single mount throws.
+  /** The one surface currently standing in for the conversation, if any. */
+  let activeSurface: { readonly kind: SurfaceKind; readonly view: ProductSurface } | null = null;
+  /** The customer answered or skipped the pre-chat gate, for this widget's lifetime. */
+  let preChatAnswered = false;
+  /** A rating has been submitted (or the survey dismissed) for the current session. */
+  let ratedSessionId: string | null = null;
   const switcher = createSessionSwitcher(pickerCallbacks);
 
   /**
@@ -617,6 +654,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // sitting above them — a chooser and the conversation it chooses between
       // are alternatives, not a stack.
       preChat.node,
+      // Same slot family as the chooser above: a form that gates the
+      // conversation replaces it rather than stacking on top of it.
+      surfaceHost,
       messageList.log,
       // Between the transcript and the composer: the customer looks here when
       // the bot's last answer did not help, which is exactly when they want
@@ -755,6 +795,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       () => syncLauncher(store.getState()),
       { immediate: true },
     ),
+    // The pre-chat gate lifts on the first message, and the rating appears
+    // when a session ends — so both of those facts have to re-run the check.
+    store.select((state) => state.messages.length, () => syncProductSurfaces()),
+    store.select(
+      (state) => (state.session === null ? null : `${state.session.id}:${state.session.status}`),
+      () => syncProductSurfaces(),
+    ),
     store.select(
       (state) => state.connectionState,
       (connectionState) => {
@@ -887,6 +934,148 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * matters most — taking the pane out of the tab order and the accessibility
    * tree — and the inline style is what actually takes it off the screen.
    */
+  // ── product surfaces: pre-chat, out-of-hours, CSAT ────────────────────
+  //
+  // All three stand IN PLACE OF the transcript and composer rather than
+  // stacking above them, the same way the session chooser does: a form asking
+  // the customer for something and the conversation it gates are alternatives,
+  // not a pile. One at a time, in the order below, because they are mutually
+  // exclusive states of the same conversation.
+  //
+  // Built lazily and torn down on every change rather than mounted once and
+  // toggled: which fields a pre-chat form renders is a fact about the
+  // PUBLISHED CONFIG, which arrives after mount and can be re-fetched, and a
+  // long-lived form would keep rendering the field list it happened to be born
+  // with.
+
+  function closeSurface(): void {
+    if (activeSurface === null) return;
+    activeSurface.view.destroy();
+    surfaceHost.replaceChildren();
+    activeSurface = null;
+    setPaneVisible(surfaceHost, false);
+    // Restores the transcript and composer the surface was standing in for.
+    // Safe to call unconditionally: `showConversation` is idempotent and
+    // returns early while another surface is up.
+    showConversation();
+  }
+
+  function openSurface(kind: SurfaceKind, build: () => ProductSurface): void {
+    // Idempotent by KIND, not by identity: `syncProductSurfaces` runs on every
+    // message and every session change, and rebuilding the form under the
+    // customer on each one would wipe what they were halfway through typing.
+    if (activeSurface?.kind === kind) return;
+    closeSurface();
+    const view = build();
+    activeSurface = { kind, view };
+    surfaceHost.replaceChildren(view.node);
+    setPaneVisible(surfaceHost, true);
+    // The surface stands IN PLACE OF the conversation, so everything it
+    // replaces goes away with it — including the session chooser, which would
+    // otherwise sit behind an out-of-hours form offering conversations the
+    // customer cannot currently have.
+    preChatOpen = false;
+    setPaneVisible(preChat.node, false);
+    setPaneVisible(messageList.log, false);
+    composer.node.hidden = true;
+    if (open) view.focus?.();
+  }
+
+  /**
+   * Puts the right surface — or none — in front of the conversation.
+   *
+   * Ordered by precedence, and the order is the product decision: being CLOSED
+   * outranks everything (there is no conversation to gate), a pre-chat gate
+   * outranks a rating (a thread with no messages cannot be rated), and the
+   * rating is what is left once a session has ended.
+   */
+  function syncProductSurfaces(): void {
+    if (destroyed) return;
+    const state = store.getState();
+
+    if (shouldCollectOffline(remote)) {
+      openSurface('offline', () =>
+        createOfflineForm(
+          remote.preChatEnabled ? [...remote.preChatFields] : [],
+          {
+            onSubmit: (message) =>
+              store.client.sendMessage(
+                `Offline message from ${message.name} (${message.contact}):\n\n${message.message}`,
+                { metadata: { kind: 'offline_message', name: message.name, contact: message.contact } },
+              ),
+            onError: report,
+          },
+          remote.offlineMessage,
+        ),
+      );
+      return;
+    }
+
+    const gateOnPreChat =
+      remote.preChatEnabled &&
+      remote.preChatFields.length > 0 &&
+      !preChatAnswered &&
+      state.messages.length === 0;
+    if (gateOnPreChat) {
+      openSurface('preChat', () =>
+        createPreChatForm(
+          [...remote.preChatFields],
+          {
+            onSubmit: async (answers) => {
+              // Sent as a MESSAGE, not as an identity upsert. The answers are
+              // free text a customer typed on a storefront page; promoting
+              // them to a Contact would let anyone claim any email address by
+              // typing it, which is the hole §14's key split exists to close.
+              // The agent reads the lines; `metadata` carries the same facts
+              // structured, for whatever consumes them later.
+              const lines = remote.preChatFields
+                .filter((field) => answers[field.id] !== undefined)
+                .map((field) => `${field.label}: ${answers[field.id] ?? ''}`)
+                .join('\n');
+              await store.client.sendMessage(lines, {
+                metadata: { kind: 'pre_chat', answers },
+              });
+              preChatAnswered = true;
+              syncProductSurfaces();
+            },
+            onSkip: () => {
+              preChatAnswered = true;
+              syncProductSurfaces();
+            },
+            onError: report,
+          },
+          remote.greeting,
+        ),
+      );
+      return;
+    }
+
+    const session = state.session;
+    const ended = session !== null && (session.status === 'CLOSED' || session.status === 'RESOLVED');
+    if (ended && session.id !== ratedSessionId && state.messages.length > 0) {
+      const sessionId = session.id;
+      openSurface('csat', () =>
+        createCsatSurvey(remote.csatStyle, {
+          onSubmit: async (score, comment) => {
+            // No CSAT endpoint exists on chat-service, so the rating travels
+            // the one channel that does work end to end. Stated plainly rather
+            // than pretending: a survey that silently discards the answer is
+            // worse than no survey.
+            await store.client.sendMessage(
+              comment === undefined ? `Rating: ${score}/5` : `Rating: ${score}/5 — ${comment}`,
+              { metadata: { kind: 'csat', score, ...(comment === undefined ? {} : { comment }) } },
+            );
+            ratedSessionId = sessionId;
+          },
+          onError: report,
+        }),
+      );
+      return;
+    }
+
+    closeSurface();
+  }
+
   function setPaneVisible(node: HTMLElement, visible: boolean): void {
     node.hidden = !visible;
     node.style.display = visible ? '' : 'none';
@@ -1033,6 +1222,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   /** Puts the conversation back on screen. Idempotent. */
   function showConversation(): void {
+    // A product surface outranks the transcript: `showConversation` runs on
+    // every session switch and on mount, and without this it would reveal the
+    // log and composer straight through an out-of-hours form or a pre-chat
+    // gate that is still waiting for an answer.
+    if (activeSurface !== null) {
+      conversationShownEpoch += 1;
+      preChatOpen = false;
+      setPaneVisible(preChat.node, false);
+      setPaneVisible(messageList.log, false);
+      composer.node.hidden = true;
+      return;
+    }
     // Bumped unconditionally, including on the idempotent re-call: it is a
     // "the conversation pane has been asserted since you looked" marker for
     // {@link maybeShowPreChat}'s pending reveal, not a state change counter.
@@ -1606,6 +1807,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // obvious. A copy, because `finish` deletes from the set it walks.
       for (const cancel of [...pendingHistorySettles]) cancel();
       for (const unsubscribe of unsubscribers) unsubscribe();
+      closeSurface();
       composer.destroy();
       // The switcher owns a document-level `pointerdown` listener for its
       // outside-click close, which outlives the shadow root unless released.
