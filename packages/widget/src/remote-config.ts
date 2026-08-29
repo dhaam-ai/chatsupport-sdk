@@ -369,6 +369,25 @@ export function shouldCollectOffline(remote: RemoteConfig): boolean {
   return remote.isOpenNow === false && remote.offlineMode === OFFLINE_MODE.COLLECT_MESSAGE;
 }
 
+// A KNOWN, DELIBERATE DIVERGENCE FROM THE CONSOLE CONTRACT.
+//
+// The console specifies COLLECT_MESSAGE as "run the tenant's OFFLINE-trigger
+// bot flow, falling back to SHOW_MESSAGE when no published+enabled one
+// exists". This widget does not implement the bot-flow step machine at all —
+// that is a separate feature — so it renders a built-in offline form and does
+// NOT consult `flows` first.
+//
+// Chosen knowingly rather than by omission. Implementing only the fallback
+// half would leave a merchant who set COLLECT_MESSAGE without authoring an
+// OFFLINE flow with no form at all, which is strictly worse than the built-in
+// one: it collects the same name/contact/message an offline flow would. The
+// payload carries no flag saying the fallback happened, so nothing here could
+// distinguish the two cases even if it wanted to.
+//
+// What it costs: a merchant who DID author an OFFLINE flow gets the generic
+// form rather than their scripted one. Closing that needs the step machine.
+// `PublishedFlow.trigger === 4` is parsed and carried for exactly that.
+
 /** Convenience for the UI layer: is the team closed right now? */
 export function isOutOfHours(remote: RemoteConfig): boolean {
   return remote.isOpenNow === false;
