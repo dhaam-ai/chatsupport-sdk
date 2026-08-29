@@ -55,6 +55,13 @@ export interface IdentityHeaderView {
   readonly liveRegion: HTMLElement;
 
   /**
+   * Replaces the title used when no agent is driving it — published config,
+   * which arrives after mount. No-ops visually while an agent's name is
+   * showing, and never announces.
+   */
+  setFallbackTitle(title: string): void;
+
+  /**
    * Recomputes the displayed identity from `session.status`/`handledBy` and
    * speaks the change — but only when the DISPLAYED LABEL actually differs
    * from what was last shown, and never on the very first call.
@@ -80,7 +87,8 @@ export interface IdentityHeaderView {
  *   header's rule 1 and rule 2. Read once at construction: a host does not
  *   change its own configured title at runtime.
  */
-export function createIdentityHeader(fallbackTitle: string): IdentityHeaderView {
+export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
+  let fallbackTitle = initialTitle;
   const node = el('h2', { attrs: { class: 'dh-title', id: 'dh-title' }, text: fallbackTitle });
 
   // Same shape as message-list.ts's `liveRegion`: `role="status"` rather than
@@ -130,5 +138,31 @@ export function createIdentityHeader(fallbackTitle: string): IdentityHeaderView 
     liveRegion.textContent = `You're now chatting with ${label}.`;
   }
 
-  return { node, liveRegion, update };
+  /**
+   * Replaces the title shown when no agent is driving it.
+   *
+   * Exists for published config, which lands after mount: the merchant's
+   * configured title has to be able to replace the boot-time one without
+   * rebuilding the header (and losing the `id="dh-title"` the panel's
+   * `aria-labelledby` points at).
+   *
+   * Only repaints when the fallback is what is CURRENTLY on screen. An agent's
+   * name outranks a configured title, and stamping over it here would rename
+   * the person the customer is talking to.
+   *
+   * Silent: `currentLabel` is updated in step so the next `update()` still
+   * compares against what is really displayed, but nothing is announced. A
+   * screen-reader user being told "You're now chatting with Acme Support"
+   * because a config fetch landed would be a lie about an event that did not
+   * happen.
+   */
+  function setFallbackTitle(title: string): void {
+    const wasShowingFallback = node.textContent === fallbackTitle;
+    fallbackTitle = title;
+    if (!wasShowingFallback) return;
+    node.textContent = title;
+    currentLabel = title;
+  }
+
+  return { node, liveRegion, update, setFallbackTitle };
 }

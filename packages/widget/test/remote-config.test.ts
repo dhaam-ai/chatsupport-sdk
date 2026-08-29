@@ -1,0 +1,367 @@
+// @vitest-environment node
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  CONFIG_TIMEOUT_MS,
+  DEFAULT_REMOTE_CONFIG,
+  OFFLINE_MODE,
+  fetchRemoteConfig,
+  isOutOfHours,
+  mergeRemoteConfig,
+  parseRemoteConfig,
+  shouldCollectOffline,
+  shouldMount,
+} from '../src/remote-config.js';
+import type { RemoteConfig } from '../src/remote-config.js';
+import type { WidgetConfig } from '../src/config.js';
+
+// Assembled at runtime, never a contiguous literal — see auth.test.ts.
+const PUBLISHABLE = 'dhp_' + 'test_' + '0123456789abcdefghijklmn';
+
+/** A full, realistic body exactly as chat-service serializes it. */
+function body(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    success: true,
+    data: {
+      enabled: true,
+      appearance: { accent: '#7C3AED', title: 'Dhaam Support' },
+      behaviour: {
+        greeting: 'How can we help today?',
+        preChatEnabled: true,
+        preChatFields: [
+          { id: 'p1', label: 'Your name', type: 'text', required: true },
+          { id: 'p2', label: 'Email address', type: 'email', required: true },
+        ],
+        csatStyle: 'emoji',
+        offlineMessage: "We're closed right now.",
+        fileUploads: true,
+      },
+      offlineMode: OFFLINE_MODE.COLLECT_MESSAGE,
+      isOpenNow: false,
+      flows: [
+        { id: 'flow-1', name: 'Welcome', trigger: 1, keywords: ['refund'], pagePattern: '/cart', steps: [{ id: 's1' }] },
+      ],
+      botDisplayName: 'Dhaam Bot',
+      publishedVersion: 4,
+      ...overrides,
+    },
+  };
+}
+
+function hostConfig(overrides: Partial<WidgetConfig> = {}): WidgetConfig {
+  return {
+    auth: { publishableKey: PUBLISHABLE, tokenEndpoint: '/api/chat-token' },
+    identity: { userId: 'cus_1' },
+    apiUrl: 'https://chat.example.com',
+    wsUrl: 'wss://chat.example.com',
+    ...overrides,
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
+  it('reads every field off a full body', () => {
+    const config = parseRemoteConfig(body());
+    expect(config).not.toBeNull();
+    expect(config).toMatchObject({
+      enabled: true,
+      accent: '#7C3AED',
+      title: 'Dhaam Support',
+      greeting: 'How can we help today?',
+      preChatEnabled: true,
+      csatStyle: 'emoji',
+      offlineMode: OFFLINE_MODE.COLLECT_MESSAGE,
+      offlineMessage: "We're closed right now.",
+      fileUploads: true,
+      isOpenNow: false,
+      botDisplayName: 'Dhaam Bot',
+      publishedVersion: 4,
+    });
+    expect(config?.preChatFields).toEqual([
+      { id: 'p1', label: 'Your name', type: 'text', required: true },
+      { id: 'p2', label: 'Email address', type: 'email', required: true },
+    ]);
+    expect(config?.flows[0]).toMatchObject({ id: 'flow-1', trigger: 1, keywords: ['refund'], pagePattern: '/cart' });
+  });
+
+  it.each([
+    ['not an object', 42],
+    ['null', null],
+    ['an array', []],
+    ['missing data', { success: true }],
+    ['data that is not an object', { success: true, data: 'nope' }],
+  ])('returns null for a body that is %s', (_label, input) => {
+    expect(parseRemoteConfig(input)).toBeNull();
+  });
+
+  // The server stores appearance/behaviour as opaque blobs written by
+  // whole-object replacement, so any leaf can simply be missing.
+  it('defaults every leaf when appearance and behaviour are empty', () => {
+    const config = parseRemoteConfig({ data: { appearance: {}, behaviour: {} } });
+    expect(config).toEqual({
+      ...DEFAULT_REMOTE_CONFIG,
+      // `enabled` defaults true and there is no publishedVersion to read.
+      publishedVersion: 0,
+    });
+  });
+
+  it('survives appearance/behaviour being the wrong type entirely', () => {
+    const config = parseRemoteConfig({ data: { appearance: 'nope', behaviour: 7, enabled: true } });
+    expect(config?.accent).toBeUndefined();
+    expect(config?.csatStyle).toBe('stars');
+  });
+
+  it('treats an empty-string accent or title as unset, not as a blank value', () => {
+    const config = parseRemoteConfig({ data: { appearance: { accent: '   ', title: '' }, behaviour: {} } });
+    expect(config?.accent).toBeUndefined();
+    expect(config?.title).toBeUndefined();
+  });
+
+  it.each([
+    ['an unknown string', 'thumbs'],
+    ['a number', 3],
+    ['absent', undefined],
+  ])('falls back to stars when csatStyle is %s', (_label, csatStyle) => {
+    const config = parseRemoteConfig({ data: { appearance: {}, behaviour: { csatStyle } } });
+    expect(config?.csatStyle).toBe('stars');
+  });
+
+  it.each([
+    ['0', 0],
+    ['4', 4],
+    ['a string', '2'],
+    ['absent', undefined],
+  ])('falls back to SHOW_MESSAGE when offlineMode is %s', (_label, offlineMode) => {
+    const config = parseRemoteConfig({ data: { appearance: {}, behaviour: {}, offlineMode } });
+    expect(config?.offlineMode).toBe(OFFLINE_MODE.SHOW_MESSAGE);
+  });
+
+  // The whole point of the three-valued field.
+  it.each([
+    ['true', true, true],
+    ['false', false, false],
+    ['null', null, null],
+    ['absent', undefined, null],
+    ['a string', 'yes', null],
+  ])('maps isOpenNow %s to %s', (_label, input, expected) => {
+    const config = parseRemoteConfig({ data: { appearance: {}, behaviour: {}, isOpenNow: input } });
+    expect(config?.isOpenNow).toBe(expected);
+  });
+
+  it('drops pre-chat fields that have no id or no label rather than rendering them', () => {
+    const config = parseRemoteConfig({
+      data: {
+        appearance: {},
+        behaviour: {
+          preChatFields: [
+            { id: 'ok', label: 'Name', type: 'text', required: true },
+            { label: 'No id' },
+            { id: 'no-label' },
+            'not an object',
+            { id: 'weird', label: 'Weird type', type: 'colour' },
+          ],
+        },
+      },
+    });
+    expect(config?.preChatFields).toEqual([
+      { id: 'ok', label: 'Name', type: 'text', required: true },
+      // An unrecognised type degrades to text rather than dropping the field.
+      { id: 'weird', label: 'Weird type', type: 'text', required: false },
+    ]);
+  });
+
+  it('drops flows missing an id, name or numeric trigger', () => {
+    const config = parseRemoteConfig({
+      data: {
+        appearance: {},
+        behaviour: {},
+        flows: [
+          { id: 'a', name: 'A', trigger: 1 },
+          { id: 'b', name: 'B' },
+          { name: 'C', trigger: 2 },
+        ],
+      },
+    });
+    expect(config?.flows.map((f) => f.id)).toEqual(['a']);
+    expect(config?.flows[0]).toMatchObject({ keywords: [], pagePattern: '', steps: [] });
+  });
+});
+
+describe('fetchRemoteConfig — every failure class collapses to null', () => {
+  it('sends the publishable key as a header, never in the URL', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => body() });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchRemoteConfig({ apiUrl: 'https://chat.example.com', publishableKey: PUBLISHABLE });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://chat.example.com/chat-services/api/v1/widget/config');
+    expect(url).not.toContain(PUBLISHABLE);
+    expect((init.headers as Record<string, string>)['X-Publishable-Key']).toBe(PUBLISHABLE);
+    // No cookies on a cross-origin public read.
+    expect(init.credentials).toBe('omit');
+  });
+
+  it("lets the browser's HTTP cache do the revalidating", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => body() });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchRemoteConfig({ apiUrl: 'https://chat.example.com', publishableKey: PUBLISHABLE });
+
+    // Not 'no-store': the route ships max-age=30 + stale-while-revalidate, and
+    // ETag is not in its CORS exposedHeaders, so hand-rolled revalidation is
+    // impossible cross-origin anyway.
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.cache).toBe('default');
+  });
+
+  it('strips a trailing slash off apiUrl rather than doubling it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => body() });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchRemoteConfig({ apiUrl: 'https://chat.example.com//', publishableKey: PUBLISHABLE });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://chat.example.com/chat-services/api/v1/widget/config');
+  });
+
+  it.each([
+    ['a 401 from an unknown key', { ok: false, status: 401 }],
+    ['a 429 from the throttle', { ok: false, status: 429 }],
+    ['a 500', { ok: false, status: 500 }],
+  ])('returns null on %s', async (_label, response) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    expect(
+      await fetchRemoteConfig({ apiUrl: 'https://chat.example.com', publishableKey: PUBLISHABLE }),
+    ).toBeNull();
+  });
+
+  // The operational caveat that matters most: WIDGET_ALLOWED_ORIGINS is
+  // fleet-wide, so an unlisted storefront gets a response the browser refuses
+  // to hand us. It arrives as a bare TypeError with no detail.
+  it('returns null when CORS blocks the read, rather than throwing into the host page', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    await expect(
+      fetchRemoteConfig({ apiUrl: 'https://chat.example.com', publishableKey: PUBLISHABLE }),
+    ).resolves.toBeNull();
+  });
+
+  it('returns null when the body is not JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('Unexpected token <');
+      },
+    }));
+    expect(
+      await fetchRemoteConfig({ apiUrl: 'https://chat.example.com', publishableKey: PUBLISHABLE }),
+    ).toBeNull();
+  });
+
+  it('gives up after the timeout instead of hanging the widget forever', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+          }),
+      ),
+    );
+
+    const pending = fetchRemoteConfig({ apiUrl: 'https://chat.example.com', publishableKey: PUBLISHABLE });
+    await vi.advanceTimersByTimeAsync(CONFIG_TIMEOUT_MS + 1);
+    await expect(pending).resolves.toBeNull();
+  });
+
+  it('honours a caller-supplied abort signal', async () => {
+    const controller = new AbortController();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+          }),
+      ),
+    );
+
+    const pending = fetchRemoteConfig({
+      apiUrl: 'https://chat.example.com',
+      publishableKey: PUBLISHABLE,
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(pending).resolves.toBeNull();
+  });
+});
+
+describe('mergeRemoteConfig — the host always wins', () => {
+  const remote: RemoteConfig = { ...DEFAULT_REMOTE_CONFIG, accent: '#7C3AED', title: 'Remote title' };
+
+  it('fills fields the host left unsaid', () => {
+    const merged = mergeRemoteConfig(hostConfig(), remote);
+    expect(merged.accent).toBe('#7C3AED');
+    expect(merged.title).toBe('Remote title');
+  });
+
+  // The rule the whole precedence decision exists for: a host that hardcoded
+  // a colour to match its checkout page must not have it yanked by a console
+  // save it cannot see.
+  it('never overwrites a value the host stated explicitly', () => {
+    const merged = mergeRemoteConfig(hostConfig({ accent: '#0f172a', title: 'Host title' }), remote);
+    expect(merged.accent).toBe('#0f172a');
+    expect(merged.title).toBe('Host title');
+  });
+
+  it('returns the host config untouched when there is no remote config', () => {
+    const host = hostConfig({ accent: '#0f172a' });
+    expect(mergeRemoteConfig(host, null)).toBe(host);
+  });
+
+  it('never introduces a credential-shaped field', () => {
+    const merged = mergeRemoteConfig(hostConfig(), remote) as unknown as Record<string, unknown>;
+    expect(Object.keys(merged)).not.toContain('secretKey');
+    expect(merged['auth']).toEqual({ publishableKey: PUBLISHABLE, tokenEndpoint: '/api/chat-token' });
+  });
+});
+
+describe('mount and offline gating', () => {
+  const at = (overrides: Partial<RemoteConfig>): RemoteConfig => ({ ...DEFAULT_REMOTE_CONFIG, ...overrides });
+
+  it('does not mount when the merchant disabled the widget', () => {
+    expect(shouldMount(at({ enabled: false }))).toBe(false);
+  });
+
+  it('does not mount when HIDE_WIDGET and the team is closed', () => {
+    expect(shouldMount(at({ offlineMode: OFFLINE_MODE.HIDE_WIDGET, isOpenNow: false }))).toBe(false);
+  });
+
+  it('still mounts under HIDE_WIDGET while the team is open', () => {
+    expect(shouldMount(at({ offlineMode: OFFLINE_MODE.HIDE_WIDGET, isOpenNow: true }))).toBe(true);
+  });
+
+  // `null` is "does not follow business hours", so there is no outside to be
+  // outside of — it must never hide the widget or open an offline form.
+  it('treats an unknown open-state as always open', () => {
+    expect(shouldMount(at({ offlineMode: OFFLINE_MODE.HIDE_WIDGET, isOpenNow: null }))).toBe(true);
+    expect(shouldCollectOffline(at({ offlineMode: OFFLINE_MODE.COLLECT_MESSAGE, isOpenNow: null }))).toBe(false);
+    expect(isOutOfHours(at({ isOpenNow: null }))).toBe(false);
+  });
+
+  it('collects an offline message only under COLLECT_MESSAGE while closed', () => {
+    expect(shouldCollectOffline(at({ offlineMode: OFFLINE_MODE.COLLECT_MESSAGE, isOpenNow: false }))).toBe(true);
+    expect(shouldCollectOffline(at({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: false }))).toBe(false);
+    expect(shouldCollectOffline(at({ offlineMode: OFFLINE_MODE.COLLECT_MESSAGE, isOpenNow: true }))).toBe(false);
+  });
+
+  it('mounts on the defaults a failed fetch leaves behind', () => {
+    expect(shouldMount(DEFAULT_REMOTE_CONFIG)).toBe(true);
+    expect(shouldCollectOffline(DEFAULT_REMOTE_CONFIG)).toBe(false);
+  });
+});

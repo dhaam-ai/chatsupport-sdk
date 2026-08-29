@@ -70,7 +70,7 @@ export function themeCss(config: ResolvedConfig): string {
  * refused in favour of the default rather than escaped, because there is no
  * legitimate CSS colour containing one.
  */
-function cssColor(value: string): string {
+export function cssColor(value: string): string {
   return /[;{}()<>\\]|\/\*/.test(value) ? '#1f2937' : value.trim();
 }
 

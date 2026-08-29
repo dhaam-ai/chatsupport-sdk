@@ -28,7 +28,9 @@ import type { ResolvedPresentation } from './ui/presentation.js';
 import { createWidgetRoot } from './ui/root.js';
 import { createPreChatScreen, createSessionSwitcher } from './ui/session-picker.js';
 import type { SessionPickerCallbacks } from './ui/session-picker.js';
-import { STYLES, themeCss } from './ui/styles.js';
+import { STYLES, cssColor, themeCss } from './ui/styles.js';
+import { DEFAULT_REMOTE_CONFIG, fetchRemoteConfig, shouldMount } from './remote-config.js';
+import type { RemoteConfig } from './remote-config.js';
 
 /** How the host drives the widget after mounting it. */
 export interface ChatWidget {
@@ -382,6 +384,72 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const preChatAllowed = config.sessionId === undefined;
 
   const report = (error: unknown): void => config.onError(error);
+
+  // ── published config ──────────────────────────────────────────────────
+  //
+  // Fetched, never awaited. `mount()` is synchronous and stays that way: a
+  // widget that waited for a network round trip before painting would be a
+  // blank launcher on every cold load, and — because `WIDGET_ALLOWED_ORIGINS`
+  // is fleet-wide rather than per-tenant — a PERMANENTLY blank one on any
+  // storefront whose origin nobody remembered to add. So the widget renders
+  // the host's own config immediately and upgrades in place if the fetch
+  // lands.
+  //
+  // Everything below reads `remote` through this holder rather than
+  // capturing it, because it is replaced once, asynchronously, after mount.
+  let remote: RemoteConfig = DEFAULT_REMOTE_CONFIG;
+  const remoteConfigAbort = new AbortController();
+
+  /** Applies the parts of published config that are safe to change in place. */
+  const applyRemoteConfig = (next: RemoteConfig): void => {
+    remote = next;
+
+    // Accent goes on the host's inline style rather than by rewriting the
+    // `<style>` element: an inline custom property outranks the `:host` rule
+    // themeCss wrote, so this upgrades the theme without reparsing a sheet or
+    // racing anything already using the old value.
+    //
+    // Guarded on the host having said nothing, which is the precedence rule
+    // from remote-config.ts applied to a value that already went through
+    // `resolveConfig`'s defaults — by this point `config.accent` is populated
+    // either way, so `rawConfig` is the only place the distinction survives.
+    if (rawConfig.accent === undefined && next.accent !== undefined) {
+      host.style.setProperty('--dh-accent', cssColor(next.accent));
+    }
+    if (rawConfig.title === undefined && next.title !== undefined) {
+      launcherLabel.textContent = next.title;
+      identityHeader.setFallbackTitle(next.title);
+    }
+
+    // `enabled: false` and out-of-hours HIDE_WIDGET both mean "no launcher on
+    // this page". Handled by hiding rather than by tearing the widget down:
+    // the host still holds a `ChatWidget` handle and calling `open()` on a
+    // destroyed one should not be the price of a merchant toggling a switch.
+    launcher.hidden = !shouldMount(next);
+  };
+
+  void fetchRemoteConfig({
+    apiUrl: config.apiUrl,
+    publishableKey: config.auth.publishableKey,
+    signal: remoteConfigAbort.signal,
+  })
+    .then((fetched) => {
+      if (destroyed) return;
+      if (fetched === null) {
+        // Visible, not silent. This is the WIDGET_ALLOWED_ORIGINS trap: the
+        // browser refuses to say why a cross-origin read failed, so the
+        // message names the likeliest cause rather than pretending to know.
+        report(
+          new Error(
+            'widget config could not be read — rendering local defaults. ' +
+              'If this page is cross-origin to the chat API, check that its origin is in WIDGET_ALLOWED_ORIGINS.',
+          ),
+        );
+        return;
+      }
+      applyRemoteConfig(fetched);
+    })
+    .catch(report);
 
   // ── launcher ──────────────────────────────────────────────────────────
   const badge = el('span', { attrs: { class: 'dh-badge', hidden: true, 'aria-hidden': 'true' } });
@@ -1522,6 +1590,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      // Before anything else: an in-flight config fetch holds a timer and a
+      // pending promise, and its `.then` would otherwise run against a torn-
+      // down widget. The `destroyed` guard in there covers the race; this
+      // releases the socket rather than leaving it to time out.
+      remoteConfigAbort.abort();
       window.removeEventListener('resize', onResize);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
