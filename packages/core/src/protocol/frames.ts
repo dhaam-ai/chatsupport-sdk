@@ -93,12 +93,55 @@ export interface ConnectionReauthPayload {
   token: string;
 }
 
+/**
+ * ── Why so many frames grew an optional `sessionId` ───────────────────────
+ *
+ * A CUSTOMER client has one session at a time, so "the joined session" and
+ * "the session this frame is about" are the same fact and the wire never had
+ * to carry it. A STAFF client holds several at once, and for it those two
+ * facts come apart: the frames below are simply unroutable without an
+ * address, exactly as `message.send` was (see {@link MessageSendPayload}).
+ *
+ * Optional everywhere rather than required, on both halves of the wire:
+ *   - client→server, absence keeps the old meaning — "whatever this
+ *     connection last joined" — so an existing customer client is unchanged.
+ *   - server→client, the server populates it on every push; it is typed
+ *     optional only so the addition stays additive for a client compiled
+ *     against the previous version.
+ *
+ * Additive, so no protocol version bump: this SDK's server-frame validators
+ * are field guards rather than strict schemas, so an older client ignores a
+ * key it does not know instead of rejecting the frame.
+ */
 export interface SessionJoinPayload {
   sessionId: string;
+
+  /**
+   * Last `seq` this client applied FOR THIS SESSION — the per-session mirror
+   * of `connection.hello.resumeFrom`, and the anchor a multi-session client
+   * needs because one connection-wide cursor cannot describe N sessions.
+   *
+   * Omit to plan a `fresh` join, which replays nothing.
+   */
+  resumeFrom?: number;
+}
+
+/**
+ * `session.leave`'s payload — no longer {@link EmptyPayload}.
+ *
+ * A staff client leaving one of several open sessions has to say WHICH, and
+ * an empty payload cannot. Absent still means "the session this connection
+ * joined", which is the only thing it could ever have meant.
+ */
+export interface SessionLeavePayload {
+  sessionId?: string;
 }
 
 export interface SessionRequestAgentPayload {
   reason?: string;
+
+  /** Which session wants a human. See {@link SessionJoinPayload}. */
+  sessionId?: string;
 }
 
 export interface MessageSendPayload {
@@ -155,6 +198,9 @@ export interface MessageSendPayload {
  */
 export interface MessageMarkReadPayload {
   upToMessageId?: string;
+
+  /** Which session's watermark advances. See {@link SessionJoinPayload}. */
+  sessionId?: string;
 }
 
 /**
@@ -177,6 +223,15 @@ export interface MessageMarkReadPayload {
 export interface MessageMarkDeliveredPayload {
   /** Highest seq this client has received and rendered. */
   upToSeq: number;
+
+  /**
+   * Which session `upToSeq` counts within. See {@link SessionJoinPayload}.
+   *
+   * Load-bearing for a staff client in a way the read watermark is not: `seq`
+   * is per-session, so an unaddressed delivery watermark from a client holding
+   * several sessions is a number with no frame of reference.
+   */
+  sessionId?: string;
 }
 
 /**
@@ -190,6 +245,16 @@ export interface MessageMarkDeliveredPayload {
  */
 export interface TypingPayload {
   participantId?: string;
+
+  /**
+   * Which session is being typed in. See {@link SessionJoinPayload}.
+   *
+   * Same field in both directions, like `participantId` above: the client
+   * addresses its own typing with it, and the server populates it when
+   * relaying so a multi-session receiver knows which thread to animate
+   * instead of flashing the indicator on whichever one is on screen.
+   */
+  sessionId?: string;
 }
 
 export interface PresenceSetPayload {
@@ -287,6 +352,9 @@ export interface MessageReadPayload {
 
   /** ISO-8601. */
   readAt: string;
+
+  /** Which session this read watermark belongs to. See {@link SessionJoinPayload}. */
+  sessionId?: string;
 }
 
 /**
@@ -306,10 +374,24 @@ export interface MessageDeliveredPayload {
 
   /** ISO-8601. Display only — never an ordering or monotonicity input. */
   deliveredAt: string;
+
+  /** Which session `deliveredUpToSeq` counts within. See {@link SessionJoinPayload}. */
+  sessionId?: string;
 }
 
-/** Same shape as a `presence.query` ack's per-participant entry (domain.ts). */
-export type PresenceUpdatePayload = PresenceEntry;
+/**
+ * A `presence.query` ack's per-participant entry, plus the session it was
+ * observed in.
+ *
+ * No longer a bare alias for `PresenceEntry`: the ack answers a question the
+ * client just asked (so it already knows the session), but a PUSH arrives
+ * unprompted and a staff client cannot place it without an address. The ack's
+ * `PresenceQueryAckData` deliberately keeps the un-addressed entry shape.
+ */
+export interface PresenceUpdatePayload extends PresenceEntry {
+  /** See {@link SessionJoinPayload}. */
+  sessionId?: string;
+}
 
 export interface TicketLinkedPayload {
   ticketId: string;
@@ -369,6 +451,32 @@ export interface PresenceQueryAckData {
 }
 
 /**
+ * Extra data on a successful ack of `session.join`.
+ *
+ * This is the per-session analogue of `connection.ack`: joining a session is
+ * where a staff client learns that session's `seq` anchor and receives
+ * whatever it missed, because for a multi-session client there is no single
+ * connection-wide cursor that `connection.ack` could have carried.
+ *
+ * Spread into the ack's `d` alongside `ok: true` — `{ ok: true, seq, replay? }`
+ * — not nested under a key, matching every other member of
+ * {@link AckExtraData}.
+ */
+export interface SessionJoinAckData {
+  /** The session's own `last_seq` — this client's new anchor for it. */
+  seq: number;
+
+  /**
+   * Frames missed since the `resumeFrom` the join asked from, replayed inline.
+   *
+   * ABSENT, never `[]`, when there is nothing to replay — the same
+   * absence-over-empty rule `connection.ack.replay` follows, so "no replay
+   * happened" and "replay happened and was empty" stay distinguishable.
+   */
+  replay?: Frame<unknown>[];
+}
+
+/**
  * An ack carrying nothing beyond `{ ok: true }` — what `connection.reauth`,
  * `session.join`, and friends return.
  *
@@ -380,7 +488,7 @@ export interface PresenceQueryAckData {
  */
 export type EmptyAckData = Record<never, never>;
 
-export type AckExtraData = MessageSendAckData | PresenceQueryAckData | EmptyAckData;
+export type AckExtraData = MessageSendAckData | PresenceQueryAckData | SessionJoinAckData | EmptyAckData;
 
 // =============================================================================
 // Frame type catalog
@@ -446,7 +554,7 @@ export interface ClientFramePayloadMap {
   'connection.hello': ConnectionHelloPayload;
   'connection.reauth': ConnectionReauthPayload;
   'session.join': SessionJoinPayload;
-  'session.leave': EmptyPayload;
+  'session.leave': SessionLeavePayload;
   'session.requestAgent': SessionRequestAgentPayload;
   'message.send': MessageSendPayload;
   'message.markRead': MessageMarkReadPayload;

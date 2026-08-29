@@ -364,9 +364,29 @@ function validateConnectionReauth(d: unknown, path: string, frameType: string): 
   return requireField(d, 'token', isNonEmptyString, path, 'a non-empty string', frameType);
 }
 
+// ── The `sessionId` / `resumeFrom` additions are checked HERE and not on the
+// server-push side ────────────────────────────────────────────────────────
+//
+// Strict in what we send, liberal in what we accept. These are frames THIS
+// SDK constructs, so a malformed one is our own bug and the validator is the
+// cheapest place to catch it. The matching `sessionId` on `message.read` /
+// `message.delivered` / `presence.update` is deliberately left unchecked: a
+// server push is data we did not build, the field is an address rather than
+// content, and rejecting a whole frame over it would drop a real receipt to
+// punish a cosmetic defect. Those validators stay field guards (§ the
+// forward-compatibility tests below).
+
 function validateSessionJoin(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
-  return requireField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType);
+  return (
+    requireField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    optionalField(d, 'resumeFrom', isInteger, path, 'an integer', frameType)
+  );
+}
+
+function validateSessionLeave(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+  return optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType);
 }
 
 function validateEmptyPayload(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
@@ -376,7 +396,10 @@ function validateEmptyPayload(d: unknown, path: string, frameType: string): Fram
 
 function validateSessionRequestAgent(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
-  return optionalField(d, 'reason', isString, path, 'a string', frameType);
+  return (
+    optionalField(d, 'reason', isString, path, 'a string', frameType) ??
+    optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType)
+  );
 }
 
 function validateMessageSend(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
@@ -398,7 +421,10 @@ function validateMessageSend(d: unknown, path: string, frameType: string): Frame
 
 function validateMessageMarkRead(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
-  return optionalField(d, 'upToMessageId', isNonEmptyString, path, 'a non-empty string', frameType);
+  return (
+    optionalField(d, 'upToMessageId', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType)
+  );
 }
 
 /**
@@ -412,12 +438,18 @@ function validateMessageMarkRead(d: unknown, path: string, frameType: string): F
  */
 function validateMessageMarkDelivered(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
-  return requireField(d, 'upToSeq', isInteger, path, 'an integer', frameType);
+  return (
+    requireField(d, 'upToSeq', isInteger, path, 'an integer', frameType) ??
+    optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType)
+  );
 }
 
 function validateTyping(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
-  return optionalField(d, 'participantId', isNonEmptyString, path, 'a non-empty string', frameType);
+  return (
+    optionalField(d, 'participantId', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType)
+  );
 }
 
 function validatePresenceSet(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
@@ -528,7 +560,7 @@ const PAYLOAD_VALIDATORS: Record<PlainFrameType, PayloadValidator> = {
   'connection.hello': validateConnectionHello,
   'connection.reauth': validateConnectionReauth,
   'session.join': validateSessionJoin,
-  'session.leave': validateEmptyPayload,
+  'session.leave': validateSessionLeave,
   'session.requestAgent': validateSessionRequestAgent,
   'message.send': validateMessageSend,
   'message.markRead': validateMessageMarkRead,

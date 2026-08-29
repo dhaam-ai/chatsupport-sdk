@@ -835,3 +835,69 @@ describe('connection.hello selects a flow by the PRESENCE of publishableKey (WS 
     expect(validateFrame(hello({ token: 'tok' })).ok).toBe(false);
   });
 });
+
+describe('multi-session addressing — the optional sessionId/resumeFrom additions', () => {
+  const frame = (t: string, d: Record<string, unknown>) => ({ v: 1, t, id: ULID_A, ts: TS, d });
+
+  // Every one of these is optional, so the pre-staff shapes must still pass
+  // unchanged. This is the "an existing customer client is unaffected" claim,
+  // stated as a test rather than as a comment.
+  it.each([
+    ['session.join', { sessionId: 'sess_1' }],
+    ['session.leave', {}],
+    ['session.requestAgent', {}],
+    ['message.markRead', {}],
+    ['message.markDelivered', { upToSeq: 42 }],
+    ['typing.start', {}],
+    ['typing.stop', {}],
+  ])('%s still validates with no session address at all', (t, d) => {
+    expect(validateFrame(frame(t, d)).ok).toBe(true);
+  });
+
+  it.each([
+    ['session.join', { sessionId: 'sess_1', resumeFrom: 12 }],
+    ['session.leave', { sessionId: 'sess_1' }],
+    ['session.requestAgent', { reason: 'billing', sessionId: 'sess_1' }],
+    ['message.markRead', { upToMessageId: ULID_B, sessionId: 'sess_1' }],
+    ['message.markDelivered', { upToSeq: 42, sessionId: 'sess_1' }],
+    ['typing.start', { sessionId: 'sess_1' }],
+    ['typing.stop', { participantId: 'p1', sessionId: 'sess_1' }],
+  ])('%s validates when it addresses its own session', (t, d) => {
+    expect(validateFrame(frame(t, d)).ok).toBe(true);
+  });
+
+  // Optional does not mean unchecked — same rule as publishableKey above.
+  it.each([
+    ['session.leave', 'sessionId', ''],
+    ['session.requestAgent', 'sessionId', ''],
+    ['message.markRead', 'sessionId', 7],
+    ['typing.start', 'sessionId', null],
+  ])('%s rejects a malformed %s', (t, key, value) => {
+    const base: Record<string, Record<string, unknown>> = {
+      'session.leave': {},
+      'session.requestAgent': {},
+      'message.markRead': {},
+      'typing.start': {},
+    };
+    const result = validateFrame(frame(t, { ...base[t], [key]: value }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe(`d.${key}`);
+  });
+
+  it('rejects a non-integer session.join resumeFrom but accepts an integer one', () => {
+    expect(validateFrame(frame('session.join', { sessionId: 's', resumeFrom: 1.5 })).ok).toBe(false);
+    expect(validateFrame(frame('session.join', { sessionId: 's', resumeFrom: 0 })).ok).toBe(true);
+  });
+
+  // The asymmetry is deliberate: a server push is data we did not build, and
+  // dropping a real receipt over a cosmetic address defect is the worse
+  // failure. These stay field guards.
+  it.each([
+    ['message.read', { participantId: 'p1', readAt: ISO, sessionId: 'sess_1' }],
+    ['message.read', { participantId: 'p1', readAt: ISO, sessionId: '' }],
+    ['message.delivered', { participantId: 'p1', deliveredUpToSeq: 9, deliveredAt: ISO, sessionId: 'sess_1' }],
+    ['presence.update', { participantId: 'p1', status: 'ONLINE', sessionId: 'sess_1' }],
+  ])('%s accepts a server-supplied sessionId without second-guessing it', (t, d) => {
+    expect(validateFrame(frame(t, d)).ok).toBe(true);
+  });
+});
