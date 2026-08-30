@@ -33,6 +33,40 @@ export type WidgetPosition = 'bottom-right' | 'bottom-left';
  */
 export type LauncherStyle = 'bubble' | 'bubble-label' | 'tab';
 
+/** Where the launcher's glyph comes from. */
+export type LauncherIconSource = 'library' | 'emoji' | 'image';
+
+/**
+ * The launcher's glyph.
+ *
+ * Only the field matching `source` is read, and the console keeps the other
+ * two populated on purpose — switching back and forth must not lose the
+ * choices already made. Mirrored here rather than collapsed to one
+ * `icon: string`, because collapsing it would make "an emoji" and "a
+ * one-character image URL" the same input.
+ */
+export interface LauncherIcon {
+  readonly source: LauncherIconSource;
+  /** An id from the built-in set — see `ui/dom.ts`'s `LAUNCHER_ICONS`. */
+  readonly library: string;
+  readonly emoji: string;
+  /** `https:` or `data:image/…`. Anything else is refused rather than rendered. */
+  readonly imageUrl: string;
+}
+
+/**
+ * The drop shadow under the launcher.
+ *
+ * One `intensity` drives blur, offset, spread and alpha together, so the
+ * control reads as "how lifted" rather than asking a merchant to tune four
+ * numbers that only look right in certain combinations.
+ */
+export interface LauncherShadow {
+  readonly enabled: boolean;
+  /** 0–100, clamped. */
+  readonly intensity: number;
+}
+
 /** How the host tells us who the end user is, without ever holding a secret. */
 export interface WidgetAuth {
   /**
@@ -207,6 +241,19 @@ export interface WidgetConfig {
   readonly launcherLabel?: string;
 
   /**
+   * The launcher's glyph. Defaults to the built-in chat bubble.
+   *
+   * `Partial`, so a host naming an emoji does not also have to state a library
+   * id and an image URL it will never use. Missing fields fall through to the
+   * built-in defaults, and — because precedence is per FIELD — to published
+   * config before that.
+   */
+  readonly launcherIcon?: Partial<LauncherIcon>;
+
+  /** The launcher's drop shadow. Defaults to enabled at intensity 45. */
+  readonly launcherShadow?: Partial<LauncherShadow>;
+
+  /**
    * Corner radius in CSS pixels, applied to the panel, the message bubbles and
    * every card inside them. Defaults to 12.
    *
@@ -260,6 +307,8 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly offsetY: number;
   readonly launcher: LauncherStyle;
   readonly launcherLabel: string;
+  readonly launcherIcon: LauncherIcon;
+  readonly launcherShadow: LauncherShadow;
   readonly cornerRadius: number;
   readonly fontFamily: string;
   readonly font: 'isolate' | 'inherit';
@@ -272,6 +321,17 @@ export class WidgetConfigError extends Error {
     this.name = 'WidgetConfigError';
   }
 }
+
+/** What the launcher renders when nobody has said otherwise: today's glyph. */
+const DEFAULT_LAUNCHER_ICON: LauncherIcon = {
+  source: 'library',
+  library: 'chat',
+  emoji: '\u{1F4AC}',
+  imageUrl: '',
+};
+
+/** Matches the console's own default, which is the shipped look. */
+const DEFAULT_LAUNCHER_SHADOW: LauncherShadow = { enabled: true, intensity: 45 };
 
 const PRESENTATION_MODES = new Set<string>(['auto', 'bubble', 'sidebar', 'sheet']);
 
@@ -369,6 +429,11 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     position: config.position ?? 'bottom-right',
     launcher: config.launcher ?? 'bubble',
     launcherLabel: config.launcherLabel ?? title,
+    // Spread, so a host stating only `{ source: 'emoji', emoji: '👋' }` keeps
+    // the built-in library id behind it rather than having to restate every
+    // branch it is not using.
+    launcherIcon: { ...DEFAULT_LAUNCHER_ICON, ...config.launcherIcon },
+    launcherShadow: { ...DEFAULT_LAUNCHER_SHADOW, ...config.launcherShadow },
     // 20px each: exactly `calc(var(--dh-space) * 5)`, which is where the
     // launcher and the bubble panel have always sat.
     offsetX: config.offsetX ?? 20,

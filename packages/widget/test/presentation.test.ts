@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveConfig } from '../src/config.js';
 import type { WidgetConfig } from '../src/config.js';
 import { resolvePresentation } from '../src/ui/presentation.js';
-import { cssPx, fontStackFor, themeCss } from '../src/ui/styles.js';
+import { cssPx, fontStackFor, launcherShadowCss, themeCss } from '../src/ui/styles.js';
 
 const PUBLISHABLE = 'dhp_' + 'test_' + '0123456789abcdefghijklmn';
 
@@ -105,5 +105,37 @@ describe('themeCss — config becomes custom properties, and only custom propert
 
   it('keeps a zero length, which renders as square corners rather than as unset', () => {
     expect(cssPx(0, 12)).toBe('0px');
+  });
+});
+
+describe('launcherShadowCss — one intensity drives the whole shadow', () => {
+  it('is nothing at all when the merchant turned it off', () => {
+    expect(launcherShadowCss({ enabled: false, intensity: 90 }, 'resting')).toBe('none');
+    expect(launcherShadowCss({ enabled: false, intensity: 90 }, 'lifted')).toBe('none');
+  });
+
+  it('grows with intensity in every dimension at once', () => {
+    const soft = launcherShadowCss({ enabled: true, intensity: 0 }, 'resting');
+    const hard = launcherShadowCss({ enabled: true, intensity: 100 }, 'resting');
+    expect(soft).toBe('0 6px 14px -6px rgba(0,0,0,0.12)');
+    expect(hard).toBe('0 20px 44px -12px rgba(0,0,0,0.45)');
+  });
+
+  // The launcher lifts on hover, and a shadow that does not grow with it reads
+  // as the button sliding out from under its own shadow.
+  it('casts further in the lifted state than at rest', () => {
+    const shadow = { enabled: true, intensity: 45 };
+    expect(launcherShadowCss(shadow, 'lifted')).not.toBe(launcherShadowCss(shadow, 'resting'));
+  });
+
+  // The slider is 0–100 in the console, but this value crosses a public
+  // endpoint and a host-supplied object to get here.
+  it.each([
+    ['above the range', 400],
+    ['below it', -50],
+    ['NaN', Number.NaN],
+  ])('clamps an intensity %s rather than emitting a broken declaration', (_label, intensity) => {
+    const css = launcherShadowCss({ enabled: true, intensity }, 'resting');
+    expect(css).toMatch(/^0 \d+px \d+px -\d+px rgba\(0,0,0,0\.\d+\)$/);
   });
 });

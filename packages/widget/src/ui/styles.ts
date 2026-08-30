@@ -32,7 +32,7 @@
 // exists, which no z-index can outrank, and falls back to the real maximum
 // (2147483647) rather than v1's arbitrary six digits.
 
-import type { ResolvedConfig } from '../config.js';
+import type { LauncherShadow, ResolvedConfig } from '../config.js';
 
 const SYSTEM_FONT_STACK = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
@@ -99,6 +99,8 @@ export function themeCss(config: ResolvedConfig): string {
     --dh-radius: ${cssPx(config.cornerRadius, 12)};
     --dh-offset-x: ${cssPx(config.offsetX, 20)};
     --dh-offset-y: ${cssPx(config.offsetY, 20)};
+    --dh-launcher-shadow: ${launcherShadowCss(config.launcherShadow, 'resting')};
+    --dh-launcher-shadow-lift: ${launcherShadowCss(config.launcherShadow, 'lifted')};
   }`;
 }
 
@@ -119,6 +121,36 @@ export function themeCss(config: ResolvedConfig): string {
  */
 export function cssPx(value: number, fallback: number): string {
   return `${Number.isFinite(value) && value >= 0 ? value : fallback}px`;
+}
+
+/**
+ * `launcherShadow` → a `box-shadow` value.
+ *
+ * The coefficients are lifted verbatim from `chatsupport_react`'s
+ * `ChatLauncher` rather than re-derived, and that is the point: `intensity` is
+ * a number a merchant set while watching the console's live preview, so the
+ * only definition of what 45 LOOKS like is the one that preview used. A
+ * plausible-looking second curve here would render their slider differently
+ * from the thing they set it against.
+ *
+ * Two states, because the launcher lifts on hover and a shadow that does not
+ * grow with it reads as the button sliding out from under its own shadow.
+ *
+ * @param state `resting` for the ambient shadow, `lifted` for `:hover`.
+ */
+export function launcherShadowCss(shadow: LauncherShadow, state: 'resting' | 'lifted'): string {
+  if (!shadow.enabled) return 'none';
+  // Clamped, not trusted: this is a 0–100 slider in the console, but it
+  // reaches here through a public endpoint and a host-supplied object, and a
+  // NaN would take the whole `:host` rule's remaining declarations with it.
+  const raw = Number.isFinite(shadow.intensity) ? shadow.intensity : 45;
+  const strength = Math.min(100, Math.max(0, raw)) / 100;
+  const [offset, blur, alpha] =
+    state === 'lifted'
+      ? [10 + strength * 18, 20 + strength * 36, 0.16 + strength * 0.36]
+      : [6 + strength * 14, 14 + strength * 30, 0.12 + strength * 0.33];
+  const spread = 6 + strength * 6;
+  return `0 ${offset.toFixed(0)}px ${blur.toFixed(0)}px -${spread.toFixed(0)}px rgba(0,0,0,${alpha.toFixed(2)})`;
 }
 
 /**
@@ -290,16 +322,38 @@ button {
   border-radius: 999px;
   background: var(--dh-accent);
   color: var(--dh-accent-text);
-  box-shadow: var(--dh-shadow);
-  transition: transform 160ms ease, opacity 160ms ease;
+  /* Its own shadow, not the panel's '--dh-shadow': this one is merchant-
+     configurable and the panel's is not, and a lifted launcher over a page we
+     do not control is a different judgement from a panel that sits on its own
+     surface. */
+  box-shadow: var(--dh-launcher-shadow);
+  transition: transform 160ms ease, opacity 160ms ease, box-shadow 160ms ease;
   /* The container is 'pointer-events: none' so it cannot swallow clicks on the
      host page while it spans the viewport in the top layer (ui/root.ts). Every
      element that must actually be clickable turns them back on here. */
   pointer-events: auto;
 }
-.dh-launcher:hover { transform: scale(1.04); }
+.dh-launcher:hover { transform: scale(1.04); box-shadow: var(--dh-launcher-shadow-lift); }
 .dh-launcher:active { transform: scale(0.97); }
 .dh-launcher[hidden] { display: none; }
+
+/* The three glyph sources, sized to one 24px box so the shape does not shift
+   when a merchant switches between them. */
+.dh-launcher-glyph {
+  display: grid;
+  place-items: center;
+  width: 24px; height: 24px;
+  flex: none;
+}
+.dh-launcher-emoji {
+  font-size: 21px;
+  line-height: 1;
+}
+.dh-launcher-image {
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  object-fit: contain;
+}
 
 :host([data-position="bottom-left"]) .dh-launcher {
   right: auto;

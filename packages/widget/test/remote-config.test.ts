@@ -34,6 +34,8 @@ function body(overrides: Record<string, unknown> = {}): unknown {
         offsetY: 32,
         launcher: 'tab',
         launcherLabel: 'Need help?',
+        launcherIcon: { source: 'emoji', library: 'chat', emoji: '👋', imageUrl: '' },
+        launcherShadow: { enabled: true, intensity: 70 },
         cornerRadius: 20,
         fontFamily: 'Inter',
       },
@@ -113,7 +115,45 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       { id: 'track', label: 'Track my order', prompt: 'Where is my order?' },
       { id: 'refund', label: 'Refund question', prompt: 'I have a question about a refund.' },
     ]);
+    // No `imageUrl`: the console keeps the unused branches populated, and it
+    // writes `''` for the one that was never filled in — which `str()` reads
+    // as unset, so it never reaches the partial and never stamps over a
+    // default. The branches that DO hold something all survive.
+    expect(config?.launcherIcon).toEqual({ source: 'emoji', library: 'chat', emoji: '👋' });
+    expect(config?.launcherShadow).toEqual({ enabled: true, intensity: 70 });
     expect(config?.flows[0]).toMatchObject({ id: 'flow-1', trigger: 1, keywords: ['refund'], pagePattern: '/cart' });
+  });
+
+  // `{}`, not a defaulted object: it is the one-level-down equivalent of the
+  // scalars' `undefined`, and the merge needs to be able to tell "the merchant
+  // said nothing" from "the merchant chose the value we would have defaulted to".
+  it.each([
+    ['absent', undefined],
+    ['not an object', 'nope'],
+    ['an array', []],
+  ])('reads a launcherIcon that is %s as an empty partial', (_label, launcherIcon) => {
+    const config = parseRemoteConfig({ data: { appearance: { launcherIcon }, behaviour: {} } });
+    expect(config?.launcherIcon).toEqual({});
+  });
+
+  it('keeps only the launcherIcon fields it could actually read', () => {
+    const config = parseRemoteConfig({
+      data: {
+        appearance: { launcherIcon: { source: 'sticker', library: 'support', emoji: 42 } },
+        behaviour: {},
+      },
+    });
+    // A source nobody ships and a non-string emoji are both dropped; the
+    // library id survives, and no key is left present-holding-undefined —
+    // which under exactOptionalPropertyTypes would stamp over a default.
+    expect(config?.launcherIcon).toEqual({ library: 'support' });
+  });
+
+  it('keeps a launcherShadow the merchant switched OFF, rather than reading it as unset', () => {
+    const config = parseRemoteConfig({
+      data: { appearance: { launcherShadow: { enabled: false } }, behaviour: {} },
+    });
+    expect(config?.launcherShadow).toEqual({ enabled: false });
   });
 
   it.each([
@@ -457,6 +497,18 @@ describe('mergeRemoteConfig — the host always wins', () => {
     >;
     expect('theme' in merged).toBe(false);
     expect('accent' in merged).toBe(false);
+    expect('launcherIcon' in merged).toBe(false);
+  });
+
+  // Precedence is per FIELD even inside the objects the console writes as
+  // wholes: a host that named an emoji has said nothing about the library
+  // glyph sitting behind it.
+  it('overlays the objects key by key rather than replacing them wholesale', () => {
+    const merged = mergeRemoteConfig(hostConfig({ launcherIcon: { source: 'emoji', emoji: '👋' } }), {
+      ...DEFAULT_REMOTE_CONFIG,
+      launcherIcon: { source: 'library', library: 'support', emoji: '🛟' },
+    });
+    expect(merged.launcherIcon).toEqual({ source: 'emoji', emoji: '👋', library: 'support' });
   });
 
   it('returns the host config untouched when there is no remote config', () => {

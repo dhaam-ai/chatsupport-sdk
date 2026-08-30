@@ -35,6 +35,8 @@
 // config.ts has none: a shape with no slot for a credential cannot leak one.
 
 import type {
+  LauncherIcon,
+  LauncherShadow,
   LauncherStyle,
   ResolvedConfig,
   WidgetConfig,
@@ -126,6 +128,17 @@ export interface RemoteConfig {
   readonly launcher: LauncherStyle | undefined;
   /** `appearance.launcherLabel` — the words on the shapes that show any. */
   readonly launcherLabel: string | undefined;
+  /**
+   * `appearance.launcherIcon` / `appearance.launcherShadow`.
+   *
+   * `Partial`, and `{}` for a publish that named neither — the same
+   * "the merchant said nothing" signal the scalars carry as `undefined`, one
+   * level down. Precedence is per FIELD rather than per object (see
+   * {@link mergeRemoteConfig}), so an all-or-nothing object here would make a
+   * host that named only an emoji unable to inherit anything else.
+   */
+  readonly launcherIcon: Partial<LauncherIcon>;
+  readonly launcherShadow: Partial<LauncherShadow>;
   /** `appearance.cornerRadius`, in CSS pixels. */
   readonly cornerRadius: number | undefined;
   /** `appearance.fontFamily` — a console font NAME, not a CSS stack. */
@@ -159,6 +172,8 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   offsetY: undefined,
   launcher: undefined,
   launcherLabel: undefined,
+  launcherIcon: {},
+  launcherShadow: {},
   cornerRadius: undefined,
   fontFamily: undefined,
   greeting: undefined,
@@ -287,6 +302,19 @@ function bool(source: Record<string, unknown>, key: string, fallback: boolean): 
 }
 
 /**
+ * The three-way sibling of {@link bool}, for the appearance fields.
+ *
+ * `bool` collapses "absent" into a fallback, which is right for the behaviour
+ * flags that have one settled answer. Appearance fields cannot: the merge has
+ * to know whether the merchant CHOSE `false` or said nothing, or a host's own
+ * `true` could be overwritten by a default nobody picked.
+ */
+function flag(source: Record<string, unknown>, key: string): boolean | undefined {
+  const value = source[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+/**
  * A numeric leaf, refused unless it is a real, finite number.
  *
  * `typeof value === 'number'` is not enough on its own: `NaN` and `Infinity`
@@ -328,9 +356,55 @@ function oneOf<T extends string>(
     : undefined;
 }
 
+/**
+ * Assembles a `Partial<T>` from possibly-unreadable leaves, OMITTING every key
+ * that could not be read rather than setting it to `undefined`.
+ *
+ * That distinction is the whole reason this exists instead of an object
+ * literal. `exactOptionalPropertyTypes` is on, and both the merge and
+ * `resolveConfig` build these objects by spreading — so a key present and
+ * holding `undefined` would stamp itself over the very default it was
+ * supposed to fall through to.
+ */
+function partial<T extends object>(entries: { [K in keyof T]?: T[K] | undefined }): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(entries)) {
+    if (value !== undefined) out[key] = value;
+  }
+  return out as Partial<T>;
+}
+
 const THEMES = ['light', 'dark', 'auto'] as const;
 const POSITIONS = ['bottom-right', 'bottom-left'] as const;
 const LAUNCHER_STYLES = ['bubble', 'bubble-label', 'tab'] as const;
+const ICON_SOURCES = ['library', 'emoji', 'image'] as const;
+
+/**
+ * `appearance.launcherIcon` — the glyph on the launcher.
+ *
+ * Every branch is read, not just the one `source` names: the console keeps the
+ * unused ones populated so switching back and forth does not lose them, and
+ * dropping them here would make a later switch in the console publish a blank
+ * icon to anyone whose bundle had already thrown the value away.
+ */
+function parseLauncherIcon(value: unknown): Partial<LauncherIcon> {
+  if (!isRecord(value)) return {};
+  return partial<LauncherIcon>({
+    source: oneOf(value, 'source', ICON_SOURCES),
+    library: str(value, 'library'),
+    emoji: str(value, 'emoji'),
+    imageUrl: str(value, 'imageUrl'),
+  });
+}
+
+/** `appearance.launcherShadow` — one enable flag and one 0–100 intensity. */
+function parseLauncherShadow(value: unknown): Partial<LauncherShadow> {
+  if (!isRecord(value)) return {};
+  return partial<LauncherShadow>({
+    enabled: flag(value, 'enabled'),
+    intensity: num(value, 'intensity'),
+  });
+}
 
 function isOfflineMode(value: unknown): value is OfflineMode {
   return value === 1 || value === 2 || value === 3;
@@ -429,6 +503,8 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     offsetY: num(appearance, 'offsetY'),
     launcher: oneOf(appearance, 'launcher', LAUNCHER_STYLES),
     launcherLabel: str(appearance, 'launcherLabel'),
+    launcherIcon: parseLauncherIcon(appearance['launcherIcon']),
+    launcherShadow: parseLauncherShadow(appearance['launcherShadow']),
     cornerRadius: num(appearance, 'cornerRadius'),
     fontFamily: str(appearance, 'fontFamily'),
     greeting: str(behaviour, 'greeting'),
@@ -494,6 +570,20 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
     if (value === undefined) continue;
     if (host[key as keyof WidgetConfig] !== undefined) continue;
     filled[key] = value;
+  }
+
+  // The same rule one level down, for the fields the console writes as whole
+  // OBJECTS. Precedence stays per FIELD — a host that named an emoji has said
+  // nothing about which library glyph sits behind it — so these are overlaid
+  // key by key rather than replaced wholesale, host last.
+  //
+  // An empty result adds no key at all, exactly like the scalars above: an
+  // `{}` here would read downstream as "the host stated an object", and
+  // `resolveConfig` spreads it over the built-in defaults either way, so the
+  // distinction costs nothing to keep and is one less way to be surprised.
+  for (const key of ['launcherIcon', 'launcherShadow'] as const) {
+    const merged = { ...remote[key], ...host[key] };
+    if (Object.keys(merged).length > 0) filled[key] = merged;
   }
 
   return filled as unknown as WidgetConfig;

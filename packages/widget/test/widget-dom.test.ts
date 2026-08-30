@@ -211,6 +211,75 @@ describe('the launcher’s shape', () => {
   });
 });
 
+describe('the launcher’s glyph', () => {
+  const glyph = (): Element => {
+    const child = query('.dh-launcher-glyph').firstElementChild;
+    if (child === null) throw new Error('launcher glyph is empty');
+    return child;
+  };
+
+  it('draws the built-in chat bubble by default', () => {
+    mount(config());
+    expect(glyph().tagName.toLowerCase()).toBe('svg');
+    // Hidden from the a11y tree — the button already carries its own name.
+    expect(glyph().getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('draws a library glyph by the id the merchant picked', () => {
+    mount(config({ launcherIcon: { source: 'library', library: 'support' } }));
+    expect(glyph().tagName.toLowerCase()).toBe('svg');
+    // Six paths in the life ring, one in the chat bubble — enough to prove the
+    // id was honoured rather than silently defaulted.
+    expect(glyph().querySelectorAll('path').length).toBeGreaterThan(1);
+  });
+
+  // A ninth icon a newer console offers must not produce a blank launcher on
+  // an older embed.
+  it('falls back to the chat bubble for a library id it has never heard of', () => {
+    mount(config({ launcherIcon: { source: 'library', library: 'unicorn' } }));
+    expect(glyph().tagName.toLowerCase()).toBe('svg');
+    expect(glyph().querySelectorAll('path')).toHaveLength(1);
+  });
+
+  it('renders an emoji through textContent, never as markup', () => {
+    mount(config({ launcherIcon: { source: 'emoji', emoji: '👋' } }));
+    expect(glyph().textContent).toBe('👋');
+    expect(glyph().className).toBe('dh-launcher-emoji');
+  });
+
+  it('falls back when the emoji branch is selected but empty', () => {
+    mount(config({ launcherIcon: { source: 'emoji', emoji: '   ' } }));
+    expect(glyph().tagName.toLowerCase()).toBe('svg');
+  });
+
+  it('renders an https image', () => {
+    mount(config({ launcherIcon: { source: 'image', imageUrl: 'https://cdn.acme.test/i.png' } }));
+    expect(glyph().tagName.toLowerCase()).toBe('img');
+    expect(glyph().getAttribute('src')).toBe('https://cdn.acme.test/i.png');
+    expect(glyph().getAttribute('alt')).toBe('');
+  });
+
+  // The allowlist. Every one of these arrives from a merchant's console over a
+  // public endpoint and would end up in a `src` on someone else's checkout
+  // page; a relative path is refused too, because it would resolve against the
+  // HOST's origin rather than anything we control.
+  it.each([
+    ['a javascript: URL', 'javascript:alert(1)'],
+    ['a non-image data: URL', 'data:text/html,<script>alert(1)</script>'],
+    ['a relative path', '/assets/chat/default-logo.svg'],
+    ['an empty string', ''],
+  ])('refuses %s and draws the built-in glyph instead', (_label, imageUrl) => {
+    mount(config({ launcherIcon: { source: 'image', imageUrl } }));
+    expect(glyph().tagName.toLowerCase()).toBe('svg');
+  });
+
+  it('accepts an uploaded image as a data: URL', () => {
+    const url = 'data:image/png;base64,iVBORw0KGgo=';
+    mount(config({ launcherIcon: { source: 'image', imageUrl: url } }));
+    expect(glyph().getAttribute('src')).toBe(url);
+  });
+});
+
 describe('the panel', () => {
   it('is hidden from the a11y tree and the tab order while closed', () => {
     mount(config());

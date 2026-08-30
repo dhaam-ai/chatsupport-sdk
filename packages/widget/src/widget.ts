@@ -16,9 +16,9 @@ import type { ChatMessage, ChatSessionSummary, ChatState, ConnectionState } from
 
 import { createWidgetStore } from './client.js';
 import { resolveConfig } from './config.js';
-import type { LauncherStyle, ResolvedConfig, WidgetConfig } from './config.js';
+import type { LauncherIcon, LauncherStyle, ResolvedConfig, WidgetConfig } from './config.js';
 import { createComposer } from './ui/composer.js';
-import { ICONS, el, icon } from './ui/dom.js';
+import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
 import type { FocusTrap } from './ui/focus.js';
 import { createIdentityHeader } from './ui/identity-header.js';
@@ -28,7 +28,7 @@ import type { ResolvedPresentation } from './ui/presentation.js';
 import { createWidgetRoot } from './ui/root.js';
 import { createPreChatScreen, createSessionSwitcher } from './ui/session-picker.js';
 import type { SessionPickerCallbacks } from './ui/session-picker.js';
-import { STYLES, cssColor, cssPx, fontStackFor, themeCss } from './ui/styles.js';
+import { STYLES, cssColor, cssPx, fontStackFor, launcherShadowCss, themeCss } from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
 import { createOfflineForm } from './ui/offline-form.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
@@ -292,6 +292,38 @@ function workingConnectionStatus(
   };
 }
 
+/**
+ * The launcher's glyph, from whichever of the three sources is selected.
+ *
+ * Lives here rather than in `ui/dom.ts` so that module keeps its one-way
+ * imports: it is the primitive layer and knows nothing about `WidgetConfig`,
+ * while this file already holds both.
+ *
+ * Every branch falls back to the built-in chat bubble rather than to nothing.
+ * An emoji field a merchant blanked, an image URL the allowlist refused, a
+ * library id from a console newer than this bundle — all of them are cases
+ * where a launcher with no glyph at all is strictly worse than the default
+ * one, because a blank circle reads as a broken widget rather than as a
+ * customised one.
+ */
+function buildLauncherIcon(spec: LauncherIcon): Node {
+  if (spec.source === 'emoji' && spec.emoji.trim() !== '') {
+    // `text`, so it goes through `textContent` — a merchant's "emoji" field is
+    // free text and this is a shadow root on someone else's checkout page.
+    return el('span', { attrs: { class: 'dh-launcher-emoji', 'aria-hidden': 'true' }, text: spec.emoji });
+  }
+
+  if (spec.source === 'image') {
+    const src = safeImageUrl(spec.imageUrl);
+    // `alt=""`, not the label: the launcher already carries an accessible name
+    // (see `launcherName`), and naming the image too would make a screen
+    // reader announce the button twice — the same rule `icon()` follows.
+    if (src !== null) return el('img', { attrs: { class: 'dh-launcher-image', src, alt: '' } });
+  }
+
+  return icon(LAUNCHER_ICONS[spec.library] ?? ICONS.chat, 24);
+}
+
 /** Which of the three data-collecting surfaces is standing in for the chat. */
 type SurfaceKind = 'preChat' | 'offline' | 'csat';
 
@@ -471,6 +503,22 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // Both of the above change what the launcher SHOWS, and its accessible
     // name has to quote that — see syncLauncher's WCAG 2.5.3 note.
     syncLauncher(store.getState());
+
+    // Rebuilt rather than patched, for the same reason `applyRemoteConfig`
+    // rebuilds the chip row: three unrelated element shapes (svg / span /
+    // img) share this slot, so "patch the one that is there" would be three
+    // branches of DOM surgery to save one `replaceChildren` on a config
+    // change that happens at most once per publish.
+    if (rawConfig.launcherIcon === undefined && Object.keys(next.launcherIcon).length > 0) {
+      launcherGlyph.replaceChildren(
+        buildLauncherIcon({ ...config.launcherIcon, ...next.launcherIcon }),
+      );
+    }
+    if (rawConfig.launcherShadow === undefined && Object.keys(next.launcherShadow).length > 0) {
+      const shadow = { ...config.launcherShadow, ...next.launcherShadow };
+      host.style.setProperty('--dh-launcher-shadow', launcherShadowCss(shadow, 'resting'));
+      host.style.setProperty('--dh-launcher-shadow-lift', launcherShadowCss(shadow, 'lifted'));
+    }
     // An attribute rather than a custom property, because the scheme selects a
     // whole palette rather than setting one value — the same `[data-*]`
     // attribute-selector mechanism the presentation variants use.
@@ -556,6 +604,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     attrs: { class: 'dh-launcher-label' },
     text: config.launcherLabel,
   });
+  /**
+   * The slot the glyph lives in, so published config can swap it without
+   * rebuilding the button — which would drop the click listener and, if the
+   * customer happened to be mid-press, take the control out from under them.
+   */
+  const launcherGlyph = el('span', {
+    attrs: { class: 'dh-launcher-glyph' },
+    children: [buildLauncherIcon(config.launcherIcon)],
+  });
+
   const launcher = el('button', {
     attrs: {
       class: 'dh-launcher',
@@ -567,7 +625,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       'aria-controls': 'dh-panel',
       'aria-label': 'Open chat',
     },
-    children: [icon(ICONS.chat, 24), launcherLabel, badge],
+    children: [launcherGlyph, launcherLabel, badge],
     on: { click: () => toggle() },
   });
 

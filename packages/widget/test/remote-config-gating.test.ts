@@ -382,6 +382,28 @@ describe('appearance, and the host’s right to overrule it', () => {
     expect(find('.dh-launcher-label')?.textContent).toBe('Host title');
   });
 
+  it('swaps in the published launcher glyph and shadow after mount', async () => {
+    stubFetch(
+      published({
+        appearance: {
+          launcherIcon: { source: 'emoji', emoji: '👋' },
+          launcherShadow: { enabled: false },
+        },
+      }),
+    );
+    mount(config());
+    await settle();
+
+    // Swapped in place: the button itself is never rebuilt, so its click
+    // listener survives a publish landing mid-press.
+    expect(find('.dh-launcher-glyph')?.firstElementChild?.textContent).toBe('👋');
+    expect(
+      document.querySelector<HTMLElement>('dh-chat-widget')?.style.getPropertyValue(
+        '--dh-launcher-shadow',
+      ),
+    ).toBe('none');
+  });
+
   it('adopts the published corner and offsets', async () => {
     stubFetch(published({ appearance: { position: 'bottom-left', offsetX: 8, offsetY: 96 } }));
     mount(config());

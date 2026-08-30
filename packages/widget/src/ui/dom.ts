@@ -87,3 +87,77 @@ export const ICONS = {
   // not a chat/clock icon, so it does not compete visually with the launcher.
   list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
 } as const;
+
+/**
+ * The launcher glyphs the console's icon picker offers, keyed by its own ids.
+ *
+ * Deliberately OUTLINE, where `chatsupport_react`'s picker renders the same
+ * ids as Heroicons *solid*. Two reasons, and the divergence is a choice rather
+ * than an oversight: every other icon in this package is a 1.8px stroke drawn
+ * by {@link icon}, so a solid glyph would be the only filled thing in the
+ * widget; and matching the React set exactly would mean shipping eight new
+ * filled paths for a control that renders one of them, on a bundle whose whole
+ * budget is someone else's page-load. The id — which is what the merchant
+ * actually picked — is honoured; the drawing is this renderer's.
+ *
+ * An id this bundle has never heard of falls back to `chat` rather than to
+ * nothing: a newer console offering a ninth icon must not produce a blank
+ * launcher on an older embed.
+ */
+export const LAUNCHER_ICONS: Readonly<Record<string, readonly string[]>> = {
+  chat: ICONS.chat,
+  chats: [
+    'M17 9V7a3 3 0 0 0-3-3H5a3 3 0 0 0-3 3v5a3 3 0 0 0 3 3v3l3-3',
+    'M10 12a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3v3l-3-3h-3a3 3 0 0 1-3-3Z',
+  ],
+  message: ['M6 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2Z', 'M8 9h8', 'M8 13h5'],
+  help: [
+    'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',
+    'M9.5 9a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.9-.9 1.5v.7',
+    'M12 17h.01',
+  ],
+  support: [
+    'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z',
+    'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z',
+    'M4.9 4.9 9.2 9.2',
+    'M14.8 14.8l4.3 4.3',
+    'M19.1 4.9 14.8 9.2',
+    'M9.2 14.8l-4.3 4.3',
+  ],
+  phone: [
+    'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z',
+  ],
+  mail: ['M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z', 'm2.5 7 9.5 6 9.5-6'],
+  sparkle: [
+    'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z',
+    'M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z',
+  ],
+};
+
+/**
+ * A config-supplied image URL, or `null` if it is not one we will load.
+ *
+ * The allowlist is the point. `logoUrl`, `imageUrl` and the header's avatars
+ * all arrive from a merchant's console over a public endpoint, and every one
+ * of them ends up in a `src` attribute inside a shadow root on someone else's
+ * checkout page. Three things are refused:
+ *
+ *   - `javascript:` — inert in `<img src>` today, but this same guard is what
+ *     the header's logo and CTA will pass through, and one of those could
+ *     become an `<a href>` the day a design changes.
+ *   - `data:` that is not an image — the console writes `data:image/…` for an
+ *     uploaded file, and nothing else it writes has any business being one.
+ *   - anything relative — it would resolve against the HOST page's origin, so
+ *     a merchant's typo would silently fetch a random path off a storefront
+ *     nobody involved controls.
+ *
+ * `blob:` is not on the list because it is meaningless here: a blob URL is
+ * scoped to the document that created it, and this one arrived as JSON.
+ */
+export function safeImageUrl(value: string): string | null {
+  const url = value.trim();
+  if (url === '') return null;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(url)) return url;
+  return null;
+}
