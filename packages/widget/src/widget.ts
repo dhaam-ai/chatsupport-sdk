@@ -21,6 +21,7 @@ import type {
   LauncherIcon,
   LauncherStyle,
   ResolvedConfig,
+  ThreadAppearance,
   WidgetConfig,
   WidgetDesign,
 } from './config.js';
@@ -48,6 +49,7 @@ import {
   launcherShadowCss,
   readableOn,
   themeCss,
+  threadTokens,
 } from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
 import { createOfflineForm } from './ui/offline-form.js';
@@ -563,6 +565,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       accent,
       rawConfig.logoUrl === undefined ? (next.logoUrl ?? config.logoUrl) : config.logoUrl,
     );
+    if (rawConfig.thread === undefined && Object.keys(next.thread).length > 0) {
+      applyThreadAppearance({ ...config.thread, ...next.thread });
+    }
     // An attribute rather than a custom property, because the scheme selects a
     // whole palette rather than setting one value — the same `[data-*]`
     // attribute-selector mechanism the presentation variants use.
@@ -639,6 +644,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (header.colorSource === 'platform' && header.backgroundColor.trim() === '') {
       borrowPlatformColor();
     }
+  }
+
+  /** The conversation's backdrop, through the same inline-property route. */
+  function applyThreadAppearance(thread: ThreadAppearance): void {
+    const tokens = threadTokens(thread);
+    host.style.setProperty('--dh-thread-bg', tokens.bg);
+    host.style.setProperty('--dh-thread-layers', tokens.layers);
+    host.style.setProperty('--dh-thread-size', tokens.size);
+    host.style.setProperty('--dh-thread-repeat', tokens.repeat);
   }
 
   /**

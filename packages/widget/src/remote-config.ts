@@ -41,6 +41,7 @@ import type {
   LauncherStyle,
   ResolvedConfig,
   WidgetConfig,
+  ThreadAppearance,
   WidgetDesign,
   WidgetPosition,
   WidgetTheme,
@@ -147,6 +148,8 @@ export interface RemoteConfig {
   readonly header: Partial<HeaderAppearance>;
   /** `appearance.logoUrl` — the brand mark, behind the header's own. */
   readonly logoUrl: string | undefined;
+  /** `appearance.thread` — the conversation's backdrop. Same `{}`-means-unset rule. */
+  readonly thread: Partial<ThreadAppearance>;
   /** `appearance.cornerRadius`, in CSS pixels. */
   readonly cornerRadius: number | undefined;
   /** `appearance.fontFamily` — a console font NAME, not a CSS stack. */
@@ -185,6 +188,7 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   design: undefined,
   header: {},
   logoUrl: undefined,
+  thread: {},
   cornerRadius: undefined,
   fontFamily: undefined,
   greeting: undefined,
@@ -418,6 +422,24 @@ function parseLauncherShadow(value: unknown): Partial<LauncherShadow> {
 }
 
 const DESIGNS = ['classic', 'hero'] as const;
+const THREAD_BACKGROUNDS = ['mesh', 'solid', 'image', 'pattern'] as const;
+const THREAD_PATTERNS = ['dots', 'grid', 'diagonal', 'crosshatch'] as const;
+const IMAGE_FADES = ['light', 'dark'] as const;
+
+/** `appearance.thread` — how the conversation's backdrop is painted. */
+function parseThread(value: unknown): Partial<ThreadAppearance> {
+  if (!isRecord(value)) return {};
+  return partial<ThreadAppearance>({
+    background: oneOf(value, 'background', THREAD_BACKGROUNDS),
+    color: str(value, 'color'),
+    pattern: oneOf(value, 'pattern', THREAD_PATTERNS),
+    patternOpacity: num(value, 'patternOpacity'),
+    imageUrl: str(value, 'imageUrl'),
+    imageFade: oneOf(value, 'imageFade', IMAGE_FADES),
+    imageOverlay: num(value, 'imageOverlay'),
+  });
+}
+
 const HEADER_BACKGROUNDS = ['solid', 'gradient', 'image'] as const;
 const HEADER_COLOR_SOURCES = ['accent', 'platform'] as const;
 
@@ -559,6 +581,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     design: oneOf(appearance, 'design', DESIGNS),
     header: parseHeader(appearance['header']),
     logoUrl: str(appearance, 'logoUrl'),
+    thread: parseThread(appearance['thread']),
     cornerRadius: num(appearance, 'cornerRadius'),
     fontFamily: str(appearance, 'fontFamily'),
     greeting: str(behaviour, 'greeting'),
@@ -637,7 +660,7 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
   // `{}` here would read downstream as "the host stated an object", and
   // `resolveConfig` spreads it over the built-in defaults either way, so the
   // distinction costs nothing to keep and is one less way to be surprised.
-  for (const key of ['launcherIcon', 'launcherShadow', 'header'] as const) {
+  for (const key of ['launcherIcon', 'launcherShadow', 'header', 'thread'] as const) {
     const merged = { ...remote[key], ...host[key] };
     if (Object.keys(merged).length > 0) filled[key] = merged;
   }

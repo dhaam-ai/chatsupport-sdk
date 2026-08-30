@@ -80,6 +80,37 @@ export interface HeaderAppearance {
   readonly ctaSubtitle: string;
 }
 
+/** How the conversation's backdrop is painted. */
+export type ThreadBackground = 'mesh' | 'solid' | 'image' | 'pattern';
+
+/** The built-in textures, drawn in CSS and tinted from the accent. */
+export type ThreadPattern = 'dots' | 'grid' | 'diagonal' | 'crosshatch';
+
+/**
+ * The conversation's backdrop.
+ *
+ * `mesh` is the console's own default — a four-corner pastel wash. The rest
+ * let a merchant put their own colour, artwork or texture behind the messages.
+ * Bubbles keep their own opaque surfaces in every mode, so nothing here can
+ * make a message unreadable.
+ */
+export interface ThreadAppearance {
+  readonly background: ThreadBackground;
+  /** Used by `solid`, and as the base tint behind `pattern`. Empty keeps the panel's own surface. */
+  readonly color: string;
+  readonly pattern: ThreadPattern;
+  /** 0–100. How strongly the texture reads against its base. */
+  readonly patternOpacity: number;
+  readonly imageUrl: string;
+  /**
+   * Which way the scrim washes the artwork. Light artwork needs a white veil
+   * to keep dark bubble text readable; dark artwork needs a black one.
+   */
+  readonly imageFade: 'light' | 'dark';
+  /** 0–100. Scrim over the image, so the bubbles stay readable on it. */
+  readonly imageOverlay: number;
+}
+
 /** Where the launcher's glyph comes from. */
 export type LauncherIconSource = 'library' | 'emoji' | 'image';
 
@@ -331,6 +362,19 @@ export interface WidgetConfig {
   readonly logoUrl?: string;
 
   /**
+   * The conversation's backdrop. Defaults to a plain `solid` with no colour —
+   * which is the panel's own surface, i.e. exactly what this widget has always
+   * drawn.
+   *
+   * NOT the console's default of `mesh`, for the same reason `design` is not
+   * `hero`: a pastel wash behind the transcript is a redesign, and it belongs
+   * only to merchants who chose it. Unlike `design` this is read under BOTH
+   * layouts — a merchant on the classic header can still want artwork behind
+   * their messages, and the console lets them have it.
+   */
+  readonly thread?: Partial<ThreadAppearance>;
+
+  /**
    * Corner radius in CSS pixels, applied to the panel, the message bubbles and
    * every card inside them. Defaults to 12.
    *
@@ -389,6 +433,7 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly design: WidgetDesign;
   readonly header: HeaderAppearance;
   readonly logoUrl: string;
+  readonly thread: ThreadAppearance;
   readonly cornerRadius: number;
   readonly fontFamily: string;
   readonly font: 'isolate' | 'inherit';
@@ -440,6 +485,24 @@ const DEFAULT_HEADER: HeaderAppearance = {
   ctaEnabled: false,
   ctaTitle: '',
   ctaSubtitle: '',
+};
+
+/**
+ * A plain backdrop, where the console's own default is `mesh`.
+ *
+ * `solid` with an empty `color` resolves to the panel's own surface, so a
+ * widget nobody has configured looks exactly as it always has. The other
+ * fields carry the console's defaults, so a merchant who switches the KIND
+ * without touching anything else gets what the console showed them.
+ */
+const DEFAULT_THREAD: ThreadAppearance = {
+  background: 'solid',
+  color: '',
+  pattern: 'dots',
+  patternOpacity: 35,
+  imageUrl: '',
+  imageFade: 'light',
+  imageOverlay: 55,
 };
 
 const PRESENTATION_MODES = new Set<string>(['auto', 'bubble', 'sidebar', 'sheet']);
@@ -546,6 +609,7 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     design: config.design ?? 'classic',
     header: { ...DEFAULT_HEADER, ...config.header },
     logoUrl: config.logoUrl ?? '',
+    thread: { ...DEFAULT_THREAD, ...config.thread },
     // 20px each: exactly `calc(var(--dh-space) * 5)`, which is where the
     // launcher and the bubble panel have always sat.
     offsetX: config.offsetX ?? 20,

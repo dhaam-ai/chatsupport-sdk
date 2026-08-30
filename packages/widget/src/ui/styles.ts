@@ -34,7 +34,12 @@
 
 import { safeImageUrl } from './dom.js';
 
-import type { HeaderAppearance, LauncherShadow, ResolvedConfig } from '../config.js';
+import type {
+  HeaderAppearance,
+  LauncherShadow,
+  ResolvedConfig,
+  ThreadAppearance,
+} from '../config.js';
 
 const SYSTEM_FONT_STACK = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
@@ -106,6 +111,7 @@ export function themeCss(config: ResolvedConfig): string {
     --dh-header-bg: ${headerBaseColor(config.header)};
     --dh-header-fg: ${headerForeground(config.header, config.accent)};
     --dh-header-layers: ${headerLayers(config.header)};
+    ${threadTokensCss(config.thread)}
   }`;
 }
 
@@ -247,6 +253,106 @@ export function readableOn(color: string): string {
 }
 
 /**
+ * The three declarations that paint the conversation's backdrop, as an object
+ * so the boot path can write them into a rule and the live-config path can set
+ * them as inline properties from the same source.
+ *
+ * Split across three properties rather than one `background` shorthand because
+ * `mesh` has to defer to a THEME token pair (light and dark meshes are
+ * different artwork, and only CSS knows which is in force), while `pattern`
+ * needs an explicit tile size and `image` needs `cover`. A shorthand cannot
+ * express "take these two from a variable and that one from here".
+ */
+export interface ThreadTokens {
+  readonly bg: string;
+  readonly layers: string;
+  readonly size: string;
+  readonly repeat: string;
+}
+
+/**
+ * `thread` → the backdrop tokens.
+ *
+ * Every formula is lifted from `chatsupport_react`'s `threadBackgroundStyle`,
+ * for the third time and the same reason: `patternOpacity` and `imageOverlay`
+ * are numbers a merchant set against that renderer's preview.
+ *
+ * The one structural difference is `mesh`. There it is a CSS class with a
+ * `[data-theme="dark"]` variant, because a pastel wash that works on white is
+ * mud on near-black. Here it resolves to `var(--dh-mesh-*)`, which the palette
+ * defines twice — so the mesh follows the scheme through exactly the mechanism
+ * every other colour in this sheet does, rather than through a second
+ * theme-detection path that could disagree with the first.
+ */
+export function threadTokens(thread: ThreadAppearance): ThreadTokens {
+  const base = thread.color.trim() === '' ? 'var(--dh-surface)' : cssColor(thread.color);
+
+  if (thread.background === 'solid') {
+    return { bg: base, layers: 'none', size: 'auto', repeat: 'repeat' };
+  }
+
+  if (thread.background === 'image') {
+    const url = cssUrl(thread.imageUrl);
+    // Same graceful miss as the header's: the base colour alone, rather than a
+    // `url()` that 404s into the browser's broken-image behaviour.
+    if (url === null) return { bg: base, layers: 'none', size: 'auto', repeat: 'repeat' };
+    const scrim = percent(thread.imageOverlay, 55);
+    const veil = thread.imageFade === 'dark' ? '0,0,0' : '255,255,255';
+    return {
+      bg: base,
+      layers: `linear-gradient(rgba(${veil},${scrim}), rgba(${veil},${scrim})), ${url}`,
+      size: 'cover',
+      // Pinned to the scroll container rather than tiled: the artwork is the
+      // panel's backdrop and must stay put while messages move over it.
+      repeat: 'no-repeat',
+    };
+  }
+
+  if (thread.background === 'pattern') {
+    // 0.18 is the ceiling, not the value. The slider is "how strongly does
+    // this read", and a texture behind a conversation that reaches full
+    // opacity competes with the messages rather than sitting behind them.
+    const alpha = percent(thread.patternOpacity, 35) * 0.18;
+    const ink = 'color-mix(in srgb, var(--dh-accent) 55%, #000)';
+    const dot = `color-mix(in srgb, ${ink} ${Math.round(alpha * 100)}%, transparent)`;
+    return { bg: base, ...PATTERNS[thread.pattern](dot), repeat: 'repeat' };
+  }
+
+  return { bg: 'var(--dh-mesh-bg)', layers: 'var(--dh-mesh-layers)', size: 'auto', repeat: 'no-repeat' };
+}
+
+/** Each texture, as the `background-image` and tile size that draw it. */
+const PATTERNS: Readonly<
+  Record<ThreadAppearance['pattern'], (dot: string) => { layers: string; size: string }>
+> = {
+  dots: (dot) => ({
+    layers: `radial-gradient(${dot} 1.5px, transparent 1.5px)`,
+    size: '16px 16px',
+  }),
+  grid: (dot) => ({
+    layers: `linear-gradient(${dot} 1px, transparent 1px), linear-gradient(90deg, ${dot} 1px, transparent 1px)`,
+    size: '22px 22px',
+  }),
+  diagonal: (dot) => ({
+    layers: `repeating-linear-gradient(45deg, ${dot} 0 2px, transparent 2px 10px)`,
+    size: 'auto',
+  }),
+  crosshatch: (dot) => ({
+    layers: `repeating-linear-gradient(45deg, ${dot} 0 1px, transparent 1px 9px), repeating-linear-gradient(-45deg, ${dot} 0 1px, transparent 1px 9px)`,
+    size: 'auto',
+  }),
+};
+
+/** {@link threadTokens} as the custom-property declarations themeCss emits. */
+function threadTokensCss(thread: ThreadAppearance): string {
+  const { bg, layers, size, repeat } = threadTokens(thread);
+  return `--dh-thread-bg: ${bg};
+    --dh-thread-layers: ${layers};
+    --dh-thread-size: ${size};
+    --dh-thread-repeat: ${repeat};`;
+}
+
+/**
  * `launcherShadow` → a `box-shadow` value.
  *
  * The coefficients are lifted verbatim from `chatsupport_react`'s
@@ -314,6 +420,14 @@ const DARK_TOKENS = `
   --dh-focus: #7aa5ff;
   --dh-danger: #f97066;
   --dh-shadow: 0 6px 24px -4px rgb(0 0 0 / 0.55), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  /* A pastel wash that works on white is mud on near-black, so the mesh gets
+     its own dark artwork rather than an opacity applied to the light one. */
+  --dh-mesh-bg: #1c1a24;
+  --dh-mesh-layers:
+    radial-gradient(88% 68% at 0% 0%, rgb(237 100 140 / 0.14) 0%, rgb(237 100 140 / 0) 72%),
+    radial-gradient(88% 68% at 100% 0%, rgb(240 190 90 / 0.12) 0%, rgb(240 190 90 / 0) 72%),
+    radial-gradient(88% 70% at 0% 100%, rgb(60 200 165 / 0.12) 0%, rgb(60 200 165 / 0) 72%),
+    radial-gradient(95% 76% at 100% 100%, rgb(90 170 210 / 0.14) 0%, rgb(90 170 210 / 0) 74%);
 `;
 
 export const STYLES = `
@@ -332,6 +446,19 @@ export const STYLES = `
   --dh-focus: #2563eb;
   --dh-bubble-in: #f1f3f5;
   --dh-shadow: 0 6px 24px -4px rgb(16 18 24 / 0.18), 0 2px 6px -2px rgb(16 18 24 / 0.12);
+
+  /* The console's 'thread.background: mesh' — a four-corner pastel wash.
+     CSS has no mesh gradient, so this is one radial per corner over a lilac
+     base. It lives in the PALETTE rather than in themeCss because it is the
+     one backdrop with a dark variant, and the palette is already the thing
+     that knows which scheme is in force. */
+  --dh-mesh-bg: #dcdcea;
+  --dh-mesh-layers:
+    radial-gradient(88% 68% at 0% 0%, #ffdcdc 0%, rgb(255 220 220 / 0) 72%),
+    radial-gradient(88% 68% at 100% 0%, #fff4da 0%, rgb(255 244 218 / 0) 72%),
+    radial-gradient(88% 70% at 0% 100%, #c4f5e8 0%, rgb(196 245 232 / 0) 72%),
+    radial-gradient(95% 76% at 100% 100%, #c6e3ed 0%, rgb(198 227 237 / 0) 74%);
+
   /* '--dh-radius' is NOT declared here. It is config-driven and belongs to
      themeCss(), which is appended after this sheet — declaring a second copy
      here would be dead the moment it disagreed, and the disagreement is the
@@ -947,7 +1074,21 @@ button {
   display: flex;
   flex-direction: column;
   gap: calc(var(--dh-space) * 2);
-  background: var(--dh-surface);
+  /* The merchant-configurable backdrop. Defaults to '--dh-surface' through
+     themeCss, so a widget nobody has configured is unchanged.
+
+     Only the transcript takes it, not the composer or the pre-chat screen:
+     artwork behind a text field is a legibility problem, and the console's own
+     preview puts it behind the messages alone. Bubbles keep their opaque
+     surfaces on top of it in every mode. */
+  background-color: var(--dh-thread-bg);
+  background-image: var(--dh-thread-layers);
+  background-size: var(--dh-thread-size);
+  background-repeat: var(--dh-thread-repeat);
+  background-position: center;
+  /* Pinned to the scroll container rather than the content, so artwork stays
+     put while messages move over it. */
+  background-attachment: scroll;
 }
 .dh-log:focus-visible { outline-offset: -2px; }
 

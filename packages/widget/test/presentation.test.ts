@@ -21,8 +21,9 @@ import {
   launcherShadowCss,
   readableOn,
   themeCss,
+  threadTokens,
 } from '../src/ui/styles.js';
-import type { HeaderAppearance } from '../src/config.js';
+import type { HeaderAppearance, ThreadAppearance } from '../src/config.js';
 
 const PUBLISHABLE = 'dhp_' + 'test_' + '0123456789abcdefghijklmn';
 
@@ -230,5 +231,84 @@ describe('the hero header’s paint', () => {
     expect(cssUrl('https://cdn.acme.test/a");background:red;--x:("')).toBeNull();
     expect(cssUrl("https://cdn.acme.test/a'")).toBeNull();
     expect(cssUrl('https://cdn.acme.test/ok.png')).toBe('url("https://cdn.acme.test/ok.png")');
+  });
+});
+
+describe('the conversation’s backdrop', () => {
+  const thread = (overrides: Partial<ThreadAppearance> = {}): ThreadAppearance =>
+    resolveConfig({
+      auth: { publishableKey: PUBLISHABLE, tokenEndpoint: '/api/chat-token' },
+      identity: { userId: 'cus_1' },
+      apiUrl: 'https://chat.example.com',
+      wsUrl: 'wss://chat.example.com',
+      thread: overrides,
+    }).thread;
+
+  // The default has to be indistinguishable from what the widget drew before
+  // any of this existed, or every embedded widget gets a repaint nobody asked
+  // for the moment this ships.
+  it('is the panel’s own surface until a merchant says otherwise', () => {
+    expect(threadTokens(thread())).toEqual({
+      bg: 'var(--dh-surface)',
+      layers: 'none',
+      size: 'auto',
+      repeat: 'repeat',
+    });
+  });
+
+  it('takes a solid colour when one is set', () => {
+    expect(threadTokens(thread({ background: 'solid', color: '#f4f4f5' })).bg).toBe('#f4f4f5');
+  });
+
+  // The mesh defers to a token pair the palette defines twice, so it follows
+  // light/dark through the same mechanism as every other colour rather than a
+  // second theme-detection path that could disagree with the first.
+  it('defers the mesh to the palette, which has a dark version of it', () => {
+    expect(threadTokens(thread({ background: 'mesh' }))).toMatchObject({
+      bg: 'var(--dh-mesh-bg)',
+      layers: 'var(--dh-mesh-layers)',
+      repeat: 'no-repeat',
+    });
+  });
+
+  it.each([
+    ['dots', '16px 16px'],
+    ['grid', '22px 22px'],
+    ['diagonal', 'auto'],
+    ['crosshatch', 'auto'],
+  ] as const)('tiles the %s texture at %s', (pattern, size) => {
+    const tokens = threadTokens(thread({ background: 'pattern', pattern }));
+    expect(tokens.size).toBe(size);
+    expect(tokens.repeat).toBe('repeat');
+    // Tinted from the accent, so a texture never fights the brand.
+    expect(tokens.layers).toContain('var(--dh-accent)');
+  });
+
+  // 0.18 is the ceiling, not the value: a texture that reaches full opacity
+  // competes with the messages rather than sitting behind them.
+  it('caps how loud a texture can get, even at full opacity', () => {
+    expect(threadTokens(thread({ background: 'pattern', patternOpacity: 100 })).layers).toContain(
+      '18%',
+    );
+    expect(threadTokens(thread({ background: 'pattern', patternOpacity: 0 })).layers).toContain('0%');
+  });
+
+  it('washes artwork the way the fade says, so bubble text stays readable', () => {
+    const light = threadTokens(
+      thread({ background: 'image', imageUrl: 'https://cdn.acme.test/b.jpg', imageFade: 'light', imageOverlay: 60 }),
+    );
+    expect(light.layers).toContain('rgba(255,255,255,0.6)');
+    expect(light.size).toBe('cover');
+
+    const dark = threadTokens(
+      thread({ background: 'image', imageUrl: 'https://cdn.acme.test/b.jpg', imageFade: 'dark', imageOverlay: 60 }),
+    );
+    expect(dark.layers).toContain('rgba(0,0,0,0.6)');
+  });
+
+  it('falls back to the base colour when the artwork URL is refused', () => {
+    expect(
+      threadTokens(thread({ background: 'image', imageUrl: 'javascript:alert(1)', color: '#eee' })),
+    ).toEqual({ bg: '#eee', layers: 'none', size: 'auto', repeat: 'repeat' });
   });
 });
