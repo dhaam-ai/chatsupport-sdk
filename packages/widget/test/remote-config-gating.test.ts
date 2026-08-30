@@ -351,6 +351,27 @@ describe('appearance, and the host’s right to overrule it', () => {
     expect(host?.style.getPropertyValue('--dh-font')).toBe('');
   });
 
+  it('adopts the published corner and offsets', async () => {
+    stubFetch(published({ appearance: { position: 'bottom-left', offsetX: 8, offsetY: 96 } }));
+    mount(config());
+    await settle();
+
+    const host = document.querySelector<HTMLElement>('dh-chat-widget');
+    expect(host?.getAttribute('data-position')).toBe('bottom-left');
+    expect(host?.style.getPropertyValue('--dh-offset-x')).toBe('8px');
+    expect(host?.style.getPropertyValue('--dh-offset-y')).toBe('96px');
+  });
+
+  it('leaves a host-stated corner and offsets alone', async () => {
+    stubFetch(published({ appearance: { position: 'bottom-left', offsetX: 8, offsetY: 96 } }));
+    mount(config({ position: 'bottom-right', offsetX: 40, offsetY: 40 }));
+    await settle();
+
+    const host = document.querySelector<HTMLElement>('dh-chat-widget');
+    expect(host?.getAttribute('data-position')).toBe('bottom-right');
+    expect(host?.style.getPropertyValue('--dh-offset-x')).toBe('');
+  });
+
   // `font: 'inherit'` is a statement about the HOST page's typography. A face
   // published later must not quietly cancel it.
   it('does not let a published font override font: inherit', async () => {

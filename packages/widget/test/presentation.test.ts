@@ -58,6 +58,16 @@ describe('themeCss — config becomes custom properties, and only custom propert
     expect(css).toContain('--dh-accent: #1f2937;');
     expect(css).toContain('--dh-radius: 12px;');
     expect(css).toContain('--dh-font: system-ui');
+    // 20px is exactly `calc(var(--dh-space) * 5)`, where the launcher has
+    // always sat — the tokens must not move an existing host's widget.
+    expect(css).toContain('--dh-offset-x: 20px;');
+    expect(css).toContain('--dh-offset-y: 20px;');
+  });
+
+  it('emits the host’s offsets as tokens', () => {
+    const css = tokens({ offsetX: 8, offsetY: 96 });
+    expect(css).toContain('--dh-offset-x: 8px;');
+    expect(css).toContain('--dh-offset-y: 96px;');
   });
 
   it('emits the host’s corner radius and font as tokens', () => {

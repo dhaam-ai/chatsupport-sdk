@@ -34,7 +34,7 @@
 // response type and no field that could carry one, for the same reason
 // config.ts has none: a shape with no slot for a credential cannot leak one.
 
-import type { ResolvedConfig, WidgetConfig, WidgetTheme } from './config.js';
+import type { ResolvedConfig, WidgetConfig, WidgetPosition, WidgetTheme } from './config.js';
 
 /** One console-defined field on the pre-chat form. */
 export interface PreChatField {
@@ -111,6 +111,11 @@ export interface RemoteConfig {
    * may be overwritten by a later default.
    */
   readonly theme: WidgetTheme | undefined;
+  /** `appearance.position` — which bottom corner the launcher sits in. */
+  readonly position: WidgetPosition | undefined;
+  /** `appearance.offsetX`/`offsetY`, in CSS pixels from the viewport edges. */
+  readonly offsetX: number | undefined;
+  readonly offsetY: number | undefined;
   /** `appearance.cornerRadius`, in CSS pixels. */
   readonly cornerRadius: number | undefined;
   /** `appearance.fontFamily` — a console font NAME, not a CSS stack. */
@@ -139,6 +144,9 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   accent: undefined,
   title: undefined,
   theme: undefined,
+  position: undefined,
+  offsetX: undefined,
+  offsetY: undefined,
   cornerRadius: undefined,
   fontFamily: undefined,
   greeting: undefined,
@@ -309,6 +317,7 @@ function oneOf<T extends string>(
 }
 
 const THEMES = ['light', 'dark', 'auto'] as const;
+const POSITIONS = ['bottom-right', 'bottom-left'] as const;
 
 function isOfflineMode(value: unknown): value is OfflineMode {
   return value === 1 || value === 2 || value === 3;
@@ -402,6 +411,9 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     accent: str(appearance, 'accent'),
     title: str(appearance, 'title'),
     theme: oneOf(appearance, 'theme', THEMES),
+    position: oneOf(appearance, 'position', POSITIONS),
+    offsetX: num(appearance, 'offsetX'),
+    offsetY: num(appearance, 'offsetY'),
     cornerRadius: num(appearance, 'cornerRadius'),
     fontFamily: str(appearance, 'fontFamily'),
     greeting: str(behaviour, 'greeting'),
@@ -451,6 +463,9 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
     accent: remote.accent,
     title: remote.title,
     theme: remote.theme,
+    position: remote.position,
+    offsetX: remote.offsetX,
+    offsetY: remote.offsetY,
     cornerRadius: remote.cornerRadius,
     fontFamily: remote.fontFamily,
   };

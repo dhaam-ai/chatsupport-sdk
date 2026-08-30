@@ -29,6 +29,9 @@ function body(overrides: Record<string, unknown> = {}): unknown {
         accent: '#7C3AED',
         title: 'Dhaam Support',
         theme: 'dark',
+        position: 'bottom-left',
+        offsetX: 24,
+        offsetY: 32,
         cornerRadius: 20,
         fontFamily: 'Inter',
       },
@@ -83,6 +86,9 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       accent: '#7C3AED',
       title: 'Dhaam Support',
       theme: 'dark',
+      position: 'bottom-left',
+      offsetX: 24,
+      offsetY: 32,
       cornerRadius: 20,
       fontFamily: 'Inter',
       greeting: 'How can we help today?',
@@ -171,6 +177,23 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
   it('keeps a zero corner radius, which is a real choice and not "unset"', () => {
     const config = parseRemoteConfig({ data: { appearance: { cornerRadius: 0 }, behaviour: {} } });
     expect(config?.cornerRadius).toBe(0);
+  });
+
+  it.each([
+    ['a corner nobody ships', 'top-left'],
+    ['the wrong type', true],
+    ['absent', undefined],
+  ])('leaves position unset when it is %s', (_label, position) => {
+    const config = parseRemoteConfig({ data: { appearance: { position }, behaviour: {} } });
+    expect(config?.position).toBeUndefined();
+  });
+
+  it('keeps a zero offset, which pins the launcher flush to the edge', () => {
+    const config = parseRemoteConfig({
+      data: { appearance: { offsetX: 0, offsetY: 0 }, behaviour: {} },
+    });
+    expect(config?.offsetX).toBe(0);
+    expect(config?.offsetY).toBe(0);
   });
 
   it('reads fontFamily as the console NAME, leaving the stack to the renderer', () => {

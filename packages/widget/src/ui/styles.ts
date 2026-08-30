@@ -97,6 +97,8 @@ export function themeCss(config: ResolvedConfig): string {
     --dh-font: ${font};
     --dh-accent: ${cssColor(config.accent)};
     --dh-radius: ${cssPx(config.cornerRadius, 12)};
+    --dh-offset-x: ${cssPx(config.offsetX, 20)};
+    --dh-offset-y: ${cssPx(config.offsetY, 20)};
   }`;
 }
 
@@ -272,10 +274,16 @@ button {
 
 /* ── Launcher ─────────────────────────────────────────────────────────── */
 
+/* 'right'/'bottom', not 'inset-inline-*'. A merchant picking "bottom right"
+   in a console showing a right-anchored preview means the right of the
+   screen; a logical property would put it in the other corner on an RTL
+   storefront, which is a setting silently doing the opposite of what it says.
+   Everything INSIDE the widget stays logical — only the viewport anchor is
+   physical, because only the anchor is what the merchant named. */
 .dh-launcher {
   position: fixed;
-  bottom: calc(var(--dh-space) * 5);
-  inset-inline-end: calc(var(--dh-space) * 5);
+  bottom: var(--dh-offset-y);
+  right: var(--dh-offset-x);
   width: 56px; height: 56px;
   display: grid;
   place-items: center;
@@ -293,9 +301,23 @@ button {
 .dh-launcher:active { transform: scale(0.97); }
 .dh-launcher[hidden] { display: none; }
 
+:host([data-position="bottom-left"]) .dh-launcher {
+  right: auto;
+  left: var(--dh-offset-x);
+}
+
 /* The sidebar's launcher is an edge tab, not a circle — the brief's "side tab
-   that slides in". Vertical text keeps it narrow enough not to eat content. */
+   that slides in". Vertical text keeps it narrow enough not to eat content.
+
+   It also takes back the horizontal anchor, and must come AFTER the
+   'data-position' rule above to do it: a sidebar is a full-height tab with no
+   bottom corner to sit in, so its edge is 'data-side' (which also decides
+   which way the panel slides) rather than the launcher's own corner setting.
+   Letting both apply would let a merchant park the tab on the opposite edge
+   from the panel it opens. */
 :host([data-presentation="sidebar"]) .dh-launcher {
+  right: var(--dh-offset-x);
+  left: auto;
   bottom: auto;
   top: 50%;
   translate: 0 -50%;
@@ -306,6 +328,8 @@ button {
   gap: calc(var(--dh-space) * 2);
 }
 :host([data-presentation="sidebar"][data-side="left"]) .dh-launcher {
+  left: var(--dh-offset-x);
+  right: auto;
   border-radius: 0 var(--dh-radius) var(--dh-radius) 0;
 }
 :host([data-presentation="sidebar"]) .dh-launcher-label {
@@ -371,13 +395,18 @@ button {
    declaration instead of trying to out-specify it, which is the version that
    cannot regress when a fourth presentation is added. */
 
-/* bubble: a floating card anchored above the launcher. */
+/* bubble: a floating card anchored above the launcher — so it takes the same
+   physical corner and the same offsets, for the same reason. */
 :host([data-presentation="bubble"]) .dh-panel {
-  bottom: calc(var(--dh-space) * 5 + 56px + var(--dh-space) * 3);
-  inset-inline-end: calc(var(--dh-space) * 5);
+  bottom: calc(var(--dh-offset-y) + 56px + var(--dh-space) * 3);
+  right: var(--dh-offset-x);
   width: min(384px, calc(100vw - var(--dh-space) * 8));
   height: min(560px, calc(100dvh - 140px));
   border-radius: var(--dh-radius);
+}
+:host([data-position="bottom-left"][data-presentation="bubble"]) .dh-panel {
+  right: auto;
+  left: var(--dh-offset-x);
 }
 :host([data-presentation="bubble"]) .dh-panel[data-open="false"] { translate: 0 8px; }
 

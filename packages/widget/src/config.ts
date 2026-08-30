@@ -24,6 +24,9 @@ import type { PresentationMode } from './ui/presentation.js';
 /** Follows the OS (`auto`) or pins one scheme. */
 export type WidgetTheme = 'light' | 'dark' | 'auto';
 
+/** Which bottom corner the launcher — and the bubble panel above it — sits in. */
+export type WidgetPosition = 'bottom-right' | 'bottom-left';
+
 /** How the host tells us who the end user is, without ever holding a secret. */
 export interface WidgetAuth {
   /**
@@ -147,6 +150,34 @@ export interface WidgetConfig {
   readonly theme?: WidgetTheme;
 
   /**
+   * Which bottom corner the launcher sits in. Defaults to `'bottom-right'`.
+   *
+   * PHYSICAL, not logical — a merchant who picked "bottom right" in a console
+   * showing a right-anchored preview means the right of the screen, and an
+   * RTL storefront must not silently render it in the other corner. That is
+   * a change from the pre-config behaviour, which used `inset-inline-end` and
+   * therefore flipped with the host page's `direction`; the flip was
+   * incidental rather than chosen, and it is unreachable as a setting now
+   * that the corner is nameable.
+   *
+   * Distinct from {@link side}, which is the SIDEBAR presentation's edge.
+   * A sidebar is a full-height tab rather than a floating launcher, so it has
+   * no bottom corner to sit in and keeps following `side`.
+   */
+  readonly position?: WidgetPosition;
+
+  /**
+   * Distance from the viewport's side edge, in CSS pixels. Defaults to 20.
+   *
+   * The gap a merchant reaches for when the launcher covers their own fixed
+   * furniture — a cookie banner, a sticky "add to cart" bar.
+   */
+  readonly offsetX?: number;
+
+  /** Distance from the viewport's bottom edge, in CSS pixels. Defaults to 20. */
+  readonly offsetY?: number;
+
+  /**
    * Corner radius in CSS pixels, applied to the panel, the message bubbles and
    * every card inside them. Defaults to 12.
    *
@@ -195,6 +226,9 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly title: string;
   readonly accent: string;
   readonly theme: WidgetTheme;
+  readonly position: WidgetPosition;
+  readonly offsetX: number;
+  readonly offsetY: number;
   readonly cornerRadius: number;
   readonly fontFamily: string;
   readonly font: 'isolate' | 'inherit';
@@ -296,6 +330,11 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     title: config.title ?? 'Chat with us',
     accent: config.accent ?? '#1f2937',
     theme: config.theme ?? 'auto',
+    position: config.position ?? 'bottom-right',
+    // 20px each: exactly `calc(var(--dh-space) * 5)`, which is where the
+    // launcher and the bubble panel have always sat.
+    offsetX: config.offsetX ?? 20,
+    offsetY: config.offsetY ?? 20,
     // 12, not the console's own default of 20: this is what `--dh-radius` has
     // always been, and a built-in that reshaped every unpublished widget would
     // be a change nobody asked for. A merchant who publishes gets theirs.

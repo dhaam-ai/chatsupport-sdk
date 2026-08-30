@@ -316,6 +316,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // leaves the resolved scheme readable on the element for anyone debugging a
   // merchant's page.
   host.setAttribute('data-theme', config.theme);
+  host.setAttribute('data-position', config.position);
 
   let presentation: ResolvedPresentation = 'bubble';
   let open = false;
@@ -450,6 +451,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // attribute-selector mechanism the presentation variants use.
     if (rawConfig.theme === undefined && next.theme !== undefined) {
       host.setAttribute('data-theme', next.theme);
+    }
+    if (rawConfig.position === undefined && next.position !== undefined) {
+      host.setAttribute('data-position', next.position);
+    }
+    if (rawConfig.offsetX === undefined && next.offsetX !== undefined) {
+      host.style.setProperty('--dh-offset-x', cssPx(next.offsetX, config.offsetX));
+    }
+    if (rawConfig.offsetY === undefined && next.offsetY !== undefined) {
+      host.style.setProperty('--dh-offset-y', cssPx(next.offsetY, config.offsetY));
     }
     if (rawConfig.cornerRadius === undefined && next.cornerRadius !== undefined) {
       host.style.setProperty('--dh-radius', cssPx(next.cornerRadius, config.cornerRadius));
