@@ -32,6 +32,7 @@ import { STYLES, cssColor, themeCss } from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
 import { createOfflineForm } from './ui/offline-form.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
+import { createCommonQuestions } from './ui/common-questions.js';
 import {
   DEFAULT_REMOTE_CONFIG,
   fetchRemoteConfig,
@@ -439,6 +440,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       identityHeader.setFallbackTitle(next.title);
     }
 
+    // Rebuilt whole, not patched: the chip list is short, changes at most
+    // once per publish, and a chip mid-tap should not be re-keyed under the
+    // customer's finger — the same "rebuild wholesale" choice `openSurface`
+    // makes for `surfaceHost`, for the same reason.
+    commonQuestionsHost.replaceChildren(
+      createCommonQuestions(next.commonQuestions, {
+        onSelect: (question) => {
+          void store.client.sendMessage(question.prompt).catch(report);
+        },
+      }).node,
+    );
+    syncCommonQuestions();
+
     // Config is what decides whether a pre-chat gate or an out-of-hours form
     // exists at all, so it is also what first puts one on screen.
     syncProductSurfaces();
@@ -533,6 +547,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     text: 'Talk to a human',
     on: { click: () => requestHumanAgent() },
   });
+
+  /**
+   * Slot for the "Common Questions" chip row (`ui/common-questions.ts`).
+   *
+   * Rebuilt whenever remote config changes (`applyRemoteConfig` below) —
+   * `remote.commonQuestions` is not known at mount, only after the config
+   * fetch lands — and shown/hidden by {@link syncCommonQuestions}, the one
+   * place that decides whether tapping a chip still makes sense right now.
+   */
+  const commonQuestionsHost = el('div', { attrs: { class: 'dh-common-questions-host', hidden: true } });
 
   /**
    * Who the customer is talking to.
@@ -658,6 +682,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // conversation replaces it rather than stacking on top of it.
       surfaceHost,
       messageList.log,
+      // Sits right where the transcript is still empty — the chips ARE the
+      // starting point of a conversation, so they read most naturally right
+      // above where the customer is about to type, not competing with the
+      // header or buried inside the (empty) log.
+      commonQuestionsHost,
       // Between the transcript and the composer: the customer looks here when
       // the bot's last answer did not help, which is exactly when they want
       // it. In the header it would compete with the conversation switcher for
@@ -797,7 +826,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     ),
     // The pre-chat gate lifts on the first message, and the rating appears
     // when a session ends — so both of those facts have to re-run the check.
-    store.select((state) => state.messages.length, () => syncProductSurfaces()),
+    // Common Questions leaves for the same reason the pre-chat gate does: the
+    // first message, whichever surface produced it, means the chips have done
+    // their job.
+    store.select((state) => state.messages.length, () => {
+      syncProductSurfaces();
+      syncCommonQuestions();
+    }),
     store.select(
       (state) => (state.session === null ? null : `${state.session.id}:${state.session.status}`),
       () => syncProductSurfaces(),
@@ -968,6 +1003,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     closeSurface();
     const view = build();
     activeSurface = { kind, view };
+    syncCommonQuestions();
     surfaceHost.replaceChildren(view.node);
     setPaneVisible(surfaceHost, true);
     // The surface stands IN PLACE OF the conversation, so everything it
@@ -1217,6 +1253,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     setPaneVisible(preChat.node, true);
     setPaneVisible(messageList.log, false);
     composer.node.hidden = true;
+    syncCommonQuestions();
     if (open) preChat.focus();
   }
 
@@ -1232,6 +1269,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       setPaneVisible(preChat.node, false);
       setPaneVisible(messageList.log, false);
       composer.node.hidden = true;
+      syncCommonQuestions();
       return;
     }
     // Bumped unconditionally, including on the idempotent re-call: it is a
@@ -1242,6 +1280,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     setPaneVisible(preChat.node, false);
     setPaneVisible(messageList.log, true);
     composer.node.hidden = false;
+    syncCommonQuestions();
   }
 
   /**
@@ -1601,6 +1640,31 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       handoffButton.disabled = false;
       handoffButton.textContent = 'Talk to a human';
     }
+  }
+
+  /**
+   * Whether the "Common Questions" chip row is on screen right now.
+   *
+   * Three conditions, all required:
+   *   - The merchant configured at least one (`remote.commonQuestions`).
+   *   - No product surface is standing in for the conversation — a chip that
+   *     sends a message makes no sense in front of an out-of-hours form the
+   *     customer has not gotten past, or a CSAT survey for a session that
+   *     already ended.
+   *   - The conversation is still empty. The chips ARE the starting point;
+   *     once the customer has said anything (by tapping one or by typing)
+   *     the prompts have done their job and stay gone for this session, same
+   *     as the pre-chat gate never reappearing after its first answer.
+   */
+  function syncCommonQuestions(): void {
+    if (destroyed) return;
+    const state = store.getState();
+    const show =
+      remote.commonQuestions.length > 0 &&
+      activeSurface === null &&
+      !preChatOpen &&
+      state.messages.length === 0;
+    setPaneVisible(commonQuestionsHost, show);
   }
 
   /**

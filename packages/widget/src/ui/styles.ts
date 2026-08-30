@@ -410,6 +410,39 @@ button {
 .dh-handoff[hidden] { display: none; }
 .dh-handoff[disabled] { opacity: 0.45; cursor: not-allowed; }
 
+/* ── Common Questions ─────────────────────────────────────────────────── */
+
+/*
+ * Same seam as .dh-handoff above (flex: none, same rationale) — it sits in
+ * the same "between the log and the composer" position, just shown at the
+ * opposite moment: before the first message rather than mid-conversation.
+ */
+.dh-common-questions-host {
+  flex: none;
+  margin: 0 calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
+}
+.dh-common-questions-host[hidden] { display: none; }
+
+.dh-common-questions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--dh-space) * 1);
+}
+
+.dh-common-question-chip {
+  flex: none;
+  padding: calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 2.5);
+  border-radius: 999px;
+  border: 1px solid var(--dh-border);
+  background: var(--dh-surface);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--dh-text);
+  cursor: pointer;
+  text-align: left;
+}
+.dh-common-question-chip:hover { background: var(--dh-surface-sunken); }
+
 /* ── Message list ─────────────────────────────────────────────────────── */
 
 .dh-log {

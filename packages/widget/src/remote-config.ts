@@ -48,6 +48,19 @@ export interface PreChatField {
 export type CsatStyle = 'stars' | 'emoji';
 
 /**
+ * One console-defined quick question — `behaviour.commonQuestions[]`
+ * (Chatbot → Behaviour → Common Questions). Declared here, alongside
+ * {@link PreChatField}, rather than in `ui/common-questions.ts`: that module
+ * is presentation and imports FROM this one (see this file's closing note on
+ * "keeps imports one-way"), so the wire-shaped type belongs on this side.
+ */
+export interface CommonQuestion {
+  readonly id: string;
+  readonly label: string;
+  readonly prompt: string;
+}
+
+/**
  * What the widget does when the team is closed.
  *
  * Integers, not strings, because that is what the wire carries
@@ -94,6 +107,10 @@ export interface RemoteConfig {
   readonly greeting: string | undefined;
   readonly preChatEnabled: boolean;
   readonly preChatFields: readonly PreChatField[];
+  /** `behaviour.commonQuestions[]`. `[]` for a merchant who has configured
+   *  none — see `ui/common-questions.ts`'s header for why that renders
+   *  nothing rather than a built-in fallback list. */
+  readonly commonQuestions: readonly CommonQuestion[];
   readonly csatStyle: CsatStyle;
   readonly offlineMode: OfflineMode;
   readonly offlineMessage: string | undefined;
@@ -113,6 +130,7 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   greeting: undefined,
   preChatEnabled: false,
   preChatFields: [],
+  commonQuestions: [],
   csatStyle: 'stars',
   offlineMode: OFFLINE_MODE.SHOW_MESSAGE,
   offlineMessage: undefined,
@@ -256,6 +274,30 @@ function parsePreChatFields(value: unknown): readonly PreChatField[] {
   return fields;
 }
 
+/**
+ * `behaviour.commonQuestions` → the widget's own {@link CommonQuestion} list.
+ *
+ * Same defensive read as {@link parsePreChatFields}: `behaviour` is an opaque
+ * blob the console writes by whole-object replacement, so an older publish
+ * can be missing this key entirely and any entry can be malformed. A
+ * question with no `id` has nowhere to key its chip, and one with no
+ * `label` or `prompt` has nothing to show or nothing to send — skipped
+ * rather than rendered broken.
+ */
+function parseCommonQuestions(value: unknown): readonly CommonQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const questions: CommonQuestion[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const id = str(entry, 'id');
+    const label = str(entry, 'label');
+    const prompt = str(entry, 'prompt');
+    if (id === undefined || label === undefined || prompt === undefined) continue;
+    questions.push({ id, label, prompt });
+  }
+  return questions;
+}
+
 function parseFlows(value: unknown): readonly PublishedFlow[] {
   if (!Array.isArray(value)) return [];
   const flows: PublishedFlow[] = [];
@@ -304,6 +346,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     greeting: str(behaviour, 'greeting'),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
+    commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),
     csatStyle: rawCsat === 'emoji' || rawCsat === 'stars' ? rawCsat : 'stars',
     offlineMode: isOfflineMode(rawOfflineMode) ? rawOfflineMode : OFFLINE_MODE.SHOW_MESSAGE,
     offlineMessage: str(behaviour, 'offlineMessage'),

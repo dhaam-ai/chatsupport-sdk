@@ -33,6 +33,10 @@ function body(overrides: Record<string, unknown> = {}): unknown {
           { id: 'p1', label: 'Your name', type: 'text', required: true },
           { id: 'p2', label: 'Email address', type: 'email', required: true },
         ],
+        commonQuestions: [
+          { id: 'track', label: 'Track my order', prompt: 'Where is my order?' },
+          { id: 'refund', label: 'Refund question', prompt: 'I have a question about a refund.' },
+        ],
         csatStyle: 'emoji',
         offlineMessage: "We're closed right now.",
         fileUploads: true,
@@ -85,6 +89,10 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
     expect(config?.preChatFields).toEqual([
       { id: 'p1', label: 'Your name', type: 'text', required: true },
       { id: 'p2', label: 'Email address', type: 'email', required: true },
+    ]);
+    expect(config?.commonQuestions).toEqual([
+      { id: 'track', label: 'Track my order', prompt: 'Where is my order?' },
+      { id: 'refund', label: 'Refund question', prompt: 'I have a question about a refund.' },
     ]);
     expect(config?.flows[0]).toMatchObject({ id: 'flow-1', trigger: 1, keywords: ['refund'], pagePattern: '/cart' });
   });
@@ -173,6 +181,31 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       // An unrecognised type degrades to text rather than dropping the field.
       { id: 'weird', label: 'Weird type', type: 'text', required: false },
     ]);
+  });
+
+  it('drops common questions that have no id, label or prompt rather than rendering them broken', () => {
+    const config = parseRemoteConfig({
+      data: {
+        appearance: {},
+        behaviour: {
+          commonQuestions: [
+            { id: 'ok', label: 'Track my order', prompt: 'Where is my order?' },
+            { label: 'No id', prompt: 'x' },
+            { id: 'no-label', prompt: 'x' },
+            { id: 'no-prompt', label: 'No prompt' },
+            'not an object',
+          ],
+        },
+      },
+    });
+    expect(config?.commonQuestions).toEqual([
+      { id: 'ok', label: 'Track my order', prompt: 'Where is my order?' },
+    ]);
+  });
+
+  it('defaults commonQuestions to an empty array when absent, rather than a built-in list', () => {
+    const config = parseRemoteConfig({ data: { appearance: {}, behaviour: {} } });
+    expect(config?.commonQuestions).toEqual([]);
   });
 
   it('drops flows missing an id, name or numeric trigger', () => {
