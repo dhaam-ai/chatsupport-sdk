@@ -147,6 +147,30 @@ export interface WidgetConfig {
   readonly theme?: WidgetTheme;
 
   /**
+   * Corner radius in CSS pixels, applied to the panel, the message bubbles and
+   * every card inside them. Defaults to 12.
+   *
+   * One number for all of them rather than a per-element scale: the console
+   * offers one slider, and a widget whose panel and bubbles disagree about how
+   * round they are reads as a rendering bug rather than as a choice.
+   */
+  readonly cornerRadius?: number;
+
+  /**
+   * Typeface, named the way the console names it — `'Inter'`, `'Roboto'`,
+   * `'Georgia'`, `'DM Sans'`, or `'System default'` (the default). An
+   * unrecognised name falls back to the system stack rather than to nothing.
+   *
+   * Distinct from {@link font}, which answers a different question: `font`
+   * decides whether the host page's typography reaches us AT ALL, and
+   * `fontFamily` picks which face we use when it does not. `font: 'inherit'`
+   * therefore wins — a host that asked for their own typography did so about
+   * their own page, and a merchant picking a face in a console tab cannot see
+   * that decision to overrule it.
+   */
+  readonly fontFamily?: string;
+
+  /**
    * `'isolate'` (default) pins our own font stack so the host page's typography
    * cannot distort the widget; `'inherit'` adopts the host's. See ui/styles.ts
    * — inheritable properties DO cross a shadow boundary, so this is a real
@@ -171,6 +195,8 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly title: string;
   readonly accent: string;
   readonly theme: WidgetTheme;
+  readonly cornerRadius: number;
+  readonly fontFamily: string;
   readonly font: 'isolate' | 'inherit';
   readonly onError: (error: unknown) => void;
 }
@@ -270,6 +296,11 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     title: config.title ?? 'Chat with us',
     accent: config.accent ?? '#1f2937',
     theme: config.theme ?? 'auto',
+    // 12, not the console's own default of 20: this is what `--dh-radius` has
+    // always been, and a built-in that reshaped every unpublished widget would
+    // be a change nobody asked for. A merchant who publishes gets theirs.
+    cornerRadius: config.cornerRadius ?? 12,
+    fontFamily: config.fontFamily ?? 'System default',
     font: config.font ?? 'isolate',
     onError: config.onError ?? defaultOnError,
   };

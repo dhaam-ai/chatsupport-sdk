@@ -111,6 +111,10 @@ export interface RemoteConfig {
    * may be overwritten by a later default.
    */
   readonly theme: WidgetTheme | undefined;
+  /** `appearance.cornerRadius`, in CSS pixels. */
+  readonly cornerRadius: number | undefined;
+  /** `appearance.fontFamily` — a console font NAME, not a CSS stack. */
+  readonly fontFamily: string | undefined;
   readonly greeting: string | undefined;
   readonly preChatEnabled: boolean;
   readonly preChatFields: readonly PreChatField[];
@@ -135,6 +139,8 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   accent: undefined,
   title: undefined,
   theme: undefined,
+  cornerRadius: undefined,
+  fontFamily: undefined,
   greeting: undefined,
   preChatEnabled: false,
   preChatFields: [],
@@ -261,6 +267,21 @@ function bool(source: Record<string, unknown>, key: string, fallback: boolean): 
 }
 
 /**
+ * A numeric leaf, refused unless it is a real, finite number.
+ *
+ * `typeof value === 'number'` is not enough on its own: `NaN` and `Infinity`
+ * both pass it, both survive `String()`, and both reach a stylesheet as a
+ * declaration the engine drops — silently taking the whole rule with it. The
+ * console writes these from range inputs, so a string `"20"` is also a
+ * plausible shape from an older publish and is deliberately NOT coerced:
+ * accepting one wire type keeps the parse a decision rather than a guess.
+ */
+function num(source: Record<string, unknown>, key: string): number | undefined {
+  const value = source[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
  * A string leaf constrained to a known value set — `theme`, `position`,
  * `launcher`, the header/thread background kinds, and every other enum the
  * console writes.
@@ -381,6 +402,8 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     accent: str(appearance, 'accent'),
     title: str(appearance, 'title'),
     theme: oneOf(appearance, 'theme', THEMES),
+    cornerRadius: num(appearance, 'cornerRadius'),
+    fontFamily: str(appearance, 'fontFamily'),
     greeting: str(behaviour, 'greeting'),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
@@ -428,6 +451,8 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
     accent: remote.accent,
     title: remote.title,
     theme: remote.theme,
+    cornerRadius: remote.cornerRadius,
+    fontFamily: remote.fontFamily,
   };
 
   for (const [key, value] of Object.entries(fromRemote)) {

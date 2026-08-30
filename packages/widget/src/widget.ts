@@ -28,7 +28,7 @@ import type { ResolvedPresentation } from './ui/presentation.js';
 import { createWidgetRoot } from './ui/root.js';
 import { createPreChatScreen, createSessionSwitcher } from './ui/session-picker.js';
 import type { SessionPickerCallbacks } from './ui/session-picker.js';
-import { STYLES, cssColor, themeCss } from './ui/styles.js';
+import { STYLES, cssColor, cssPx, fontStackFor, themeCss } from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
 import { createOfflineForm } from './ui/offline-form.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
@@ -450,6 +450,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // attribute-selector mechanism the presentation variants use.
     if (rawConfig.theme === undefined && next.theme !== undefined) {
       host.setAttribute('data-theme', next.theme);
+    }
+    if (rawConfig.cornerRadius === undefined && next.cornerRadius !== undefined) {
+      host.style.setProperty('--dh-radius', cssPx(next.cornerRadius, config.cornerRadius));
+    }
+    // Only when the host left `font` alone as well: `font: 'inherit'` is a
+    // statement about the HOST's typography, and a merchant's face published
+    // later must not quietly cancel it. Same precedence rule, one level up.
+    if (
+      rawConfig.fontFamily === undefined &&
+      config.font !== 'inherit' &&
+      next.fontFamily !== undefined
+    ) {
+      host.style.setProperty('--dh-font', fontStackFor(next.fontFamily));
     }
 
     // Rebuilt whole, not patched: the chip list is short, changes at most

@@ -25,7 +25,13 @@ function body(overrides: Record<string, unknown> = {}): unknown {
     success: true,
     data: {
       enabled: true,
-      appearance: { accent: '#7C3AED', title: 'Dhaam Support', theme: 'dark' },
+      appearance: {
+        accent: '#7C3AED',
+        title: 'Dhaam Support',
+        theme: 'dark',
+        cornerRadius: 20,
+        fontFamily: 'Inter',
+      },
       behaviour: {
         greeting: 'How can we help today?',
         preChatEnabled: true,
@@ -77,6 +83,8 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       accent: '#7C3AED',
       title: 'Dhaam Support',
       theme: 'dark',
+      cornerRadius: 20,
+      fontFamily: 'Inter',
       greeting: 'How can we help today?',
       preChatEnabled: true,
       csatStyle: 'emoji',
@@ -145,6 +153,29 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
     ['absent', undefined],
   ])('leaves theme unset when it is %s', (_label, theme) => {
     expect(parseRemoteConfig({ data: { appearance: { theme }, behaviour: {} } })?.theme).toBeUndefined();
+  });
+
+  // NaN and Infinity are the two that matter: both survive `typeof x ===
+  // 'number'`, both survive String(), and both reach a stylesheet as a
+  // declaration the engine drops.
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a numeric string', '20'],
+    ['absent', undefined],
+  ])('leaves cornerRadius unset when it is %s', (_label, cornerRadius) => {
+    const config = parseRemoteConfig({ data: { appearance: { cornerRadius }, behaviour: {} } });
+    expect(config?.cornerRadius).toBeUndefined();
+  });
+
+  it('keeps a zero corner radius, which is a real choice and not "unset"', () => {
+    const config = parseRemoteConfig({ data: { appearance: { cornerRadius: 0 }, behaviour: {} } });
+    expect(config?.cornerRadius).toBe(0);
+  });
+
+  it('reads fontFamily as the console NAME, leaving the stack to the renderer', () => {
+    const config = parseRemoteConfig({ data: { appearance: { fontFamily: 'Georgia' }, behaviour: {} } });
+    expect(config?.fontFamily).toBe('Georgia');
   });
 
   it.each([

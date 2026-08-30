@@ -34,6 +34,45 @@
 
 import type { ResolvedConfig } from '../config.js';
 
+const SYSTEM_FONT_STACK = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+/**
+ * The console's font NAMES → real CSS stacks.
+ *
+ * Deliberately not the console's own table. `chatsupport_react` maps these to
+ * `var(--font-inter)` and friends — Next.js font-loader variables that exist
+ * only on a page Next rendered. This bundle runs on any merchant's storefront,
+ * where those variables resolve to nothing and the declaration is dropped, so
+ * the named family goes in literally with a system fallback behind it.
+ *
+ * The consequence, stated because it is a real limitation rather than an
+ * oversight: nothing here LOADS a webfont. A merchant who picks Inter gets
+ * Inter if their page already serves it and the system stack if not, because
+ * injecting a `@font-face` from a third-party script would add a render-
+ * blocking download to someone else's page without asking.
+ */
+const FONT_STACKS: Readonly<Record<string, string>> = {
+  'System default': SYSTEM_FONT_STACK,
+  Inter: `Inter, ${SYSTEM_FONT_STACK}`,
+  'DM Sans': `'DM Sans', ${SYSTEM_FONT_STACK}`,
+  Roboto: `Roboto, ${SYSTEM_FONT_STACK}`,
+  Georgia: 'Georgia, "Times New Roman", serif',
+};
+
+/**
+ * A console font name → the stack that renders it. An unknown name — a face a
+ * newer console offers and this bundle has never heard of — falls back to the
+ * system stack rather than to an invalid declaration.
+ *
+ * Exported because the live-config path in widget.ts needs the same mapping:
+ * a published `fontFamily` arriving after mount is applied as an inline
+ * `--dh-font`, and computing the stack a second time there is how the two
+ * would drift.
+ */
+export function fontStackFor(name: string): string {
+  return FONT_STACKS[name] ?? SYSTEM_FONT_STACK;
+}
+
 /**
  * Tokens only. Kept separate from {@link STYLES} because these are the only
  * declarations that depend on runtime config, so the ~9KB of static CSS below
@@ -49,15 +88,35 @@ export function themeCss(config: ResolvedConfig): string {
   // `font-family: var(--dh-font)` on the subtree roots below, and
   // `font-family: inherit` there means "adopt the host element's font", which
   // is exactly what a host asking for brand continuity wants.
-  const font =
-    config.font === 'inherit'
-      ? 'inherit'
-      : "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+  //
+  // It also OUTRANKS `fontFamily`, and that ordering is the whole point of the
+  // two settings being separate — see config.ts's `fontFamily` doc.
+  const font = config.font === 'inherit' ? 'inherit' : fontStackFor(config.fontFamily);
 
   return `:host{
     --dh-font: ${font};
     --dh-accent: ${cssColor(config.accent)};
+    --dh-radius: ${cssPx(config.cornerRadius, 12)};
   }`;
+}
+
+/**
+ * A config-supplied length, as a CSS pixel value.
+ *
+ * The same containment job {@link cssColor} does, for the other kind of value
+ * that reaches a stylesheet. `NaN` and `Infinity` both survive `String()` and
+ * both produce a declaration the engine drops — which takes the WHOLE `:host`
+ * rule's remaining declarations with it in some engines, so one bad number
+ * from a hand-written `mount()` call could cost the accent and the font too.
+ * Negative lengths are refused for the same reason `border-radius: -4px` is:
+ * there is no reading of one that renders.
+ *
+ * Clamped rather than thrown on, unlike `sheetBreakpointPx`: this value also
+ * arrives from published config, and a merchant dragging a slider must never
+ * be able to stop a widget booting on someone else's checkout page.
+ */
+export function cssPx(value: number, fallback: number): string {
+  return `${Number.isFinite(value) && value >= 0 ? value : fallback}px`;
 }
 
 /**
@@ -116,7 +175,10 @@ export const STYLES = `
   --dh-focus: #2563eb;
   --dh-bubble-in: #f1f3f5;
   --dh-shadow: 0 6px 24px -4px rgb(16 18 24 / 0.18), 0 2px 6px -2px rgb(16 18 24 / 0.12);
-  --dh-radius: 12px;
+  /* '--dh-radius' is NOT declared here. It is config-driven and belongs to
+     themeCss(), which is appended after this sheet — declaring a second copy
+     here would be dead the moment it disagreed, and the disagreement is the
+     kind nobody notices until a merchant's corners are the wrong shape. */
   --dh-space: 4px;
 
   all: revert;

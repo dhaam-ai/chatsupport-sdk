@@ -327,6 +327,41 @@ describe('appearance, and the host’s right to overrule it', () => {
 
     expect(document.querySelector('dh-chat-widget')?.getAttribute('data-theme')).toBe('light');
   });
+
+  // Applied as an inline custom property on the host, exactly like the accent:
+  // an inline declaration outranks the `:host` rule themeCss wrote, so the
+  // upgrade needs no sheet reparse and races nothing already using the old one.
+  it('adopts the published corner radius and font', async () => {
+    stubFetch(published({ appearance: { cornerRadius: 24, fontFamily: 'Georgia' } }));
+    mount(config());
+    await settle();
+
+    const host = document.querySelector<HTMLElement>('dh-chat-widget');
+    expect(host?.style.getPropertyValue('--dh-radius')).toBe('24px');
+    expect(host?.style.getPropertyValue('--dh-font')).toContain('Georgia');
+  });
+
+  it('leaves a host-stated radius and font alone', async () => {
+    stubFetch(published({ appearance: { cornerRadius: 24, fontFamily: 'Georgia' } }));
+    mount(config({ cornerRadius: 4, fontFamily: 'Roboto' }));
+    await settle();
+
+    const host = document.querySelector<HTMLElement>('dh-chat-widget');
+    expect(host?.style.getPropertyValue('--dh-radius')).toBe('');
+    expect(host?.style.getPropertyValue('--dh-font')).toBe('');
+  });
+
+  // `font: 'inherit'` is a statement about the HOST page's typography. A face
+  // published later must not quietly cancel it.
+  it('does not let a published font override font: inherit', async () => {
+    stubFetch(published({ appearance: { fontFamily: 'Georgia' } }));
+    mount(config({ font: 'inherit' }));
+    await settle();
+
+    expect(
+      document.querySelector<HTMLElement>('dh-chat-widget')?.style.getPropertyValue('--dh-font'),
+    ).toBe('');
+  });
 });
 
 describe('degrading when the config cannot be read', () => {
