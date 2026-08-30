@@ -763,6 +763,94 @@ button {
 }
 :host([data-design="hero"]) .dh-reconnect:hover { background: rgb(255 255 255 / 0.16); }
 
+/* The hero's content block, painted as a continuation of the header above it
+   rather than as a panel of its own — same background layers, no border
+   between them, so the two read as one tall header.
+
+   'flex: none' for the same reason .dh-composer has it: the transcript is the
+   only element in the panel column allowed to absorb spare height. The hero
+   only ever renders while that transcript is EMPTY (see widget.ts), so what
+   it takes costs nothing that was being used. */
+.dh-hero {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 3);
+  padding: 0 calc(var(--dh-space) * 4) calc(var(--dh-space) * 5);
+  background-color: var(--dh-header-bg);
+  background-image: var(--dh-header-layers);
+  background-size: cover;
+  background-position: center;
+  color: var(--dh-header-fg);
+}
+.dh-hero[hidden], .dh-hero[data-empty="true"] { display: none; }
+
+.dh-hero-logo {
+  height: 40px;
+  max-width: 150px;
+  align-self: flex-start;
+  object-fit: contain;
+  object-position: left;
+}
+
+/* Overlapped by a negative margin, in order, so they read as a team rather
+   than as a list. The last one carries the presence dot. */
+.dh-hero-avatars { display: flex; align-items: center; }
+.dh-hero-avatar {
+  position: relative;
+  display: block;
+  width: 26px; height: 26px;
+  flex: none;
+  border-radius: 999px;
+  border: 2px solid var(--dh-header-fg);
+  background: var(--dh-header-fg);
+}
+.dh-hero-avatar + .dh-hero-avatar { margin-inline-start: -8px; }
+.dh-hero-avatar img { width: 100%; height: 100%; border-radius: 999px; object-fit: cover; }
+.dh-hero-presence {
+  position: absolute;
+  bottom: -2px; inset-inline-end: -2px;
+  width: 9px; height: 9px;
+  border-radius: 999px;
+  border: 2px solid var(--dh-header-fg);
+  background: #118d57;
+}
+
+.dh-hero-greeting {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.dh-hero-sub {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  opacity: 0.92;
+}
+
+/* The card overhangs nothing here — the React design hangs it off the hero's
+   bottom edge onto a home screen, and there is no home screen underneath this
+   one to hang it over. It sits in flow instead, on the panel's own surface, so
+   it still reads as the thing you act on rather than as more header. */
+.dh-hero-cta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 3);
+  width: 100%;
+  padding: calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  color: var(--dh-text);
+  text-align: start;
+}
+.dh-hero-cta:hover { background: var(--dh-surface-sunken); }
+.dh-hero-cta-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dh-hero-cta-title { font-size: 14px; font-weight: 600; }
+.dh-hero-cta-sub { font-size: 12px; color: var(--dh-text-muted); }
+
 .dh-icon-button {
   width: 32px; height: 32px;
   display: grid;

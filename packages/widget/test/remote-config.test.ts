@@ -167,6 +167,23 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
     expect(config?.launcherIcon).toEqual({ library: 'support' });
   });
 
+  it('filters a broken avatar out of the row rather than dropping the row', () => {
+    const config = parseRemoteConfig({
+      data: {
+        appearance: { header: { avatars: ['https://a.test/1.png', 7, null, 'https://a.test/2.png'] } },
+        behaviour: {},
+      },
+    });
+    expect(config?.header.avatars).toEqual(['https://a.test/1.png', 'https://a.test/2.png']);
+  });
+
+  // Absent stays absent, so `resolveConfig`'s own default still applies rather
+  // than an empty array the parse invented.
+  it('leaves an absent avatar list absent', () => {
+    const config = parseRemoteConfig({ data: { appearance: { header: {} }, behaviour: {} } });
+    expect('avatars' in (config?.header ?? {})).toBe(false);
+  });
+
   it('keeps only the header fields it could actually read', () => {
     const config = parseRemoteConfig({
       data: {

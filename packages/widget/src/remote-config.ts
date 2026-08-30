@@ -145,6 +145,8 @@ export interface RemoteConfig {
   readonly design: WidgetDesign | undefined;
   /** `appearance.header`, read only under the `hero` design. Same `{}`-means-unset rule. */
   readonly header: Partial<HeaderAppearance>;
+  /** `appearance.logoUrl` — the brand mark, behind the header's own. */
+  readonly logoUrl: string | undefined;
   /** `appearance.cornerRadius`, in CSS pixels. */
   readonly cornerRadius: number | undefined;
   /** `appearance.fontFamily` — a console font NAME, not a CSS stack. */
@@ -182,6 +184,7 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   launcherShadow: {},
   design: undefined,
   header: {},
+  logoUrl: undefined,
   cornerRadius: undefined,
   fontFamily: undefined,
   greeting: undefined,
@@ -435,6 +438,22 @@ function parseHeader(value: unknown): Partial<HeaderAppearance> {
     gradientStrength: num(value, 'gradientStrength'),
     backgroundImageUrl: str(value, 'backgroundImageUrl'),
     imageOverlay: num(value, 'imageOverlay'),
+    showLogo: flag(value, 'showLogo'),
+    logoUrl: str(value, 'logoUrl'),
+    showAvatars: flag(value, 'showAvatars'),
+    // An ABSENT array stays absent so the default can apply; a present one
+    // that contains non-strings is filtered rather than rejected, because a
+    // merchant with one broken avatar among three should still get the other
+    // two. Same reasoning as `parseFlows`'s `keywords`.
+    avatars: Array.isArray(value['avatars'])
+      ? value['avatars'].filter((entry): entry is string => typeof entry === 'string')
+      : undefined,
+    showPresence: flag(value, 'showPresence'),
+    greeting: str(value, 'greeting'),
+    subGreeting: str(value, 'subGreeting'),
+    ctaEnabled: flag(value, 'ctaEnabled'),
+    ctaTitle: str(value, 'ctaTitle'),
+    ctaSubtitle: str(value, 'ctaSubtitle'),
   });
 }
 
@@ -539,6 +558,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     launcherShadow: parseLauncherShadow(appearance['launcherShadow']),
     design: oneOf(appearance, 'design', DESIGNS),
     header: parseHeader(appearance['header']),
+    logoUrl: str(appearance, 'logoUrl'),
     cornerRadius: num(appearance, 'cornerRadius'),
     fontFamily: str(appearance, 'fontFamily'),
     greeting: str(behaviour, 'greeting'),
@@ -594,6 +614,7 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
     launcher: remote.launcher,
     launcherLabel: remote.launcherLabel,
     design: remote.design,
+    logoUrl: remote.logoUrl,
     cornerRadius: remote.cornerRadius,
     fontFamily: remote.fontFamily,
   };

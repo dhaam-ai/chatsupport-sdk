@@ -152,15 +152,16 @@ describe('launcherShadowCss — one intensity drives the whole shadow', () => {
 });
 
 describe('the hero header’s paint', () => {
-  const header = (overrides: Partial<HeaderAppearance> = {}): HeaderAppearance => ({
-    background: 'gradient',
-    backgroundColor: '',
-    colorSource: 'accent',
-    gradientStrength: 100,
-    backgroundImageUrl: '',
-    imageOverlay: 45,
-    ...overrides,
-  });
+  // Built through `resolveConfig` rather than by hand, so a field added to
+  // `HeaderAppearance` cannot leave this fixture silently stale.
+  const header = (overrides: Partial<HeaderAppearance> = {}): HeaderAppearance =>
+    resolveConfig({
+      auth: { publishableKey: PUBLISHABLE, tokenEndpoint: '/api/chat-token' },
+      identity: { userId: 'cus_1' },
+      apiUrl: 'https://chat.example.com',
+      wsUrl: 'wss://chat.example.com',
+      header: overrides,
+    }).header;
 
   // The variable, not the accent's literal value: a published accent landing
   // after mount has to repaint the header along with everything else.

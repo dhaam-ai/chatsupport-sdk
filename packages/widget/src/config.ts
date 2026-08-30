@@ -64,6 +64,20 @@ export interface HeaderAppearance {
   readonly backgroundImageUrl: string;
   /** 0–100. Dark scrim over the image, so the greeting stays readable. */
   readonly imageOverlay: number;
+
+  readonly showLogo: boolean;
+  /** The hero's own logo. Empty falls back to {@link WidgetConfig.logoUrl}. */
+  readonly logoUrl: string;
+  readonly showAvatars: boolean;
+  /** Up to three, rendered overlapping in order. Beyond that they are dropped. */
+  readonly avatars: readonly string[];
+  /** The online dot, on the last avatar only. */
+  readonly showPresence: boolean;
+  readonly greeting: string;
+  readonly subGreeting: string;
+  readonly ctaEnabled: boolean;
+  readonly ctaTitle: string;
+  readonly ctaSubtitle: string;
 }
 
 /** Where the launcher's glyph comes from. */
@@ -306,6 +320,17 @@ export interface WidgetConfig {
   readonly header?: Partial<HeaderAppearance>;
 
   /**
+   * The brand mark, as an `https:` or `data:image/…` URL. Empty by default —
+   * there is no logo to guess at.
+   *
+   * Used by the hero header when its own `header.logoUrl` is unset. A relative
+   * path is refused rather than loaded: it would resolve against the HOST
+   * page's origin, not ours, so a merchant's `/assets/logo.svg` would fetch a
+   * path off a storefront nobody involved controls.
+   */
+  readonly logoUrl?: string;
+
+  /**
    * Corner radius in CSS pixels, applied to the panel, the message bubbles and
    * every card inside them. Defaults to 12.
    *
@@ -363,6 +388,7 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly launcherShadow: LauncherShadow;
   readonly design: WidgetDesign;
   readonly header: HeaderAppearance;
+  readonly logoUrl: string;
   readonly cornerRadius: number;
   readonly fontFamily: string;
   readonly font: 'isolate' | 'inherit';
@@ -399,6 +425,21 @@ const DEFAULT_HEADER: HeaderAppearance = {
   gradientStrength: 100,
   backgroundImageUrl: '',
   imageOverlay: 45,
+  // Every piece of CONTENT is off, where the console ships them on with its
+  // own sample copy and stock faces. This package has no sample copy to ship:
+  // a greeting nobody wrote and three stock agent portraits on a merchant's
+  // storefront would be worse than no hero at all. A publish turns them on
+  // along with the merchant's own words.
+  showLogo: false,
+  logoUrl: '',
+  showAvatars: false,
+  avatars: [],
+  showPresence: false,
+  greeting: '',
+  subGreeting: '',
+  ctaEnabled: false,
+  ctaTitle: '',
+  ctaSubtitle: '',
 };
 
 const PRESENTATION_MODES = new Set<string>(['auto', 'bubble', 'sidebar', 'sheet']);
@@ -504,6 +545,7 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     launcherShadow: { ...DEFAULT_LAUNCHER_SHADOW, ...config.launcherShadow },
     design: config.design ?? 'classic',
     header: { ...DEFAULT_HEADER, ...config.header },
+    logoUrl: config.logoUrl ?? '',
     // 20px each: exactly `calc(var(--dh-space) * 5)`, which is where the
     // launcher and the bubble panel have always sat.
     offsetX: config.offsetX ?? 20,

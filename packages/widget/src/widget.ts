@@ -22,11 +22,13 @@ import type {
   LauncherStyle,
   ResolvedConfig,
   WidgetConfig,
+  WidgetDesign,
 } from './config.js';
 import { createComposer } from './ui/composer.js';
 import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
 import type { FocusTrap } from './ui/focus.js';
+import { createHeroHeader, heroContentFrom } from './ui/hero-header.js';
 import { createIdentityHeader } from './ui/identity-header.js';
 import { createMessageList } from './ui/message-list.js';
 import { resolvePresentation } from './ui/presentation.js';
@@ -380,6 +382,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * BOOT value, not the current one.
    */
   let launcherStyle: LauncherStyle = config.launcher;
+  /** Mirrored for the same reason as {@link launcherStyle}: a publish can replace it. */
+  let design: WidgetDesign = config.design;
   let open = false;
   let trap: FocusTrap | null = null;
   let restoreFocus: (() => void) | null = null;
@@ -548,6 +552,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
 
     if (rawConfig.design === undefined && next.design !== undefined) {
+      design = next.design;
       host.setAttribute('data-design', next.design);
     }
     // Unconditional, unlike the fields above: even a publish that says nothing
@@ -556,6 +561,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     applyHeaderAppearance(
       rawConfig.header === undefined ? { ...config.header, ...next.header } : config.header,
       accent,
+      rawConfig.logoUrl === undefined ? (next.logoUrl ?? config.logoUrl) : config.logoUrl,
     );
     // An attribute rather than a custom property, because the scheme selects a
     // whole palette rather than setting one value — the same `[data-*]`
@@ -597,7 +603,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         },
       }).node,
     );
-    syncCommonQuestions();
+    syncPreConversationPanes();
 
     // Config is what decides whether a pre-chat gate or an out-of-hours form
     // exists at all, so it is also what first puts one on screen.
@@ -622,10 +628,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * the "is the header painted at all" decision in exactly one place instead
    * of two that could disagree.
    */
-  function applyHeaderAppearance(header: HeaderAppearance, accent: string): void {
+  function applyHeaderAppearance(header: HeaderAppearance, accent: string, logoUrl: string): void {
     host.style.setProperty('--dh-header-bg', headerBaseColor(header));
     host.style.setProperty('--dh-header-fg', headerForeground(header, accent));
     host.style.setProperty('--dh-header-layers', headerLayers(header));
+    heroHeader.render(heroContentFrom(header, logoUrl));
 
     // `platform` only means anything when no explicit colour was set —
     // "borrow the site's colour" and "use this hex" are not both answerable.
@@ -665,8 +672,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // above covers the case where teardown wins the race.
     window.addEventListener('load', sample, { once: true });
   }
-
-  applyHeaderAppearance(config.header, config.accent);
 
   void fetchRemoteConfig({
     apiUrl: config.apiUrl,
@@ -773,10 +778,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    *
    * Rebuilt whenever remote config changes (`applyRemoteConfig` below) —
    * `remote.commonQuestions` is not known at mount, only after the config
-   * fetch lands — and shown/hidden by {@link syncCommonQuestions}, the one
-   * place that decides whether tapping a chip still makes sense right now.
+   * fetch lands — and shown/hidden by {@link syncPreConversationPanes}, the
+   * one place that decides whether tapping a chip still makes sense right now.
    */
   const commonQuestionsHost = el('div', { attrs: { class: 'dh-common-questions-host', hidden: true } });
+
+  /**
+   * The hero header's content block — greeting, faces, call to action.
+   *
+   * Shown only while the transcript is empty, which is this widget's version
+   * of the React implementation's home screen; see `ui/hero-header.ts` for
+   * why that mapping is the honest one, and why the CTA focuses the composer
+   * rather than starting a conversation that is already open.
+   */
+  const heroHeader = createHeroHeader({ onCallToAction: () => composer.input.focus() });
 
   /**
    * Who the customer is talking to.
@@ -894,6 +909,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
           closeButton,
         ],
       }),
+      // Directly under the header row and painted as its continuation, so the
+      // two read as one tall header rather than as a banner stacked on a bar.
+      heroHeader.node,
       // The pre-chat screen stands in for the log + composer rather than
       // sitting above them — a chooser and the conversation it chooses between
       // are alternatives, not a stack.
@@ -933,6 +951,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   });
 
   shadow.append(launcher, panel);
+
+  // Down HERE, not beside its own definition further up, and for the reason
+  // `activeSurface` is declared where it is: this call reaches `heroHeader`,
+  // which is built with the panel above, so running it any earlier puts that
+  // const in the temporal dead zone and every single mount throws.
+  applyHeaderAppearance(config.header, config.accent, config.logoUrl);
 
   // The conversation is the default screen. The pre-chat chooser only ever
   // replaces it once a non-empty session list has actually arrived, so it
@@ -1077,7 +1101,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // their job.
     store.select((state) => state.messages.length, () => {
       syncProductSurfaces();
-      syncCommonQuestions();
+      syncPreConversationPanes();
     }),
     store.select(
       (state) => (state.session === null ? null : `${state.session.id}:${state.session.status}`),
@@ -1249,7 +1273,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     closeSurface();
     const view = build();
     activeSurface = { kind, view };
-    syncCommonQuestions();
+    syncPreConversationPanes();
     surfaceHost.replaceChildren(view.node);
     setPaneVisible(surfaceHost, true);
     // The surface stands IN PLACE OF the conversation, so everything it
@@ -1499,7 +1523,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     setPaneVisible(preChat.node, true);
     setPaneVisible(messageList.log, false);
     composer.node.hidden = true;
-    syncCommonQuestions();
+    syncPreConversationPanes();
     if (open) preChat.focus();
   }
 
@@ -1515,7 +1539,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       setPaneVisible(preChat.node, false);
       setPaneVisible(messageList.log, false);
       composer.node.hidden = true;
-      syncCommonQuestions();
+      syncPreConversationPanes();
       return;
     }
     // Bumped unconditionally, including on the idempotent re-call: it is a
@@ -1526,7 +1550,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     setPaneVisible(preChat.node, false);
     setPaneVisible(messageList.log, true);
     composer.node.hidden = false;
-    syncCommonQuestions();
+    syncPreConversationPanes();
   }
 
   /**
@@ -1902,15 +1926,27 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    *     the prompts have done their job and stay gone for this session, same
    *     as the pre-chat gate never reappearing after its first answer.
    */
-  function syncCommonQuestions(): void {
+  /**
+   * Shows or hides everything that only belongs in front of a conversation
+   * that has not started: the Common Questions chips, and the hero header's
+   * content block.
+   *
+   * One function rather than two called in pairs, because the condition is the
+   * SAME condition — no surface standing in for the chat, no pre-chat chooser,
+   * and an empty transcript. Both pieces are furniture the first message
+   * retires, and the React implementation collapses its hero on exactly this
+   * transition (see `ui/hero-header.ts` for why one widget's home screen is
+   * the other's empty transcript). Splitting them across six call sites is how
+   * one of them ends up shown at a moment the other is not.
+   */
+  function syncPreConversationPanes(): void {
     if (destroyed) return;
     const state = store.getState();
-    const show =
-      remote.commonQuestions.length > 0 &&
-      activeSurface === null &&
-      !preChatOpen &&
-      state.messages.length === 0;
-    setPaneVisible(commonQuestionsHost, show);
+    const beforeConversation =
+      activeSurface === null && !preChatOpen && state.messages.length === 0;
+
+    setPaneVisible(commonQuestionsHost, beforeConversation && remote.commonQuestions.length > 0);
+    setPaneVisible(heroHeader.node, beforeConversation && design === 'hero');
   }
 
   /**

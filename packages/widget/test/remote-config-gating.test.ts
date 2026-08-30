@@ -425,6 +425,139 @@ describe('appearance, and the host’s right to overrule it', () => {
     ).toBe('#1a1a1a');
   });
 
+  describe('the hero header’s content', () => {
+    const hero = published({
+      appearance: {
+        design: 'hero',
+        header: {
+          greeting: 'Hello there 👋',
+          subGreeting: 'Ask us anything.',
+          showAvatars: true,
+          showPresence: true,
+          avatars: ['https://cdn.acme.test/a.png', 'https://cdn.acme.test/b.png'],
+          ctaEnabled: true,
+          ctaTitle: 'Send us a message',
+          ctaSubtitle: 'We usually reply instantly',
+        },
+      },
+    });
+
+    it('renders the merchant’s greeting, faces and call to action', async () => {
+      stubFetch(hero);
+      mount(config());
+      await settle();
+
+      expect(find('.dh-hero-greeting')?.textContent).toBe('Hello there 👋');
+      expect(find('.dh-hero-sub')?.textContent).toBe('Ask us anything.');
+      expect(shadow().querySelectorAll('.dh-hero-avatar')).toHaveLength(2);
+      // The dot rides the LAST face only — it says "someone is here", not
+      // "this particular person is".
+      expect(shadow().querySelectorAll('.dh-hero-presence')).toHaveLength(1);
+      expect(find('.dh-hero-cta-title')?.textContent).toBe('Send us a message');
+    });
+
+    // The whole block is decoration the panel already conveys, and announcing
+    // four lines of marketing before the conversation is hostile.
+    it('is hidden from the a11y tree, with nothing focusable left inside it', async () => {
+      stubFetch(hero);
+      mount(config());
+      await settle();
+
+      expect(find('.dh-hero')?.getAttribute('aria-hidden')).toBe('true');
+      // A focusable control inside an aria-hidden subtree is the one
+      // combination that genuinely breaks assistive tech.
+      expect(find('.dh-hero-cta')?.getAttribute('tabindex')).toBe('-1');
+    });
+
+    it('shows while the transcript is empty and never on the classic design', async () => {
+      stubFetch(hero);
+      mount(config());
+      await settle();
+      expect(find<HTMLElement>('.dh-hero')?.hidden).toBe(false);
+
+      unmount();
+      stubFetch(published({ appearance: { header: { greeting: 'Hi' } } }));
+      mount(config());
+      await settle();
+      expect(find<HTMLElement>('.dh-hero')?.hidden).toBe(true);
+    });
+
+    // The hero and the Common Questions chips are shown by ONE function
+    // against ONE condition (`syncPreConversationPanes`), so a surface that
+    // stands in for the conversation has to retire both. Proved through the
+    // pre-chat gate because it is the surface reachable without a socket.
+    it('stands down while a surface is standing in for the conversation', async () => {
+      stubFetch(
+        published({
+          appearance: { design: 'hero', header: { greeting: 'Hello there 👋' } },
+          behaviour: {
+            preChatEnabled: true,
+            preChatFields: [{ id: 'name', label: 'Your name', type: 'text', required: true }],
+            commonQuestions: [{ id: 'q', label: 'Track my order', prompt: 'Where is my order?' }],
+          },
+        }),
+      );
+      mount(config());
+      await settle();
+
+      expect(find('.dh-prechat-form')).not.toBeNull();
+      expect(find<HTMLElement>('.dh-hero')?.hidden).toBe(true);
+      expect(find<HTMLElement>('.dh-common-questions-host')?.hidden).toBe(true);
+    });
+
+    // A merchant who turned every piece of it off has turned the block off; a
+    // bare coloured slab above the transcript reads as a rendering failure.
+    it('collapses to nothing when the merchant left every piece of it empty', async () => {
+      stubFetch(published({ appearance: { design: 'hero', header: { background: 'solid' } } }));
+      mount(config());
+      await settle();
+
+      expect(find<HTMLElement>('.dh-hero')?.dataset['empty']).toBe('true');
+    });
+
+    it('drops avatars past the third and any the allowlist refuses', async () => {
+      stubFetch(
+        published({
+          appearance: {
+            design: 'hero',
+            header: {
+              showAvatars: true,
+              avatars: [
+                'https://cdn.acme.test/1.png',
+                'javascript:alert(1)',
+                'https://cdn.acme.test/2.png',
+                'https://cdn.acme.test/3.png',
+                'https://cdn.acme.test/4.png',
+              ],
+            },
+          },
+        }),
+      );
+      mount(config());
+      await settle();
+
+      expect(shadow().querySelectorAll('.dh-hero-avatar')).toHaveLength(3);
+    });
+
+    // `header.logoUrl` is the hero's own; `appearance.logoUrl` is the brand
+    // mark. A merchant who uploaded one and not the other means the same thing.
+    it('falls back to the top-level logo when the header names none', async () => {
+      stubFetch(
+        published({
+          appearance: {
+            design: 'hero',
+            logoUrl: 'https://cdn.acme.test/logo.svg',
+            header: { showLogo: true },
+          },
+        }),
+      );
+      mount(config());
+      await settle();
+
+      expect(find('.dh-hero-logo')?.getAttribute('src')).toBe('https://cdn.acme.test/logo.svg');
+    });
+  });
+
   it('swaps in the published launcher glyph and shadow after mount', async () => {
     stubFetch(
       published({
