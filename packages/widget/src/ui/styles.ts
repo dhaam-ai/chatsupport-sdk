@@ -74,6 +74,32 @@ export function cssColor(value: string): string {
   return /[;{}()<>\\]|\/\*/.test(value) ? '#1f2937' : value.trim();
 }
 
+/**
+ * The dark half of the palette, interpolated into {@link STYLES} twice.
+ *
+ * Twice because there are two independent ways to be in dark mode and they
+ * cannot be expressed as one selector: the host page's OS preference (a media
+ * query) and an explicit `theme: 'dark'` (an attribute). Declaring the tokens
+ * once here is what stops the two copies drifting — the bug this shape exists
+ * to prevent is a token added to the media query and forgotten in the
+ * attribute rule, which renders a half-dark widget only for the merchants who
+ * pinned the scheme.
+ *
+ * Still module scope, so {@link STYLES} is still a constant the engine parses
+ * once — the interpolation happens at module evaluation, not per mount.
+ */
+const DARK_TOKENS = `
+  --dh-surface: #191c21;
+  --dh-surface-sunken: #131519;
+  --dh-text: #f2f4f7;
+  --dh-text-muted: #9aa3b0;
+  --dh-border: #2c3039;
+  --dh-bubble-in: #252a32;
+  --dh-focus: #7aa5ff;
+  --dh-danger: #f97066;
+  --dh-shadow: 0 6px 24px -4px rgb(0 0 0 / 0.55), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+`;
+
 export const STYLES = `
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -128,21 +154,27 @@ export const STYLES = `
   color: var(--dh-text);
 }
 
-/* Follows the host page's scheme rather than imposing one — a dark-mode food
-   ordering app should not get a white slab bolted to its corner. */
+/* ── Colour scheme ────────────────────────────────────────────────────────
+
+   'theme: auto' (the default) follows the host page's scheme rather than
+   imposing one — a dark-mode food ordering app should not get a white slab
+   bolted to its corner. 'light'/'dark' pin one, for a merchant whose brand
+   only works in one of them.
+
+   The OS rule is an override ON TOP OF the light tokens on ':host', so the
+   explicit LIGHT case needs no rule of its own: excluding it from the media
+   query is enough, and one rule that opts out beats two rules that
+   re-declare the same palette and drift apart. ':host(:not([data-theme=
+   "light"]))' also covers the attribute being ABSENT entirely, which is what
+   a widget mounted before its published config lands looks like. */
 @media (prefers-color-scheme: dark) {
-  :host {
-    --dh-surface: #191c21;
-    --dh-surface-sunken: #131519;
-    --dh-text: #f2f4f7;
-    --dh-text-muted: #9aa3b0;
-    --dh-border: #2c3039;
-    --dh-bubble-in: #252a32;
-    --dh-focus: #7aa5ff;
-    --dh-danger: #f97066;
-    --dh-shadow: 0 6px 24px -4px rgb(0 0 0 / 0.55), 0 2px 6px -2px rgb(0 0 0 / 0.4);
-  }
+  :host(:not([data-theme="light"])) {${DARK_TOKENS}}
 }
+
+/* Last, and higher-specificity than the base ':host', so a pinned dark theme
+   wins on a light OS. Where both this and the media query match they set
+   identical tokens, so which one wins does not matter. */
+:host([data-theme="dark"]) {${DARK_TOKENS}}
 
 /* Screen-reader-only. Every tick, every unread count, and every connection
    state has one of these, because the brief's "ticks need text equivalents,

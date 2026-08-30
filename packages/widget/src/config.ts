@@ -13,6 +13,17 @@ import type { IdentityProfile } from '@dhaam-ccrm/core';
 
 import type { PresentationMode } from './ui/presentation.js';
 
+// ── Appearance vocabulary ───────────────────────────────────────────────
+//
+// The console's Appearance tab (Settings → Chatbot) writes exactly these
+// value sets, and `remote-config.ts` parses the published blob into them.
+// They are declared HERE rather than there because this file is the layer a
+// host page can state a value at, and remote-config already imports from this
+// one — putting them the other way round would reverse that dependency.
+
+/** Follows the OS (`auto`) or pins one scheme. */
+export type WidgetTheme = 'light' | 'dark' | 'auto';
+
 /** How the host tells us who the end user is, without ever holding a secret. */
 export interface WidgetAuth {
   /**
@@ -123,6 +134,19 @@ export interface WidgetConfig {
   readonly accent?: string;
 
   /**
+   * Colour scheme. Defaults to `'auto'`, which is what this widget has always
+   * done: follow the host page's `prefers-color-scheme` rather than impose a
+   * scheme on it (see ui/styles.ts). `'light'`/`'dark'` pin one regardless of
+   * the OS, for a host — or a merchant — whose own page does not follow it
+   * either.
+   *
+   * Deliberately NOT defaulted to the console's own default (`'light'`):
+   * changing the built-in would repaint every host already relying on the
+   * media query, and none of them asked for that.
+   */
+  readonly theme?: WidgetTheme;
+
+  /**
    * `'isolate'` (default) pins our own font stack so the host page's typography
    * cannot distort the widget; `'inherit'` adopts the host's. See ui/styles.ts
    * — inheritable properties DO cross a shadow boundary, so this is a real
@@ -146,6 +170,7 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly openOnAgentInitiated: boolean;
   readonly title: string;
   readonly accent: string;
+  readonly theme: WidgetTheme;
   readonly font: 'isolate' | 'inherit';
   readonly onError: (error: unknown) => void;
 }
@@ -244,6 +269,7 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     openOnAgentInitiated: config.openOnAgentInitiated ?? false,
     title: config.title ?? 'Chat with us',
     accent: config.accent ?? '#1f2937',
+    theme: config.theme ?? 'auto',
     font: config.font ?? 'isolate',
     onError: config.onError ?? defaultOnError,
   };

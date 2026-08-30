@@ -25,7 +25,7 @@ function body(overrides: Record<string, unknown> = {}): unknown {
     success: true,
     data: {
       enabled: true,
-      appearance: { accent: '#7C3AED', title: 'Dhaam Support' },
+      appearance: { accent: '#7C3AED', title: 'Dhaam Support', theme: 'dark' },
       behaviour: {
         greeting: 'How can we help today?',
         preChatEnabled: true,
@@ -76,6 +76,7 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       enabled: true,
       accent: '#7C3AED',
       title: 'Dhaam Support',
+      theme: 'dark',
       greeting: 'How can we help today?',
       preChatEnabled: true,
       csatStyle: 'emoji',
@@ -128,6 +129,22 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
     const config = parseRemoteConfig({ data: { appearance: { accent: '   ', title: '' }, behaviour: {} } });
     expect(config?.accent).toBeUndefined();
     expect(config?.title).toBeUndefined();
+  });
+
+  it.each(['light', 'dark', 'auto'])('reads theme %s off appearance', (theme) => {
+    expect(parseRemoteConfig({ data: { appearance: { theme }, behaviour: {} } })?.theme).toBe(theme);
+  });
+
+  // `undefined`, not `'auto'`. The three-way distinction matters exactly once
+  // — in mergeRemoteConfig, which may only fill a field the host left unsaid —
+  // and collapsing an unrecognised value to a real one here would hand the
+  // merge a choice nobody made.
+  it.each([
+    ['an unknown scheme', 'sepia'],
+    ['the wrong type', 1],
+    ['absent', undefined],
+  ])('leaves theme unset when it is %s', (_label, theme) => {
+    expect(parseRemoteConfig({ data: { appearance: { theme }, behaviour: {} } })?.theme).toBeUndefined();
   });
 
   it.each([
@@ -335,21 +352,44 @@ describe('fetchRemoteConfig — every failure class collapses to null', () => {
 });
 
 describe('mergeRemoteConfig — the host always wins', () => {
-  const remote: RemoteConfig = { ...DEFAULT_REMOTE_CONFIG, accent: '#7C3AED', title: 'Remote title' };
+  const remote: RemoteConfig = {
+    ...DEFAULT_REMOTE_CONFIG,
+    accent: '#7C3AED',
+    title: 'Remote title',
+    theme: 'dark',
+  };
 
   it('fills fields the host left unsaid', () => {
     const merged = mergeRemoteConfig(hostConfig(), remote);
     expect(merged.accent).toBe('#7C3AED');
     expect(merged.title).toBe('Remote title');
+    expect(merged.theme).toBe('dark');
   });
 
   // The rule the whole precedence decision exists for: a host that hardcoded
   // a colour to match its checkout page must not have it yanked by a console
   // save it cannot see.
   it('never overwrites a value the host stated explicitly', () => {
-    const merged = mergeRemoteConfig(hostConfig({ accent: '#0f172a', title: 'Host title' }), remote);
+    const merged = mergeRemoteConfig(
+      hostConfig({ accent: '#0f172a', title: 'Host title', theme: 'light' }),
+      remote,
+    );
     expect(merged.accent).toBe('#0f172a');
     expect(merged.title).toBe('Host title');
+    expect(merged.theme).toBe('light');
+  });
+
+  // The reason RemoteConfig's appearance fields are `T | undefined` rather
+  // than pre-defaulted: a publish that says nothing must leave the key ABSENT,
+  // so `resolveConfig`'s own default still applies rather than a value the
+  // merge invented.
+  it('adds no key at all for a field the publish left unset', () => {
+    const merged = mergeRemoteConfig(hostConfig(), DEFAULT_REMOTE_CONFIG) as unknown as Record<
+      string,
+      unknown
+    >;
+    expect('theme' in merged).toBe(false);
+    expect('accent' in merged).toBe(false);
   });
 
   it('returns the host config untouched when there is no remote config', () => {

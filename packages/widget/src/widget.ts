@@ -310,6 +310,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const root = createWidgetRoot(`${STYLES}\n${themeCss(config)}`);
   const { host, shadow } = root;
   host.setAttribute('data-side', config.side);
+  // Stamped for every value including `auto`, which the CSS treats as "no
+  // opinion" (see ui/styles.ts). Always writing it — rather than removing the
+  // attribute for `auto` — keeps this a plain assignment with no branch, and
+  // leaves the resolved scheme readable on the element for anyone debugging a
+  // merchant's page.
+  host.setAttribute('data-theme', config.theme);
 
   let presentation: ResolvedPresentation = 'bubble';
   let open = false;
@@ -438,6 +444,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (rawConfig.title === undefined && next.title !== undefined) {
       launcherLabel.textContent = next.title;
       identityHeader.setFallbackTitle(next.title);
+    }
+    // An attribute rather than a custom property, because the scheme selects a
+    // whole palette rather than setting one value — the same `[data-*]`
+    // attribute-selector mechanism the presentation variants use.
+    if (rawConfig.theme === undefined && next.theme !== undefined) {
+      host.setAttribute('data-theme', next.theme);
     }
 
     // Rebuilt whole, not patched: the chip list is short, changes at most

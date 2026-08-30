@@ -34,7 +34,7 @@
 // response type and no field that could carry one, for the same reason
 // config.ts has none: a shape with no slot for a credential cannot leak one.
 
-import type { ResolvedConfig, WidgetConfig } from './config.js';
+import type { ResolvedConfig, WidgetConfig, WidgetTheme } from './config.js';
 
 /** One console-defined field on the pre-chat form. */
 export interface PreChatField {
@@ -104,6 +104,13 @@ export interface RemoteConfig {
   readonly enabled: boolean;
   readonly accent: string | undefined;
   readonly title: string | undefined;
+  /**
+   * `appearance.theme`. `undefined` — not `'auto'` — when the publish said
+   * nothing, because {@link mergeRemoteConfig} has to be able to tell "the
+   * merchant chose auto" from "the merchant chose nothing"; only the latter
+   * may be overwritten by a later default.
+   */
+  readonly theme: WidgetTheme | undefined;
   readonly greeting: string | undefined;
   readonly preChatEnabled: boolean;
   readonly preChatFields: readonly PreChatField[];
@@ -127,6 +134,7 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   enabled: true,
   accent: undefined,
   title: undefined,
+  theme: undefined,
   greeting: undefined,
   preChatEnabled: false,
   preChatFields: [],
@@ -252,6 +260,35 @@ function bool(source: Record<string, unknown>, key: string, fallback: boolean): 
   return typeof value === 'boolean' ? value : fallback;
 }
 
+/**
+ * A string leaf constrained to a known value set — `theme`, `position`,
+ * `launcher`, the header/thread background kinds, and every other enum the
+ * console writes.
+ *
+ * Returns `undefined` rather than a fallback for anything unrecognised, which
+ * is the same three-way answer {@link str} gives: absent, malformed, and "the
+ * merchant deliberately chose the value that happens to be our default" all
+ * have to stay distinguishable until {@link mergeRemoteConfig} has run, or a
+ * host's own explicit choice could be overwritten by a console default nobody
+ * actually picked.
+ *
+ * The `allowed` list is the widget's, not the wire's: a value a newer console
+ * writes and this bundle has never heard of degrades to the default rather
+ * than reaching a stylesheet or an attribute selector as an unknown string.
+ */
+function oneOf<T extends string>(
+  source: Record<string, unknown>,
+  key: string,
+  allowed: readonly T[],
+): T | undefined {
+  const value = source[key];
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : undefined;
+}
+
+const THEMES = ['light', 'dark', 'auto'] as const;
+
 function isOfflineMode(value: unknown): value is OfflineMode {
   return value === 1 || value === 2 || value === 3;
 }
@@ -343,6 +380,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     enabled: bool(data, 'enabled', DEFAULT_REMOTE_CONFIG.enabled),
     accent: str(appearance, 'accent'),
     title: str(appearance, 'title'),
+    theme: oneOf(appearance, 'theme', THEMES),
     greeting: str(behaviour, 'greeting'),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
@@ -377,11 +415,29 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
   if (remote === null) return host;
 
   const filled: Record<string, unknown> = { ...host };
-  // `exactOptionalPropertyTypes` is on, so a key holding `undefined` is not
-  // the same as an absent key — assign conditionally rather than spreading
-  // possibly-undefined values in.
-  if (host.accent === undefined && remote.accent !== undefined) filled['accent'] = remote.accent;
-  if (host.title === undefined && remote.title !== undefined) filled['title'] = remote.title;
+
+  // A table rather than a line per field, same shape as `attributes.ts`'s
+  // `optionals`: the list is the ONLY thing that changes when the console
+  // grows another appearance knob, and a table makes a forgotten field a
+  // missing row rather than a missing `if` that still compiles.
+  //
+  // Keys are `WidgetConfig`'s, and every one here is deliberately spelled the
+  // same on both sides — a `RemoteConfig` field whose name drifts from its
+  // `WidgetConfig` twin would silently stop being fillable.
+  const fromRemote: Partial<Record<keyof WidgetConfig, unknown>> = {
+    accent: remote.accent,
+    title: remote.title,
+    theme: remote.theme,
+  };
+
+  for (const [key, value] of Object.entries(fromRemote)) {
+    // `exactOptionalPropertyTypes` is on, so a key holding `undefined` is not
+    // the same as an absent key — assign conditionally rather than spreading
+    // possibly-undefined values in.
+    if (value === undefined) continue;
+    if (host[key as keyof WidgetConfig] !== undefined) continue;
+    filled[key] = value;
+  }
 
   return filled as unknown as WidgetConfig;
 }

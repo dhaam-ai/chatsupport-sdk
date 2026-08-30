@@ -300,6 +300,33 @@ describe('appearance, and the host’s right to overrule it', () => {
     expect(host?.style.getPropertyValue('--dh-accent')).toBe('');
     expect(find('.dh-launcher-label')?.textContent).toBe('Host title');
   });
+
+  it('pins the published colour scheme onto the host element', async () => {
+    stubFetch(published({ appearance: { theme: 'dark' } }));
+    mount(config());
+    await settle();
+
+    expect(document.querySelector('dh-chat-widget')?.getAttribute('data-theme')).toBe('dark');
+  });
+
+  // `auto` is not the absence of a choice — it is the widget's own default and
+  // what every host relied on before appearance parsing existed. The media
+  // query, not an attribute, is what governs it (ui/styles.ts).
+  it('leaves the scheme on auto when the publish names none', async () => {
+    stubFetch(published({ appearance: {} }));
+    mount(config());
+    await settle();
+
+    expect(document.querySelector('dh-chat-widget')?.getAttribute('data-theme')).toBe('auto');
+  });
+
+  it('keeps a host-pinned scheme against a published one', async () => {
+    stubFetch(published({ appearance: { theme: 'dark' } }));
+    mount(config({ theme: 'light' }));
+    await settle();
+
+    expect(document.querySelector('dh-chat-widget')?.getAttribute('data-theme')).toBe('light');
+  });
 });
 
 describe('degrading when the config cannot be read', () => {
