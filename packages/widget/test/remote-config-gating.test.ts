@@ -382,6 +382,49 @@ describe('appearance, and the host’s right to overrule it', () => {
     expect(find('.dh-launcher-label')?.textContent).toBe('Host title');
   });
 
+  // The load-bearing default. `hero` paints the header in the brand colour,
+  // and that must reach only merchants who asked for it in the console —
+  // never a host who embedded a script tag and never opened one.
+  it('stays on the classic header until a publish says hero', async () => {
+    stubFetch(published({ appearance: {} }));
+    mount(config());
+    await settle();
+
+    expect(document.querySelector('dh-chat-widget')?.getAttribute('data-design')).toBe('classic');
+  });
+
+  it('paints the header once the merchant publishes the hero design', async () => {
+    stubFetch(
+      published({
+        appearance: {
+          design: 'hero',
+          accent: '#0f172a',
+          header: { background: 'gradient', gradientStrength: 100 },
+        },
+      }),
+    );
+    mount(config());
+    await settle();
+
+    const host = document.querySelector<HTMLElement>('dh-chat-widget');
+    expect(host?.getAttribute('data-design')).toBe('hero');
+    // The variable, so a later accent change repaints the header with it.
+    expect(host?.style.getPropertyValue('--dh-header-bg')).toBe('var(--dh-accent)');
+    expect(host?.style.getPropertyValue('--dh-header-layers')).toContain('linear-gradient');
+  });
+
+  // The header's text is painted straight onto the brand colour, so a publish
+  // that moves the accent has to be able to flip it from white to near-black.
+  it('recomputes the header foreground against a published accent', async () => {
+    stubFetch(published({ appearance: { design: 'hero', accent: '#fde68a' } }));
+    mount(config());
+    await settle();
+
+    expect(
+      document.querySelector<HTMLElement>('dh-chat-widget')?.style.getPropertyValue('--dh-header-fg'),
+    ).toBe('#1a1a1a');
+  });
+
   it('swaps in the published launcher glyph and shadow after mount', async () => {
     stubFetch(
       published({

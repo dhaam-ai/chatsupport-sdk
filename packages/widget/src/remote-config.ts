@@ -35,11 +35,13 @@
 // config.ts has none: a shape with no slot for a credential cannot leak one.
 
 import type {
+  HeaderAppearance,
   LauncherIcon,
   LauncherShadow,
   LauncherStyle,
   ResolvedConfig,
   WidgetConfig,
+  WidgetDesign,
   WidgetPosition,
   WidgetTheme,
 } from './config.js';
@@ -139,6 +141,10 @@ export interface RemoteConfig {
    */
   readonly launcherIcon: Partial<LauncherIcon>;
   readonly launcherShadow: Partial<LauncherShadow>;
+  /** `appearance.design` — which home layout the merchant chose. */
+  readonly design: WidgetDesign | undefined;
+  /** `appearance.header`, read only under the `hero` design. Same `{}`-means-unset rule. */
+  readonly header: Partial<HeaderAppearance>;
   /** `appearance.cornerRadius`, in CSS pixels. */
   readonly cornerRadius: number | undefined;
   /** `appearance.fontFamily` — a console font NAME, not a CSS stack. */
@@ -174,6 +180,8 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   launcherLabel: undefined,
   launcherIcon: {},
   launcherShadow: {},
+  design: undefined,
+  header: {},
   cornerRadius: undefined,
   fontFamily: undefined,
   greeting: undefined,
@@ -406,6 +414,30 @@ function parseLauncherShadow(value: unknown): Partial<LauncherShadow> {
   });
 }
 
+const DESIGNS = ['classic', 'hero'] as const;
+const HEADER_BACKGROUNDS = ['solid', 'gradient', 'image'] as const;
+const HEADER_COLOR_SOURCES = ['accent', 'platform'] as const;
+
+/**
+ * `appearance.header` — how the hero header is painted.
+ *
+ * Same whole-object read as the launcher's two: every branch survives, so a
+ * merchant switching from `image` back to `gradient` in the console does not
+ * publish a blank background to a bundle that had already discarded the
+ * gradient's strength.
+ */
+function parseHeader(value: unknown): Partial<HeaderAppearance> {
+  if (!isRecord(value)) return {};
+  return partial<HeaderAppearance>({
+    background: oneOf(value, 'background', HEADER_BACKGROUNDS),
+    backgroundColor: str(value, 'backgroundColor'),
+    colorSource: oneOf(value, 'colorSource', HEADER_COLOR_SOURCES),
+    gradientStrength: num(value, 'gradientStrength'),
+    backgroundImageUrl: str(value, 'backgroundImageUrl'),
+    imageOverlay: num(value, 'imageOverlay'),
+  });
+}
+
 function isOfflineMode(value: unknown): value is OfflineMode {
   return value === 1 || value === 2 || value === 3;
 }
@@ -505,6 +537,8 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     launcherLabel: str(appearance, 'launcherLabel'),
     launcherIcon: parseLauncherIcon(appearance['launcherIcon']),
     launcherShadow: parseLauncherShadow(appearance['launcherShadow']),
+    design: oneOf(appearance, 'design', DESIGNS),
+    header: parseHeader(appearance['header']),
     cornerRadius: num(appearance, 'cornerRadius'),
     fontFamily: str(appearance, 'fontFamily'),
     greeting: str(behaviour, 'greeting'),
@@ -559,6 +593,7 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
     offsetY: remote.offsetY,
     launcher: remote.launcher,
     launcherLabel: remote.launcherLabel,
+    design: remote.design,
     cornerRadius: remote.cornerRadius,
     fontFamily: remote.fontFamily,
   };
@@ -581,7 +616,7 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
   // `{}` here would read downstream as "the host stated an object", and
   // `resolveConfig` spreads it over the built-in defaults either way, so the
   // distinction costs nothing to keep and is one less way to be surprised.
-  for (const key of ['launcherIcon', 'launcherShadow'] as const) {
+  for (const key of ['launcherIcon', 'launcherShadow', 'header'] as const) {
     const merged = { ...remote[key], ...host[key] };
     if (Object.keys(merged).length > 0) filled[key] = merged;
   }

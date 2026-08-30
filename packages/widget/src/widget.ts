@@ -16,7 +16,13 @@ import type { ChatMessage, ChatSessionSummary, ChatState, ConnectionState } from
 
 import { createWidgetStore } from './client.js';
 import { resolveConfig } from './config.js';
-import type { LauncherIcon, LauncherStyle, ResolvedConfig, WidgetConfig } from './config.js';
+import type {
+  HeaderAppearance,
+  LauncherIcon,
+  LauncherStyle,
+  ResolvedConfig,
+  WidgetConfig,
+} from './config.js';
 import { createComposer } from './ui/composer.js';
 import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
@@ -25,10 +31,22 @@ import { createIdentityHeader } from './ui/identity-header.js';
 import { createMessageList } from './ui/message-list.js';
 import { resolvePresentation } from './ui/presentation.js';
 import type { ResolvedPresentation } from './ui/presentation.js';
+import { samplePlatformColor } from './ui/platform-color.js';
 import { createWidgetRoot } from './ui/root.js';
 import { createPreChatScreen, createSessionSwitcher } from './ui/session-picker.js';
 import type { SessionPickerCallbacks } from './ui/session-picker.js';
-import { STYLES, cssColor, cssPx, fontStackFor, launcherShadowCss, themeCss } from './ui/styles.js';
+import {
+  STYLES,
+  cssColor,
+  cssPx,
+  fontStackFor,
+  headerBaseColor,
+  headerForeground,
+  headerLayers,
+  launcherShadowCss,
+  readableOn,
+  themeCss,
+} from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
 import { createOfflineForm } from './ui/offline-form.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
@@ -350,6 +368,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   host.setAttribute('data-theme', config.theme);
   host.setAttribute('data-position', config.position);
   host.setAttribute('data-launcher', config.launcher);
+  host.setAttribute('data-design', config.design);
 
   let presentation: ResolvedPresentation = 'bubble';
   /**
@@ -484,6 +503,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (rawConfig.accent === undefined && next.accent !== undefined) {
       host.style.setProperty('--dh-accent', cssColor(next.accent));
     }
+
+    // The accent as it stands AFTER that, because the header's own foreground
+    // is computed from it — a published accent that changed the brand colour
+    // has to be able to flip the header's text from white to near-black with
+    // it, or a merchant switching to a pastel gets an unreadable header.
+    const accent =
+      rawConfig.accent === undefined && next.accent !== undefined ? next.accent : config.accent;
+
     if (rawConfig.title === undefined && next.title !== undefined) {
       identityHeader.setFallbackTitle(next.title);
     }
@@ -519,6 +546,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       host.style.setProperty('--dh-launcher-shadow', launcherShadowCss(shadow, 'resting'));
       host.style.setProperty('--dh-launcher-shadow-lift', launcherShadowCss(shadow, 'lifted'));
     }
+
+    if (rawConfig.design === undefined && next.design !== undefined) {
+      host.setAttribute('data-design', next.design);
+    }
+    // Unconditional, unlike the fields above: even a publish that says nothing
+    // about the header can still have moved the ACCENT the header is painted
+    // from, and the foreground has to be recomputed against it either way.
+    applyHeaderAppearance(
+      rawConfig.header === undefined ? { ...config.header, ...next.header } : config.header,
+      accent,
+    );
     // An attribute rather than a custom property, because the scheme selects a
     // whole palette rather than setting one value — the same `[data-*]`
     // attribute-selector mechanism the presentation variants use.
@@ -571,6 +609,64 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // destroyed one should not be the price of a merchant toggling a switch.
     launcher.hidden = !shouldMount(next);
   };
+
+  /**
+   * Paints the hero header from a resolved appearance and accent.
+   *
+   * Inline custom properties, for the same reason the accent uses them: they
+   * outrank the `:host` rule `themeCss` wrote, so a publish landing after
+   * mount repaints without reparsing a stylesheet.
+   *
+   * Nothing here checks `design`. The tokens are written either way and the
+   * `classic` header simply never reads them (see ui/styles.ts) — which keeps
+   * the "is the header painted at all" decision in exactly one place instead
+   * of two that could disagree.
+   */
+  function applyHeaderAppearance(header: HeaderAppearance, accent: string): void {
+    host.style.setProperty('--dh-header-bg', headerBaseColor(header));
+    host.style.setProperty('--dh-header-fg', headerForeground(header, accent));
+    host.style.setProperty('--dh-header-layers', headerLayers(header));
+
+    // `platform` only means anything when no explicit colour was set —
+    // "borrow the site's colour" and "use this hex" are not both answerable.
+    if (header.colorSource === 'platform' && header.backgroundColor.trim() === '') {
+      borrowPlatformColor();
+    }
+  }
+
+  /**
+   * Repaints the header in the host page's own colour, once the page is
+   * finished loading.
+   *
+   * Deferred to `load` rather than sampled now, and that wait is the whole
+   * correctness of it: the host's stylesheets may still be arriving when the
+   * widget mounts, so sampling immediately locks in whatever the UNSTYLED
+   * document happened to be — usually white, on a site whose brand is not.
+   *
+   * A `null` sample changes nothing, deliberately. It means the page has no
+   * opaque colour to borrow, which is a real answer rather than a failure, and
+   * the accent already on the header is the right thing to leave there.
+   */
+  function borrowPlatformColor(): void {
+    const sample = (): void => {
+      if (destroyed) return;
+      const color = samplePlatformColor();
+      if (color === null) return;
+      host.style.setProperty('--dh-header-bg', cssColor(color));
+      host.style.setProperty('--dh-header-fg', readableOn(color));
+    };
+
+    if (typeof document === 'undefined' || document.readyState === 'complete') {
+      sample();
+      return;
+    }
+    // `once`, and never removed on teardown: a one-shot listener on `window`
+    // is released by the browser after it fires, and the `destroyed` guard
+    // above covers the case where teardown wins the race.
+    window.addEventListener('load', sample, { once: true });
+  }
+
+  applyHeaderAppearance(config.header, config.accent);
 
   void fetchRemoteConfig({
     apiUrl: config.apiUrl,

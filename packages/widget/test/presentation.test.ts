@@ -11,7 +11,18 @@ import { describe, expect, it } from 'vitest';
 import { resolveConfig } from '../src/config.js';
 import type { WidgetConfig } from '../src/config.js';
 import { resolvePresentation } from '../src/ui/presentation.js';
-import { cssPx, fontStackFor, launcherShadowCss, themeCss } from '../src/ui/styles.js';
+import {
+  cssPx,
+  cssUrl,
+  fontStackFor,
+  headerBaseColor,
+  headerForeground,
+  headerLayers,
+  launcherShadowCss,
+  readableOn,
+  themeCss,
+} from '../src/ui/styles.js';
+import type { HeaderAppearance } from '../src/config.js';
 
 const PUBLISHABLE = 'dhp_' + 'test_' + '0123456789abcdefghijklmn';
 
@@ -137,5 +148,86 @@ describe('launcherShadowCss — one intensity drives the whole shadow', () => {
   ])('clamps an intensity %s rather than emitting a broken declaration', (_label, intensity) => {
     const css = launcherShadowCss({ enabled: true, intensity }, 'resting');
     expect(css).toMatch(/^0 \d+px \d+px -\d+px rgba\(0,0,0,0\.\d+\)$/);
+  });
+});
+
+describe('the hero header’s paint', () => {
+  const header = (overrides: Partial<HeaderAppearance> = {}): HeaderAppearance => ({
+    background: 'gradient',
+    backgroundColor: '',
+    colorSource: 'accent',
+    gradientStrength: 100,
+    backgroundImageUrl: '',
+    imageOverlay: 45,
+    ...overrides,
+  });
+
+  // The variable, not the accent's literal value: a published accent landing
+  // after mount has to repaint the header along with everything else.
+  it('follows the accent variable when no explicit colour is set', () => {
+    expect(headerBaseColor(header())).toBe('var(--dh-accent)');
+    expect(headerBaseColor(header({ backgroundColor: '#0f172a' }))).toBe('#0f172a');
+  });
+
+  it('refuses a colour that could break out of its declaration', () => {
+    expect(headerBaseColor(header({ backgroundColor: '#fff; display: none' }))).toBe('#1f2937');
+  });
+
+  // A pastel brand with hardcoded white text is a header nobody can read, and
+  // nothing in the console warns the merchant about it.
+  it('picks a foreground the text survives on', () => {
+    expect(headerForeground(header(), '#0f172a')).toBe('#ffffff');
+    expect(headerForeground(header(), '#fde68a')).toBe('#1a1a1a');
+    expect(headerForeground(header({ backgroundColor: '#ffffff' }), '#0f172a')).toBe('#1a1a1a');
+  });
+
+  // `accent` is any CSS colour, and resolving `rebeccapurple` or a
+  // `color-mix()` needs the engine rather than arithmetic. White is what this
+  // widget has always used and is right for the dark accents that dominate.
+  it.each(['rebeccapurple', 'rgb(12 12 12)', 'color-mix(in srgb, red, blue)'])(
+    'assumes white on %s, which it cannot measure',
+    (accent) => {
+      expect(readableOn(accent)).toBe('#ffffff');
+    },
+  );
+
+  it('paints nothing over a solid header', () => {
+    expect(headerLayers(header({ background: 'solid' }))).toBe('none');
+  });
+
+  it('washes a gradient down from the top edge, scaled by its strength', () => {
+    expect(headerLayers(header({ background: 'gradient', gradientStrength: 100 }))).toBe(
+      'linear-gradient(180deg, rgba(0,0,0,1) 0%, rgba(0,0,0,0.300) 50%, rgba(0,0,0,0) 100%)',
+    );
+    expect(headerLayers(header({ background: 'gradient', gradientStrength: 0 }))).toContain(
+      'rgba(0,0,0,0) 0%',
+    );
+  });
+
+  it('scrims an image so the greeting stays readable over it', () => {
+    const layers = headerLayers(
+      header({ background: 'image', backgroundImageUrl: 'https://cdn.acme.test/h.jpg', imageOverlay: 50 }),
+    );
+    expect(layers).toBe(
+      'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.5) 100%), url("https://cdn.acme.test/h.jpg")',
+    );
+  });
+
+  // A `url()` that 404s flashes the browser's broken-image behaviour on
+  // someone else's page; an unpainted header over the base colour does not.
+  it.each([
+    ['a refused scheme', 'javascript:alert(1)'],
+    ['a relative path', '/assets/hero.png'],
+    ['nothing at all', ''],
+  ])('paints no image layer for %s', (_label, backgroundImageUrl) => {
+    expect(headerLayers(header({ background: 'image', backgroundImageUrl }))).toBe('none');
+  });
+
+  // safeImageUrl answers "will we load this"; cssUrl answers "can it be
+  // written into a stylesheet", and the second question has its own answer.
+  it('refuses a URL that would break out of the url() it is written into', () => {
+    expect(cssUrl('https://cdn.acme.test/a");background:red;--x:("')).toBeNull();
+    expect(cssUrl("https://cdn.acme.test/a'")).toBeNull();
+    expect(cssUrl('https://cdn.acme.test/ok.png')).toBe('url("https://cdn.acme.test/ok.png")');
   });
 });

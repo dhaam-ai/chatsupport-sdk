@@ -32,7 +32,9 @@
 // exists, which no z-index can outrank, and falls back to the real maximum
 // (2147483647) rather than v1's arbitrary six digits.
 
-import type { LauncherShadow, ResolvedConfig } from '../config.js';
+import { safeImageUrl } from './dom.js';
+
+import type { HeaderAppearance, LauncherShadow, ResolvedConfig } from '../config.js';
 
 const SYSTEM_FONT_STACK = "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
@@ -101,6 +103,9 @@ export function themeCss(config: ResolvedConfig): string {
     --dh-offset-y: ${cssPx(config.offsetY, 20)};
     --dh-launcher-shadow: ${launcherShadowCss(config.launcherShadow, 'resting')};
     --dh-launcher-shadow-lift: ${launcherShadowCss(config.launcherShadow, 'lifted')};
+    --dh-header-bg: ${headerBaseColor(config.header)};
+    --dh-header-fg: ${headerForeground(config.header, config.accent)};
+    --dh-header-layers: ${headerLayers(config.header)};
   }`;
 }
 
@@ -121,6 +126,124 @@ export function themeCss(config: ResolvedConfig): string {
  */
 export function cssPx(value: number, fallback: number): string {
   return `${Number.isFinite(value) && value >= 0 ? value : fallback}px`;
+}
+
+/**
+ * The header's flat base colour.
+ *
+ * An empty `backgroundColor` means "follow `colorSource`", and both of its
+ * values resolve to the accent here: `platform` is decided at runtime against
+ * the host document (see `ui/platform-color.ts`) and lands as an inline
+ * override, so the accent is what it falls back to when nothing usable was
+ * found. There is no input for which the header ends up with no colour.
+ *
+ * `var(--dh-accent)` rather than the accent's literal value, so a published
+ * accent arriving after mount repaints the header along with everything else
+ * instead of stranding it on the boot-time colour.
+ */
+export function headerBaseColor(header: HeaderAppearance): string {
+  const explicit = header.backgroundColor.trim();
+  return explicit === '' ? 'var(--dh-accent)' : cssColor(explicit);
+}
+
+/**
+ * The header's text colour, measured against whatever it is painted on.
+ *
+ * Takes `accent` explicitly because {@link headerBaseColor} may have deferred
+ * to `var(--dh-accent)`, and a CSS variable is not a colour anything can
+ * measure — the caller knows the value the variable currently holds, and this
+ * function cannot.
+ */
+export function headerForeground(header: HeaderAppearance, accent: string): string {
+  const explicit = header.backgroundColor.trim();
+  return readableOn(explicit === '' ? accent : explicit);
+}
+
+/**
+ * The gradient/image layers painted over {@link headerBaseColor}.
+ *
+ * Coefficients lifted verbatim from `chatsupport_react`'s `WidgetHeader`, for
+ * the same reason as the launcher shadow: `gradientStrength` and
+ * `imageOverlay` are numbers a merchant set while watching that preview.
+ *
+ * `none` for `solid`, and `none` for an `image` whose URL the allowlist
+ * refused — an unpainted header over the base colour is the graceful version
+ * of a missing image, where a `url()` that 404s would flash the browser's
+ * broken-image behaviour on someone else's page.
+ */
+export function headerLayers(header: HeaderAppearance): string {
+  if (header.background === 'gradient') {
+    const a = percent(header.gradientStrength, 100);
+    return `linear-gradient(180deg, rgba(0,0,0,${a}) 0%, rgba(0,0,0,${(a * 0.3).toFixed(3)}) 50%, rgba(0,0,0,0) 100%)`;
+  }
+
+  if (header.background === 'image') {
+    const url = cssUrl(header.backgroundImageUrl);
+    if (url === null) return 'none';
+    const o = percent(header.imageOverlay, 45);
+    return `linear-gradient(180deg, rgba(0,0,0,${o}) 0%, rgba(0,0,0,${o}) 100%), ${url}`;
+  }
+
+  return 'none';
+}
+
+/** A console 0–100 slider as a 0–1 alpha, clamped and NaN-proofed. */
+function percent(value: number, fallback: number): number {
+  const raw = Number.isFinite(value) ? value : fallback;
+  return Math.min(100, Math.max(0, raw)) / 100;
+}
+
+/**
+ * A config-supplied image URL as a CSS `url()`, or `null` if it is not one.
+ *
+ * Two gates, and both are needed. {@link safeImageUrl} decides whether we are
+ * willing to LOAD it at all; this then decides whether it can be written into
+ * a stylesheet, which `safeImageUrl` says nothing about — `https://x/");
+ * background: red; --a: ("` passes the scheme check and would still break out
+ * of the declaration and rewrite the rest of the rule. Anything with a quote,
+ * paren, backslash, semicolon or whitespace is refused outright rather than
+ * escaped, because no URL that reaches a `<img src>` cleanly needs one here.
+ */
+export function cssUrl(value: string): string | null {
+  const url = safeImageUrl(value);
+  if (url === null) return null;
+  return /["'()\\;\s]/.test(url) ? null : `url("${url}")`;
+}
+
+/**
+ * Relative luminance per WCAG 2.x, for a hex colour. `null` for anything else.
+ *
+ * Hex only, deliberately. `accent` is any CSS colour — `rebeccapurple`,
+ * `color-mix(...)`, `rgb(...)` — and resolving those needs the engine rather
+ * than arithmetic. The caller treats `null` as "assume dark", which is what
+ * this widget has always assumed.
+ */
+export function luminance(color: string): number | null {
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
+  if (match === null) return null;
+  const hex = match[1] as string;
+  const full = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex;
+  const channel = (index: number): number => {
+    const srgb = parseInt(full.slice(index * 2, index * 2 + 2), 16) / 255;
+    return srgb <= 0.03928 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
+}
+
+/**
+ * A foreground that stays readable on `color` — white unless it is light.
+ *
+ * The hero header paints its own text directly onto a merchant-chosen colour,
+ * so this is the difference between legible and invisible: a pastel brand
+ * with hardcoded white text is a header nobody can read, and nothing in the
+ * console warns them.
+ *
+ * Falls back to white for a colour it cannot measure, which is what the widget
+ * has always used and is right for the dark accents that are the common case.
+ */
+export function readableOn(color: string): string {
+  const light = luminance(color);
+  return light !== null && light > 0.55 ? '#1a1a1a' : '#ffffff';
 }
 
 /**
@@ -598,6 +721,48 @@ button {
   flex: none;
 }
 .dh-header-spacer { flex: 1; }
+
+/* ── The hero header ──────────────────────────────────────────────────────
+
+   Gated on 'data-design="hero"', and that gate is the whole reason the
+   default is 'classic'. Painting the header in the brand colour is a
+   redesign, and it must reach only the merchants who asked for one in the
+   console — never a host who embedded a script tag and never opened it.
+
+   The background is two layers: a flat colour, and a gradient or image over
+   it ('--dh-header-layers', 'none' when neither applies). The foreground is
+   computed from the colour's luminance rather than hardcoded white, because
+   a pastel brand with white text is a header nobody can read. */
+:host([data-design="hero"]) .dh-header {
+  background-color: var(--dh-header-bg);
+  background-image: var(--dh-header-layers);
+  background-size: cover;
+  background-position: center;
+  color: var(--dh-header-fg);
+  /* The paint IS the separation — a hairline on top of it reads as a seam. */
+  border-bottom-color: transparent;
+}
+
+/* Everything in the header that had its own muted colour now inherits, or it
+   would be painting grey-on-brand. Opacity rather than a second colour token:
+   it holds up over a gradient, an image and a flat colour alike, where any
+   fixed grey only works over one of them. */
+:host([data-design="hero"]) .dh-status,
+:host([data-design="hero"]) .dh-icon-button {
+  color: inherit;
+  opacity: 0.85;
+}
+:host([data-design="hero"]) .dh-icon-button:hover {
+  background: rgb(255 255 255 / 0.16);
+  color: inherit;
+  opacity: 1;
+}
+:host([data-design="hero"]) .dh-reconnect {
+  color: inherit;
+  border-color: currentColor;
+}
+:host([data-design="hero"]) .dh-reconnect:hover { background: rgb(255 255 255 / 0.16); }
+
 .dh-icon-button {
   width: 32px; height: 32px;
   display: grid;

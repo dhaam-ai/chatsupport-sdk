@@ -280,6 +280,46 @@ describe('the launcher’s glyph', () => {
   });
 });
 
+describe('borrowing the host page’s colour', () => {
+  const headerBg = (): string =>
+    host().style.getPropertyValue('--dh-header-bg');
+
+  it('samples the host’s top bar when the merchant asked for its colour', () => {
+    document.body.innerHTML = '<header id="bar">shop</header>';
+    document.getElementById('bar')!.style.backgroundColor = 'rgb(18, 52, 86)';
+
+    mount(config({ design: 'hero', header: { colorSource: 'platform' } }));
+    expect(headerBg()).toBe('#123456');
+  });
+
+  it('falls through to the body when there is no top bar to sample', () => {
+    document.body.style.backgroundColor = 'rgb(255, 255, 255)';
+    mount(config({ design: 'hero', header: { colorSource: 'platform' } }));
+
+    expect(headerBg()).toBe('#ffffff');
+    // …and the text follows the colour rather than staying hardcoded white.
+    expect(host().style.getPropertyValue('--dh-header-fg')).toBe('#1a1a1a');
+    document.body.style.backgroundColor = '';
+  });
+
+  // "Borrow the site's colour" and "use this hex" are not both answerable, and
+  // the explicit answer is the one the merchant typed most recently.
+  it('does not sample when an explicit colour was set', () => {
+    document.body.innerHTML = '<header id="bar">shop</header>';
+    document.getElementById('bar')!.style.backgroundColor = 'rgb(18, 52, 86)';
+
+    mount(config({ design: 'hero', header: { colorSource: 'platform', backgroundColor: '#abcdef' } }));
+    expect(headerBg()).toBe('#abcdef');
+  });
+
+  // A page with no opaque colour genuinely has none to lend. That is an
+  // answer, not a failure — and the accent already on the header is right.
+  it('leaves the accent in place when there is nothing opaque to borrow', () => {
+    mount(config({ design: 'hero', header: { colorSource: 'platform' } }));
+    expect(headerBg()).toBe('var(--dh-accent)');
+  });
+});
+
 describe('the panel', () => {
   it('is hidden from the a11y tree and the tab order while closed', () => {
     mount(config());

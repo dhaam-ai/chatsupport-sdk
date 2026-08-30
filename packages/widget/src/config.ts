@@ -33,6 +33,39 @@ export type WidgetPosition = 'bottom-right' | 'bottom-left';
  */
 export type LauncherStyle = 'bubble' | 'bubble-label' | 'tab';
 
+/**
+ * Which home layout the merchant chose. `classic` is the compact header this
+ * widget has always drawn; `hero` is the tall branded one — a painted
+ * background, the team's faces, a greeting and a call to action.
+ */
+export type WidgetDesign = 'classic' | 'hero';
+
+/** How the hero header's background is painted. */
+export type HeaderBackground = 'solid' | 'gradient' | 'image';
+
+/**
+ * Where the header's colour comes from when no explicit one is set.
+ *
+ * `accent` uses the configured brand colour. `platform` samples the page the
+ * widget is installed on, so the widget takes the host site's look without the
+ * merchant re-entering a hex code — and falls back to the accent when there is
+ * nothing usable to sample, because a header with no colour is not an option.
+ */
+export type HeaderColorSource = 'accent' | 'platform';
+
+/** The hero header, field for field as the console writes it. */
+export interface HeaderAppearance {
+  readonly background: HeaderBackground;
+  /** Empty means "follow {@link colorSource}". */
+  readonly backgroundColor: string;
+  readonly colorSource: HeaderColorSource;
+  /** 0–100. Strength of the black wash falling from the top edge. */
+  readonly gradientStrength: number;
+  readonly backgroundImageUrl: string;
+  /** 0–100. Dark scrim over the image, so the greeting stays readable. */
+  readonly imageOverlay: number;
+}
+
 /** Where the launcher's glyph comes from. */
 export type LauncherIconSource = 'library' | 'emoji' | 'image';
 
@@ -254,6 +287,25 @@ export interface WidgetConfig {
   readonly launcherShadow?: Partial<LauncherShadow>;
 
   /**
+   * Which home layout to draw. Defaults to `'classic'`.
+   *
+   * NOT the console's own default of `'hero'`, and this one is load-bearing:
+   * `hero` paints the header in the brand colour, and defaulting to it would
+   * repaint the header of every widget already embedded — including hosts who
+   * never opened the console at all. A merchant who publishes gets `hero`
+   * because that is what their console says; nobody else gets a redesign they
+   * did not ask for.
+   */
+  readonly design?: WidgetDesign;
+
+  /**
+   * The hero header's background. Read only under {@link design} `'hero'` —
+   * the classic header is transparent over the panel's own surface and has
+   * nothing to paint.
+   */
+  readonly header?: Partial<HeaderAppearance>;
+
+  /**
    * Corner radius in CSS pixels, applied to the panel, the message bubbles and
    * every card inside them. Defaults to 12.
    *
@@ -309,6 +361,8 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly launcherLabel: string;
   readonly launcherIcon: LauncherIcon;
   readonly launcherShadow: LauncherShadow;
+  readonly design: WidgetDesign;
+  readonly header: HeaderAppearance;
   readonly cornerRadius: number;
   readonly fontFamily: string;
   readonly font: 'isolate' | 'inherit';
@@ -332,6 +386,20 @@ const DEFAULT_LAUNCHER_ICON: LauncherIcon = {
 
 /** Matches the console's own default, which is the shipped look. */
 const DEFAULT_LAUNCHER_SHADOW: LauncherShadow = { enabled: true, intensity: 45 };
+
+/**
+ * The console's own header defaults, with one change: `backgroundColor` is
+ * empty, which means "follow `colorSource`" and therefore the accent. There is
+ * no colour to hardcode here that would not be a brand guess.
+ */
+const DEFAULT_HEADER: HeaderAppearance = {
+  background: 'gradient',
+  backgroundColor: '',
+  colorSource: 'accent',
+  gradientStrength: 100,
+  backgroundImageUrl: '',
+  imageOverlay: 45,
+};
 
 const PRESENTATION_MODES = new Set<string>(['auto', 'bubble', 'sidebar', 'sheet']);
 
@@ -434,6 +502,8 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     // branch it is not using.
     launcherIcon: { ...DEFAULT_LAUNCHER_ICON, ...config.launcherIcon },
     launcherShadow: { ...DEFAULT_LAUNCHER_SHADOW, ...config.launcherShadow },
+    design: config.design ?? 'classic',
+    header: { ...DEFAULT_HEADER, ...config.header },
     // 20px each: exactly `calc(var(--dh-space) * 5)`, which is where the
     // launcher and the bubble panel have always sat.
     offsetX: config.offsetX ?? 20,

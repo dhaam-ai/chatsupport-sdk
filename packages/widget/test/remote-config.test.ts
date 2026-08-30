@@ -36,6 +36,15 @@ function body(overrides: Record<string, unknown> = {}): unknown {
         launcherLabel: 'Need help?',
         launcherIcon: { source: 'emoji', library: 'chat', emoji: '👋', imageUrl: '' },
         launcherShadow: { enabled: true, intensity: 70 },
+        design: 'hero',
+        header: {
+          background: 'gradient',
+          backgroundColor: '',
+          colorSource: 'accent',
+          gradientStrength: 80,
+          backgroundImageUrl: '',
+          imageOverlay: 45,
+        },
         cornerRadius: 20,
         fontFamily: 'Inter',
       },
@@ -121,6 +130,15 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
     // default. The branches that DO hold something all survive.
     expect(config?.launcherIcon).toEqual({ source: 'emoji', library: 'chat', emoji: '👋' });
     expect(config?.launcherShadow).toEqual({ enabled: true, intensity: 70 });
+    expect(config?.design).toBe('hero');
+    // Again no empty strings: `backgroundColor: ''` is the console's way of
+    // saying "follow colorSource", which is an ABSENCE rather than a colour.
+    expect(config?.header).toEqual({
+      background: 'gradient',
+      colorSource: 'accent',
+      gradientStrength: 80,
+      imageOverlay: 45,
+    });
     expect(config?.flows[0]).toMatchObject({ id: 'flow-1', trigger: 1, keywords: ['refund'], pagePattern: '/cart' });
   });
 
@@ -147,6 +165,25 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
     // library id survives, and no key is left present-holding-undefined —
     // which under exactOptionalPropertyTypes would stamp over a default.
     expect(config?.launcherIcon).toEqual({ library: 'support' });
+  });
+
+  it('keeps only the header fields it could actually read', () => {
+    const config = parseRemoteConfig({
+      data: {
+        appearance: {
+          header: {
+            background: 'plaid',
+            colorSource: 'platform',
+            gradientStrength: 'lots',
+            imageOverlay: 0,
+          },
+        },
+        behaviour: {},
+      },
+    });
+    // A background kind nobody ships and a non-numeric strength are dropped; a
+    // ZERO overlay survives, because zero is a choice and not an absence.
+    expect(config?.header).toEqual({ colorSource: 'platform', imageOverlay: 0 });
   });
 
   it('keeps a launcherShadow the merchant switched OFF, rather than reading it as unset', () => {
