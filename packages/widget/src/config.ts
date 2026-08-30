@@ -27,6 +27,12 @@ export type WidgetTheme = 'light' | 'dark' | 'auto';
 /** Which bottom corner the launcher — and the bubble panel above it — sits in. */
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
 
+/**
+ * The launcher's shape. `bubble` is the bare circle, `bubble-label` puts the
+ * label beside it, and `tab` is a pill flush against the viewport edge.
+ */
+export type LauncherStyle = 'bubble' | 'bubble-label' | 'tab';
+
 /** How the host tells us who the end user is, without ever holding a secret. */
 export interface WidgetAuth {
   /**
@@ -178,6 +184,29 @@ export interface WidgetConfig {
   readonly offsetY?: number;
 
   /**
+   * The launcher's shape. Defaults to `'bubble'` — the bare circle this
+   * widget has always rendered.
+   *
+   * Ignored under the `sidebar` presentation, which is an edge tab by
+   * definition: a full-height vertical rail has no circular form to take, and
+   * letting a cosmetic setting reshape a structural one would put the tab and
+   * the panel it opens on different edges.
+   */
+  readonly launcher?: LauncherStyle;
+
+  /**
+   * The words on the launcher, for the shapes that show any —
+   * `'bubble-label'`, `'tab'`, and the `sidebar` presentation's edge tab.
+   *
+   * Defaults to {@link title}, which is what the sidebar tab has always
+   * shown: a host that renamed the widget once should not have to say it
+   * twice. Set it separately when the header title and the launcher want
+   * different lengths — "Dhaam Support" reads fine in a header and overflows a
+   * pill.
+   */
+  readonly launcherLabel?: string;
+
+  /**
    * Corner radius in CSS pixels, applied to the panel, the message bubbles and
    * every card inside them. Defaults to 12.
    *
@@ -229,6 +258,8 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly position: WidgetPosition;
   readonly offsetX: number;
   readonly offsetY: number;
+  readonly launcher: LauncherStyle;
+  readonly launcherLabel: string;
   readonly cornerRadius: number;
   readonly fontFamily: string;
   readonly font: 'isolate' | 'inherit';
@@ -317,6 +348,11 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     throw new WidgetConfigError('sheetBreakpointPx must be a positive number');
   }
 
+  // Resolved before the literal below because `launcherLabel` falls back to it
+  // — the sidebar tab has always shown the configured title, and a host that
+  // renamed the widget once should not have to say it twice.
+  const title = config.title ?? 'Chat with us';
+
   return {
     ...config,
     apiUrl,
@@ -327,10 +363,12 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     side: config.side ?? 'right',
     openOnLoad: config.openOnLoad ?? false,
     openOnAgentInitiated: config.openOnAgentInitiated ?? false,
-    title: config.title ?? 'Chat with us',
+    title,
     accent: config.accent ?? '#1f2937',
     theme: config.theme ?? 'auto',
     position: config.position ?? 'bottom-right',
+    launcher: config.launcher ?? 'bubble',
+    launcherLabel: config.launcherLabel ?? title,
     // 20px each: exactly `calc(var(--dh-space) * 5)`, which is where the
     // launcher and the bubble panel have always sat.
     offsetX: config.offsetX ?? 20,

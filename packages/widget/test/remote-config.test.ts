@@ -32,6 +32,8 @@ function body(overrides: Record<string, unknown> = {}): unknown {
         position: 'bottom-left',
         offsetX: 24,
         offsetY: 32,
+        launcher: 'tab',
+        launcherLabel: 'Need help?',
         cornerRadius: 20,
         fontFamily: 'Inter',
       },
@@ -89,6 +91,8 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       position: 'bottom-left',
       offsetX: 24,
       offsetY: 32,
+      launcher: 'tab',
+      launcherLabel: 'Need help?',
       cornerRadius: 20,
       fontFamily: 'Inter',
       greeting: 'How can we help today?',
@@ -186,6 +190,15 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
   ])('leaves position unset when it is %s', (_label, position) => {
     const config = parseRemoteConfig({ data: { appearance: { position }, behaviour: {} } });
     expect(config?.position).toBeUndefined();
+  });
+
+  it.each([
+    ['a shape nobody ships', 'pill'],
+    ['the wrong type', 2],
+    ['absent', undefined],
+  ])('leaves the launcher shape unset when it is %s', (_label, launcher) => {
+    const config = parseRemoteConfig({ data: { appearance: { launcher }, behaviour: {} } });
+    expect(config?.launcher).toBeUndefined();
   });
 
   it('keeps a zero offset, which pins the launcher flush to the edge', () => {

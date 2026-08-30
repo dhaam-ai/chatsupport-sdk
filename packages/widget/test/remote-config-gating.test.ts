@@ -351,6 +351,37 @@ describe('appearance, and the host’s right to overrule it', () => {
     expect(host?.style.getPropertyValue('--dh-font')).toBe('');
   });
 
+  it('adopts the published launcher shape and label', async () => {
+    stubFetch(published({ appearance: { launcher: 'tab', launcherLabel: 'Need help?' } }));
+    mount(config());
+    await settle();
+
+    expect(document.querySelector('dh-chat-widget')?.getAttribute('data-launcher')).toBe('tab');
+    expect(find('.dh-launcher-label')?.textContent).toBe('Need help?');
+    // The name follows the words, WCAG 2.5.3 — including on the async path.
+    expect(find('.dh-launcher')?.getAttribute('aria-label')).toBe('Need help?');
+  });
+
+  // The launcher label falls back to the title, so renaming the widget renames
+  // the tab with it.
+  it('labels the launcher from a published title when no label was published', async () => {
+    stubFetch(published({ appearance: { launcher: 'bubble-label', title: 'Acme Support' } }));
+    mount(config());
+    await settle();
+
+    expect(find('.dh-launcher-label')?.textContent).toBe('Acme Support');
+  });
+
+  // …but not through the back door: a host that stated the title has stated
+  // what the launcher says too, because that is where the fallback comes from.
+  it('does not let a published title relabel a launcher whose title the host set', async () => {
+    stubFetch(published({ appearance: { launcher: 'bubble-label', title: 'Acme Support' } }));
+    mount(config({ title: 'Host title' }));
+    await settle();
+
+    expect(find('.dh-launcher-label')?.textContent).toBe('Host title');
+  });
+
   it('adopts the published corner and offsets', async () => {
     stubFetch(published({ appearance: { position: 'bottom-left', offsetX: 8, offsetY: 96 } }));
     mount(config());

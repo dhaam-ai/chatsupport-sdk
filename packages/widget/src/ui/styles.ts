@@ -306,6 +306,39 @@ button {
   left: var(--dh-offset-x);
 }
 
+/* ── Launcher shapes ──────────────────────────────────────────────────────
+
+   'bubble' is the base rule above and needs no variant. The other two grow
+   sideways to fit a label, so they trade the fixed 56px square for auto width
+   and lay their two children out in a row — 'place-items: center' on the base
+   rule keeps both centred either way. */
+:host([data-launcher="bubble-label"]) .dh-launcher,
+:host([data-launcher="tab"]) .dh-launcher {
+  width: auto;
+  grid-auto-flow: column;
+  gap: calc(var(--dh-space) * 2.5);
+  white-space: nowrap;
+}
+:host([data-launcher="bubble-label"]) .dh-launcher {
+  padding: 0 calc(var(--dh-space) * 5) 0 calc(var(--dh-space) * 4);
+}
+
+/* A tab hugs the wall, so it drops the two corners facing it and gives up its
+   horizontal offset — an offset gap behind a shape whose whole idea is being
+   flush against the edge is the one thing it must not have. The VERTICAL
+   offset still applies: that is how far up from the bottom it sits. */
+:host([data-launcher="tab"]) .dh-launcher {
+  height: 48px;
+  padding: 0 calc(var(--dh-space) * 4);
+  right: 0;
+  border-radius: 999px 0 0 999px;
+}
+:host([data-launcher="tab"][data-position="bottom-left"]) .dh-launcher {
+  right: auto;
+  left: 0;
+  border-radius: 0 999px 999px 0;
+}
+
 /* The sidebar's launcher is an edge tab, not a circle — the brief's "side tab
    that slides in". Vertical text keeps it narrow enough not to eat content.
 
@@ -326,20 +359,49 @@ button {
   padding: calc(var(--dh-space) * 4) calc(var(--dh-space) * 2);
   border-radius: var(--dh-radius) 0 0 var(--dh-radius);
   gap: calc(var(--dh-space) * 2);
+  /* Stacked, not side by side. Restated rather than left to the grid default
+     because 'data-launcher="tab"' above sets 'column' and this rule has to be
+     able to take it back — a vertical rail 40px wide cannot lay an icon and a
+     rotated label out in a row. Every other property this block needs from
+     that rule is already re-declared here for the same reason. */
+  grid-auto-flow: row;
 }
 :host([data-presentation="sidebar"][data-side="left"]) .dh-launcher {
   left: var(--dh-offset-x);
   right: auto;
   border-radius: 0 var(--dh-radius) var(--dh-radius) 0;
 }
+/* Hidden by default and shown by whichever shape has room for it. Three
+   selectors rather than one, because the sidebar's edge tab shows a label for
+   a reason of its own — it is a structural presentation, not the 'tab'
+   launcher STYLE — and collapsing them would tie the two together. */
+.dh-launcher-label { display: none; }
+:host([data-launcher="bubble-label"]) .dh-launcher-label,
+:host([data-launcher="tab"]) .dh-launcher-label,
+:host([data-presentation="sidebar"]) .dh-launcher-label { display: block; }
+
+:host([data-launcher="bubble-label"]) .dh-launcher-label,
+:host([data-launcher="tab"]) .dh-launcher-label {
+  font-size: 14px;
+  font-weight: 600;
+  /* A merchant's label is free text and the launcher sits over their own
+     page, so it is capped rather than allowed to span the viewport. */
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* LAST, so it wins the tie against the launcher-style typography above when
+   both match — a merchant's 'tab' style on a host's sidebar presentation. The
+   rail owns its own type: rotated, narrower, and with no horizontal cap,
+   which is the wrong axis to clamp on vertical text. */
 :host([data-presentation="sidebar"]) .dh-launcher-label {
   writing-mode: vertical-rl;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  max-width: none;
 }
-.dh-launcher-label { display: none; }
-:host([data-presentation="sidebar"]) .dh-launcher-label { display: block; }
 :host([data-presentation="sidebar"]) .dh-launcher:hover { transform: none; }
 
 /* The unread badge. Its number is decoration: the count is also in the

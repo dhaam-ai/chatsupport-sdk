@@ -16,7 +16,7 @@ import type { ChatMessage, ChatSessionSummary, ChatState, ConnectionState } from
 
 import { createWidgetStore } from './client.js';
 import { resolveConfig } from './config.js';
-import type { ResolvedConfig, WidgetConfig } from './config.js';
+import type { LauncherStyle, ResolvedConfig, WidgetConfig } from './config.js';
 import { createComposer } from './ui/composer.js';
 import { ICONS, el, icon } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
@@ -317,8 +317,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // merchant's page.
   host.setAttribute('data-theme', config.theme);
   host.setAttribute('data-position', config.position);
+  host.setAttribute('data-launcher', config.launcher);
 
   let presentation: ResolvedPresentation = 'bubble';
+  /**
+   * The launcher's current shape.
+   *
+   * Mirrored in a local rather than read back off the host attribute because
+   * {@link syncLauncher} needs it on every unread change, and because published
+   * config can replace it after mount — so `config.launcher` is only ever the
+   * BOOT value, not the current one.
+   */
+  let launcherStyle: LauncherStyle = config.launcher;
   let open = false;
   let trap: FocusTrap | null = null;
   let restoreFocus: (() => void) | null = null;
@@ -443,9 +453,24 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       host.style.setProperty('--dh-accent', cssColor(next.accent));
     }
     if (rawConfig.title === undefined && next.title !== undefined) {
-      launcherLabel.textContent = next.title;
       identityHeader.setFallbackTitle(next.title);
     }
+    if (rawConfig.launcher === undefined && next.launcher !== undefined) {
+      launcherStyle = next.launcher;
+      host.setAttribute('data-launcher', next.launcher);
+    }
+    if (rawConfig.launcherLabel === undefined) {
+      // The launcher's label falls back to the TITLE (see config.ts), so a
+      // publish that renames the widget renames the tab with it — but only
+      // when the host has not named the title itself, or a console save would
+      // reach a string the host explicitly set through the back door.
+      const label =
+        next.launcherLabel ?? (rawConfig.title === undefined ? next.title : undefined);
+      if (label !== undefined) launcherLabel.textContent = label;
+    }
+    // Both of the above change what the launcher SHOWS, and its accessible
+    // name has to quote that — see syncLauncher's WCAG 2.5.3 note.
+    syncLauncher(store.getState());
     // An attribute rather than a custom property, because the scheme selects a
     // whole palette rather than setting one value — the same `[data-*]`
     // attribute-selector mechanism the presentation variants use.
@@ -524,7 +549,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   // ── launcher ──────────────────────────────────────────────────────────
   const badge = el('span', { attrs: { class: 'dh-badge', hidden: true, 'aria-hidden': 'true' } });
-  const launcherLabel = el('span', { attrs: { class: 'dh-launcher-label' }, text: config.title });
+  // `launcherLabel`, not `title` — they default to the same string, so the
+  // sidebar tab reads exactly as it always did, but a merchant who wants a
+  // short pill and a long header now gets both.
+  const launcherLabel = el('span', {
+    attrs: { class: 'dh-launcher-label' },
+    text: config.launcherLabel,
+  });
   const launcher = el('button', {
     attrs: {
       class: 'dh-launcher',
@@ -827,8 +858,34 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // reader never mentions is not an unread indicator. The panel is
     // `aria-hidden` while closed, so its live region cannot speak here — this
     // attribute is the only accessible surface a closed widget has.
-    const base = open ? 'Close chat' : 'Open chat';
-    launcher.setAttribute('aria-label', showBadge ? `${base}, ${unreadLabel(unread)}` : base);
+    launcher.setAttribute(
+      'aria-label',
+      showBadge ? `${launcherName()}, ${unreadLabel(unread)}` : launcherName(),
+    );
+  }
+
+  /**
+   * The launcher's name, minus any unread clause.
+   *
+   * ── WCAG 2.5.3, Label in Name ────────────────────────────────────────────
+   *
+   * Where the launcher SHOWS words — the `bubble-label` and `tab` shapes, and
+   * the sidebar presentation's edge tab — those words have to appear in its
+   * accessible name, or voice-control software cannot address the control by
+   * what its user can see: "click Chat with us" finds nothing on a button
+   * whose name is "Open chat".
+   *
+   * The name then stops swapping Open/Close, which is the APG disclosure
+   * pattern rather than a loss: `aria-expanded` already carries the state, and
+   * a name that changes under a voice-control user mid-session is the thing
+   * 2.5.3 exists to prevent. The bare `bubble` shape keeps the swap, because
+   * it shows no words for the name to have to match.
+   */
+  function launcherName(): string {
+    const showsLabel = launcherStyle !== 'bubble' || presentation === 'sidebar';
+    const visible = showsLabel ? (launcherLabel.textContent ?? '') : '';
+    if (visible !== '') return visible;
+    return open ? 'Close chat' : 'Open chat';
   }
 
   /** The unread half of the launcher's accessible name. */

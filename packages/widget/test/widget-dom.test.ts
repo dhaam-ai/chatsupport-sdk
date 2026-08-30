@@ -153,6 +153,64 @@ describe('the launcher', () => {
   });
 });
 
+describe('the launcher’s shape', () => {
+  it('is a bare bubble unless something says otherwise', () => {
+    mount(config());
+    expect(host().getAttribute('data-launcher')).toBe('bubble');
+  });
+
+  it.each(['bubble-label', 'tab'] as const)('carries the %s shape as an attribute', (launcher) => {
+    mount(config({ launcher }));
+    expect(host().getAttribute('data-launcher')).toBe(launcher);
+  });
+
+  // The label element has always existed — the sidebar tab uses it — so what
+  // changes per shape is only whether CSS reveals it. Its TEXT is asserted
+  // here because that is what the accessible name has to match.
+  it('labels itself with the title when the host names no separate label', () => {
+    mount(config({ launcher: 'bubble-label', title: 'Acme Support' }));
+    expect(query('.dh-launcher-label').textContent).toBe('Acme Support');
+  });
+
+  it('prefers an explicit launcherLabel over the title', () => {
+    mount(config({ launcher: 'tab', title: 'Acme Customer Support', launcherLabel: 'Help' }));
+    expect(query('.dh-launcher-label').textContent).toBe('Help');
+  });
+
+  // WCAG 2.5.3: voice control addresses a button by the words on it, so
+  // "click Help" has to find the control that says Help.
+  it('puts the visible label in the accessible name of a shape that shows one', () => {
+    mount(config({ launcher: 'tab', launcherLabel: 'Help' }));
+    expect(query('.dh-launcher').getAttribute('aria-label')).toBe('Help');
+  });
+
+  // …and the name then stops swapping Open/Close, which is the APG disclosure
+  // pattern: `aria-expanded` carries the state instead.
+  it('keeps that name stable across open and close', () => {
+    const widget = mount(config({ launcher: 'tab', launcherLabel: 'Help' }));
+    widget.open();
+
+    const launcher = query('.dh-launcher');
+    expect(launcher.getAttribute('aria-label')).toBe('Help');
+    expect(launcher.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('leaves the bare bubble’s Open/Close name alone — it shows no words to match', () => {
+    const widget = mount(config({ launcher: 'bubble', launcherLabel: 'Help' }));
+    expect(query('.dh-launcher').getAttribute('aria-label')).toBe('Open chat');
+    widget.open();
+    expect(query('.dh-launcher').getAttribute('aria-label')).toBe('Close chat');
+  });
+
+  // The sidebar's edge tab shows its label for a structural reason of its own,
+  // independent of the launcher STYLE — so it earns the same naming rule.
+  it('names the sidebar’s edge tab by its visible label', () => {
+    vi.stubGlobal('innerWidth', 1280);
+    mount(config({ mode: 'sidebar', title: 'Acme Support' }));
+    expect(query('.dh-launcher').getAttribute('aria-label')).toBe('Acme Support');
+  });
+});
+
 describe('the panel', () => {
   it('is hidden from the a11y tree and the tab order while closed', () => {
     mount(config());

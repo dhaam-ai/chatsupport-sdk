@@ -34,7 +34,13 @@
 // response type and no field that could carry one, for the same reason
 // config.ts has none: a shape with no slot for a credential cannot leak one.
 
-import type { ResolvedConfig, WidgetConfig, WidgetPosition, WidgetTheme } from './config.js';
+import type {
+  LauncherStyle,
+  ResolvedConfig,
+  WidgetConfig,
+  WidgetPosition,
+  WidgetTheme,
+} from './config.js';
 
 /** One console-defined field on the pre-chat form. */
 export interface PreChatField {
@@ -116,6 +122,10 @@ export interface RemoteConfig {
   /** `appearance.offsetX`/`offsetY`, in CSS pixels from the viewport edges. */
   readonly offsetX: number | undefined;
   readonly offsetY: number | undefined;
+  /** `appearance.launcher` — the launcher's shape. */
+  readonly launcher: LauncherStyle | undefined;
+  /** `appearance.launcherLabel` — the words on the shapes that show any. */
+  readonly launcherLabel: string | undefined;
   /** `appearance.cornerRadius`, in CSS pixels. */
   readonly cornerRadius: number | undefined;
   /** `appearance.fontFamily` — a console font NAME, not a CSS stack. */
@@ -147,6 +157,8 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   position: undefined,
   offsetX: undefined,
   offsetY: undefined,
+  launcher: undefined,
+  launcherLabel: undefined,
   cornerRadius: undefined,
   fontFamily: undefined,
   greeting: undefined,
@@ -318,6 +330,7 @@ function oneOf<T extends string>(
 
 const THEMES = ['light', 'dark', 'auto'] as const;
 const POSITIONS = ['bottom-right', 'bottom-left'] as const;
+const LAUNCHER_STYLES = ['bubble', 'bubble-label', 'tab'] as const;
 
 function isOfflineMode(value: unknown): value is OfflineMode {
   return value === 1 || value === 2 || value === 3;
@@ -414,6 +427,8 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     position: oneOf(appearance, 'position', POSITIONS),
     offsetX: num(appearance, 'offsetX'),
     offsetY: num(appearance, 'offsetY'),
+    launcher: oneOf(appearance, 'launcher', LAUNCHER_STYLES),
+    launcherLabel: str(appearance, 'launcherLabel'),
     cornerRadius: num(appearance, 'cornerRadius'),
     fontFamily: str(appearance, 'fontFamily'),
     greeting: str(behaviour, 'greeting'),
@@ -466,6 +481,8 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
     position: remote.position,
     offsetX: remote.offsetX,
     offsetY: remote.offsetY,
+    launcher: remote.launcher,
+    launcherLabel: remote.launcherLabel,
     cornerRadius: remote.cornerRadius,
     fontFamily: remote.fontFamily,
   };
