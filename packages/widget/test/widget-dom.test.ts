@@ -486,6 +486,99 @@ describe('teardown', () => {
   });
 });
 
+describe('the classic header’s avatar', () => {
+  // The rule the whole `null`-not-empty-circle contract exists for: this
+  // widget has never drawn an avatar, and an upgrade must not put a grey disc
+  // where a merchant's brand is supposed to be.
+  it('draws nothing at all when there is nothing to draw', () => {
+    mount(config());
+    expect(shadow().querySelector('.dh-avatar')).toBeNull();
+    expect(query<HTMLElement>('.dh-avatar-host').hidden).toBe(true);
+  });
+
+  it('draws the initials a merchant set', () => {
+    mount(config({ avatarInitials: 'DH' }));
+    expect(query('.dh-avatar').textContent).toBe('DH');
+    expect(query<HTMLElement>('.dh-avatar-host').hidden).toBe(false);
+  });
+
+  // The console renders this field as a free-text input; three letters
+  // overflow a 32px disc, so a merchant who typed their whole name gets the
+  // first letters of it rather than a broken circle.
+  it('takes the first two letters of a longer string', () => {
+    mount(config({ avatarInitials: 'Dhaam Support' }));
+    expect(query('.dh-avatar').textContent).toBe('Dh');
+  });
+
+  it('draws the logo instead when the mode says so', () => {
+    mount(config({ avatarMode: 'logo', logoUrl: 'https://cdn.acme.test/logo.png' }));
+    expect(query<HTMLImageElement>('.dh-avatar-image').getAttribute('src')).toBe(
+      'https://cdn.acme.test/logo.png',
+    );
+  });
+
+  // A refused URL is the no-avatar case, not a broken-image icon in the
+  // header of somebody's checkout page.
+  it('draws nothing when the logo URL is refused', () => {
+    mount(config({ avatarMode: 'logo', logoUrl: 'javascript:alert(1)' }));
+    expect(shadow().querySelector('.dh-avatar')).toBeNull();
+  });
+
+  // The hero design has its own face row; two avatars in one header is one
+  // more than anybody asked for.
+  it('stays out of the hero header entirely', () => {
+    mount(config({ design: 'hero', avatarInitials: 'DH' }));
+    expect(shadow().querySelector('.dh-avatar')).toBeNull();
+  });
+});
+
+describe('the platform credit', () => {
+  it('is absent until a merchant turns it on', () => {
+    mount(config());
+    expect(query<HTMLElement>('.dh-branding').hidden).toBe(true);
+  });
+
+  it('renders as plain text when no URL is given', () => {
+    mount(config({ showBranding: true, brandingText: 'Powered by Dhaam' }));
+    expect(query<HTMLElement>('.dh-branding').hidden).toBe(false);
+    expect(query('.dh-branding-text').textContent).toBe('Powered by Dhaam');
+    expect(query<HTMLElement>('.dh-branding-link').hidden).toBe(true);
+  });
+
+  it('renders as a link when the URL survives the guard', () => {
+    mount(config({ showBranding: true, brandingUrl: 'https://dhaam.com' }));
+    const link = query<HTMLAnchorElement>('.dh-branding-link');
+    expect(link.hidden).toBe(false);
+    expect(link.getAttribute('href')).toBe('https://dhaam.com');
+    // The credit sits on a merchant's checkout page; the referrer would leak
+    // whatever the customer was buying to whoever it points at.
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  // The half of the guard that matters: this value lands in an `href`, where
+  // a `javascript:` URL is a script and not a broken picture.
+  it('refuses a javascript: URL and falls back to plain text', () => {
+    mount(config({ showBranding: true, brandingText: 'Us', brandingUrl: 'javascript:alert(1)' }));
+    expect(query<HTMLElement>('.dh-branding-link').hidden).toBe(true);
+    expect(query('.dh-branding-text').textContent).toBe('Us');
+  });
+
+  it('stays hidden when switched on with nothing to say', () => {
+    mount(config({ showBranding: true, brandingText: '   ' }));
+    expect(query<HTMLElement>('.dh-branding').hidden).toBe(true);
+  });
+});
+
+describe('the merchant’s subtitle', () => {
+  // The connection never reaches `connected` in this environment (the socket
+  // is silent by design), which is exactly the case worth pinning: a
+  // response-time promise must never be painted over a diagnostic.
+  it('never replaces a connection label that is still diagnostic', () => {
+    mount(config({ subtitle: 'Typically replies in a few minutes' }));
+    expect(query('.dh-status-text').textContent).not.toBe('Typically replies in a few minutes');
+  });
+});
+
 describe('the §14 key split, end to end', () => {
   it('refuses to mount with a secret key and leaves nothing on the page', () => {
     expect(() =>

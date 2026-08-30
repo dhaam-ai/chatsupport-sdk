@@ -161,3 +161,20 @@ export function safeImageUrl(value: string): string | null {
   if (/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(url)) return url;
   return null;
 }
+
+/**
+ * The same allowlist for a value going into an `href`, where the stakes are
+ * higher than in a `src`.
+ *
+ * Deliberately NARROWER than {@link safeImageUrl} rather than a reuse of it:
+ * `data:` is refused outright here. A `data:image/svg+xml` in an `<img>` is
+ * rendered as a picture with no script, but the same string NAVIGATED to is a
+ * document with a script — the exact difference the two guards exist to keep
+ * apart. Only absolute `http(s)` survives, so `javascript:` is unreachable
+ * rather than merely unlikely, and a relative path cannot silently point at
+ * the host page's own origin.
+ */
+export function safeLinkUrl(value: string): string | null {
+  const url = value.trim();
+  return /^https?:\/\//i.test(url) ? url : null;
+}

@@ -17,6 +17,7 @@ import type { ChatMessage, ChatSessionSummary, ChatState, ConnectionState } from
 import { createWidgetStore } from './client.js';
 import { resolveConfig } from './config.js';
 import type {
+  AvatarMode,
   HeaderAppearance,
   LauncherIcon,
   LauncherStyle,
@@ -26,7 +27,7 @@ import type {
   WidgetDesign,
 } from './config.js';
 import { createComposer } from './ui/composer.js';
-import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl } from './ui/dom.js';
+import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl, safeLinkUrl } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
 import type { FocusTrap } from './ui/focus.js';
 import { createHeroHeader, heroContentFrom } from './ui/hero-header.js';
@@ -346,6 +347,36 @@ function buildLauncherIcon(spec: LauncherIcon): Node {
   return icon(LAUNCHER_ICONS[spec.library] ?? ICONS.chat, 24);
 }
 
+/**
+ * The classic header's avatar, or `null` when there is nothing to draw.
+ *
+ * `null` rather than an empty circle is the whole contract: this widget has
+ * never drawn an avatar, so a merchant who has set neither initials nor a logo
+ * must get the header they already have rather than a grey disc where their
+ * brand is supposed to be.
+ *
+ * `aria-hidden` throughout — the title beside it already names who the
+ * customer is talking to, and a screen reader announcing "D" before it would
+ * be reading out a decoration.
+ */
+function buildHeaderAvatar(mode: AvatarMode, initials: string, logoUrl: string): HTMLElement | null {
+  if (mode === 'logo') {
+    const src = safeImageUrl(logoUrl);
+    return src === null
+      ? null
+      : el('img', { attrs: { class: 'dh-avatar dh-avatar-image', src, alt: '', 'aria-hidden': 'true' } });
+  }
+
+  // Two characters, because that is what fits: the console lets a merchant
+  // type a whole word into a field rendered as a 32px disc, and three letters
+  // overflow it. Sliced rather than refused — a merchant who typed their full
+  // name meant the first letters of it.
+  const letters = initials.trim().slice(0, 2);
+  return letters === ''
+    ? null
+    : el('span', { attrs: { class: 'dh-avatar', 'aria-hidden': 'true' }, text: letters });
+}
+
 /** Which of the three data-collecting surfaces is standing in for the chat. */
 type SurfaceKind = 'preChat' | 'offline' | 'csat';
 
@@ -386,6 +417,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   let launcherStyle: LauncherStyle = config.launcher;
   /** Mirrored for the same reason as {@link launcherStyle}: a publish can replace it. */
   let design: WidgetDesign = config.design;
+  /**
+   * The merchant's own line under the title, or `''` for none.
+   *
+   * Mirrored for the same reason as {@link design}, and read by
+   * {@link syncConnection} rather than written into the DOM once: the slot it
+   * occupies belongs to the connection status, which repaints on every
+   * transport change, so a value written here directly would be overwritten
+   * by the next reconnect.
+   */
+  let subtitle = config.subtitle;
   let open = false;
   let trap: FocusTrap | null = null;
   let restoreFocus: (() => void) | null = null;
@@ -568,6 +609,35 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (rawConfig.thread === undefined && Object.keys(next.thread).length > 0) {
       applyThreadAppearance({ ...config.thread, ...next.thread });
     }
+    if (rawConfig.subtitle === undefined && next.subtitle !== undefined) {
+      subtitle = next.subtitle;
+      // Repainted through the connection sync rather than written straight to
+      // the node: that function owns this slot and would overwrite anything
+      // put there behind its back on the very next transport event.
+      syncConnection();
+    }
+    // Unconditional for the same reason `applyHeaderAppearance` is: the avatar
+    // reads `logoUrl`, which a publish can move without saying anything about
+    // `avatarMode` — and it reads `design`, which the branch above may just
+    // have changed out from under it.
+    applyHeaderAvatar(
+      rawConfig.avatarMode === undefined ? (next.avatarMode ?? config.avatarMode) : config.avatarMode,
+      rawConfig.avatarInitials === undefined
+        ? (next.avatarInitials ?? config.avatarInitials)
+        : config.avatarInitials,
+      rawConfig.logoUrl === undefined ? (next.logoUrl ?? config.logoUrl) : config.logoUrl,
+    );
+    applyBranding(
+      rawConfig.showBranding === undefined
+        ? (next.showBranding ?? config.showBranding)
+        : config.showBranding,
+      rawConfig.brandingText === undefined
+        ? (next.brandingText ?? config.brandingText)
+        : config.brandingText,
+      rawConfig.brandingUrl === undefined
+        ? (next.brandingUrl ?? config.brandingUrl)
+        : config.brandingUrl,
+    );
     // An attribute rather than a custom property, because the scheme selects a
     // whole palette rather than setting one value — the same `[data-*]`
     // attribute-selector mechanism the presentation variants use.
@@ -644,6 +714,21 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (header.colorSource === 'platform' && header.backgroundColor.trim() === '') {
       borrowPlatformColor();
     }
+  }
+
+  /**
+   * The classic header's avatar. Rebuilt rather than patched — see
+   * {@link buildHeaderAvatar} for why the slot holds three shapes.
+   *
+   * The hero design is skipped outright rather than hidden in CSS: its own
+   * face row already answers "who am I talking to", and building an element
+   * only to have a stylesheet refuse to show it is a node that exists to be
+   * invisible.
+   */
+  function applyHeaderAvatar(mode: AvatarMode, initials: string, logoUrl: string): void {
+    const avatar = design === 'hero' ? null : buildHeaderAvatar(mode, initials, logoUrl);
+    avatarHost.hidden = avatar === null;
+    avatarHost.replaceChildren(...(avatar === null ? [] : [avatar]));
   }
 
   /** The conversation's backdrop, through the same inline-property route. */
@@ -808,6 +893,60 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const heroHeader = createHeroHeader({ onCallToAction: () => composer.input.focus() });
 
   /**
+   * The classic header's avatar slot.
+   *
+   * A wrapper rather than the avatar itself, for the reason the launcher's
+   * glyph is one: three element shapes (img / span / nothing at all) share
+   * this position, and a publish can swap between them. `replaceChildren` on
+   * an empty wrapper is one line where patching in place would be three
+   * branches of DOM surgery.
+   *
+   * Never mounted under the hero design — that layout has its own, richer
+   * face row (`header.avatars`, `header.showLogo`), and two avatars in one
+   * header is one more than any of them is asking for.
+   */
+  const avatarHost = el('div', { attrs: { class: 'dh-avatar-host' } });
+
+  /**
+   * The platform credit under the composer.
+   *
+   * An `<a>` only when the merchant gave a URL that survives
+   * {@link safeLinkUrl}; otherwise the same text as a plain span. Hidden
+   * entirely by default — see `showBranding` in config.ts for why a widget
+   * nobody has configured does not sprout a footer.
+   *
+   * `rel="noreferrer"` alongside `noopener`: this sits on a merchant's
+   * checkout page, and the referrer would leak the URL of whatever page the
+   * customer was buying from to whoever the credit points at.
+   */
+  const brandingLink = el('a', {
+    attrs: { class: 'dh-branding-link', target: '_blank', rel: 'noopener noreferrer' },
+  });
+  const brandingText = el('span', { attrs: { class: 'dh-branding-text' } });
+  const branding = el('div', {
+    attrs: { class: 'dh-branding', hidden: true },
+    children: [brandingText, brandingLink],
+  });
+
+  /** Paints the credit, or leaves it hidden. Re-run when a publish lands. */
+  function applyBranding(show: boolean, text: string, url: string): void {
+    const label = text.trim();
+    // A footer switched on with nothing to say is still nothing to say.
+    branding.hidden = !show || label === '';
+    if (branding.hidden) return;
+
+    const href = safeLinkUrl(url);
+    brandingLink.hidden = href === null;
+    brandingText.hidden = href !== null;
+    if (href === null) {
+      brandingText.textContent = label;
+      return;
+    }
+    brandingLink.textContent = label;
+    brandingLink.setAttribute('href', href);
+  }
+
+  /**
    * Who the customer is talking to.
    *
    * Its `node` IS the `<h2 id="dh-title">` — mounted in place of the h2 this
@@ -913,6 +1052,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       el('header', {
         attrs: { class: 'dh-header' },
         children: [
+          avatarHost,
           el('div', { children: [identityHeader.node, status] }),
           el('div', { attrs: { class: 'dh-header-spacer' } }),
           reconnectButton,
@@ -945,6 +1085,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // a glance, and inside the log it would scroll away.
       handoffButton,
       composer.node,
+      // Under the composer, which is where a credit belongs: it is the least
+      // important thing in the panel and must never sit between the customer
+      // and the conversation.
+      branding,
       messageList.liveRegion,
       // Its own channel, deliberately not folded into `status` or the message
       // log's region: `status` re-announces on every connection change, and
@@ -971,6 +1115,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // which is built with the panel above, so running it any earlier puts that
   // const in the temporal dead zone and every single mount throws.
   applyHeaderAppearance(config.header, config.accent, config.logoUrl);
+  applyHeaderAvatar(config.avatarMode, config.avatarInitials, config.logoUrl);
+  applyBranding(config.showBranding, config.brandingText, config.brandingUrl);
 
   // The conversation is the default screen. The pre-chat chooser only ever
   // replaces it once a non-empty session list has actually arrived, so it
@@ -1829,9 +1975,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * button and the composer said nothing at all.
    */
   function syncConnection(): void {
-    const status = resolveConnectionStatus(store.getState().connectionState, online, failedAttempts);
+    const connectionState = store.getState().connectionState;
+    const status = resolveConnectionStatus(connectionState, online, failedAttempts);
 
-    statusText.textContent = status.label;
+    // The merchant's subtitle stands in for `'Online'` and for nothing else.
+    // Every other label is diagnostic, and a response-time promise painted
+    // over "Not connected — use Reconnect to try again" would tell a customer
+    // their message is on its way to somebody while it is going nowhere. A
+    // healthy connection is the one state with nothing of its own to report,
+    // so it is the one the merchant's words can have.
+    statusText.textContent =
+      connectionState === 'connected' && subtitle !== '' ? subtitle : status.label;
     statusDot.style.color = status.color;
 
     reconnectButton.hidden = status.control === 'hidden';

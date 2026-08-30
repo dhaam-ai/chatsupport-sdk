@@ -35,6 +35,7 @@
 // config.ts has none: a shape with no slot for a credential cannot leak one.
 
 import type {
+  AvatarMode,
   HeaderAppearance,
   LauncherIcon,
   LauncherShadow,
@@ -148,6 +149,16 @@ export interface RemoteConfig {
   readonly header: Partial<HeaderAppearance>;
   /** `appearance.logoUrl` — the brand mark, behind the header's own. */
   readonly logoUrl: string | undefined;
+  /** `appearance.subtitle` — stands in for the status line's `'Online'` only. */
+  readonly subtitle: string | undefined;
+  /** `appearance.avatarMode` — whether the classic header's avatar is letters or the logo. */
+  readonly avatarMode: AvatarMode | undefined;
+  /** `appearance.avatarInitials`. Absent means no avatar, not a blank one. */
+  readonly avatarInitials: string | undefined;
+  /** `appearance.showBranding` — whether to credit the platform under the composer. */
+  readonly showBranding: boolean | undefined;
+  readonly brandingText: string | undefined;
+  readonly brandingUrl: string | undefined;
   /** `appearance.thread` — the conversation's backdrop. Same `{}`-means-unset rule. */
   readonly thread: Partial<ThreadAppearance>;
   /** `appearance.cornerRadius`, in CSS pixels. */
@@ -188,6 +199,12 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   design: undefined,
   header: {},
   logoUrl: undefined,
+  subtitle: undefined,
+  avatarMode: undefined,
+  avatarInitials: undefined,
+  showBranding: undefined,
+  brandingText: undefined,
+  brandingUrl: undefined,
   thread: {},
   cornerRadius: undefined,
   fontFamily: undefined,
@@ -422,6 +439,7 @@ function parseLauncherShadow(value: unknown): Partial<LauncherShadow> {
 }
 
 const DESIGNS = ['classic', 'hero'] as const;
+const AVATAR_MODES = ['initials', 'logo'] as const;
 const THREAD_BACKGROUNDS = ['mesh', 'solid', 'image', 'pattern'] as const;
 const THREAD_PATTERNS = ['dots', 'grid', 'diagonal', 'crosshatch'] as const;
 const IMAGE_FADES = ['light', 'dark'] as const;
@@ -581,6 +599,12 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     design: oneOf(appearance, 'design', DESIGNS),
     header: parseHeader(appearance['header']),
     logoUrl: str(appearance, 'logoUrl'),
+    subtitle: str(appearance, 'subtitle'),
+    avatarMode: oneOf(appearance, 'avatarMode', AVATAR_MODES),
+    avatarInitials: str(appearance, 'avatarInitials'),
+    showBranding: flag(appearance, 'showBranding'),
+    brandingText: str(appearance, 'brandingText'),
+    brandingUrl: str(appearance, 'brandingUrl'),
     thread: parseThread(appearance['thread']),
     cornerRadius: num(appearance, 'cornerRadius'),
     fontFamily: str(appearance, 'fontFamily'),
@@ -638,6 +662,12 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
     launcherLabel: remote.launcherLabel,
     design: remote.design,
     logoUrl: remote.logoUrl,
+    subtitle: remote.subtitle,
+    avatarMode: remote.avatarMode,
+    avatarInitials: remote.avatarInitials,
+    showBranding: remote.showBranding,
+    brandingText: remote.brandingText,
+    brandingUrl: remote.brandingUrl,
     cornerRadius: remote.cornerRadius,
     fontFamily: remote.fontFamily,
   };

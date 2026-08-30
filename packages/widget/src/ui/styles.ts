@@ -833,6 +833,29 @@ button {
   flex: none;
 }
 .dh-title { font-size: 15px; font-weight: 600; margin: 0; }
+/* The classic header's avatar. Sized off the accent rather than a neutral so
+   an initials disc reads as the merchant's brand and not as a placeholder;
+   'readableOn' picks the letter colour, so a pale accent still has legible
+   text on it. Hidden entirely when there is nothing to draw — see
+   'buildHeaderAvatar'. */
+.dh-avatar-host { display: flex; align-items: center; flex: none; }
+.dh-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  border-radius: 999px;
+  background: var(--dh-accent);
+  color: var(--dh-on-accent, #fff);
+  font-size: 13px;
+  font-weight: 600;
+  /* Uppercase in CSS rather than in the string, so what a merchant typed is
+     what a screen reader would get if this ever stopped being decoration. */
+  text-transform: uppercase;
+  flex: none;
+  overflow: hidden;
+}
+.dh-avatar-image { object-fit: cover; background: none; }
 .dh-status {
   display: flex;
   align-items: center;
@@ -1420,6 +1443,35 @@ button {
   display: flex;
   align-items: flex-end;
   gap: calc(var(--dh-space) * 2);
+}
+/* The platform credit. Muted and small on purpose: it is the least important
+   thing in the panel, and a footer that competes with the composer above it
+   has misunderstood its job. */
+.dh-branding {
+  flex: none;
+  padding: calc(var(--dh-space)) calc(var(--dh-space) * 3);
+  padding-bottom: max(var(--dh-space), env(safe-area-inset-bottom));
+  background: var(--dh-surface);
+  font-size: 11px;
+  text-align: center;
+  color: var(--dh-text-muted);
+}
+/* The safe-area clearance belongs to whichever element is actually last. With
+   a credit below it the composer would otherwise reserve room for the iOS
+   home indicator that the credit then reserves again, leaving a visible gap
+   between the two. */
+.dh-composer:has(+ .dh-branding:not([hidden])) {
+  padding-bottom: calc(var(--dh-space) * 2);
+}
+.dh-branding-link {
+  color: inherit;
+  text-decoration: none;
+}
+.dh-branding-link:hover { text-decoration: underline; }
+.dh-branding-link:focus-visible {
+  outline: 2px solid var(--dh-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 /* The slot a product surface occupies — same "stands in for the conversation"
    role as .dh-prechat, so it takes the same remaining height. */

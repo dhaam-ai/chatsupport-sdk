@@ -40,6 +40,9 @@ export type LauncherStyle = 'bubble' | 'bubble-label' | 'tab';
  */
 export type WidgetDesign = 'classic' | 'hero';
 
+/** What the classic header's avatar draws. */
+export type AvatarMode = 'initials' | 'logo';
+
 /** How the hero header's background is painted. */
 export type HeaderBackground = 'solid' | 'gradient' | 'image';
 
@@ -251,6 +254,20 @@ export interface WidgetConfig {
   /** Header title. Defaults to `'Chat with us'`. */
   readonly title?: string;
 
+  /**
+   * The line under the title — a response-time promise, typically. Defaults to
+   * `''`, which leaves the connection status alone.
+   *
+   * Set, it replaces the status line's `'Online'` AND NOTHING ELSE. Every
+   * other connection label is diagnostic — "Connecting…", "Not connected —
+   * use Reconnect to try again" — and a merchant's reassurance rendered over
+   * one of those would tell a customer their message is on its way to someone
+   * while it is in fact going nowhere. There is one line under the title, so
+   * the two have to share it, and the rule for sharing it is that a working
+   * connection has nothing to report and a broken one always wins.
+   */
+  readonly subtitle?: string;
+
   /** Accent colour, any CSS colour. Defaults to a neutral slate. */
   readonly accent?: string;
 
@@ -362,6 +379,50 @@ export interface WidgetConfig {
   readonly logoUrl?: string;
 
   /**
+   * Whether the classic header's avatar draws {@link avatarInitials} or
+   * {@link logoUrl}. Defaults to `'initials'`.
+   *
+   * Inert on its own: with no initials and no logo there is nothing to draw,
+   * which is why this can carry the console's default without repainting a
+   * widget nobody has configured. The hero header has its own, richer
+   * `header.showLogo`/`header.avatars` and never reads this.
+   */
+  readonly avatarMode?: AvatarMode;
+
+  /**
+   * One or two letters for the classic header's avatar. Empty by default, and
+   * empty means NO AVATAR — not a blank circle.
+   *
+   * The console defaults this to the workspace's initial, but the built-in
+   * default here is the pre-config behaviour: a header with a title and no
+   * avatar beside it. A merchant who wants one has said so.
+   */
+  readonly avatarInitials?: string;
+
+  /**
+   * Whether to credit the platform under the composer. Defaults to `false` —
+   * this widget has never drawn a footer, and turning one on for every
+   * existing host would be a visible change none of them asked for.
+   *
+   * The console defaults it to `true`, so a merchant whose config this widget
+   * can actually read gets the credit; a host embedding without one does not
+   * sprout a footer on upgrade.
+   */
+  readonly showBranding?: boolean;
+
+  /** The credit line itself. Defaults to `'Powered by Dhaam'`. */
+  readonly brandingText?: string;
+
+  /**
+   * Makes the credit a link. Empty — the default — renders it as plain text.
+   *
+   * Refused unless `https:`/`http:` for the same reason {@link logoUrl} is:
+   * this is merchant-supplied and lands in an `href`, so `javascript:` has to
+   * be unreachable rather than merely unlikely.
+   */
+  readonly brandingUrl?: string;
+
+  /**
    * The conversation's backdrop. Defaults to a plain `solid` with no colour —
    * which is the panel's own surface, i.e. exactly what this widget has always
    * drawn.
@@ -421,6 +482,7 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly openOnLoad: boolean;
   readonly openOnAgentInitiated: boolean;
   readonly title: string;
+  readonly subtitle: string;
   readonly accent: string;
   readonly theme: WidgetTheme;
   readonly position: WidgetPosition;
@@ -433,6 +495,11 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly design: WidgetDesign;
   readonly header: HeaderAppearance;
   readonly logoUrl: string;
+  readonly avatarMode: AvatarMode;
+  readonly avatarInitials: string;
+  readonly showBranding: boolean;
+  readonly brandingText: string;
+  readonly brandingUrl: string;
   readonly thread: ThreadAppearance;
   readonly cornerRadius: number;
   readonly fontFamily: string;
@@ -596,6 +663,7 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     openOnLoad: config.openOnLoad ?? false,
     openOnAgentInitiated: config.openOnAgentInitiated ?? false,
     title,
+    subtitle: config.subtitle ?? '',
     accent: config.accent ?? '#1f2937',
     theme: config.theme ?? 'auto',
     position: config.position ?? 'bottom-right',
@@ -609,6 +677,11 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     design: config.design ?? 'classic',
     header: { ...DEFAULT_HEADER, ...config.header },
     logoUrl: config.logoUrl ?? '',
+    avatarMode: config.avatarMode ?? 'initials',
+    avatarInitials: config.avatarInitials ?? '',
+    showBranding: config.showBranding ?? false,
+    brandingText: config.brandingText ?? 'Powered by Dhaam',
+    brandingUrl: config.brandingUrl ?? '',
     thread: { ...DEFAULT_THREAD, ...config.thread },
     // 20px each: exactly `calc(var(--dh-space) * 5)`, which is where the
     // launcher and the bubble panel have always sat.
