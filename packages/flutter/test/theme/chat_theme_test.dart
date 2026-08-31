@@ -1,0 +1,146 @@
+import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+/// A [RemoteConfig] fixture with just the theme-relevant leaves overridable
+/// — mirrors `remote_config_client_test.dart`'s own `withOverrides` helper,
+/// scoped to what this file needs rather than a shared utility the codebase
+/// has not otherwise chosen to introduce.
+RemoteConfig _config({String? accent, WidgetTheme? theme, String? fontFamily, double? cornerRadius}) {
+  return RemoteConfig(
+    enabled: true,
+    accent: accent,
+    title: null,
+    theme: theme,
+    position: null,
+    offsetX: null,
+    offsetY: null,
+    launcher: null,
+    launcherLabel: null,
+    launcherIcon: const LauncherIcon(),
+    launcherShadow: const LauncherShadow(),
+    design: null,
+    header: const HeaderAppearance(),
+    logoUrl: null,
+    subtitle: null,
+    avatarMode: null,
+    avatarInitials: null,
+    showBranding: null,
+    brandingText: null,
+    brandingUrl: null,
+    thread: const ThreadAppearance(),
+    cornerRadius: cornerRadius,
+    fontFamily: fontFamily,
+    greeting: null,
+    greetingDelaySec: 0,
+    autoOpen: AutoOpen.never,
+    autoOpenDelaySec: 12,
+    typingIndicator: true,
+    sound: false,
+    transcriptEmail: false,
+    consentRequired: false,
+    consentText: null,
+    handoffKeywords: const <String>[],
+    reportIssue: false,
+    preChatEnabled: false,
+    preChatFields: const <PreChatField>[],
+    commonQuestions: const <CommonQuestion>[],
+    conversationTopics: const <ConversationTopic>[],
+    csatStyle: CsatStyle.stars,
+    offlineMode: OfflineMode.showMessage,
+    offlineMessage: null,
+    fileUploads: true,
+    isOpenNow: null,
+    flows: const <PublishedFlow>[],
+    botDisplayName: null,
+    publishedVersion: 0,
+  );
+}
+
+void main() {
+  group('parseHexColor', () {
+    test('parses a 6-digit hex string, with or without the #', () {
+      expect(parseHexColor('#ff0000'), const Color(0xFFFF0000));
+      expect(parseHexColor('00ff00'), const Color(0xFF00FF00));
+    });
+
+    test('expands the 3-digit shorthand', () {
+      expect(parseHexColor('#f00'), const Color(0xFFFF0000));
+    });
+
+    test('is case-insensitive', () {
+      expect(parseHexColor('#AbCdEf'), parseHexColor('#abcdef'));
+    });
+
+    test('null for absent, malformed, or a CSS colour Flutter cannot parse', () {
+      expect(parseHexColor(null), isNull);
+      expect(parseHexColor('not-a-color'), isNull);
+      expect(parseHexColor('rebeccapurple'), isNull);
+      expect(parseHexColor('rgb(0, 0, 0)'), isNull);
+      expect(parseHexColor('#12'), isNull);
+    });
+  });
+
+  group('chatThemeData', () {
+    test('an absent accent falls back to the JS widget\'s own default (#1f2937)', () {
+      final theme = chatThemeData(_config(), Brightness.light);
+      expect(theme.colorScheme, ColorScheme.fromSeed(seedColor: kDefaultAccent, brightness: Brightness.light));
+    });
+
+    test('a published accent seeds the ColorScheme', () {
+      final theme = chatThemeData(_config(accent: '#ff0000'), Brightness.light);
+      expect(
+        theme.colorScheme,
+        ColorScheme.fromSeed(seedColor: const Color(0xFFFF0000), brightness: Brightness.light),
+      );
+    });
+
+    test('WidgetTheme.light and .dark pin the brightness regardless of the platform', () {
+      expect(chatThemeData(_config(theme: WidgetTheme.light), Brightness.dark).brightness, Brightness.light);
+      expect(chatThemeData(_config(theme: WidgetTheme.dark), Brightness.light).brightness, Brightness.dark);
+    });
+
+    test('WidgetTheme.auto and an absent theme both follow the platform', () {
+      expect(chatThemeData(_config(theme: WidgetTheme.auto), Brightness.dark).brightness, Brightness.dark);
+      expect(chatThemeData(_config(), Brightness.dark).brightness, Brightness.dark);
+      expect(chatThemeData(_config(), Brightness.light).brightness, Brightness.light);
+    });
+
+    test('a published fontFamily reaches the text theme', () {
+      // ThemeData has no `fontFamily` getter of its own — the constructor
+      // parameter is sugar that applies onto textTheme (confirmed against
+      // https://api.flutter.dev/flutter/material/ThemeData/ThemeData.html),
+      // so that is where a published font actually shows up.
+      expect(
+        chatThemeData(_config(fontFamily: 'Inter'), Brightness.light).textTheme.bodyMedium?.fontFamily,
+        'Inter',
+      );
+    });
+
+    test('an unset fontFamily leaves Material 3\'s own default (Roboto) alone', () {
+      // Not null: passing fontFamily: null to ThemeData() does not blank the
+      // font, it leaves Material 3's own default text theme untouched. An
+      // absent RemoteConfig.fontFamily should mean exactly that — "no
+      // opinion" — not "no font at all".
+      expect(chatThemeData(_config(), Brightness.light).textTheme.bodyMedium?.fontFamily, 'Roboto');
+    });
+  });
+
+  group('chatCornerRadius', () {
+    test('defaults to 12 when unset', () {
+      expect(chatCornerRadius(_config()), 12);
+    });
+
+    test('passes a sane published value through', () {
+      expect(chatCornerRadius(_config(cornerRadius: 20)), 20);
+    });
+
+    test('clamps a negative value to 0', () {
+      expect(chatCornerRadius(_config(cornerRadius: -5)), 0);
+    });
+
+    test('clamps an absurd value to 32', () {
+      expect(chatCornerRadius(_config(cornerRadius: 999)), 32);
+    });
+  });
+}

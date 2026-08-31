@@ -21,3 +21,4 @@ export 'src/session/session_display.dart';
 export 'src/state/chat_widget_cubit.dart';
 export 'src/state/chat_widget_state.dart';
 export 'src/state/widget_chat_client.dart';
+export 'src/theme/chat_theme.dart';
