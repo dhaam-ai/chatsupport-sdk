@@ -99,17 +99,47 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   /// The Home CTA, or the Messages screen's "New conversation" button.
   /// Composes fresh rather than opening a past session — see
-  /// [ChatWidgetState.composingNew].
+  /// [ChatWidgetState.composingNew]. Clears any topic left selected from a
+  /// PREVIOUS compose that never sent, so returning to this screen a second
+  /// time does not silently carry a stale chip forward as pre-selected.
   void startNewConversation() {
     _screens.go(ScreenName.conversation);
-    emit(state.copyWith(screen: _screens.current, canGoBack: _screens.canGoBack, composingNew: true));
+    emit(
+      state.copyWith(
+        screen: _screens.current,
+        canGoBack: _screens.canGoBack,
+        composingNew: true,
+        clearSelectedTopic: true,
+      ),
+    );
   }
 
-  /// Opens a past conversation from a Home/Messages row.
+  /// Opens a past conversation from a Home/Messages row. Clears
+  /// [ChatWidgetState.selectedTopic] — a topic chip belongs to a prospective
+  /// NEW conversation, and has nothing to do with re-opening an existing one.
   void openConversation(String sessionId) {
     _client.joinSession(sessionId);
     _screens.go(ScreenName.conversation);
-    emit(state.copyWith(screen: _screens.current, canGoBack: _screens.canGoBack, composingNew: false));
+    emit(
+      state.copyWith(
+        screen: _screens.current,
+        canGoBack: _screens.canGoBack,
+        composingNew: false,
+        clearSelectedTopic: true,
+      ),
+    );
+  }
+
+  /// Picks (or, tapped a second time, un-picks) a New Conversation topic
+  /// chip — a single-select toggle, matching the `aria-pressed` chip the
+  /// console-facing pieces of this feature already use.
+  void selectTopic(ConversationTopic topic) {
+    final bool alreadySelected = state.selectedTopic == topic;
+    emit(
+      alreadySelected
+          ? state.copyWith(clearSelectedTopic: true)
+          : state.copyWith(selectedTopic: topic),
+    );
   }
 
   /// Answers `false` when there is nowhere to go — see [ChatScreens.back]
@@ -128,9 +158,16 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// Sends [content]. The optimistic echo arrives through [_onMessage] like
   /// any other — see `ChatClient.sendMessage` on why there is no `Future`
   /// here to await instead.
+  ///
+  /// Clears [ChatWidgetState.selectedTopic] alongside `composingNew`: a
+  /// chosen topic's job was to accompany THIS compose, and once it has sent,
+  /// carrying the selection forward would pre-select a chip for whatever the
+  /// customer composes next.
   void sendMessage(String content, {String? replyToMessageId}) {
     _client.sendMessage(content, replyToMessageId: replyToMessageId);
-    if (state.composingNew) emit(state.copyWith(composingNew: false));
+    if (state.composingNew) {
+      emit(state.copyWith(composingNew: false, clearSelectedTopic: true));
+    }
   }
 
   void markRead({String? upToMessageId}) => _client.markRead(upToMessageId: upToMessageId);

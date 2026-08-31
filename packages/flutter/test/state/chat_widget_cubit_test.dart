@@ -140,6 +140,47 @@ void main() {
       expect(moved, isFalse);
       expect(cubit.state, same(before));
     });
+
+    test('startNewConversation clears a topic left selected from a compose that never sent', () {
+      cubit.startNewConversation();
+      cubit.selectTopic(const ConversationTopic(id: 't1', label: 'Delivery issue'));
+      expect(cubit.state.selectedTopic, isNotNull);
+
+      cubit.startNewConversation();
+
+      expect(cubit.state.selectedTopic, isNull);
+    });
+
+    test('openConversation clears a selected topic — it belongs to a prospective new conversation', () {
+      cubit.startNewConversation();
+      cubit.selectTopic(const ConversationTopic(id: 't1', label: 'Delivery issue'));
+
+      cubit.openConversation('past-session-1');
+
+      expect(cubit.state.selectedTopic, isNull);
+    });
+  });
+
+  group('topic selection', () {
+    const topic = ConversationTopic(id: 't1', label: 'Delivery issue');
+    const otherTopic = ConversationTopic(id: 't2', label: 'Refund');
+
+    test('selectTopic picks a topic', () {
+      cubit.selectTopic(topic);
+      expect(cubit.state.selectedTopic, topic);
+    });
+
+    test('selecting a different topic replaces the previous one', () {
+      cubit.selectTopic(topic);
+      cubit.selectTopic(otherTopic);
+      expect(cubit.state.selectedTopic, otherTopic);
+    });
+
+    test('selecting the SAME topic again un-picks it — a single-select toggle', () {
+      cubit.selectTopic(topic);
+      cubit.selectTopic(topic);
+      expect(cubit.state.selectedTopic, isNull);
+    });
   });
 
   group('sending', () {
@@ -155,6 +196,21 @@ void main() {
       cubit.sendMessage('hi');
 
       expect(cubit.state.composingNew, isFalse);
+    });
+
+    test('sendMessage while composing also clears a selected topic — its job for this compose is done', () {
+      cubit.startNewConversation();
+      cubit.selectTopic(const ConversationTopic(id: 't1', label: 'Delivery issue'));
+
+      cubit.sendMessage('my order never arrived');
+
+      expect(cubit.state.selectedTopic, isNull);
+    });
+
+    test('sendMessage NOT composing (an existing conversation) leaves no topic to clear either way', () {
+      cubit.openConversation('past-session-1');
+      cubit.sendMessage('a follow-up message');
+      expect(cubit.state.selectedTopic, isNull);
     });
 
     test('markRead delegates to the client', () {

@@ -21,6 +21,7 @@ class ChatWidgetState extends Equatable {
     required this.isTyping,
     required this.sessionSummaries,
     required this.unreadCount,
+    this.selectedTopic,
   });
 
   /// Starting point for a fresh [ChatWidgetCubit] — disconnected, the
@@ -85,6 +86,16 @@ class ChatWidgetState extends Equatable {
   /// data.
   final int unreadCount;
 
+  /// The New Conversation screen's chosen topic chip, or `null` — nothing
+  /// picked, which is the default and stays valid: a topic is an optional
+  /// refinement on a new conversation, never a requirement to start one.
+  ///
+  /// Cleared (not carried forward) once a new conversation actually starts
+  /// composing again, once its first message sends, or when an existing
+  /// conversation is opened instead — see [ChatWidgetCubit.startNewConversation],
+  /// [ChatWidgetCubit.sendMessage] and [ChatWidgetCubit.openConversation].
+  final ConversationTopic? selectedTopic;
+
   ChatWidgetState copyWith({
     ConnectionState? connectionState,
     RemoteConfig? config,
@@ -96,6 +107,13 @@ class ChatWidgetState extends Equatable {
     bool? isTyping,
     List<ChatSessionSummary>? sessionSummaries,
     int? unreadCount,
+    ConversationTopic? selectedTopic,
+    // Unlike every other field here, "clear selectedTopic" IS something a
+    // real caller needs (see the field's own doc: three different Cubit
+    // methods reset it) — plain `??` cannot express "set this to null", so
+    // this is the sentinel wrapper `session`'s own comment says was not yet
+    // worth adding, now that there is an actual caller for it.
+    bool clearSelectedTopic = false,
   }) {
     return ChatWidgetState(
       connectionState: connectionState ?? this.connectionState,
@@ -111,6 +129,7 @@ class ChatWidgetState extends Equatable {
       isTyping: isTyping ?? this.isTyping,
       sessionSummaries: sessionSummaries ?? this.sessionSummaries,
       unreadCount: unreadCount ?? this.unreadCount,
+      selectedTopic: clearSelectedTopic ? null : (selectedTopic ?? this.selectedTopic),
     );
   }
 
@@ -126,5 +145,6 @@ class ChatWidgetState extends Equatable {
         isTyping,
         sessionSummaries,
         unreadCount,
+        selectedTopic,
       ];
 }
