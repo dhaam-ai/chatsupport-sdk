@@ -33,16 +33,29 @@ function build() {
   const onStartNewConversation = vi.fn();
   const onEmailTranscript = vi.fn(async () => undefined);
   const onQuickReply = vi.fn();
+  const onCopyMessage = vi.fn(async () => undefined);
+  const onReplyToMessage = vi.fn();
   const view = createMessageList({
     onRetry,
     onLoadOlder,
     onStartNewConversation,
     onEmailTranscript,
     onQuickReply,
+    onCopyMessage,
+    onReplyToMessage,
   });
   // Attached so `getComputedStyle` and `scrollHeight` behave.
   document.body.append(view.log, view.liveRegion);
-  return { view, onRetry, onLoadOlder, onStartNewConversation, onEmailTranscript, onQuickReply };
+  return {
+    view,
+    onRetry,
+    onLoadOlder,
+    onStartNewConversation,
+    onEmailTranscript,
+    onQuickReply,
+    onCopyMessage,
+    onReplyToMessage,
+  };
 }
 
 beforeEach(() => {
@@ -891,5 +904,105 @@ describe('the bot’s suggested replies', () => {
     );
     // Deduped to A,B,C,D,E,F,G,H then capped at 6.
     expect(chips(view)).toEqual(['A', 'B', 'C', 'D', 'E', 'F']);
+  });
+});
+
+describe('per-message actions', () => {
+  const openMenu = (view: ReturnType<typeof build>['view']) => {
+    view.log.querySelector<HTMLButtonElement>('.dh-msg-more')!.click();
+    return view.log.querySelector<HTMLElement>('.dh-msg-menu')!;
+  };
+
+  const render1 = () => {
+    const b = build();
+    b.view.render(state({ messages: [message({ content: 'where is my order' })] }), ME);
+    return b;
+  };
+
+  it('offers exactly Copy and Reply', () => {
+    const { view } = render1();
+    const labels = [...openMenu(view).querySelectorAll('.dh-msg-action')].map((b) =>
+      b.textContent?.trim(),
+    );
+    // Edit and delete are deliberately absent: no protocol frame exists for
+    // either, and a menu item that cannot work is a promise broken in front
+    // of the customer.
+    expect(labels).toEqual(['Copy', 'Reply']);
+  });
+
+  it('starts closed, and the toggle says so', () => {
+    const { view } = render1();
+    expect(view.log.querySelector<HTMLElement>('.dh-msg-menu')!.hidden).toBe(true);
+    expect(view.log.querySelector('.dh-msg-more')!.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens on the toggle and reports it', () => {
+    const { view } = render1();
+    expect(openMenu(view).hidden).toBe(false);
+    expect(view.log.querySelector('.dh-msg-more')!.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('copies the message it belongs to, then closes', async () => {
+    const { view, onCopyMessage } = render1();
+    const menu = openMenu(view);
+    menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!.click();
+
+    expect(onCopyMessage).toHaveBeenCalledTimes(1);
+    expect(onCopyMessage.mock.calls[0]![0]).toMatchObject({ content: 'where is my order' });
+    expect(menu.hidden).toBe(true);
+  });
+
+  it('replies to the message it belongs to, then closes', () => {
+    const { view, onReplyToMessage } = render1();
+    const menu = openMenu(view);
+    menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[1]!.click();
+
+    expect(onReplyToMessage).toHaveBeenCalledTimes(1);
+    expect(onReplyToMessage.mock.calls[0]![0]).toMatchObject({ content: 'where is my order' });
+    expect(menu.hidden).toBe(true);
+  });
+
+  // Clipboard access is genuinely refused in some embedded webviews, so the
+  // rejection path is real. It must not surface as an unhandled rejection.
+  it('survives a clipboard the browser refuses', async () => {
+    const { view, onCopyMessage } = render1();
+    onCopyMessage.mockRejectedValueOnce(new Error('denied'));
+    const menu = openMenu(view);
+    expect(() => menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!.click()).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  it('closes on a click outside it', () => {
+    const { view } = render1();
+    const menu = openMenu(view);
+    document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(menu.hidden).toBe(true);
+  });
+
+  // The menu's own Escape must not reach the panel's handler, which closes the
+  // whole widget.
+  it('closes on Escape without letting it bubble to the panel', () => {
+    const { view } = render1();
+    const menu = openMenu(view);
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    const seenByPanel = vi.fn();
+    document.body.addEventListener('keydown', seenByPanel);
+    view.log.querySelector('.dh-msg-more')!.dispatchEvent(event);
+
+    expect(menu.hidden).toBe(true);
+    expect(seenByPanel).not.toHaveBeenCalled();
+    document.body.removeEventListener('keydown', seenByPanel);
+  });
+
+  // The menu holds a document-level pointerdown listener, which outlives the
+  // row unless the eviction path releases it.
+  it('releases its document listener when the row is evicted', () => {
+    const { view } = render1();
+    openMenu(view);
+    // A render without that message evicts the row.
+    view.render(state({ messages: [] }), ME);
+    expect(() =>
+      document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })),
+    ).not.toThrow();
   });
 });

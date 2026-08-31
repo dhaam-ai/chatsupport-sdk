@@ -28,6 +28,7 @@ import type { ChatMessage, ChatState, MessageTickState } from '@dhaam-ccrm/js';
 import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-ccrm/core';
 
 import { ICONS, el, icon } from './dom.js';
+import { createMessageActions } from './message-actions.js';
 import { renderLinkified } from './linkify.js';
 import { createQuickReplies, readQuickReplies } from './quick-replies.js';
 
@@ -80,6 +81,10 @@ export interface MessageListCallbacks {
   readonly onEmailTranscript: () => Promise<void>;
   /** Sends one of the bot's suggested follow-ups as the customer's next message. */
   readonly onQuickReply: (text: string) => void;
+  /** Puts the message's text on the clipboard. Rejects if the browser refuses. */
+  readonly onCopyMessage: (message: ChatMessage) => Promise<void>;
+  /** Starts a reply addressed to this message — `replyToMessageId` on the send. */
+  readonly onReplyToMessage: (message: ChatMessage) => void;
 }
 
 export interface MessageListView {
@@ -294,6 +299,9 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
 
     for (const [id, row] of rows) {
       if (live.has(id)) continue;
+      // Before removal: the action menu holds a document-level `pointerdown`
+      // listener, which outlives the node it belongs to unless released.
+      row.destroy();
       row.node.remove();
       rows.delete(id);
     }
@@ -399,6 +407,8 @@ interface MessageRow {
   readonly node: HTMLElement;
   /** @param authorName the name to show above the bubble, or `null` for none. */
   update(message: ChatMessage, tick: MessageTickState | null, authorName: string | null): void;
+  /** Releases the row's document-level listeners. See `createMessageActions`. */
+  destroy(): void;
 }
 
 function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): MessageRow {
@@ -424,7 +434,17 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
     children: [time, tickGlyph, tickLabel, failureText, retry],
   });
 
-  const node = el('div', { attrs: { class: 'dh-msg' }, children: [author, body, meta] });
+  // Copy and Reply. Built per row because both act on THIS message; the
+  // menu's own document listener is released through `destroy` below.
+  const actions = createMessageActions({
+    onCopy: () => callbacks.onCopyMessage(current),
+    onReply: () => callbacks.onReplyToMessage(current),
+  });
+
+  const node = el('div', {
+    attrs: { class: 'dh-msg' },
+    children: [author, body, meta, actions.node],
+  });
 
   let current = initial;
   retry.addEventListener('click', () => callbacks.onRetry(current));
@@ -433,6 +453,9 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
 
   return {
     node,
+    destroy() {
+      actions.destroy();
+    },
     update(message, tick, authorName) {
       current = message;
 

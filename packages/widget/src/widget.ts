@@ -826,6 +826,49 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     avatarHost.replaceChildren(...(avatar === null ? [] : [avatar]));
   }
 
+  /**
+   * The message this reply is addressed to, or `null`.
+   *
+   * Held here rather than in the composer because it is the WIDGET that calls
+   * `sendMessage`, and the id only ever travels on that call. The composer
+   * renders the quote and knows nothing else about it.
+   */
+  let replyingTo: ChatMessage | null = null;
+
+  function startReply(message: ChatMessage): void {
+    replyingTo = message;
+    // The excerpt is the message's own text, trimmed to one line's worth. Long
+    // enough to identify which message, short enough not to become a second
+    // transcript above the composer.
+    const text = (message.content ?? '').trim().replace(/\s+/g, ' ');
+    composer.setReplyTo(text.length > 90 ? `${text.slice(0, 90)}…` : text);
+    composer.input.focus();
+  }
+
+  function cancelReply(): void {
+    if (replyingTo === null) return;
+    replyingTo = null;
+    composer.setReplyTo(null);
+  }
+
+  /**
+   * Puts a message's text on the clipboard.
+   *
+   * Rejects rather than reporting: the caller is a menu item that announces
+   * its own outcome, and `report` would swallow the failure and leave it
+   * silently claiming success. `navigator.clipboard` is genuinely absent in
+   * some embedded webviews and refused outright in others, so the rejection
+   * path is real rather than defensive.
+   */
+  async function copyMessage(message: ChatMessage): Promise<void> {
+    const text = message.content ?? '';
+    if (text === '') throw new Error('Nothing to copy');
+    if (typeof navigator === 'undefined' || navigator.clipboard === undefined) {
+      throw new Error('Clipboard unavailable');
+    }
+    await navigator.clipboard.writeText(text);
+  }
+
   /** The conversation's backdrop, through the same inline-property route. */
   function applyThreadAppearance(thread: ThreadAppearance): void {
     const tokens = threadTokens(thread);
@@ -1097,6 +1140,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the composer's own send path so a suggestion is subject to every rule a
     // typed message is, the consent gate and handoff keywords included.
     onQuickReply: (text) => void composer.submit(text),
+    onCopyMessage: (message) => copyMessage(message),
+    onReplyToMessage: (message) => startReply(message),
     onLoadOlder: () => {
       // `.catch`, not `void`: an unhandled rejection here surfaces on the
       // HOST's window and lands in the host's error tracker as a bug in their
@@ -1106,6 +1151,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   });
 
   const composer = createComposer({
+    onCancelReply: () => cancelReply(),
     onSend: async (text) => {
       // SEND FIRST, then escalate, and only once the send has actually
       // settled. The customer typed a sentence and expects it to arrive;
@@ -1113,7 +1159,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // and an agent picking the conversation up would inherit a handoff with
       // no context for it. A send that REJECTS escalates nothing, for the same
       // reason: there would be nothing in the transcript for them to read.
-      await store.client.sendMessage(text);
+      //
+      // The reply target is read and CLEARED before the await, not after: a
+      // send that takes a second must not leave the quote chip on screen
+      // looking like it still applies to whatever they type next, and a
+      // rejected send must not silently re-address the retry.
+      const addressedTo = replyingTo;
+      cancelReply();
+      await store.client.sendMessage(
+        text,
+        addressedTo === null ? undefined : { replyToMessageId: addressedTo.id },
+      );
       // Only while the BOT is driving. `syncHandoff` already owns that rule
       // for the button, and reusing its condition — rather than re-deriving
       // one here — is what stops a keyword escalating a conversation a human

@@ -86,6 +86,12 @@ export const ICONS = {
   // The session-switcher toggle (ui/session-picker.ts) — a plain list glyph,
   // not a chat/clock icon, so it does not compete visually with the launcher.
   list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
+  // Per-message actions (ui/message-actions.ts). A vertical ellipsis rather
+  // than a horizontal one: the row it sits in is already horizontal, and the
+  // upright form is what every mobile OS uses for "more on this item".
+  more: ['M12 5h.01', 'M12 12h.01', 'M12 19h.01'],
+  copy: ['M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1Z', 'M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1'],
+  reply: ['M9 17l-5-5 5-5', 'M4 12h11a5 5 0 0 1 5 5v3'],
 } as const;
 
 /**

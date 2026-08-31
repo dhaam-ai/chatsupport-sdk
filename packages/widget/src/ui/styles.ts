@@ -1469,6 +1469,100 @@ button {
   /* Merchant free text, so a long unbroken string must not widen the panel. */
   overflow-wrap: anywhere;
 }
+/* Per-message actions. Hidden until the row is hovered or something inside it
+   has focus, so a transcript at rest is text rather than a column of buttons —
+   but ALWAYS present for keyboard and touch, which have no hover: 'opacity' is
+   what is animated, never 'display', so the control stays in the tab order and
+   in the accessibility tree at all times. */
+.dh-msg { position: relative; }
+.dh-msg-actions { position: absolute; top: 2px; inset-inline-end: 2px; }
+.dh-msg-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px; height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dh-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.dh-msg:hover .dh-msg-more,
+.dh-msg-more:focus-visible,
+.dh-msg-actions:focus-within .dh-msg-more,
+.dh-msg-more[aria-expanded="true"] { opacity: 1; }
+/* Coarse pointers get no hover event at all, so the control would be
+   permanently invisible and permanently tappable — the worst combination. */
+@media (hover: none) { .dh-msg-more { opacity: 1; } }
+.dh-msg-more:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 1px; }
+
+.dh-msg-menu {
+  position: absolute;
+  top: 26px;
+  inset-inline-end: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 132px;
+  padding: calc(var(--dh-space) * 0.75);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  box-shadow: var(--dh-shadow);
+}
+.dh-msg-action {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 1.5);
+  padding: calc(var(--dh-space) * 1.25) calc(var(--dh-space) * 1.5);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dh-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+}
+.dh-msg-action:hover { background: var(--dh-bubble-in); }
+.dh-msg-action:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
+
+/* The quoted message above the composer while a reply is being written. */
+.dh-reply-chip {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 1.5);
+  margin-bottom: calc(var(--dh-space) * 1.5);
+  padding: calc(var(--dh-space) * 1.25) calc(var(--dh-space) * 2);
+  border-inline-start: 3px solid var(--dh-accent);
+  border-radius: 6px;
+  background: var(--dh-bubble-in);
+  font-size: 12px;
+}
+.dh-reply-label { flex: none; font-weight: 600; color: var(--dh-text-muted); }
+.dh-reply-excerpt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dh-text-muted);
+}
+.dh-reply-clear {
+  flex: none;
+  display: flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dh-text-muted);
+  cursor: pointer;
+}
+.dh-reply-clear:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 1px; }
+
 /* Links inside message text. Underlined, not colour-only: WCAG 1.4.1, and on
    a merchant accent that happens to sit close to the bubble's own text colour
    a colour-only link is invisible. Inherits the bubble's colour so it reads

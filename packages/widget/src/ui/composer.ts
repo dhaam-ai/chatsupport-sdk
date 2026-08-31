@@ -23,6 +23,8 @@ export interface ComposerCallbacks {
   readonly onSendAttachment: (file: File) => Promise<void>;
   readonly onTyping: () => void;
   readonly onError: (error: unknown) => void;
+  /** The customer dismissing the quoted message they were replying to. */
+  readonly onCancelReply: () => void;
 }
 
 export interface ComposerView {
@@ -45,6 +47,16 @@ export interface ComposerView {
    * destroy the customer's own words.
    */
   submit(text: string): Promise<void>;
+
+  /**
+   * Shows the message being replied to, or `null` to clear it.
+   *
+   * The composer renders the QUOTE and nothing else — it never learns the
+   * message's id. Which message a send is addressed to is the widget's state,
+   * because it is the widget that calls `sendMessage`; giving the composer an
+   * id it would only hand back would be two owners for one fact.
+   */
+  setReplyTo(excerpt: string | null): void;
   setEnabled(enabled: boolean): void;
   setUploading(uploading: boolean): void;
   destroy(): void;
@@ -165,10 +177,26 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     on: { click: () => { void submit(); } },
   });
 
+  // The quoted message, shown above the input while a reply is being composed.
+  const replyExcerpt = el('span', { attrs: { class: 'dh-reply-excerpt' } });
+  const replyChip = el('div', {
+    attrs: { class: 'dh-reply-chip', hidden: true },
+    children: [
+      el('span', { attrs: { class: 'dh-reply-label' }, text: 'Replying to' }),
+      replyExcerpt,
+      el('button', {
+        attrs: { class: 'dh-reply-clear', type: 'button', 'aria-label': 'Cancel reply' },
+        children: [icon(ICONS.close, 14)],
+        on: { click: () => callbacks.onCancelReply() },
+      }),
+    ],
+  });
+
   const node = el('div', {
     attrs: { class: 'dh-composer' },
     children: [
       errorLine,
+      replyChip,
       preview,
       recording,
       el('div', {
@@ -329,6 +357,11 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   return {
     node,
     input,
+    setReplyTo(excerpt) {
+      replyChip.hidden = excerpt === null;
+      // `textContent`: this is another party's message text.
+      replyExcerpt.textContent = excerpt ?? '';
+    },
     async submit(text) {
       // Both guards are refusals, not races. `disabled` is the consent gate
       // and the closed-session rule; a non-empty box is the customer's own
