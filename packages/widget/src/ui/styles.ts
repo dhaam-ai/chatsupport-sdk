@@ -942,8 +942,14 @@ button {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: calc(var(--dh-space) * 3);
-  padding: 0 calc(var(--dh-space) * 4) calc(var(--dh-space) * 5);
+  /* Widened one step (space*3 -> space*4) so the logo, the avatar stack and
+     the greeting read as distinct sections rather than a cramped stack —
+     the bigger avatars and larger greeting below need the extra air, or
+     they crowd the row above them. Top padding stays 0: this block is
+     painted as the header's own continuation (see the comment above), and
+     that seam is the one edge this reconciliation pass does not touch. */
+  gap: calc(var(--dh-space) * 4);
+  padding: 0 calc(var(--dh-space) * 4) calc(var(--dh-space) * 6);
   background-color: var(--dh-header-bg);
   background-image: var(--dh-header-layers);
   background-size: cover;
@@ -961,33 +967,41 @@ button {
 }
 
 /* Overlapped by a negative margin, in order, so they read as a team rather
-   than as a list. The last one carries the presence dot. */
+   than as a list. The last one carries the presence dot. Sized to match
+   .dh-avatar (the classic header's own face, 32px) rather than the smaller
+   26px this stack drew before — two different avatar sizes in one product
+   for no reason other than which header design is on is not a size worth
+   keeping. */
 .dh-hero-avatars { display: flex; align-items: center; }
 .dh-hero-avatar {
   position: relative;
   display: block;
-  width: 26px; height: 26px;
+  width: 32px; height: 32px;
   flex: none;
   border-radius: 999px;
   border: 2px solid var(--dh-header-fg);
   background: var(--dh-header-fg);
 }
-.dh-hero-avatar + .dh-hero-avatar { margin-inline-start: -8px; }
+.dh-hero-avatar + .dh-hero-avatar { margin-inline-start: -10px; }
 .dh-hero-avatar img { width: 100%; height: 100%; border-radius: 999px; object-fit: cover; }
 .dh-hero-presence {
   position: absolute;
   bottom: -2px; inset-inline-end: -2px;
-  width: 9px; height: 9px;
+  width: 10px; height: 10px;
   border-radius: 999px;
   border: 2px solid var(--dh-header-fg);
   background: #118d57;
 }
 
+/* One step up (22px -> 24px) and tightened (1.25 -> 1.2): this is the one
+   headline the hero has, playing the part the reference's home screen
+   greeting plays, and it read closer to a subtitle than a headline at the
+   old scale next to a 40px logo and a 32px avatar stack. */
 .dh-hero-greeting {
   margin: 0;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.2;
 }
 .dh-hero-sub {
   margin: 0;
