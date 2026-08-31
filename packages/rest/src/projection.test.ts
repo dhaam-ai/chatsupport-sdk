@@ -511,6 +511,8 @@ function sessionSummaryRow(overrides: Record<string, unknown> = {}): Record<stri
     lastMessageAt: '2026-08-19T09:05:00.000Z',
     lastMessagePreview: 'here you go',
     unreadCount: 3,
+    subject: 'Order never arrived',
+    topic: 'Delivery issue',
     handledBy: { kind: 'AGENT', id: 'agent-9', displayName: 'Ada' },
     ...overrides,
   };
@@ -542,7 +544,7 @@ describe('toChatSessionSummary — string enums (already v2-projected)', () => {
 });
 
 describe('toChatSessionSummary — full mapping', () => {
-  it('parses every field, including handledBy', () => {
+  it('parses every field, including subject/topic and handledBy', () => {
     expect(toChatSessionSummary(sessionSummaryRow())).toEqual({
       id: 'sum-1',
       status: 'ASSIGNED',
@@ -552,6 +554,8 @@ describe('toChatSessionSummary — full mapping', () => {
       lastMessageAt: '2026-08-19T09:05:00.000Z',
       lastMessagePreview: 'here you go',
       unreadCount: 3,
+      subject: 'Order never arrived',
+      topic: 'Delivery issue',
       handledBy: { kind: 'AGENT', id: 'agent-9', displayName: 'Ada' },
     });
   });
@@ -566,11 +570,15 @@ describe('toChatSessionSummary — full mapping', () => {
   it('keeps optional fields absent, not undefined-valued or null, when the wire omits them', () => {
     const row = sessionSummaryRow();
     delete row['lastMessagePreview'];
+    delete row['subject'];
+    delete row['topic'];
     delete row['handledBy'];
 
     const summary = toChatSessionSummary(row);
 
     expect('lastMessagePreview' in summary).toBe(false);
+    expect('subject' in summary).toBe(false);
+    expect('topic' in summary).toBe(false);
     expect('handledBy' in summary).toBe(false);
     expect(Object.keys(summary).sort()).toEqual([
       'closedAt',
@@ -585,6 +593,22 @@ describe('toChatSessionSummary — full mapping', () => {
 
   it('treats an empty-string lastMessagePreview as absent, same as replyToMessageId', () => {
     expect(toChatSessionSummary(sessionSummaryRow({ lastMessagePreview: '' })).lastMessagePreview).toBeUndefined();
+  });
+
+  it('treats empty-string subject/topic as absent, same rule as lastMessagePreview', () => {
+    const summary = toChatSessionSummary(sessionSummaryRow({ subject: '', topic: '' }));
+    expect(summary.subject).toBeUndefined();
+    expect(summary.topic).toBeUndefined();
+  });
+
+  it('accepts subject without topic and vice versa', () => {
+    const subjectOnly = toChatSessionSummary(sessionSummaryRow({ topic: undefined }));
+    expect(subjectOnly.subject).toBe('Order never arrived');
+    expect('topic' in subjectOnly).toBe(false);
+
+    const topicOnly = toChatSessionSummary(sessionSummaryRow({ subject: undefined }));
+    expect(topicOnly.topic).toBe('Delivery issue');
+    expect('subject' in topicOnly).toBe(false);
   });
 
   it('keeps closedAt and lastMessageAt null rather than treating null as a parse failure', () => {

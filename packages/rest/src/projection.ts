@@ -120,7 +120,8 @@ export interface RestSessionHandledBy {
 
 /**
  * Mirrors core's `ChatSessionSummary` — field for field, `id` through
- * `unreadCount` — plus `handledBy`, which core's type does not have.
+ * `unreadCount`, PLUS `subject`/`topic` (also field-for-field with core) —
+ * plus `handledBy`, which core's type does not have.
  *
  * ── Why `handledBy` survives even though core has no field for it ──
  *
@@ -148,6 +149,12 @@ export interface RestChatSessionSummary {
   /** Absent — never `""` — when the session has no public message yet. */
   lastMessagePreview?: string;
   unreadCount: number;
+  /**
+   * The conversation's chosen subject/topic. Absent — never `""` — when none
+   * was chosen, same rule as `lastMessagePreview` above.
+   */
+  subject?: string;
+  topic?: string;
   /** Absent — never `null` — when nobody has picked the session up yet. */
   handledBy?: RestSessionHandledBy;
 }
@@ -672,6 +679,13 @@ export function toChatSessionSummary(row: unknown): RestChatSessionSummary {
   // `toChatMessage` does for `replyToMessageId`.
   const preview = optionalString(source['lastMessagePreview']);
   if (preview !== null) summary.lastMessagePreview = preview;
+
+  // Same absence rule as lastMessagePreview: no topic chosen is absent, not "".
+  const subject = optionalString(source['subject']);
+  if (subject !== null) summary.subject = subject;
+
+  const topic = optionalString(source['topic']);
+  if (topic !== null) summary.topic = topic;
 
   const handledBy = toHandledBy(source['handledBy']);
   if (handledBy !== undefined) summary.handledBy = handledBy;
