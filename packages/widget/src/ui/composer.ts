@@ -29,6 +29,22 @@ export interface ComposerView {
   readonly node: HTMLElement;
   /** The control to focus when the panel opens. */
   readonly input: HTMLTextAreaElement;
+
+  /**
+   * Sends `text` as though the customer had typed and submitted it.
+   *
+   * Exists for the bot's suggested replies, which are chosen by tapping a chip
+   * rather than typing. Deliberately routed through the SAME `submit()` every
+   * other send uses, so a suggestion is subject to every rule a typed message
+   * is — most importantly the disabled state, which is how the consent gate
+   * holds the composer shut. A chip that could send while consent was
+   * outstanding would be a way around the gate.
+   *
+   * A no-op when the composer is disabled, or when the box already holds a
+   * draft: overwriting something half-typed to send a suggestion instead would
+   * destroy the customer's own words.
+   */
+  submit(text: string): Promise<void>;
   setEnabled(enabled: boolean): void;
   setUploading(uploading: boolean): void;
   destroy(): void;
@@ -313,6 +329,14 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   return {
     node,
     input,
+    async submit(text) {
+      // Both guards are refusals, not races. `disabled` is the consent gate
+      // and the closed-session rule; a non-empty box is the customer's own
+      // draft, which a suggestion must not overwrite.
+      if (sendButton.disabled || input.value.trim() !== '') return;
+      input.value = text;
+      await submit();
+    },
     setEnabled(next) {
       enabled = next;
       syncSendState();

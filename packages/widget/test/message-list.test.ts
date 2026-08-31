@@ -32,15 +32,17 @@ function build() {
   const onLoadOlder = vi.fn();
   const onStartNewConversation = vi.fn();
   const onEmailTranscript = vi.fn(async () => undefined);
+  const onQuickReply = vi.fn();
   const view = createMessageList({
     onRetry,
     onLoadOlder,
     onStartNewConversation,
     onEmailTranscript,
+    onQuickReply,
   });
   // Attached so `getComputedStyle` and `scrollHeight` behave.
   document.body.append(view.log, view.liveRegion);
-  return { view, onRetry, onLoadOlder, onStartNewConversation, onEmailTranscript };
+  return { view, onRetry, onLoadOlder, onStartNewConversation, onEmailTranscript, onQuickReply };
 }
 
 beforeEach(() => {
@@ -802,5 +804,92 @@ describe('the emailed transcript', () => {
       expect(transcriptButton(view)?.textContent).toBe("Couldn't send — try again"),
     );
     expect(transcriptButton(view)?.disabled).toBe(false);
+  });
+});
+
+describe('the bot’s suggested replies', () => {
+  const BOT = { senderId: 'bot_1', senderType: 'BOT' as const };
+  const chips = (view: ReturnType<typeof build>['view']) =>
+    [...view.log.querySelectorAll<HTMLButtonElement>('.dh-quick-reply')].map((b) => b.textContent);
+
+  it('renders what the bot suggested', () => {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({ id: 'b1', ...BOT, metadata: { options: ['Track my order', 'Talk to a person'] } }),
+        ],
+      }),
+      ME,
+    );
+    expect(chips(view)).toEqual(['Track my order', 'Talk to a person']);
+  });
+
+  it('sends the chosen one as the customer’s own message', () => {
+    const { view, onQuickReply } = build();
+    view.render(
+      state({ messages: [message({ id: 'b1', ...BOT, metadata: { options: ['Refund'] } })] }),
+      ME,
+    );
+    view.log.querySelector<HTMLButtonElement>('.dh-quick-reply')!.click();
+    expect(onQuickReply).toHaveBeenCalledWith('Refund');
+  });
+
+  // Stale by construction: they were answers to a question two turns ago, and
+  // the customer's own message arriving is what retires them.
+  it('retires them once the customer replies', () => {
+    const { view } = build();
+    const bot = message({ id: 'b1', ...BOT, metadata: { options: ['Refund'] } });
+    view.render(state({ messages: [bot] }), ME);
+    expect(chips(view)).toHaveLength(1);
+
+    view.render(state({ messages: [bot, message({ id: 'c1' })] }), ME);
+    expect(chips(view)).toHaveLength(0);
+  });
+
+  it('offers nothing on a closed conversation', () => {
+    const { view } = build();
+    view.setClosure('RESOLVED');
+    view.render(
+      state({ messages: [message({ id: 'b1', ...BOT, metadata: { options: ['Refund'] } })] }),
+      ME,
+    );
+    expect(chips(view)).toHaveLength(0);
+  });
+
+  // The producer is a language model behind two services, and `metadata` is
+  // `{ [key: string]: unknown }` by definition — so every one of these is a
+  // shape that can actually arrive.
+  it.each([
+    ['no metadata at all', undefined],
+    ['no options key', { other: 1 }],
+    ['options that is not an array', { options: 'Refund' }],
+    ['an array of non-strings', { options: [1, null, {}] }],
+    ['blank entries only', { options: ['', '   '] }],
+  ])('renders nothing for %s', (_label, metadata) => {
+    const { view } = build();
+    view.render(
+      state({ messages: [message({ id: 'b1', ...BOT, ...(metadata ? { metadata } : {}) })] }),
+      ME,
+    );
+    expect(chips(view)).toHaveLength(0);
+  });
+
+  it('drops duplicates and caps a model that returns too many', () => {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({
+            id: 'b1',
+            ...BOT,
+            metadata: { options: ['A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] },
+          }),
+        ],
+      }),
+      ME,
+    );
+    // Deduped to A,B,C,D,E,F,G,H then capped at 6.
+    expect(chips(view)).toEqual(['A', 'B', 'C', 'D', 'E', 'F']);
   });
 });

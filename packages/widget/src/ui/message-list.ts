@@ -28,6 +28,7 @@ import type { ChatMessage, ChatState, MessageTickState } from '@dhaam-ccrm/js';
 import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-ccrm/core';
 
 import { ICONS, el, icon } from './dom.js';
+import { createQuickReplies, readQuickReplies } from './quick-replies.js';
 
 /** Glyph plus the phrase a screen reader gets. The phrase is not optional. */
 const TICK_PRESENTATION: Record<MessageTickState, { glyph: string; label: string }> = {
@@ -76,6 +77,8 @@ export interface MessageListCallbacks {
   readonly onStartNewConversation: () => void;
   /** Emails the conversation to the address already on file. Rejects on failure. */
   readonly onEmailTranscript: () => Promise<void>;
+  /** Sends one of the bot's suggested follow-ups as the customer's next message. */
+  readonly onQuickReply: (text: string) => void;
 }
 
 export interface MessageListView {
@@ -204,6 +207,11 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   });
   log.appendChild(closure);
 
+  // The bot's own suggestions. One row reused across renders — see the
+  // module's note on why it is not per-message.
+  const quickReplies = createQuickReplies((text) => callbacks.onQuickReply(text));
+  log.appendChild(quickReplies.node);
+
   const typing = createTypingIndicator();
   log.appendChild(typing.node);
 
@@ -288,6 +296,22 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       row.node.remove();
       rows.delete(id);
     }
+
+    // The bot's suggested follow-ups, from the NEWEST message and only while
+    // it is the bot's own. Older ones are stale by construction — they were
+    // answers to a question two turns ago — and the customer's own message
+    // arriving is what retires them.
+    //
+    // Appended before the closure so they sit with the message they belong to;
+    // a closed conversation clears them below, because a suggestion that would
+    // reopen nothing is a dead control.
+    const newestMessage = state.messages[state.messages.length - 1];
+    const suggestions =
+      closedReason === null && newestMessage !== undefined && !isOutgoing(newestMessage)
+        ? readQuickReplies(newestMessage.metadata)
+        : [];
+    quickReplies.update(suggestions);
+    log.appendChild(quickReplies.node);
 
     // The closing line sits after the transcript it closes, and before the
     // typing bubble, so the reading order matches the order things happened.

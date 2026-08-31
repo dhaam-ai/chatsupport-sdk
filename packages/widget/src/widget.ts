@@ -1092,6 +1092,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     onRetry: (message) => retry(message),
     onStartNewConversation: () => startNewConversation(),
     onEmailTranscript: () => emailTranscript(),
+    // Sent as the customer's own message, exactly as if they had typed it —
+    // the bot suggested the words, but the person chose them. Routed through
+    // the composer's own send path so a suggestion is subject to every rule a
+    // typed message is, the consent gate and handoff keywords included.
+    onQuickReply: (text) => void composer.submit(text),
     onLoadOlder: () => {
       // `.catch`, not `void`: an unhandled rejection here surfaces on the
       // HOST's window and lands in the host's error tracker as a bug in their

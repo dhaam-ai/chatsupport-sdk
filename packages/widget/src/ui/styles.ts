@@ -1469,6 +1469,35 @@ button {
   /* Merchant free text, so a long unbroken string must not widen the panel. */
   overflow-wrap: anywhere;
 }
+/* The bot's own suggested follow-ups (metadata.options). Outlined rather
+   than filled: they sit directly under the bot's last bubble, and solid chips
+   there read as the bot having sent four more messages. Wraps rather than
+   scrolls horizontally — a suggestion off the edge of a phone screen is one
+   nobody takes. */
+.dh-quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--dh-space) * 1.5);
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0 calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
+}
+.dh-quick-reply {
+  padding: calc(var(--dh-space) * 1.25) calc(var(--dh-space) * 2.5);
+  border: 1px solid var(--dh-accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dh-accent);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.dh-quick-reply:hover { background: color-mix(in srgb, var(--dh-accent) 10%, transparent); }
+.dh-quick-reply:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+
 /* 'behaviour.typingIndicator: false'. 'display: none' rather than
    'visibility: hidden' on purpose — it takes the screen-reader label out of
    the accessibility tree along with the dots, and a merchant who turned the
