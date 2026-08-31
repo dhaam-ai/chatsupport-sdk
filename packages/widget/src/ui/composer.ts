@@ -9,7 +9,7 @@
 // makes that impossible, and it is why no `void promise` appears in this file
 // without a `.catch` in front of it.
 
-import { ICONS, el, icon } from './dom.js';
+import { ICONS, el, icon, safeLinkUrl } from './dom.js';
 import { createEmojiPicker, insertAtCaret } from './emoji.js';
 import type { EmojiPickerView } from './emoji.js';
 import { createVoiceRecorder } from './voice.js';
@@ -17,6 +17,19 @@ import type { VoiceRecorder } from './voice.js';
 
 /** Above this, the browser will reject or the server will 413. Refused with words, not silence. */
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Heroicons' `link` outline, lifted verbatim from the installed package —
+ * `node_modules/@heroicons/react/24/outline/LinkIcon.js` in `chatsupport_react`
+ * — the same sourcing discipline `ui/dom.ts`'s `LAUNCHER_ICONS` documents for
+ * itself. Kept local rather than added to the shared `ICONS` set: nothing
+ * else in this package draws a link glyph yet, and `ui/header-menu.ts`
+ * already establishes that a module-local icon table is the right size for
+ * "one file uses this."
+ */
+const LINK_ICON = [
+  'M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244',
+];
 
 export interface ComposerCallbacks {
   readonly onSend: (text: string) => Promise<void>;
@@ -123,6 +136,12 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     on: { click: () => { void toggleRecording(); } },
   });
 
+  const linkButton = el('button', {
+    attrs: { class: 'dh-icon-button', type: 'button', 'aria-label': 'Insert a link' },
+    children: [icon(LINK_ICON, 18)],
+    on: { click: () => insertLink() },
+  });
+
   // Declared before `input` only because the row below needs both; the picker
   // reaches the textarea through the closure, which is initialised by the time
   // any click can happen.
@@ -199,9 +218,21 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       replyChip,
       preview,
       recording,
+      // The reference puts image/emoji/attach/link on a row INSIDE the
+      // input's own border rather than beside it — so the border moves from
+      // `.dh-input` (see styles.ts) to this wrapper, and the textarea plus
+      // the icon row become its two stacked children instead of five
+      // siblings in one line. Every control's callback is unchanged; only
+      // the nesting is.
       el('div', {
-        attrs: { class: 'dh-composer-row' },
-        children: [attachButton, emojiPicker.node, micButton, input, sendButton, fileInput],
+        attrs: { class: 'dh-composer-box' },
+        children: [
+          input,
+          el('div', {
+            attrs: { class: 'dh-composer-row' },
+            children: [attachButton, emojiPicker.node, micButton, linkButton, sendButton, fileInput],
+          }),
+        ],
       }),
     ],
   });
@@ -229,7 +260,40 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     attachButton.disabled = !enabled || uploading;
     emojiPicker.setEnabled(enabled && !uploading);
     micButton.disabled = !enabled || uploading;
+    linkButton.disabled = !enabled || uploading;
     input.disabled = !enabled;
+  }
+
+  /**
+   * Asks for a URL and inserts it at the caret.
+   *
+   * `window.prompt`, deliberately — one field, asked rarely, and a bespoke
+   * popover for a single text input would be a surface to maintain for
+   * something the host page's own dialog already does. Same call widget.ts's
+   * `endConversation` makes for the same reason; see its own `no-alert` note.
+   *
+   * Validated with the same allowlist an `href` gets (`safeLinkUrl`), even
+   * though this lands in plain text rather than an attribute: the point here
+   * is not escaping, it is refusing to insert something that is not
+   * actually a link into a box a customer is about to send.
+   */
+  function insertLink(): void {
+    // eslint-disable-next-line no-alert -- see the doc comment above.
+    const raw = globalThis.prompt?.('Link URL (https://…)');
+    if (raw === null || raw === undefined) return; // Cancelled.
+
+    const url = safeLinkUrl(raw);
+    if (url === null) {
+      showError('That does not look like a valid https:// link.');
+      return;
+    }
+
+    insertAtCaret(input, url);
+    // Same three effects a keystroke has — see the emoji picker's own
+    // `onSelect` above for why skipping any one of them is a real bug.
+    autoGrow();
+    syncSendState();
+    callbacks.onTyping();
   }
 
   function acceptFile(): void {

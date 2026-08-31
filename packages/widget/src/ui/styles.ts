@@ -1702,10 +1702,25 @@ button {
   padding-bottom: max(calc(var(--dh-space) * 2), env(safe-area-inset-bottom));
   background: var(--dh-surface);
 }
+/* The bordered box the reference nests image/emoji/attach/link inside of —
+   see composer.ts's own comment at the call site. The border and background
+   that .dh-input used to carry itself now live here, one level up, so the
+   textarea and the icon row read as one control rather than a text field
+   with buttons floating beside it. */
+.dh-composer-box {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dh-border);
+  border-radius: 14px;
+  background: var(--dh-surface-sunken);
+}
+.dh-composer-box:focus-within { border-color: var(--dh-accent); }
+
 .dh-composer-row {
   display: flex;
-  align-items: flex-end;
-  gap: calc(var(--dh-space) * 2);
+  align-items: center;
+  gap: calc(var(--dh-space));
+  padding: 0 calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 1.5);
 }
 /* The platform credit. Muted and small on purpose: it is the least important
    thing in the panel, and a footer that competes with the composer above it
@@ -1880,15 +1895,16 @@ button {
 }
 .dh-emoji-cell:hover { background: var(--dh-surface-sunken); }
 
+/* Border and background now belong to .dh-composer-box, one level up — see
+   that rule's own comment. This is the plain text surface inside it. */
 .dh-input {
-  flex: 1;
+  width: 100%;
   min-height: 38px;
   max-height: 120px;
   resize: none;
-  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
-  border: 1px solid var(--dh-border);
-  border-radius: 10px;
-  background: var(--dh-surface-sunken);
+  border: 0;
+  background: transparent;
+  padding: calc(var(--dh-space) * 2.5) calc(var(--dh-space) * 3) calc(var(--dh-space) * 1);
   color: var(--dh-text);
   font: inherit;
   /* 16px on touch: anything smaller makes iOS Safari zoom the whole page on
@@ -1898,6 +1914,9 @@ button {
 @media (pointer: fine) { .dh-input { font-size: 14px; } }
 .dh-input::placeholder { color: var(--dh-text-muted); opacity: 1; }
 .dh-input:disabled { opacity: 0.6; cursor: not-allowed; }
+/* The box already shows focus via :focus-within; a second ring on the
+   textarea itself would double it up. */
+.dh-input:focus { outline: none; }
 
 .dh-send {
   width: 38px; height: 38px;
@@ -1907,6 +1926,10 @@ button {
   border-radius: 10px;
   background: var(--dh-accent);
   color: var(--dh-accent-text);
+  /* Attach/emoji/mic/link read as one cluster on the left of the icon row;
+     this pushes Send alone to the right, the same grouping the reference
+     draws. */
+  margin-inline-start: auto;
 }
 .dh-send[disabled] { opacity: 0.4; cursor: not-allowed; }
 
