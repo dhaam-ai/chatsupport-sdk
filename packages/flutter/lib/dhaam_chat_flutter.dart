@@ -29,3 +29,5 @@ export 'src/ui/hero_header.dart';
 export 'src/ui/home_screen.dart';
 export 'src/ui/image_safety.dart';
 export 'src/ui/messages_screen.dart';
+export 'src/ui/new_conversation_view.dart';
+export 'src/ui/topic_chips.dart';
