@@ -16,3 +16,5 @@ library;
 export 'src/config/remote_config.dart';
 export 'src/config/remote_config_client.dart';
 export 'src/nav/chat_screens.dart';
+export 'src/session/chat_session_summary.dart';
+export 'src/session/session_display.dart';
