@@ -24,5 +24,7 @@ export 'src/state/widget_chat_client.dart';
 export 'src/theme/chat_theme.dart';
 export 'src/theme/header_style.dart';
 export 'src/ui/chat_bottom_nav.dart';
+export 'src/ui/common_questions_list.dart';
 export 'src/ui/hero_header.dart';
+export 'src/ui/home_screen.dart';
 export 'src/ui/image_safety.dart';
