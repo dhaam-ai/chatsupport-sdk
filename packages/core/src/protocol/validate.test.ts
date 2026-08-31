@@ -841,6 +841,71 @@ describe('connection.hello selects a flow by the PRESENCE of publishableKey (WS 
   });
 });
 
+describe('connection.hello — subject/topic (the "New conversation" screen)', () => {
+  const hello = (d: Record<string, unknown> = {}) => ({
+    v: 1,
+    t: 'connection.hello',
+    id: ULID_A,
+    ts: TS,
+    d: { token: 'tok', publishableKey: 'dhp_test_1', protocolVersion: 1, ...d },
+  });
+
+  it('accepts a hello with neither — today\'s exact behaviour, unchanged', () => {
+    expect(validateFrame(hello()).ok).toBe(true);
+  });
+
+  it('accepts subject and topic independently and together', () => {
+    expect(validateFrame(hello({ subject: 'Order never arrived' })).ok).toBe(true);
+    expect(validateFrame(hello({ topic: 'Delivery issue' })).ok).toBe(true);
+    expect(
+      validateFrame(hello({ subject: 'Order never arrived', topic: 'Delivery issue' })).ok,
+    ).toBe(true);
+  });
+
+  // Same rule as publishableKey: optional does not mean unchecked, and a
+  // blank value is refused rather than treated as absent.
+  it.each([
+    ['an empty string', ''],
+    ['a number', 7],
+    ['null', null],
+    ['a boolean', false],
+    ['an object', { text: 'hi' }],
+  ])('rejects a subject that is %s', (_label, subject) => {
+    const result = validateFrame(hello({ subject }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.path).toBe('d.subject');
+      expect(result.frameType).toBe('connection.hello');
+    }
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['a number', 7],
+    ['null', null],
+  ])('rejects a topic that is %s', (_label, topic) => {
+    const result = validateFrame(hello({ topic }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.topic');
+  });
+
+  it('rejects a subject over 200 characters but accepts exactly 200', () => {
+    expect(validateFrame(hello({ subject: 'x'.repeat(201) })).ok).toBe(false);
+    expect(validateFrame(hello({ subject: 'x'.repeat(200) })).ok).toBe(true);
+  });
+
+  it('rejects a topic over 64 characters but accepts exactly 64', () => {
+    expect(validateFrame(hello({ topic: 'x'.repeat(65) })).ok).toBe(false);
+    expect(validateFrame(hello({ topic: 'x'.repeat(64) })).ok).toBe(true);
+  });
+
+  it('refuses an over-length value rather than truncating it', () => {
+    const result = validateFrame(hello({ subject: 'x'.repeat(201) }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('200');
+  });
+});
+
 describe('multi-session addressing — the optional sessionId/resumeFrom additions', () => {
   const frame = (t: string, d: Record<string, unknown>) => ({ v: 1, t, id: ULID_A, ts: TS, d });
 

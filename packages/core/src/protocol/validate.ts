@@ -80,6 +80,20 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+/**
+ * A non-empty string no longer than `maxLength` — `connection.hello`'s
+ * `subject`/`topic` (frames.ts's `ConnectionHelloPayload`).
+ *
+ * Rejects rather than truncates: a caller that supplied 500 characters gets
+ * a validation failure, not a silently shortened topic nobody chose. Empty
+ * is refused for the same reason `publishableKey` refuses it — a
+ * present-but-blank value is malformed, not a second way to spell "absent".
+ */
+function isBoundedString(maxLength: number): (value: unknown) => value is string {
+  return (value: unknown): value is string =>
+    typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -337,6 +351,11 @@ function validatePresenceEntry(value: unknown, path: string, frameType: string):
 // Per-frame-type payload validators
 // =============================================================================
 
+/** `connection.hello.subject` cap — generous for free text, still bounded. */
+const MAX_SESSION_SUBJECT_LENGTH = 200;
+/** `connection.hello.topic` cap — a merchant-configured chip label, not prose. */
+const MAX_SESSION_TOPIC_LENGTH = 64;
+
 function validateConnectionHello(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
   return (
@@ -355,7 +374,25 @@ function validateConnectionHello(d: unknown, path: string, frameType: string): F
     optionalField(d, 'publishableKey', isNonEmptyString, path, 'a non-empty string', frameType) ??
     requireField(d, 'protocolVersion', isInteger, path, 'an integer', frameType) ??
     optionalField(d, 'resumeFrom', isInteger, path, 'an integer', frameType) ??
-    optionalField(d, 'newSession', isBoolean, path, 'a boolean', frameType)
+    optionalField(d, 'newSession', isBoolean, path, 'a boolean', frameType) ??
+    // The "New conversation" screen's choice. Optional and independent of
+    // each other and of `newSession` — see ConnectionHelloPayload's doc.
+    optionalField(
+      d,
+      'subject',
+      isBoundedString(MAX_SESSION_SUBJECT_LENGTH),
+      path,
+      `a string of at most ${MAX_SESSION_SUBJECT_LENGTH} characters`,
+      frameType,
+    ) ??
+    optionalField(
+      d,
+      'topic',
+      isBoundedString(MAX_SESSION_TOPIC_LENGTH),
+      path,
+      `a string of at most ${MAX_SESSION_TOPIC_LENGTH} characters`,
+      frameType,
+    )
   );
 }
 

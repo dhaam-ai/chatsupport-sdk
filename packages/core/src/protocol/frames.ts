@@ -78,6 +78,31 @@ export interface ConnectionHelloPayload {
    * §7.2/D4 wants absence rather than a null.
    */
   newSession?: boolean;
+
+  /**
+   * The customer's chosen subject/topic for the session this hello may
+   * CREATE — the widget's "New conversation" screen. `subject` is free
+   * text; `topic` is one of the MERCHANT'S OWN configured chips (console
+   * `behaviour` JSONB) — core holds no vocabulary for either and sends
+   * whatever string the host supplied.
+   *
+   * Set by `startNewSession(payload)` and carried onto the hello that
+   * follows it, the same way `newSession` above is. Also honoured on a
+   * genuinely first hello (no active session to resume), since that too
+   * mints a row server-side.
+   *
+   * Optional and omitted — never `''` — on every ordinary connect and
+   * reconnect, exactly like `newSession`: absence means "no topic chosen",
+   * which is today's exact behaviour. Meaningless on a hello that RESUMES an
+   * existing session, and ignored there server-side — a reconnect is not the
+   * customer choosing a topic again.
+   *
+   * Still shape-checked when present — see validate.ts — and capped
+   * (subject <=200, topic <=64 chars) rather than truncated, so what the
+   * server stores is exactly what the customer chose.
+   */
+  subject?: string;
+  topic?: string;
 }
 
 /**
