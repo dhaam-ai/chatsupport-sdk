@@ -467,6 +467,28 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
     expect(config?.commonQuestions).toEqual([]);
   });
 
+  it('drops conversation topics that have no id or no label rather than rendering them broken', () => {
+    const config = parseRemoteConfig({
+      data: {
+        appearance: {},
+        behaviour: {
+          conversationTopics: [
+            { id: 'delivery', label: 'Delivery issue' },
+            { label: 'No id' },
+            { id: 'no-label' },
+            'not an object',
+          ],
+        },
+      },
+    });
+    expect(config?.conversationTopics).toEqual([{ id: 'delivery', label: 'Delivery issue' }]);
+  });
+
+  it('defaults conversationTopics to an empty array when absent, rather than a built-in list', () => {
+    const config = parseRemoteConfig({ data: { appearance: {}, behaviour: {} } });
+    expect(config?.conversationTopics).toEqual([]);
+  });
+
   it('drops flows missing an id, name or numeric trigger', () => {
     const config = parseRemoteConfig({
       data: {

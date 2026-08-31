@@ -82,6 +82,22 @@ export interface CommonQuestion {
 }
 
 /**
+ * One merchant-configured topic chip — `behaviour.conversationTopics[]`
+ * (Chatbot → Behaviour → Conversation topics). Offered on the widget's "New
+ * conversation" screen so a customer's pick becomes a real string
+ * (`ChatSessionSummary.topic`) the widget, the console and tickets all agree
+ * on, rather than something inferred after the fact from a first message.
+ *
+ * No `prompt` field, unlike {@link CommonQuestion}: picking a topic does not
+ * send a message on its own — it rides along on `startNewSession`'s payload
+ * once the customer also writes something in the textarea below the chips.
+ */
+export interface ConversationTopic {
+  readonly id: string;
+  readonly label: string;
+}
+
+/**
  * What the widget does when the team is closed.
  *
  * Integers, not strings, because that is what the wire carries
@@ -218,6 +234,10 @@ export interface RemoteConfig {
    *  none — see `ui/common-questions.ts`'s header for why that renders
    *  nothing rather than a built-in fallback list. */
   readonly commonQuestions: readonly CommonQuestion[];
+  /** `behaviour.conversationTopics[]`. `[]` skips the chip chooser entirely —
+   *  see `ui/new-conversation.ts` for why that is the same screen the widget
+   *  showed before this setting existed, not an empty row of chips. */
+  readonly conversationTopics: readonly ConversationTopic[];
   readonly csatStyle: CsatStyle;
   readonly offlineMode: OfflineMode;
   readonly offlineMessage: string | undefined;
@@ -279,6 +299,7 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   preChatEnabled: false,
   preChatFields: [],
   commonQuestions: [],
+  conversationTopics: [],
   csatStyle: 'stars',
   offlineMode: OFFLINE_MODE.SHOW_MESSAGE,
   offlineMessage: undefined,
@@ -649,6 +670,29 @@ function parseCommonQuestions(value: unknown): readonly CommonQuestion[] {
   return questions;
 }
 
+/**
+ * `behaviour.conversationTopics` → the widget's own {@link ConversationTopic}
+ * list.
+ *
+ * Same defensive read as {@link parseCommonQuestions}, one field narrower: no
+ * `prompt` to require, since a topic is a label a customer picks, not text
+ * that gets sent on its own. A topic with no `id` has nowhere to key its chip
+ * and nothing to send as `startNewSession`'s `topic`; one with no `label` has
+ * nothing to show. Either drops the entry rather than rendering it broken.
+ */
+function parseConversationTopics(value: unknown): readonly ConversationTopic[] {
+  if (!Array.isArray(value)) return [];
+  const topics: ConversationTopic[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const id = str(entry, 'id');
+    const label = str(entry, 'label');
+    if (id === undefined || label === undefined) continue;
+    topics.push({ id, label });
+  }
+  return topics;
+}
+
 function parseFlows(value: unknown): readonly PublishedFlow[] {
   if (!Array.isArray(value)) return [];
   const flows: PublishedFlow[] = [];
@@ -729,6 +773,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),
+    conversationTopics: parseConversationTopics(behaviour['conversationTopics']),
     csatStyle: rawCsat === 'emoji' || rawCsat === 'stars' ? rawCsat : 'stars',
     offlineMode: isOfflineMode(rawOfflineMode) ? rawOfflineMode : OFFLINE_MODE.SHOW_MESSAGE,
     offlineMessage: str(behaviour, 'offlineMessage'),
