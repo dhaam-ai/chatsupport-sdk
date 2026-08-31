@@ -10,6 +10,7 @@
 /// `dhaam_chat.dart` itself has.
 library;
 
+export 'src/chat_widget.dart';
 // `remote_config.dart` re-exports `appearance.dart` itself (the two are one
 // module split across two files — see remote_config.dart's header), so these
 // two lines are the whole config surface.
@@ -26,6 +27,7 @@ export 'src/theme/header_style.dart';
 export 'src/ui/chat_bottom_nav.dart';
 export 'src/ui/common_questions_list.dart';
 export 'src/ui/composer.dart';
+export 'src/ui/conversation_screen.dart';
 export 'src/ui/hero_header.dart';
 export 'src/ui/home_screen.dart';
 export 'src/ui/image_safety.dart';
