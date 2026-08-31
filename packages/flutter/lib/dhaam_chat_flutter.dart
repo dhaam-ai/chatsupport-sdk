@@ -6,6 +6,11 @@
 /// client to make, and the screens that turn its streams into something a
 /// customer can look at.
 ///
-/// Nothing is exported yet — this file grows one export per slice as each
-/// piece lands, the same shape `dhaam_chat.dart` itself has.
+/// This file grows one export per slice as each piece lands, the same shape
+/// `dhaam_chat.dart` itself has.
 library;
+
+// `remote_config.dart` re-exports `appearance.dart` itself (the two are one
+// module split across two files — see remote_config.dart's header), so this
+// one export line is the whole config surface.
+export 'src/config/remote_config.dart';
