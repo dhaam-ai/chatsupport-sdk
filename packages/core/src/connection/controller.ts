@@ -158,6 +158,16 @@ export class ConnectionController {
   #pendingNewSession = false;
 
   /**
+   * The subject/topic {@link requestNewSession} was called with, if any.
+   * Same latching rules as `#pendingNewSession` — survives a failed attempt
+   * and a transport retry, and is cleared only by `connection.ack`, because a
+   * retry that dropped the topic would half-fulfil the customer's request: a
+   * fresh session with no subject they never chose to omit.
+   */
+  #pendingNewSessionSubject: string | undefined;
+  #pendingNewSessionTopic: string | undefined;
+
+  /**
    * Bumped by every action that invalidates work already in flight — a new
    * attempt, a disconnect, a refresh. Async continuations (`getToken()`
    * resolving, a `connection.reauth` ack arriving) compare the generation they
@@ -263,9 +273,16 @@ export class ConnectionController {
    * satisfied until a new session actually comes back. A transport retry in
    * between must carry it too, or the retry silently resumes the old session —
    * the exact bug, one layer down.
+   *
+   * `payload` carries the "New conversation" screen's subject/topic onto the
+   * hello that follows (`ConnectionHelloPayload.subject`/`.topic`) — latched
+   * the same way and for the same reason: a retry that dropped it would
+   * silently downgrade the customer's chosen topic to none.
    */
-  requestNewSession(): void {
+  requestNewSession(payload?: { readonly topic?: string; readonly subject?: string }): void {
     this.#pendingNewSession = true;
+    this.#pendingNewSessionSubject = payload?.subject;
+    this.#pendingNewSessionTopic = payload?.topic;
   }
 
   /**
@@ -380,6 +397,13 @@ export class ConnectionController {
       // Absent, not `false`, when nobody asked — same absence rule as
       // `resumeFrom` above, and what keeps an older server unaffected.
       ...(this.#pendingNewSession ? { newSession: true as const } : {}),
+      // The "New conversation" screen's choice, latched alongside
+      // `#pendingNewSession` — see `requestNewSession`. `=== undefined`
+      // guards, not `??`, for the same `exactOptionalPropertyTypes` reason
+      // `publishableKey`/`resumeFrom` above do: an explicit `undefined` is a
+      // different thing from an absent key under this compiler option.
+      ...(this.#pendingNewSessionSubject === undefined ? {} : { subject: this.#pendingNewSessionSubject }),
+      ...(this.#pendingNewSessionTopic === undefined ? {} : { topic: this.#pendingNewSessionTopic }),
     };
 
     try {
@@ -559,6 +583,8 @@ export class ConnectionController {
     // one. Either way the request is spent, and carrying it into the NEXT
     // reconnect would close the customer's live conversation behind them.
     this.#pendingNewSession = false;
+    this.#pendingNewSessionSubject = undefined;
+    this.#pendingNewSessionTopic = undefined;
 
     const payload = frame.d;
 

@@ -524,8 +524,18 @@ export interface ChatClient {
    * session is already abandoned if it does — this is not atomic, and a
    * caller that retries should call it again rather than assume the old
    * session is still there.
+   *
+   * `payload` is the widget's "New conversation" screen: `subject` free
+   * text, `topic` one of the merchant's own configured chips. Both optional
+   * and independent of each other; omitting the argument entirely, or
+   * passing `{}`, behaves exactly as before this parameter existed — no
+   * topic is sent, and the new session gets none. Carried onto the
+   * `connection.hello` that reopens the socket
+   * (`ConnectionHelloPayload.subject`/`.topic`, protocol/frames.ts), so it
+   * survives a transport retry the same way the "start a new session"
+   * intent itself does.
    */
-  startNewSession(): Promise<void>;
+  startNewSession(payload?: { readonly topic?: string; readonly subject?: string }): Promise<void>;
   requestAgent(reason?: string): void;
   /** REST-only (§6.2, §12.5). Throws {@link ChatClientConfigError} if `config.sessionActions` was not supplied. */
   reopenSession(sessionId: string): Promise<ChatSession>;

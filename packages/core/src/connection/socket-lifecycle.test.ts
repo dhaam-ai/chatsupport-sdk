@@ -177,6 +177,104 @@ describe('ConnectionController over the real transport', () => {
 });
 
 // ---------------------------------------------------------------------------
+// requestNewSession — "start a new conversation", plus the subject/topic
+// payload it carries onto the hello
+// ---------------------------------------------------------------------------
+
+describe('requestNewSession', () => {
+  it('carries newSession:true with no subject/topic when called with no payload', async () => {
+    const h = harness();
+    h.controller.requestNewSession();
+    const connecting = h.controller.connect();
+    await tick();
+    h.sockets.last.open();
+
+    expect(helloOf(h.sockets.last)).toMatchObject({ newSession: true });
+    expect(helloOf(h.sockets.last)).not.toHaveProperty('subject');
+    expect(helloOf(h.sockets.last)).not.toHaveProperty('topic');
+
+    h.sockets.last.emitJson(ackJson());
+    await connecting;
+  });
+
+  it('carries subject and topic onto the hello when supplied', async () => {
+    const h = harness();
+    h.controller.requestNewSession({ subject: 'Order never arrived', topic: 'Delivery issue' });
+    const connecting = h.controller.connect();
+    await tick();
+    h.sockets.last.open();
+
+    expect(helloOf(h.sockets.last)).toMatchObject({
+      newSession: true,
+      subject: 'Order never arrived',
+      topic: 'Delivery issue',
+    });
+
+    h.sockets.last.emitJson(ackJson());
+    await connecting;
+  });
+
+  it('accepts one of subject/topic without the other', async () => {
+    const h = harness();
+    h.controller.requestNewSession({ topic: 'Billing' });
+    const connecting = h.controller.connect();
+    await tick();
+    h.sockets.last.open();
+
+    const hello = helloOf(h.sockets.last);
+    expect(hello.topic).toBe('Billing');
+    expect(hello).not.toHaveProperty('subject');
+
+    h.sockets.last.emitJson(ackJson());
+    await connecting;
+  });
+
+  it('carries the topic through a transport retry — the request is not satisfied until an ack actually arrives', async () => {
+    const h = harness();
+    h.controller.requestNewSession({ topic: 'Delivery issue' });
+    const connecting = h.controller.connect();
+    await tick();
+    h.sockets.last.open();
+    expect(helloOf(h.sockets.last).topic).toBe('Delivery issue');
+
+    // The socket fails before any ack — a real transport hiccup, not a
+    // deliberate disconnect. The retry that follows must repeat the SAME
+    // request, not silently downgrade it to "no topic".
+    h.sockets.last.emitClose({ code: CLOSE_CODE.ABNORMAL, wasClean: false });
+    h.timers.advance(500);
+    await tick();
+    h.sockets.last.open();
+
+    expect(h.sockets.sockets).toHaveLength(2);
+    expect(helloOf(h.sockets.last)).toMatchObject({ newSession: true, topic: 'Delivery issue' });
+
+    h.sockets.last.emitJson(ackJson());
+    await connecting;
+  });
+
+  it('clears subject/topic once the ack for the new session lands — the NEXT reconnect carries neither', async () => {
+    const h = harness();
+    h.controller.requestNewSession({ subject: 'Order never arrived', topic: 'Delivery issue' });
+    const connecting = h.controller.connect();
+    await tick();
+    goLive(h);
+    await connecting;
+
+    // A later, ordinary reconnect (transport drop, no new `requestNewSession`
+    // call) must not repeat a spent request.
+    h.sockets.last.emitClose({ code: CLOSE_CODE.ABNORMAL, wasClean: false });
+    h.timers.advance(500);
+    await tick();
+    h.sockets.last.open();
+
+    const hello = helloOf(h.sockets.last);
+    expect(hello).not.toHaveProperty('newSession');
+    expect(hello).not.toHaveProperty('subject');
+    expect(hello).not.toHaveProperty('topic');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Reconnecting from inside onClose
 // ---------------------------------------------------------------------------
 

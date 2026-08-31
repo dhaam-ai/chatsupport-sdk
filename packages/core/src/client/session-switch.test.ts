@@ -900,6 +900,42 @@ describe('bug 2: the selected session is durable across a reload', () => {
     expect(framesOfType(h.sockets.last, 'session.join')).toHaveLength(0);
   });
 
+  it('carries a subject/topic payload onto the hello the restart sends', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    const restart = client.startNewSession({ subject: 'Order never arrived', topic: 'Delivery issue' });
+    await tick();
+    h.sockets.last.open();
+
+    const hello = framesOfType(h.sockets.last, 'connection.hello')[0];
+    expect(hello?.d).toMatchObject({
+      newSession: true,
+      subject: 'Order never arrived',
+      topic: 'Delivery issue',
+    });
+
+    h.sockets.last.emitJson(ackJson(0, sessionSnapshot({ sessionId: 'session_9' }), 96));
+    await restart;
+  });
+
+  it('starts a new session with no topic exactly as before when called with no payload', async () => {
+    const h = harness();
+    const client = await connected(h);
+
+    const restart = client.startNewSession();
+    await tick();
+    h.sockets.last.open();
+
+    const hello = framesOfType(h.sockets.last, 'connection.hello')[0];
+    expect(hello?.d).toMatchObject({ newSession: true });
+    expect(hello?.d).not.toHaveProperty('subject');
+    expect(hello?.d).not.toHaveProperty('topic');
+
+    h.sockets.last.emitJson(ackJson(0, sessionSnapshot({ sessionId: 'session_9' }), 96));
+    await restart;
+  });
+
   it('forgets the selection when that session closes', async () => {
     const h = harness();
     const client = await connected(h);

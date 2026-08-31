@@ -1792,7 +1792,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       // establishes a new one.
       joinedSessionId = null;
     },
-    startNewSession: async (): Promise<void> => {
+    startNewSession: async (payload?: { readonly topic?: string; readonly subject?: string }): Promise<void> => {
       // Order is load-bearing throughout; see each step.
       const closing = store.getState().session?.id;
 
@@ -1826,7 +1826,11 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       //     the customer pressed "Start a new conversation" and kept talking
       //     in the old one. `newSession: true` closes that one (SWITCHED) and
       //     mints a fresh one, which is the whole operation.
-      connectionController.requestNewSession();
+      //
+      //     The caller's subject/topic rides along on the same call — see
+      //     `requestNewSession`'s own doc for why it has to be latched here
+      //     rather than sent as a later frame.
+      connectionController.requestNewSession(payload);
 
       // 4. Every per-session projection, in one write so no subscriber ever
       //    observes the new session's id against the old one's transcript.
