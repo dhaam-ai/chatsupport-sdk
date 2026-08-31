@@ -291,6 +291,24 @@ void main() {
       expect(config!.commonQuestions, isEmpty);
     });
 
+    test('conversationTopics drops entries with no id or label', () {
+      final config = parseRemoteConfig(_body(behaviour: {
+        'conversationTopics': [
+          {'id': 't1', 'label': 'Delivery issue'},
+          {'id': 't2'},
+          {'label': 'No id'},
+        ],
+      }));
+      expect(config!.conversationTopics, hasLength(1));
+      expect(config.conversationTopics.single.id, 't1');
+      expect(config.conversationTopics.single.label, 'Delivery issue');
+    });
+
+    test('conversationTopics defaults to an empty list when absent, not an invented one', () {
+      final config = parseRemoteConfig(_body());
+      expect(config!.conversationTopics, isEmpty);
+    });
+
     test('csatStyle: only "emoji" is not stars', () {
       expect(parseRemoteConfig(_body(behaviour: {'csatStyle': 'emoji'}))!.csatStyle, CsatStyle.emoji);
       expect(parseRemoteConfig(_body(behaviour: {'csatStyle': 'stars'}))!.csatStyle, CsatStyle.stars);

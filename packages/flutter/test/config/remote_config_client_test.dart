@@ -152,6 +152,7 @@ void main() {
         preChatEnabled: false,
         preChatFields: const <PreChatField>[],
         commonQuestions: const <CommonQuestion>[],
+        conversationTopics: const <ConversationTopic>[],
         csatStyle: CsatStyle.stars,
         offlineMode: offlineMode ?? defaultRemoteConfig.offlineMode,
         offlineMessage: null,

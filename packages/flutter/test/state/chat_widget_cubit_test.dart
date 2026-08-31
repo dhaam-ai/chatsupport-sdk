@@ -268,6 +268,7 @@ extension on RemoteConfig {
         preChatEnabled: preChatEnabled,
         preChatFields: preChatFields,
         commonQuestions: commonQuestions,
+        conversationTopics: conversationTopics,
         csatStyle: csatStyle,
         offlineMode: offlineMode,
         offlineMessage: offlineMessage,

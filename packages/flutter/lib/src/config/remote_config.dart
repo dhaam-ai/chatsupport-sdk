@@ -124,6 +124,19 @@ enum OfflineMode {
   }
 }
 
+/// One console-defined New Conversation topic chip —
+/// `behaviour.conversationTopics[]`. See [parseConversationTopics] for the
+/// wire shape and why it has no `prompt`.
+class ConversationTopic extends Equatable {
+  const ConversationTopic({required this.id, required this.label});
+
+  final String id;
+  final String label;
+
+  @override
+  List<Object?> get props => <Object?>[id, label];
+}
+
 /// One console-defined quick question — `behaviour.commonQuestions[]`.
 class CommonQuestion extends Equatable {
   const CommonQuestion({
@@ -212,6 +225,7 @@ class RemoteConfig extends Equatable {
     required this.preChatEnabled,
     required this.preChatFields,
     required this.commonQuestions,
+    required this.conversationTopics,
     required this.csatStyle,
     required this.offlineMode,
     required this.offlineMessage,
@@ -259,6 +273,9 @@ class RemoteConfig extends Equatable {
   final bool preChatEnabled;
   final List<PreChatField> preChatFields;
   final List<CommonQuestion> commonQuestions;
+
+  /// The New Conversation screen's topic chips. See [ConversationTopic].
+  final List<ConversationTopic> conversationTopics;
   final CsatStyle csatStyle;
   final OfflineMode offlineMode;
   final String? offlineMessage;
@@ -309,6 +326,7 @@ class RemoteConfig extends Equatable {
         preChatEnabled,
         preChatFields,
         commonQuestions,
+        conversationTopics,
         csatStyle,
         offlineMode,
         offlineMessage,
@@ -366,6 +384,7 @@ const RemoteConfig defaultRemoteConfig = RemoteConfig(
   preChatEnabled: false,
   preChatFields: <PreChatField>[],
   commonQuestions: <CommonQuestion>[],
+  conversationTopics: <ConversationTopic>[],
   csatStyle: CsatStyle.stars,
   offlineMode: OfflineMode.showMessage,
   offlineMessage: null,
@@ -467,6 +486,27 @@ List<CommonQuestion> parseCommonQuestions(Object? value) {
     questions.add(CommonQuestion(id: id, label: label, prompt: prompt));
   }
   return questions;
+}
+
+/// `behaviour.conversationTopics` → the New Conversation screen's chip list.
+///
+/// A NEW console setting (SDK plan §A/§C) — shaped `{id, label}[]`, the same
+/// list-of-objects convention [CommonQuestion] uses, minus `prompt`: a topic
+/// is picked, not sent, so it has nothing to say on its own. Same skip rule
+/// as [parseCommonQuestions] — an entry with no id has nowhere to key its
+/// chip, and one with no label has nothing to show.
+List<ConversationTopic> parseConversationTopics(Object? value) {
+  if (value is! List<Object?>) return const <ConversationTopic>[];
+  final List<ConversationTopic> topics = <ConversationTopic>[];
+  for (final Object? entry in value) {
+    if (!isJsonObject(entry)) continue;
+    final Map<String, Object?> source = entry! as Map<String, Object?>;
+    final String? id = readString(source, 'id');
+    final String? label = readString(source, 'label');
+    if (id == null || label == null) continue;
+    topics.add(ConversationTopic(id: id, label: label));
+  }
+  return topics;
 }
 
 List<PublishedFlow> parseFlows(Object? value) {
@@ -582,6 +622,7 @@ RemoteConfig? parseRemoteConfig(Object? body) {
     preChatEnabled: readBool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),
+    conversationTopics: parseConversationTopics(behaviour['conversationTopics']),
     csatStyle: rawCsat == 'emoji' ? CsatStyle.emoji : CsatStyle.stars,
     offlineMode: rawOfflineMode is int
         ? (OfflineMode.fromWire(rawOfflineMode) ?? OfflineMode.showMessage)
