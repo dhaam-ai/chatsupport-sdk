@@ -330,6 +330,23 @@ export interface ChatSessionSummary {
    * status signal — read `status`/`mode` for that.
    */
   handledBy?: HandledBy;
+
+  /**
+   * The conversation's subject/topic, chosen on the widget's "New
+   * conversation" screen when this session was created — `subject` free
+   * text, `topic` one of the merchant's own configured chips. Field-for-field
+   * the REST projection's same names (`RestChatSessionSummary.subject`/
+   * `.topic`, `@dhaam-ccrm/rest`), unlike {@link handledBy} above, which REST
+   * carries as an addition core has no field for — these two are ordinary
+   * mirrored fields.
+   *
+   * Absent — never `''` — when no topic was chosen, which includes every
+   * session that predates this field. Not defaulted anywhere: a picker
+   * renders whatever placeholder it already uses for an untitled
+   * conversation when both are absent.
+   */
+  subject?: string;
+  topic?: string;
 }
 
 /**
