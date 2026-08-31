@@ -138,11 +138,23 @@ await evaluate(`document.querySelector('dh-chat-widget').shadowRoot.querySelecto
 await new Promise((r) => setTimeout(r, 600));
 const opened = await probe(`return {
   focus: sh.activeElement && sh.activeElement.className,
+  focusInsidePanel: panel.contains(sh.activeElement),
   expanded: launcher.getAttribute('aria-expanded'),
   modal: panel.getAttribute('aria-modal'),
   ariaHidden: panel.getAttribute('aria-hidden'),
 };`);
-check('focus moves into the composer', opened.focus, (v) => String(v).includes('dh-input'), 'dh-input');
+// Was `dh-input` specifically, and that stopped being the right assertion once
+// the panel gained screens: the composer is hidden on Home and Messages, and
+// which control is first legitimately depends on the tenant's config — a
+// pre-chat gate takes focus ahead of everything behind it.
+//
+// What actually has to hold is stronger and screen-independent: focus lands
+// INSIDE the panel. The panel's Escape handler is a listener on the panel, so
+// focus landing anywhere else means Escape never arrives and a keyboard user
+// cannot close what they opened. That regression shipped once behind the old
+// assertion, which passed a hidden element to `focus()` and was satisfied by
+// the no-op.
+check('focus moves into the panel', opened.focusInsidePanel, (v) => v === true, 'true');
 check('launcher reports expanded', opened.expanded, (v) => v === 'true', 'true');
 check('panel is a modal dialog while trapped', opened.modal, (v) => v === 'true', 'true');
 check('panel leaves the a11y tree only when closed', opened.ariaHidden, (v) => v === null, 'absent while open');

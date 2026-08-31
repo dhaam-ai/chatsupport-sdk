@@ -1787,6 +1787,55 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     showConversation();
   }
 
+  /**
+   * Puts focus inside the panel, on whatever is actually on screen.
+   *
+   * ── Why this is not just "focus the composer" any more ────────────────
+   *
+   * It used to be, and that was correct while the panel WAS the conversation.
+   * With screens, the composer is hidden on Home and Messages, and
+   * `HTMLElement.focus()` on a hidden element is a silent no-op — so focus
+   * stayed on the host page's body. That is not a cosmetic problem: the
+   * panel's Escape handler is a listener ON the panel, so with focus outside
+   * it the key never arrives and Escape stops closing the widget. A keyboard
+   * user could open the thing and not get out of it.
+   *
+   * A SURFACE wins over the screen underneath it, and that is the case the
+   * previous version missed entirely: `openSurface` focuses its view only
+   * when the panel is already open, but the pre-chat gate is raised at MOUNT,
+   * long before. Opening then hit `openSurface`'s idempotence guard, so
+   * nothing focused it and nothing focused the screen it was covering either.
+   *
+   * `preventScroll` throughout: the panel is fixed-position, so any scroll the
+   * browser performs to "reveal" it is always wrong.
+   */
+  function focusOnOpen(): void {
+    if (activeSurface !== null) {
+      // Surfaces that can take focus do; the rest fall through to the panel
+      // rather than leaving focus outside it.
+      if (activeSurface.view.focus !== undefined) {
+        activeSurface.view.focus();
+        return;
+      }
+      panel.focus({ preventScroll: true });
+      return;
+    }
+
+    const openingOn = screens.current();
+    if (openingOn === 'conversation' && !composer.node.hidden) {
+      composer.input.focus({ preventScroll: true });
+      return;
+    }
+    if (openingOn === 'messages') {
+      messagesScreen.focus();
+      return;
+    }
+    // Home has no single obvious first control, and this is also the honest
+    // fallback for every case above that could not take focus: the ordinary
+    // "focus the dialog" behaviour every other modal on the page uses.
+    panel.focus({ preventScroll: true });
+  }
+
   function openSurface(kind: SurfaceKind, build: () => ProductSurface): void {
     // Idempotent by KIND, not by identity: `syncProductSurfaces` runs on every
     // message and every session change, and rebuilding the form under the
@@ -2690,16 +2739,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
     trap = trapFocus(panel, shadow);
 
-    // Focus what is actually on screen. `preventScroll` stops the host page
-    // from jumping to the widget's position — on a fixed-position element
-    // that scroll is always wrong. Conversation and Messages each have an
-    // obvious first control; Home does not, so it gets the panel itself
-    // (`tabindex="-1"`, see its own attrs) — the ordinary "focus the dialog"
-    // fallback every other modal on the page already uses.
-    const openingOn = screens.current();
-    if (openingOn === 'conversation') composer.input.focus({ preventScroll: true });
-    else if (openingOn === 'messages') messagesScreen.focus();
-    else panel.focus({ preventScroll: true });
+    focusOnOpen();
 
     // Asked here rather than at mount: a widget nobody opens should cost the
     // host page nothing beyond the socket it already opens. Fires once — see

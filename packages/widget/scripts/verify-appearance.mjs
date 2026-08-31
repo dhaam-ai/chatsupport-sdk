@@ -30,6 +30,10 @@
 // purpose. A failure there means precedence inverted, which is a real bug;
 // everything else failing means a published field stopped reaching the paint.
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const PORT = Number(process.env['CDP_PORT'] ?? 9333);
 const ORIGIN = process.env['HARNESS_ORIGIN'] ?? 'http://localhost:4599';
 
@@ -59,11 +63,38 @@ const evaluate = async (expression) => {
   return res.result?.result?.value;
 };
 
+// ── The expectations come from the LIVE config, not from constants ────────
+//
+// They used to be hardcoded ("design stayed classic", "Powered by Dhaam"), and
+// every one of them went stale the first time somebody edited the console —
+// five checks failed at once and not one of them was a defect. A verifier that
+// cries wolf on a legitimate publish is a verifier people stop reading.
+//
+// So this asks the same endpoint the widget asks, and compares what was
+// PUBLISHED against what was PAINTED. That is the property actually worth
+// asserting, and it holds whatever the merchant does next.
+const env = readFileSync(join(dirname(dirname(fileURLToPath(import.meta.url))), '..', '..', 'examples', 'demo', '.env'), 'utf8');
+const publishableKey = /^CHAT_PUBLISHABLE_KEY=(.*)$/m.exec(env)?.[1]?.trim() ?? '';
+const apiUrl = (/^CHAT_API_URL=(.*)$/m.exec(env)?.[1]?.trim() || 'http://localhost:3000').replace(/\/+$/, '');
+const published = await fetch(`${apiUrl}/chat-services/api/v1/widget/config`, {
+  headers: { 'X-Publishable-Key': publishableKey },
+}).then((r) => r.json()).then((b) => b.data);
+const appearance = published.appearance ?? {};
+const behaviour = published.behaviour ?? {};
+
 await send('Page.enable');
 await send('Runtime.enable');
 await send('Page.navigate', { url: ORIGIN });
 // The config fetch has a 2s grace; give it room to land and be applied.
 await new Promise((r) => setTimeout(r, 5000));
+
+/** '#rrggbb' as the 'rgb(r, g, b)' getComputedStyle answers with. */
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? ''));
+  if (m === null) return undefined;
+  const n = parseInt(m[1], 16);
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+}
 
 const failures = [];
 const check = (name, actual, predicate, expectation) => {
@@ -122,27 +153,35 @@ console.log('');
 // remote-config.ts holding, not a field failing to arrive. Everything below
 // that the host did NOT state is remote's, and that is what this file proves.
 check('the host’s own accent survives a console publish', seen.launcherBg, (v) => v === 'rgb(15, 118, 110)', 'rgb(15, 118, 110) — the harness’s #0f766e, not remote’s #e11d48');
-check('theme pinned to the published light', seen.theme, (v) => v === 'light', 'light');
-check('design stayed classic', seen.design, (v) => v === 'classic', 'classic');
-check('corner radius is the published 20px', seen.panelRadius, (v) => String(v).startsWith('20px'), '20px');
-check('font is the published Inter', seen.panelFont, (v) => /Inter/.test(String(v)), 'a stack led by Inter');
+check('theme matches what was published', seen.theme, (v) => v === appearance.theme, String(appearance.theme));
+check('design matches what was published', seen.design, (v) => v === (appearance.design ?? 'classic'), String(appearance.design ?? 'classic'));
+check('corner radius is the published one', seen.panelRadius, (v) => String(v).startsWith(`${appearance.cornerRadius}px`), `${appearance.cornerRadius}px`);
+check('font is the published one', seen.panelFont, (v) => String(v).includes(String(appearance.fontFamily)), `a stack led by ${appearance.fontFamily}`);
 check('launcher carries its shadow', seen.launcherShadow, (v) => v && v !== 'none', 'a box-shadow');
-check('offsets put it 20px off both edges', seen.launcherRect, (v) => v.right === 20 && v.bottom === 20, '{right:20,bottom:20}');
+check('offsets match the published ones', seen.launcherRect, (v) => v.right === appearance.offsetX && v.bottom === appearance.offsetY, `{right:${appearance.offsetX},bottom:${appearance.offsetY}}`);
 check('thread paints the crosshatch texture', seen.threadImage, (v) => /repeating-linear-gradient/.test(String(v)), 'repeating-linear-gradient layers');
-check('thread base is the published colour', seen.threadColor, (v) => v === 'rgb(244, 244, 245)', 'rgb(244, 244, 245) — #f4f4f5');
-check('avatar shows the published initial', seen.avatarText, (v) => v === 'D', 'D');
-check('avatar is painted in the accent in force', seen.avatarBg, (v) => v === seen.launcherBg, 'the same accent the launcher uses');
+check('thread base is the published colour', seen.threadColor, (v) => v === hexToRgb(appearance.thread?.color) || appearance.thread?.color === undefined, String(appearance.thread?.color));
+// The classic header's avatar is deliberately NOT drawn under the hero
+// design — that layout has its own face row, and two avatars in one header is
+// one more than anybody asked for. So what is asserted depends on the design.
+if ((appearance.design ?? 'classic') === 'hero') {
+  check('no classic avatar under the hero design', seen.avatarText, (v) => v === null, 'null — the hero header has its own faces');
+} else {
+  const initials = String(appearance.avatarInitials ?? '').trim().slice(0, 2);
+  check('avatar shows the published initials', seen.avatarText, (v) => v === (initials === '' ? null : initials), initials || 'null');
+  check('avatar is painted in the accent in force', seen.avatarBg, (v) => v === seen.launcherBg, 'the same accent the launcher uses');
+}
 check('branding is visible', seen.brandingHidden, (v) => v === false, 'false');
-check('branding links to the published URL', seen.brandingHref, (v) => v === 'https://dhaam.com', 'https://dhaam.com');
-check('branding shows the published text', seen.brandingLabel, (v) => v === 'Powered by Dhaam', 'Powered by Dhaam');
+check('branding links to the published URL', seen.brandingHref, (v) => v === (appearance.brandingUrl ?? null), String(appearance.brandingUrl ?? 'null'));
+check('branding shows the published text', seen.brandingLabel, (v) => v === appearance.brandingText, String(appearance.brandingText));
 // `botDisplayName`, not `appearance.title`: a bot really is handling this
 // conversation, and identity-header.ts's whole contract is that a PRESENT
 // handler outranks the configured title. Seeing the title here would be the bug.
-check('the handling bot’s name outranks the configured title', seen.title, (v) => v === 'Dhaam Assistant', 'Dhaam Assistant — the botDisplayName');
+check('the handling bot’s name outranks the configured title', seen.title, (v) => v === published.botDisplayName, String(published.botDisplayName));
 
 // The one that could not be proved in jsdom: the socket really connected, so
 // `connected` is in force and the merchant's subtitle stands in for 'Online'.
-check('the published subtitle replaced “Online”', seen.statusText, (v) => v === 'Typically replies in a few minutes', 'the merchant’s own line');
+check('the published subtitle replaced “Online”', seen.statusText, (v) => v === appearance.subtitle, String(appearance.subtitle));
 check('launcher glyph came from the icon library', seen.glyphKind, (v) => String(v).startsWith('svg'), 'an svg');
 
 console.log(failures.length === 0 ? '\nall appearance checks passed' : `\n${failures.length} FAILED`);
