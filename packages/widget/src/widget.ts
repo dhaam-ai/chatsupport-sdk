@@ -36,7 +36,16 @@ import { createConsentGate } from './ui/consent.js';
 import { createReportIssueForm } from './ui/report-issue.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
-import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl, safeLinkUrl } from './ui/dom.js';
+import {
+  ICONS,
+  LAUNCHER_ICONS,
+  SOLID_LAUNCHER_ICONS,
+  el,
+  icon,
+  safeImageUrl,
+  safeLinkUrl,
+  solidIcon,
+} from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
 import type { FocusTrap } from './ui/focus.js';
 import { createHeroHeader, heroContentFrom } from './ui/hero-header.js';
@@ -353,7 +362,14 @@ function buildLauncherIcon(spec: LauncherIcon): Node {
     if (src !== null) return el('img', { attrs: { class: 'dh-launcher-image', src, alt: '' } });
   }
 
-  return icon(LAUNCHER_ICONS[spec.library] ?? ICONS.chat, 24);
+  // `solidIcon` for the console's own glyphs, which are Heroicons SOLID
+  // shapes — stroking a filled path produces a blot. The built-in `chat`
+  // fallback is this package's own outline, so it keeps the outline renderer.
+  const library = LAUNCHER_ICONS[spec.library];
+  if (library !== undefined && SOLID_LAUNCHER_ICONS.has(spec.library)) {
+    return solidIcon(library, 24);
+  }
+  return icon(library ?? ICONS.chat, 24);
 }
 
 /**

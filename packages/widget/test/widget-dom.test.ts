@@ -227,10 +227,27 @@ describe('the launcher’s glyph', () => {
 
   it('draws a library glyph by the id the merchant picked', () => {
     mount(config({ launcherIcon: { source: 'library', library: 'support' } }));
-    expect(glyph().tagName.toLowerCase()).toBe('svg');
-    // Six paths in the life ring, one in the chat bubble — enough to prove the
-    // id was honoured rather than silently defaulted.
-    expect(glyph().querySelectorAll('path').length).toBeGreaterThan(1);
+    const picked = glyph();
+    expect(picked.tagName.toLowerCase()).toBe('svg');
+
+    // Compared against the DEFAULT's own path data rather than counting paths.
+    // The count was a proxy that broke the moment these glyphs became the
+    // console's artwork (Heroicons' life ring is a single path where the old
+    // hand-drawn one was six), and it would have passed just as happily on a
+    // silent fallback that happened to have the right number.
+    unmount();
+    mount(config());
+    const fallback = glyph().querySelector('path')!.getAttribute('d');
+    expect(picked.querySelector('path')!.getAttribute('d')).not.toBe(fallback);
+  });
+
+  // The console draws this picker from Heroicons' SOLID set. Stroking a filled
+  // path outlines its silhouette and fills nothing, which is a blot rather
+  // than an icon — so the library glyphs must be filled, not stroked.
+  it('fills the console’s glyphs rather than stroking them', () => {
+    mount(config({ launcherIcon: { source: 'library', library: 'support' } }));
+    expect(glyph().getAttribute('fill')).toBe('currentColor');
+    expect(glyph().getAttribute('stroke')).toBeNull();
   });
 
   // A ninth icon a newer console offers must not produce a blank launcher on
