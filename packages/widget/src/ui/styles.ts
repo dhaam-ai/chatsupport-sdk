@@ -1469,6 +1469,18 @@ button {
   /* Merchant free text, so a long unbroken string must not widen the panel. */
   overflow-wrap: anywhere;
 }
+/* Links inside message text. Underlined, not colour-only: WCAG 1.4.1, and on
+   a merchant accent that happens to sit close to the bubble's own text colour
+   a colour-only link is invisible. Inherits the bubble's colour so it reads
+   correctly on both the inbound and outbound surfaces. */
+.dh-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.dh-link:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+
 /* The bot's own suggested follow-ups (metadata.options). Outlined rather
    than filled: they sit directly under the bot's last bubble, and solid chips
    there read as the bot having sent four more messages. Wraps rather than

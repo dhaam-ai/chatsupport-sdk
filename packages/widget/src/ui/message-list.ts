@@ -28,6 +28,7 @@ import type { ChatMessage, ChatState, MessageTickState } from '@dhaam-ccrm/js';
 import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-ccrm/core';
 
 import { ICONS, el, icon } from './dom.js';
+import { renderLinkified } from './linkify.js';
 import { createQuickReplies, readQuickReplies } from './quick-replies.js';
 
 /** Glyph plus the phrase a screen reader gets. The phrase is not optional. */
@@ -451,9 +452,15 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
       node.setAttribute('data-mine', String(isOutgoing(message)));
       node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
 
-      // `textContent`, never `innerHTML`. This string is another user's input.
+      // Still never `innerHTML`. `renderLinkified` builds text nodes and
+      // `<a>` elements by hand and runs every href through the same allowlist
+      // the branding link uses — see ui/linkify.ts's header for why that file
+      // is the one place allowed to turn this string into elements.
+      //
+      // Compared before rewriting so an unrelated re-render does not destroy a
+      // text selection the customer is in the middle of making.
       const shown = visibleContent(message);
-      if (body.textContent !== shown) body.textContent = shown;
+      if (body.textContent !== shown) renderLinkified(body, shown);
 
       const created = new Date(message.createdAt);
       const iso = Number.isNaN(created.getTime()) ? '' : created.toISOString();
