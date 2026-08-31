@@ -1,0 +1,23 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # This package parses untrusted wire input too — the published config is
+    # an opaque JSON blob over HTTP, same as `dhaam_chat` parses one over the
+    # socket. Same reasoning as that package's analysis_options.yaml: an
+    # unawaited future or an unhandled switch case here is a bug in a config
+    # parser or a stream listener, not a style nit.
+    unawaited_futures: error
+    missing_required_param: error
+    missing_return: error
+
+linter:
+  rules:
+    - avoid_dynamic_calls
+    - prefer_final_locals
+    - unnecessary_lambdas
+    - always_declare_return_types

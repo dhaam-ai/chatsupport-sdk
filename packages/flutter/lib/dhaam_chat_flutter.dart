@@ -1,0 +1,11 @@
+/// Flutter UI for the Dhaam chat widget.
+///
+/// `dhaam_chat` (the package this one depends on) is deliberately pure Dart —
+/// no Flutter import, no HTTP, a protocol client and nothing else. This
+/// package is the other half: the config fetch `dhaam_chat` has no HTTP
+/// client to make, and the screens that turn its streams into something a
+/// customer can look at.
+///
+/// Nothing is exported yet — this file grows one export per slice as each
+/// piece lands, the same shape `dhaam_chat.dart` itself has.
+library;

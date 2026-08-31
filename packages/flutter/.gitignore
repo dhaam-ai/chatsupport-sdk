@@ -1,0 +1,14 @@
+# Standard Dart/Flutter package ignores. The root .gitignore is Node/pnpm-only
+# (this is the first Dart-and-Flutter package in the SDK, `dhaam_chat` has
+# none of its own either — presumably because it has never been `pub get` run
+# from a checkout that also committed), so this package carries its own.
+
+.dart_tool/
+.packages
+build/
+
+# A library commits no lockfile — only an application should, per Dart's own
+# guidance (dart.dev/guides/libraries/private-files#pubspeclock). Pinning
+# exact transitive versions here would fight every app that depends on this
+# package rather than helping it.
+pubspec.lock

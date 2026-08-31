@@ -1,0 +1,46 @@
+name: dhaam_chat_flutter
+description: >-
+  Flutter UI for the Dhaam chat widget — the screens, navigation and the
+  remote-config fetch, built on top of the pure-Dart `dhaam_chat` client.
+version: 0.1.0
+publish_to: none
+
+# Matches `dhaam_chat`'s own constraint exactly, not the higher one the
+# sibling apps (dh-customer-app-flutter, dh-merchant-app-flutter) pin. This is
+# a library sitting BETWEEN those apps and `dhaam_chat` — it has to build
+# against whatever Dart SDK `dhaam_chat` accepts, and pinning higher than that
+# for no reason this package actually needs would narrow who can depend on it
+# without buying anything back. An app can afford to be conservative about
+# what it requires; a library sitting in the middle should not be more
+# demanding than the package right below it.
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dhaam_chat:
+    path: ../dart
+  # For the one HTTP call this package makes (`fetchRemoteConfig`) — see
+  # `lib/src/config/remote_config.dart`. `dhaam_chat` deliberately carries no
+  # HTTP dependency at all (see its README); that boundary is why the fetch
+  # lives here instead. `package:http` is the Dart team's own client and ships
+  # `package:http/testing.dart`'s `MockClient`, which is what lets the fetch
+  # be tested without a real network and without a second test dependency.
+  # https://pub.dev/packages/http (v1.6.0 current at the time of writing)
+  http: ^1.6.0
+  # State management: matches what dh-customer-app-flutter and
+  # dh-merchant-app-flutter already standardise on (both pin flutter_bloc
+  # ^9.1.1) — see this package's README for which shape (Cubit vs Bloc) is
+  # used and why, and the sibling apps' own `connectivity_cubit.dart` for the
+  # precedent this package follows most directly: a Cubit whose whole job is
+  # mirroring an external stream into widget-renderable state.
+  flutter_bloc: ^9.1.1
+  equatable: ^2.0.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # Matches the sibling apps' lint package (they use flutter_lints ^5.0.0);
+  # `dhaam_chat` uses plain `lints` because it has no Flutter to lint against.
+  flutter_lints: ^5.0.0
