@@ -12,6 +12,7 @@
 library;
 
 import 'package:dhaam_chat/dhaam_chat.dart' show WireEnum;
+import 'package:equatable/equatable.dart';
 
 /// Follows the OS (`auto`) or pins one scheme.
 enum WidgetTheme implements WireEnum {
@@ -193,7 +194,14 @@ T? lookupWire<T extends WireEnum>(List<T> values, String wire) {
 // non-nullable one.
 
 /// `appearance.launcherIcon` — the glyph on the launcher.
-class LauncherIcon {
+///
+/// Extends [Equatable] (from `package:equatable`, already a dependency for
+/// Cubit state comparison — see `state/chat_widget_state.dart`) rather than
+/// hand-written `==`/`hashCode`: shorter, and `Equatable`'s own comparison
+/// already recurses correctly into the `List<String>?` further down this
+/// file ([HeaderAppearance.avatars]) — verified against its source
+/// (`equatable_utils.dart`'s `objectsEquals`), not assumed.
+class LauncherIcon extends Equatable {
   const LauncherIcon({this.source, this.library, this.emoji, this.imageUrl});
 
   final LauncherIconSource? source;
@@ -208,19 +216,11 @@ class LauncherIcon {
       source == null && library == null && emoji == null && imageUrl == null;
 
   @override
-  bool operator ==(Object other) =>
-      other is LauncherIcon &&
-      other.source == source &&
-      other.library == library &&
-      other.emoji == emoji &&
-      other.imageUrl == imageUrl;
-
-  @override
-  int get hashCode => Object.hash(source, library, emoji, imageUrl);
+  List<Object?> get props => <Object?>[source, library, emoji, imageUrl];
 }
 
 /// `appearance.launcherShadow` — one enable flag and one 0–100 intensity.
-class LauncherShadow {
+class LauncherShadow extends Equatable {
   const LauncherShadow({this.enabled, this.intensity});
 
   final bool? enabled;
@@ -229,17 +229,11 @@ class LauncherShadow {
   bool get isEmpty => enabled == null && intensity == null;
 
   @override
-  bool operator ==(Object other) =>
-      other is LauncherShadow &&
-      other.enabled == enabled &&
-      other.intensity == intensity;
-
-  @override
-  int get hashCode => Object.hash(enabled, intensity);
+  List<Object?> get props => <Object?>[enabled, intensity];
 }
 
 /// `appearance.header` — how the hero header is painted.
-class HeaderAppearance {
+class HeaderAppearance extends Equatable {
   const HeaderAppearance({
     this.background,
     this.backgroundColor,
@@ -297,27 +291,7 @@ class HeaderAppearance {
       ctaSubtitle == null;
 
   @override
-  bool operator ==(Object other) =>
-      other is HeaderAppearance &&
-      other.background == background &&
-      other.backgroundColor == backgroundColor &&
-      other.colorSource == colorSource &&
-      other.gradientStrength == gradientStrength &&
-      other.backgroundImageUrl == backgroundImageUrl &&
-      other.imageOverlay == imageOverlay &&
-      other.showLogo == showLogo &&
-      other.logoUrl == logoUrl &&
-      other.showAvatars == showAvatars &&
-      _listEquals(other.avatars, avatars) &&
-      other.showPresence == showPresence &&
-      other.greeting == greeting &&
-      other.subGreeting == subGreeting &&
-      other.ctaEnabled == ctaEnabled &&
-      other.ctaTitle == ctaTitle &&
-      other.ctaSubtitle == ctaSubtitle;
-
-  @override
-  int get hashCode => Object.hash(
+  List<Object?> get props => <Object?>[
         background,
         backgroundColor,
         colorSource,
@@ -327,19 +301,19 @@ class HeaderAppearance {
         showLogo,
         logoUrl,
         showAvatars,
-        avatars == null ? null : Object.hashAll(avatars!),
+        avatars,
         showPresence,
         greeting,
         subGreeting,
         ctaEnabled,
         ctaTitle,
         ctaSubtitle,
-      );
+      ];
 }
 
 /// The conversation's backdrop. Bubbles keep their own opaque surfaces in
 /// every mode, so nothing here can make a message unreadable.
-class ThreadAppearance {
+class ThreadAppearance extends Equatable {
   const ThreadAppearance({
     this.background,
     this.color,
@@ -368,18 +342,7 @@ class ThreadAppearance {
       imageOverlay == null;
 
   @override
-  bool operator ==(Object other) =>
-      other is ThreadAppearance &&
-      other.background == background &&
-      other.color == color &&
-      other.pattern == pattern &&
-      other.patternOpacity == patternOpacity &&
-      other.imageUrl == imageUrl &&
-      other.imageFade == imageFade &&
-      other.imageOverlay == imageOverlay;
-
-  @override
-  int get hashCode => Object.hash(
+  List<Object?> get props => <Object?>[
         background,
         color,
         pattern,
@@ -387,16 +350,7 @@ class ThreadAppearance {
         imageUrl,
         imageFade,
         imageOverlay,
-      );
-}
-
-bool _listEquals(List<String>? a, List<String>? b) {
-  if (identical(a, b)) return true;
-  if (a == null || b == null || a.length != b.length) return false;
-  for (int i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
+      ];
 }
 
 // ── Parsing ──────────────────────────────────────────────────────────────

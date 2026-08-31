@@ -25,13 +25,14 @@
 library;
 
 import 'package:dhaam_chat/dhaam_chat.dart' show WireEnum;
+import 'package:equatable/equatable.dart';
 
 import 'appearance.dart';
 
 export 'appearance.dart';
 
 /// One console-defined field on the pre-chat form.
-class PreChatField {
+class PreChatField extends Equatable {
   const PreChatField({
     required this.id,
     required this.label,
@@ -45,15 +46,7 @@ class PreChatField {
   final bool required;
 
   @override
-  bool operator ==(Object other) =>
-      other is PreChatField &&
-      other.id == id &&
-      other.label == label &&
-      other.type == type &&
-      other.required == required;
-
-  @override
-  int get hashCode => Object.hash(id, label, type, required);
+  List<Object?> get props => <Object?>[id, label, type, required];
 }
 
 enum PreChatFieldType implements WireEnum {
@@ -132,7 +125,7 @@ enum OfflineMode {
 }
 
 /// One console-defined quick question — `behaviour.commonQuestions[]`.
-class CommonQuestion {
+class CommonQuestion extends Equatable {
   const CommonQuestion({
     required this.id,
     required this.label,
@@ -144,14 +137,7 @@ class CommonQuestion {
   final String prompt;
 
   @override
-  bool operator ==(Object other) =>
-      other is CommonQuestion &&
-      other.id == id &&
-      other.label == label &&
-      other.prompt == prompt;
-
-  @override
-  int get hashCode => Object.hash(id, label, prompt);
+  List<Object?> get props => <Object?>[id, label, prompt];
 }
 
 /// A published bot flow, projected down to what a widget can act on.
@@ -159,7 +145,7 @@ class CommonQuestion {
 /// Parsed and carried for field-for-field parity with the wire, exactly as
 /// the JS widget does — NOT executed. The bot-flow step interpreter is out
 /// of scope here the same way it is there (see the SDK plan's §D).
-class PublishedFlow {
+class PublishedFlow extends Equatable {
   const PublishedFlow({
     required this.id,
     required this.name,
@@ -179,11 +165,15 @@ class PublishedFlow {
 
   /// Left opaque on purpose — step shapes are the console's to evolve.
   final List<Object?> steps;
+
+  @override
+  List<Object?> get props =>
+      <Object?>[id, name, trigger, keywords, pagePattern, steps];
 }
 
 /// The published config, after parsing — every field already defaulted, so
 /// no consumer re-decides one.
-class RemoteConfig {
+class RemoteConfig extends Equatable {
   const RemoteConfig({
     required this.enabled,
     required this.accent,
@@ -279,6 +269,55 @@ class RemoteConfig {
   final List<PublishedFlow> flows;
   final String? botDisplayName;
   final int publishedVersion;
+
+  @override
+  List<Object?> get props => <Object?>[
+        enabled,
+        accent,
+        title,
+        theme,
+        position,
+        offsetX,
+        offsetY,
+        launcher,
+        launcherLabel,
+        launcherIcon,
+        launcherShadow,
+        design,
+        header,
+        logoUrl,
+        subtitle,
+        avatarMode,
+        avatarInitials,
+        showBranding,
+        brandingText,
+        brandingUrl,
+        thread,
+        cornerRadius,
+        fontFamily,
+        greeting,
+        greetingDelaySec,
+        autoOpen,
+        autoOpenDelaySec,
+        typingIndicator,
+        sound,
+        transcriptEmail,
+        consentRequired,
+        consentText,
+        handoffKeywords,
+        reportIssue,
+        preChatEnabled,
+        preChatFields,
+        commonQuestions,
+        csatStyle,
+        offlineMode,
+        offlineMessage,
+        fileUploads,
+        isOpenNow,
+        flows,
+        botDisplayName,
+        publishedVersion,
+      ];
 }
 
 /// What a widget renders when the config could not be read at all.
