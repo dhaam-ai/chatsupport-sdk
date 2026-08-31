@@ -195,6 +195,11 @@ export interface RemoteConfig {
   readonly consentRequired: boolean;
   readonly consentText: string | undefined;
   /**
+   * `behaviour.privacyUrl` — the merchant's policy, linked from the widget's
+   * own menu. Absent hides that item rather than linking nowhere.
+   */
+  readonly privacyUrl: string | undefined;
+  /**
    * `behaviour.handoffKeywords[]` — words that take a visitor to a person.
    *
    * Lower-cased on the way in, because the console lower-cases them on the way
@@ -265,6 +270,7 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   transcriptEmail: false,
   consentRequired: false,
   consentText: undefined,
+  privacyUrl: undefined,
   handoffKeywords: [],
   // Off, like every other surface this pass added: a widget whose config never
   // landed must look exactly as it did before, and a form that files tickets
@@ -717,6 +723,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     transcriptEmail: bool(behaviour, 'transcriptEmail', DEFAULT_REMOTE_CONFIG.transcriptEmail),
     consentRequired: bool(behaviour, 'consentRequired', DEFAULT_REMOTE_CONFIG.consentRequired),
     consentText: str(behaviour, 'consentText'),
+    privacyUrl: str(behaviour, 'privacyUrl'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
     reportIssue: bool(behaviour, 'reportIssue', DEFAULT_REMOTE_CONFIG.reportIssue),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),

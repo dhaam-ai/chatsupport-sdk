@@ -33,6 +33,7 @@ import type {
 import { asksForAHuman } from './handoff-keywords.js';
 import { createChime } from './ui/chime.js';
 import { createConsentGate } from './ui/consent.js';
+import { createHeaderMenu } from './ui/header-menu.js';
 import { createReportIssueForm } from './ui/report-issue.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
@@ -562,8 +563,45 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * The last unread count seen, so the chime fires on a RISE and nothing else.
    * Seeded from the store rather than from 0 — see the selector that reads it.
    */
+  /** One close in flight at a time — the round trip is long enough to double-tap. */
+  let endingConversation = false;
   let lastUnread = store.getState().unreadCount;
   const chime = createChime(config.onError);
+
+  /**
+   * This VISITOR's own preference about noise, remembered per browser.
+   *
+   * Not a merchant setting and not synced anywhere: `behaviour.sound` is the
+   * merchant deciding whether a chime exists at all, and this is the person
+   * in front of the screen deciding they have heard enough of it. Both have to
+   * agree before anything plays — see the unread selector.
+   *
+   * Keyed per publishable key like the consent record, so two tenants on one
+   * browser cannot mute each other. A read that fails is "not muted", which is
+   * the same as a first visit.
+   */
+  const MUTE_KEY = `chatsdk:${config.auth.publishableKey}:muted`;
+  let muted = false;
+  try {
+    muted = globalThis.localStorage?.getItem(MUTE_KEY) === 'true';
+  } catch {
+    // Site data blocked. The visitor is simply not muted, and can mute again.
+  }
+
+  const headerMenu = createHeaderMenu({
+    onStartNew: () => startNewConversation(),
+    onEndConversation: () => endConversation(),
+    onReportIssue: () => openReportIssue(),
+    onMuteChange: (next) => {
+      muted = next;
+      try {
+        globalThis.localStorage?.setItem(MUTE_KEY, String(next));
+      } catch {
+        // Refused storage is not worth failing a mute over: it holds for this
+        // page either way, and is simply forgotten on the next load.
+      }
+    },
+  });
 
   /**
    * Releases whatever `behaviour.autoOpen` armed — a timer, a pointer
@@ -649,6 +687,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     consent.update(next.consentRequired, next.consentText ?? '');
     messageList.setTranscriptEmail(next.transcriptEmail);
     reportButton.hidden = !next.reportIssue;
+    syncHeaderMenu();
     // The gate may have just opened or closed under the composer.
     syncComposer();
 
@@ -1295,6 +1334,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
           // sit here without the header having to know anything about the
           // popover it opens. Hidden until there is something to switch to.
           switcher.node,
+          headerMenu.node,
           closeButton,
         ],
       }),
@@ -1500,7 +1540,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         // returning visitor with a noise about messages they have already
         // read. `lastUnread` starts at whatever the seeded state holds for
         // exactly that reason.
-        if (remote.sound && unread > lastUnread) chime();
+        // BOTH have to agree: the merchant enabled a chime, and this visitor
+        // has not silenced it.
+        if (remote.sound && !muted && unread > lastUnread) chime();
         lastUnread = unread;
         syncLauncher(store.getState());
       },
@@ -1602,7 +1644,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the day the first is changed.
     store.select(
       (state) => state.session,
-      () => syncHandoff(store.getState()),
+      () => {
+        syncHandoff(store.getState());
+        // The menu's "End conversation" depends on the same session state.
+        syncHeaderMenu();
+      },
       { immediate: true },
     ),
     store.select(
@@ -2329,6 +2375,25 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * ACTION on it would show this button to someone already talking to a
    * person.
    */
+  /**
+   * What the header menu offers right now.
+   *
+   * "End conversation" is conditional on there BEING a live one — offering it
+   * over a session that is already closed is a control that does nothing, and
+   * the menu's whole contract is that every item does something.
+   */
+  function syncHeaderMenu(): void {
+    const session = store.getState().session;
+    const live =
+      session !== null && session.status !== 'CLOSED' && session.status !== 'RESOLVED';
+    headerMenu.update({
+      canEnd: live,
+      privacyUrl: remote.privacyUrl ?? '',
+      reportIssue: remote.reportIssue,
+      muted,
+    });
+  }
+
   function syncHandoff(state: ChatState): void {
     const session = state.session;
     const live =
@@ -2501,6 +2566,39 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     await rest.request('POST', `/chat/sessions/${encodeURIComponent(sessionId)}/report-issue`, {
       body: issue,
     });
+  }
+
+  /**
+   * Ends the conversation, at the customer's request.
+   *
+   * `closeSession` goes through chat-service's own
+   * `POST /chat/sessions/:id/close`, which is customer-owned — so this is the
+   * customer closing THEIR session, not an agent action borrowed.
+   *
+   * Confirmed first, and it is the only control in this widget that asks. It
+   * is not reversible from this side: chat-service reopens a session on an
+   * AGENT's say-so, not a customer's, so a mis-tap ends the conversation
+   * somebody was in the middle of and leaves them starting a new one with no
+   * history in it.
+   *
+   * `confirm` rather than a bespoke sheet: it is the host page's own modal, it
+   * is unmissable, and building a second confirmation UI for the one place
+   * this widget needs one would be a surface to maintain for a single yes/no.
+   */
+  function endConversation(): void {
+    if (endingConversation) return;
+    const live = store.getState().session;
+    if (live === null) return;
+    // eslint-disable-next-line no-alert -- see the note above.
+    if (!globalThis.confirm?.('End this conversation? You can always start a new one.')) return;
+
+    endingConversation = true;
+    store.client
+      .closeSession()
+      .catch(report)
+      .finally(() => {
+        endingConversation = false;
+      });
   }
 
   function requestHumanAgent(): void {
@@ -2706,6 +2804,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // Its pending storage read resolves after teardown otherwise, and would
       // touch a node that is on its way out.
       consent.destroy();
+      // Its own document-level pointerdown listener, same as the message menu.
+      headerMenu.destroy();
       composer.destroy();
       // The switcher owns a document-level `pointerdown` listener for its
       // outside-click close, which outlives the shadow root unless released.

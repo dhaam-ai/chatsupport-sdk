@@ -800,3 +800,86 @@ describe('report an issue', () => {
     expect(find('.dh-report-form')).not.toBeNull();
   });
 });
+
+describe('the conversation menu', () => {
+  const openMenu = () => {
+    find<HTMLButtonElement>('.dh-hmenu-toggle')!.click();
+    return find<HTMLElement>('.dh-hmenu')!;
+  };
+  const labels = () =>
+    [...shadow().querySelectorAll<HTMLElement>('.dh-hmenu-item')]
+      .filter((n) => !n.hidden)
+      .map((n) => n.textContent?.trim());
+
+  it('starts closed and says so', async () => {
+    stubFetch(published());
+    mount(config());
+    await settle();
+    expect(find<HTMLElement>('.dh-hmenu')?.hidden).toBe(true);
+    expect(find('.dh-hmenu-toggle')?.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  // The menu's whole contract: nothing in it is decorative. Privacy and Report
+  // are absent here because this config offers neither, and End is absent
+  // because there is no live session in this environment.
+  it('offers only what is actually backed', async () => {
+    stubFetch(published());
+    mount(config());
+    await settle();
+    expect(openMenu().hidden).toBe(false);
+    expect(labels()).toEqual(['Mute notifications', 'Start new conversation']);
+  });
+
+  it('adds Report an issue when the merchant offers it', async () => {
+    stubFetch(published({ behaviour: { reportIssue: true } }));
+    mount(config());
+    await settle();
+    openMenu();
+    expect(labels()).toContain('Report an issue');
+  });
+
+  // Linking nowhere is worse than not offering it.
+  it('hides Privacy until the merchant sets a URL', async () => {
+    stubFetch(published());
+    mount(config());
+    await settle();
+    openMenu();
+    expect(labels()).not.toContain('Privacy');
+  });
+
+  it('links Privacy to the merchant’s own policy', async () => {
+    stubFetch(published({ behaviour: { privacyUrl: 'https://acme.test/privacy' } }));
+    mount(config());
+    await settle();
+    openMenu();
+
+    const link = [...shadow().querySelectorAll<HTMLAnchorElement>('a.dh-hmenu-item')][0]!;
+    expect(link.hidden).toBe(false);
+    expect(link.getAttribute('href')).toBe('https://acme.test/privacy');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  // Merchant-supplied and lands in an href, so the allowlist has to apply.
+  it('refuses a javascript: privacy URL rather than linking it', async () => {
+    stubFetch(published({ behaviour: { privacyUrl: 'javascript:alert(1)' } }));
+    mount(config());
+    await settle();
+    openMenu();
+    expect(labels()).not.toContain('Privacy');
+  });
+
+  it('reports the mute state as a checkbox, and flips it', async () => {
+    stubFetch(published());
+    mount(config());
+    await settle();
+    openMenu();
+
+    const mute = find<HTMLElement>('.dh-hmenu-item')!;
+    expect(mute.getAttribute('role')).toBe('menuitemcheckbox');
+    expect(mute.getAttribute('aria-checked')).toBe('false');
+    mute.click();
+
+    openMenu();
+    expect(find<HTMLElement>('.dh-hmenu-item')?.getAttribute('aria-checked')).toBe('true');
+  });
+});

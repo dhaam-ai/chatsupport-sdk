@@ -1493,6 +1493,51 @@ button {
 .dh-report-details { min-height: 84px; resize: vertical; font: inherit; }
 .dh-form-done { padding: calc(var(--dh-space) * 2) 0; }
 
+/* The conversation header's overflow menu. Anchored to its own toggle rather
+   than to the header, so it stays put when the title beside it changes length. */
+.dh-hmenu-wrap { position: relative; flex: none; }
+.dh-hmenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-end: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 216px;
+  padding: calc(var(--dh-space) * 0.75);
+  border: 1px solid var(--dh-border);
+  border-radius: 14px;
+  background: var(--dh-surface);
+  box-shadow: var(--dh-shadow);
+}
+.dh-hmenu-item {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 2);
+  padding: calc(var(--dh-space) * 1.75) calc(var(--dh-space) * 2);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dh-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+}
+.dh-hmenu-item:hover { background: var(--dh-surface-sunken); }
+.dh-hmenu-item:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
+.dh-hmenu-glyph { display: flex; }
+/* The one item with a consequence the customer cannot undo. Colour is not the
+   only signal — it also confirms before acting — but it is the one that lands
+   before the tap rather than after. */
+.dh-hmenu-danger { color: var(--dh-danger); }
+.dh-hmenu-danger:hover { background: color-mix(in srgb, var(--dh-danger) 10%, transparent); }
+/* The header sits on the accent under the hero design, where the panel's own
+   text colours would vanish. The menu is a surface in its own right, so it
+   keeps them — but the TOGGLE belongs to the header and inherits from it. */
+:host([data-design="hero"]) .dh-hmenu-toggle { color: inherit; opacity: 0.85; }
+
 /* Per-message actions. Hidden until the row is hovered or something inside it
    has focus, so a transcript at rest is text rather than a column of buttons —
    but ALWAYS present for keyboard and touch, which have no hover: 'opacity' is
