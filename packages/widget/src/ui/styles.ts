@@ -1970,4 +1970,309 @@ button {
 .dh-error[hidden] { display: none; }
 
 .dh-file { display: none; }
+
+/* ── Bottom navigation: Home / Messages (ui/nav.ts) ──────────────────────
+
+   flex: none for the same reason .dh-composer has it: exactly one element in
+   the panel column is allowed to absorb spare height, and this bar is never
+   it. Sits below whichever screen is showing, same physical position the
+   composer used to be the last word on. */
+.dh-nav {
+  flex: none;
+  display: flex;
+  border-top: 1px solid var(--dh-border);
+  background: var(--dh-surface);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.dh-nav-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: calc(var(--dh-space) * 2) 0;
+  color: var(--dh-text-muted);
+}
+.dh-nav-tab[aria-selected="true"] { color: var(--dh-accent); }
+.dh-nav-icon { position: relative; display: inline-flex; }
+.dh-nav-label { font-size: 11px; font-weight: 500; }
+/* Same red-pill treatment as .dh-session-unread and .dh-messages-unread --
+   one "you have not seen this" language across the whole widget. */
+.dh-nav-badge {
+  position: absolute;
+  top: -4px;
+  inset-inline-end: -8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--dh-danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* ── Home screen (ui/home-screen.ts) ──────────────────────────────────────
+
+   flex: 1 + overflow-y: auto — the one child of .dh-panel's column allowed
+   to grow and scroll while this screen is showing, same role .dh-prechat and
+   .dh-surface-host already play for the screens they stand in for. */
+.dh-home {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 5);
+  padding: calc(var(--dh-space) * 4);
+}
+
+.dh-home-cta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 3);
+  width: 100%;
+  padding: calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  color: var(--dh-text);
+  text-align: start;
+  box-shadow: var(--dh-shadow);
+}
+.dh-home-cta:hover { background: var(--dh-surface-sunken); }
+.dh-home-cta-icon {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--dh-accent);
+  color: var(--dh-accent-text);
+}
+.dh-home-cta-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dh-home-cta-title { font-size: 14px; font-weight: 600; }
+.dh-home-cta-sub { font-size: 12px; color: var(--dh-text-muted); }
+.dh-home-cta-sub[hidden] { display: none; }
+.dh-home-chevron { flex: none; font-size: 20px; line-height: 1; color: var(--dh-text-muted); }
+
+.dh-home-section { display: flex; flex-direction: column; gap: calc(var(--dh-space) * 2); }
+.dh-home-section-head { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--dh-space) * 2); }
+.dh-home-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dh-text-muted);
+}
+.dh-home-seeall { font-size: 12.5px; font-weight: 600; color: var(--dh-accent); }
+.dh-home-seeall:hover { text-decoration: underline; }
+
+.dh-home-recent-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 2);
+  width: 100%;
+  padding: calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  text-align: start;
+}
+.dh-home-recent-row:hover { background: var(--dh-surface-sunken); }
+.dh-home-recent-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dh-home-recent-head { display: flex; align-items: center; gap: calc(var(--dh-space) * 2); }
+.dh-home-recent-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Same neutral pill as .dh-session-status, ON_HOLD's amber included --
+   see that rule's own comment on why a terminal status is not dimmed. */
+.dh-home-recent-status {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px calc(var(--dh-space) * 2);
+  border-radius: 999px;
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text-muted);
+}
+.dh-home-recent-status[data-status="ON_HOLD"] { color: #c98a00; }
+.dh-home-recent-preview {
+  font-size: 12.5px;
+  color: var(--dh-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dh-home-recent-preview[hidden] { display: none; }
+.dh-home-recent-time { font-size: 11px; color: var(--dh-text-muted); font-variant-numeric: tabular-nums; }
+
+/* ── Messages screen (ui/messages-screen.ts) ──────────────────────────────
+
+   Row styling deliberately mirrors .dh-session-row rather than sharing its
+   selector — see messages-screen.ts's own header on why this is a fresh
+   component rather than session-picker.ts's row factory reused, and why
+   duplicating a few small rules here is the safer trade against editing an
+   already-shipped block those tests already pin. */
+.dh-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 3);
+  padding: calc(var(--dh-space) * 4);
+}
+
+.dh-messages-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 2);
+  padding: 0 calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: 10px;
+  background: var(--dh-surface-sunken);
+}
+.dh-messages-search-icon { flex: none; display: flex; color: var(--dh-text-muted); }
+.dh-messages-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: calc(var(--dh-space) * 2.5) 0;
+  color: var(--dh-text);
+  font: inherit;
+  /* 16px on touch, same reason .dh-input has it: anything smaller makes iOS
+     Safari zoom the page on focus. */
+  font-size: 16px;
+}
+@media (pointer: fine) { .dh-messages-search-input { font-size: 14px; } }
+.dh-messages-search-input:focus { outline: none; }
+.dh-messages-search-input::placeholder { color: var(--dh-text-muted); opacity: 1; }
+/* The browser's own search decorations (a native clear button in Chrome, an
+   extra icon slot in Safari) would sit beside this widget's own icon and
+   disagree with it about where "clear" lives. Removed so there is exactly
+   one affordance. */
+.dh-messages-search-input::-webkit-search-cancel-button,
+.dh-messages-search-input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.dh-messages-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: calc(var(--dh-space) * 2); }
+.dh-messages-empty {
+  text-align: center;
+  color: var(--dh-text-muted);
+  font-size: 13px;
+  padding: calc(var(--dh-space) * 6) 0;
+}
+.dh-messages-empty[hidden] { display: none; }
+
+.dh-messages-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(var(--dh-space));
+  padding: calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  text-align: start;
+}
+.dh-messages-row:hover { background: var(--dh-surface-sunken); }
+.dh-messages-row[aria-current="true"] { border-color: var(--dh-accent); }
+.dh-messages-row-top { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--dh-space) * 2); }
+.dh-messages-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px calc(var(--dh-space) * 2);
+  border-radius: 999px;
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text-muted);
+}
+.dh-messages-item[data-status="ON_HOLD"] .dh-messages-status { color: #c98a00; }
+.dh-messages-time {
+  font-size: 11px;
+  color: var(--dh-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dh-messages-preview {
+  font-size: 13px;
+  color: var(--dh-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dh-messages-preview[hidden] { display: none; }
+.dh-messages-unread {
+  align-self: flex-start;
+  min-width: 16px;
+  padding: 1px calc(var(--dh-space) * 1.5);
+  border-radius: 999px;
+  background: var(--dh-danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.dh-messages-unread[hidden] { display: none; }
+
+.dh-messages-new {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--dh-space) * 2);
+  min-height: 44px;
+  padding: calc(var(--dh-space) * 3);
+  border-radius: 10px;
+  background: var(--dh-accent);
+  color: var(--dh-accent-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.dh-messages-new[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+/* ── New conversation (ui/new-conversation.ts) ────────────────────────────
+
+   Mounted as a product surface inside .dh-surface-host, so it inherits that
+   host's flex: 1 and scroll — see .dh-surface-host's own rule above. Only
+   the two pieces this screen adds beyond the shared .dh-form/.dh-field
+   primitives (already styled under "Data-collecting surfaces") need rules
+   of their own. */
+.dh-topics { display: flex; flex-wrap: wrap; gap: calc(var(--dh-space) * 1.5); }
+.dh-topics[hidden] { display: none; }
+.dh-topic-chip {
+  flex: none;
+  padding: calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 3);
+  border-radius: 999px;
+  border: 1px solid var(--dh-border);
+  background: var(--dh-surface);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--dh-text);
+}
+.dh-topic-chip:hover { background: var(--dh-surface-sunken); }
+/* The selected chip -- aria-pressed carries the same state to a screen
+   reader, so this is decoration layered on top of an already-accessible
+   fact rather than the only place the state lives. */
+.dh-topic-chip[aria-pressed="true"] {
+  border-color: var(--dh-accent);
+  background: color-mix(in srgb, var(--dh-accent) 12%, transparent);
+  color: var(--dh-accent);
+  font-weight: 600;
+}
+.dh-newconvo-message { min-height: 84px; resize: vertical; font: inherit; }
 `;
