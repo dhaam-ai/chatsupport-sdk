@@ -202,6 +202,11 @@ export interface RemoteConfig {
    * none, which disables the whole check rather than matching everything.
    */
   readonly handoffKeywords: readonly string[];
+  /**
+   * `behaviour.reportIssue` — whether the widget offers the report-a-problem
+   * form, which files a ticket without a conversation.
+   */
+  readonly reportIssue: boolean;
   readonly preChatEnabled: boolean;
   readonly preChatFields: readonly PreChatField[];
   /** `behaviour.commonQuestions[]`. `[]` for a merchant who has configured
@@ -261,6 +266,10 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   consentRequired: false,
   consentText: undefined,
   handoffKeywords: [],
+  // Off, like every other surface this pass added: a widget whose config never
+  // landed must look exactly as it did before, and a form that files tickets
+  // is not something to start offering because a fetch failed.
+  reportIssue: false,
   preChatEnabled: false,
   preChatFields: [],
   commonQuestions: [],
@@ -709,6 +718,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     consentRequired: bool(behaviour, 'consentRequired', DEFAULT_REMOTE_CONFIG.consentRequired),
     consentText: str(behaviour, 'consentText'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
+    reportIssue: bool(behaviour, 'reportIssue', DEFAULT_REMOTE_CONFIG.reportIssue),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),

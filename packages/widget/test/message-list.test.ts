@@ -33,8 +33,8 @@ function build() {
   const onStartNewConversation = vi.fn();
   const onEmailTranscript = vi.fn(async () => undefined);
   const onQuickReply = vi.fn();
-  const onCopyMessage = vi.fn(async () => undefined);
-  const onReplyToMessage = vi.fn();
+  const onCopyMessage = vi.fn(async (_message: ChatMessage) => undefined);
+  const onReplyToMessage = vi.fn((_message: ChatMessage) => undefined);
   const view = createMessageList({
     onRetry,
     onLoadOlder,

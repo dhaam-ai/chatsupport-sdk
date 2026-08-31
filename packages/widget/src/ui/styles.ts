@@ -1469,6 +1469,13 @@ button {
   /* Merchant free text, so a long unbroken string must not widen the panel. */
   overflow-wrap: anywhere;
 }
+/* The report-an-issue form. Reuses '.dh-form*' wholesale — it is the fourth
+   form in the same surface slot, so it should look like the other three
+   rather than like a new screen. Only the multi-line field needs anything of
+   its own. */
+.dh-report-details { min-height: 84px; resize: vertical; font: inherit; }
+.dh-form-done { padding: calc(var(--dh-space) * 2) 0; }
+
 /* Per-message actions. Hidden until the row is hovered or something inside it
    has focus, so a transcript at rest is text rather than a column of buttons —
    but ALWAYS present for keyboard and touch, which have no hover: 'opacity' is

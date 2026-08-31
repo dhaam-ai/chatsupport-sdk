@@ -33,6 +33,8 @@ import type {
 import { asksForAHuman } from './handoff-keywords.js';
 import { createChime } from './ui/chime.js';
 import { createConsentGate } from './ui/consent.js';
+import { createReportIssueForm } from './ui/report-issue.js';
+import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
 import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl, safeLinkUrl } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
@@ -385,7 +387,7 @@ function buildHeaderAvatar(mode: AvatarMode, initials: string, logoUrl: string):
 }
 
 /** Which of the three data-collecting surfaces is standing in for the chat. */
-type SurfaceKind = 'preChat' | 'offline' | 'csat';
+type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report';
 
 /** The shape all three surfaces share, so one slot can hold any of them. */
 interface ProductSurface {
@@ -630,6 +632,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     armGreeting(next.greeting ?? '', next.greetingDelaySec);
     consent.update(next.consentRequired, next.consentText ?? '');
     messageList.setTranscriptEmail(next.transcriptEmail);
+    reportButton.hidden = !next.reportIssue;
     // The gate may have just opened or closed under the composer.
     syncComposer();
 
@@ -1011,6 +1014,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   });
 
   /**
+   * The way to a ticket without a conversation.
+   *
+   * Hidden until published config turns it on — see `reportIssue` in
+   * remote-config.ts. Sits beside "Talk to a human" because the two are the
+   * same kind of offer: both are the customer deciding the bot is not the
+   * route to their answer.
+   */
+  const reportButton = el('button', {
+    attrs: { class: 'dh-handoff dh-report-open', type: 'button', hidden: true },
+    text: 'Report an issue',
+    on: { click: () => openReportIssue() },
+  });
+
+  /**
    * Slot for the "Common Questions" chip row (`ui/common-questions.ts`).
    *
    * Rebuilt whenever remote config changes (`applyRemoteConfig` below) —
@@ -1289,6 +1306,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // it. In the header it would compete with the conversation switcher for
       // a glance, and inside the log it would scroll away.
       handoffButton,
+      reportButton,
       // Directly above the composer it gates, so the notice and the control it
       // disables are read as one thing rather than as an unrelated banner.
       consent.node,
@@ -2426,6 +2444,46 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
     await rest.request('POST', `/chat/sessions/${encodeURIComponent(sessionId)}/transcript/email`, {
       body: {},
+    });
+  }
+
+  /**
+   * Opens the report form in the surface slot the other three forms share.
+   *
+   * Not a modal, deliberately: this widget has one slot, `openSurface` already
+   * owns which form is in it, and a fourth pattern for a fourth form would be
+   * a pattern for its own sake. It also means the form cannot be opened on top
+   * of the pre-chat gate or the rating.
+   */
+  function openReportIssue(): void {
+    openSurface('report', () =>
+      createReportIssueForm({
+        onSubmit: (report) => fileIssueReport(report),
+        onCancel: () => closeSurface(),
+        onError: report,
+      }),
+    );
+  }
+
+  /**
+   * Files the report.
+   *
+   * Rejects rather than reporting, so the form can show its own message and
+   * keep what the customer typed — `submitOnce` in ui/forms.ts is built around
+   * exactly that contract.
+   *
+   * The body carries no tenant and no session: the tenant comes from the
+   * verified token server-side and the session is in the path, which is the
+   * rule the route states in its own header. Sending either would be rejected
+   * with a 400 that says so.
+   */
+  async function fileIssueReport(issue: IssueReport): Promise<void> {
+    const sessionId = store.getState().session?.id ?? closedSessionId;
+    if (sessionId === null || sessionId === undefined) {
+      throw new Error('No conversation to report against');
+    }
+    await rest.request('POST', `/chat/sessions/${encodeURIComponent(sessionId)}/report-issue`, {
+      body: issue,
     });
   }
 

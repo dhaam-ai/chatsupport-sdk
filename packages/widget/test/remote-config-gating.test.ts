@@ -745,3 +745,58 @@ describe('the consent gate', () => {
     expect(find<HTMLTextAreaElement>('.dh-input')?.disabled).toBe(false);
   });
 });
+
+describe('report an issue', () => {
+  const openButton = () => find<HTMLButtonElement>('.dh-report-open');
+
+  // Off unless the merchant turned it on — the rule every surface this pass
+  // added follows, so a widget whose config never landed is unchanged.
+  it('offers nothing until the merchant turns it on', async () => {
+    stubFetch(published());
+    mount(config());
+    await settle();
+    expect(openButton()?.hidden).toBe(true);
+  });
+
+  it('offers the form when the merchant turned it on', async () => {
+    stubFetch(published({ behaviour: { reportIssue: true } }));
+    mount(config());
+    await settle();
+    expect(openButton()?.hidden).toBe(false);
+  });
+
+  it('stands in place of the conversation rather than over it', async () => {
+    stubFetch(published({ behaviour: { reportIssue: true } }));
+    mount(config());
+    await settle();
+
+    openButton()!.click();
+    expect(find('.dh-report-form')).not.toBeNull();
+    // The same slot the pre-chat and out-of-hours forms use.
+    expect(find<HTMLElement>('.dh-log')?.hidden).toBe(true);
+    expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(true);
+  });
+
+  it('gives the conversation back on cancel', async () => {
+    stubFetch(published({ behaviour: { reportIssue: true } }));
+    mount(config());
+    await settle();
+
+    openButton()!.click();
+    find<HTMLButtonElement>('.dh-report-form .dh-form-skip')!.click();
+    expect(find('.dh-report-form')).toBeNull();
+    expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
+  });
+
+  it('refuses to submit without the two required fields, and says which', async () => {
+    stubFetch(published({ behaviour: { reportIssue: true } }));
+    mount(config());
+    await settle();
+    openButton()!.click();
+
+    find<HTMLButtonElement>('.dh-report-form .dh-form-submit')!.click();
+    expect(find('.dh-report-form .dh-form-error')?.textContent).toContain('required');
+    // Still on the form, with nothing filed.
+    expect(find('.dh-report-form')).not.toBeNull();
+  });
+});
