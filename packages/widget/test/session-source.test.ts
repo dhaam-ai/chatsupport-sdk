@@ -85,7 +85,7 @@ afterEach(() => {
 describe('the widget wires listSessions for the integrator', () => {
   it('does not throw ChatClientConfigError — the seam is supplied', async () => {
     stubFetch([ROW]);
-    const store = createWidgetStore(resolveConfig(config()));
+    const { store } = createWidgetStore(resolveConfig(config()));
 
     await expect(store.client.listSessions({ limit: 5 })).resolves.toBeInstanceOf(Array);
 
@@ -94,7 +94,7 @@ describe('the widget wires listSessions for the integrator', () => {
 
   it('calls the customer-sessions route with the picker’s page size', async () => {
     stubFetch([ROW]);
-    const store = createWidgetStore(resolveConfig(config()));
+    const { store } = createWidgetStore(resolveConfig(config()));
 
     await store.client.listSessions({ limit: 5 });
 
@@ -107,7 +107,7 @@ describe('the widget wires listSessions for the integrator', () => {
 
   it('projects the row into core’s ChatSessionSummary, handledBy included', async () => {
     stubFetch([ROW]);
-    const store = createWidgetStore(resolveConfig(config()));
+    const { store } = createWidgetStore(resolveConfig(config()));
 
     const sessions = await store.client.listSessions({ limit: 5 });
 
@@ -121,7 +121,7 @@ describe('the widget wires listSessions for the integrator', () => {
 
   it('writes the page to ChatState.pastSessions, so the picker needs no second read', async () => {
     stubFetch([ROW]);
-    const store = createWidgetStore(resolveConfig(config()));
+    const { store } = createWidgetStore(resolveConfig(config()));
 
     await store.client.listSessions({ limit: 5 });
 
@@ -132,7 +132,7 @@ describe('the widget wires listSessions for the integrator', () => {
 
   it('resolves an empty page normally — that IS the guest signal', async () => {
     stubFetch([]);
-    const store = createWidgetStore(resolveConfig(config()));
+    const { store } = createWidgetStore(resolveConfig(config()));
 
     await expect(store.client.listSessions({ limit: 5 })).resolves.toEqual([]);
     expect(store.getState().pastSessions).toEqual([]);

@@ -74,6 +74,8 @@ export interface MessageListCallbacks {
   readonly onLoadOlder: () => void;
   /** The customer asking for a fresh conversation after this one ended. */
   readonly onStartNewConversation: () => void;
+  /** Emails the conversation to the address already on file. Rejects on failure. */
+  readonly onEmailTranscript: () => Promise<void>;
 }
 
 export interface MessageListView {
@@ -88,6 +90,13 @@ export interface MessageListView {
    * and the customer may well want to re-read what the agent told them.
    */
   setClosure(reason: CloseReason | null): void;
+
+  /**
+   * Whether the merchant offers an emailed transcript. Off by default, so a
+   * build whose config never landed shows no control rather than one that
+   * fails when pressed.
+   */
+  setTranscriptEmail(enabled: boolean): void;
 
   /**
    * Marks the new-conversation request in flight.
@@ -145,6 +154,42 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     text: 'Start a new conversation',
     on: { click: () => callbacks.onStartNewConversation() },
   });
+  /**
+   * `behaviour.transcriptEmail` — "Sent when the chat ends, if you have their
+   * address", which is why it lives in the closure block and nowhere else.
+   *
+   * Hidden until {@link MessageListView.setTranscriptEmail} enables it, so a
+   * merchant with the setting off — or a build talking to a chat-service too
+   * old to have the endpoint — shows no control at all rather than one that
+   * fails when pressed.
+   *
+   * Its label changes rather than disappearing on success: the address is the
+   * one already on file, which the widget deliberately never echoes back, so
+   * "Sent" is the whole of what it can honestly say.
+   */
+  const transcriptAction = el('button', {
+    attrs: { class: 'dh-system-action', type: 'button', hidden: true },
+    text: 'Email me a transcript',
+    on: {
+      click: () => {
+        transcriptAction.disabled = true;
+        transcriptAction.textContent = 'Sending…';
+        void callbacks
+          .onEmailTranscript()
+          .then(() => {
+            transcriptAction.textContent = 'Transcript sent';
+          })
+          .catch(() => {
+            // Re-armed, and honest about it. A control that stays on "Sending…"
+            // after a failure tells the customer their transcript is on its way
+            // when nothing was sent.
+            transcriptAction.disabled = false;
+            transcriptAction.textContent = "Couldn't send — try again";
+          });
+      },
+    },
+  });
+
   const closure = el('div', {
     attrs: {
       class: 'dh-system',
@@ -155,7 +200,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       role: 'group',
       'aria-label': 'Conversation ended',
     },
-    children: [closureText, closureAction],
+    children: [closureText, closureAction, transcriptAction],
   });
   log.appendChild(closure);
 
@@ -318,7 +363,11 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     closureAction.textContent = busy ? 'Starting…' : 'Start a new conversation';
   }
 
-  return { log, liveRegion, render, setClosure, setStartingNewConversation };
+  function setTranscriptEmail(enabled: boolean): void {
+    transcriptAction.hidden = !enabled;
+  }
+
+  return { log, liveRegion, render, setClosure, setStartingNewConversation, setTranscriptEmail };
 }
 
 interface MessageRow {

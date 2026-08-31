@@ -119,7 +119,7 @@ const receipt = (): Response =>
 
 /** Builds a widget client and hands back the config core was given. */
 function buildConfig(identity: WidgetConfig['identity']): ChatClientConfig {
-  const store = createWidgetStore(resolveConfig(config(identity)));
+  const { store } = createWidgetStore(resolveConfig(config(identity)));
   store.destroy({ disconnect: true });
   // Not `.at(-1)`: `lib` is ES2020 here, and tsconfig.test.json typechecks
   // this file. `noUncheckedIndexedAccess` makes the index read `| undefined`

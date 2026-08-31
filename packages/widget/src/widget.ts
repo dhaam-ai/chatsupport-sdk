@@ -396,7 +396,7 @@ interface ProductSurface {
 
 export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const config = resolveConfig(rawConfig);
-  const store = createWidgetStore(config);
+  const { store, rest } = createWidgetStore(config);
   const localParticipantId = config.identity.userId;
 
   const root = createWidgetRoot(`${STYLES}\n${themeCss(config)}`);
@@ -629,6 +629,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     armAutoOpen(next.autoOpen, next.autoOpenDelaySec);
     armGreeting(next.greeting ?? '', next.greetingDelaySec);
     consent.update(next.consentRequired, next.consentText ?? '');
+    messageList.setTranscriptEmail(next.transcriptEmail);
     // The gate may have just opened or closed under the composer.
     syncComposer();
 
@@ -1090,6 +1091,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const messageList = createMessageList({
     onRetry: (message) => retry(message),
     onStartNewConversation: () => startNewConversation(),
+    onEmailTranscript: () => emailTranscript(),
     onLoadOlder: () => {
       // `.catch`, not `void`: an unhandled rejection here surfaces on the
       // HOST's window and lands in the host's error tracker as a bug in their
@@ -2340,6 +2342,32 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * socket. Reported, and the button re-armed — leaving it disabled would
    * strand the customer with a dead control and no way to try again.
    */
+  /**
+   * Emails the customer their own conversation.
+   *
+   * `POST /chat/sessions/:id/transcript/email`, which takes NO body — the
+   * recipient is resolved server-side from the session's own record and is
+   * never accepted from a client. That is the endpoint's security model, not
+   * an omission here: an address the browser could choose would make this a
+   * way to mail any conversation anywhere.
+   *
+   * Rejects rather than reporting, because the caller is a button that has to
+   * change its own label on failure. `report` would swallow the outcome and
+   * leave it saying "Sending…" forever.
+   */
+  async function emailTranscript(): Promise<void> {
+    const sessionId = store.getState().session?.id ?? closedSessionId;
+    // The button only exists on a closed conversation, so this is close to
+    // unreachable — but "no session" must not become a request to
+    // `/sessions/undefined/transcript/email`.
+    if (sessionId === null || sessionId === undefined) {
+      throw new Error('No conversation to send');
+    }
+    await rest.request('POST', `/chat/sessions/${encodeURIComponent(sessionId)}/transcript/email`, {
+      body: {},
+    });
+  }
+
   function requestHumanAgent(): void {
     if (requestingAgent) return;
     requestingAgent = true;

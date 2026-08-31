@@ -42,8 +42,20 @@ import type { ResolvedConfig } from './config.js';
  * `@dhaam-ccrm/js` exists to do, with per-subscription selector caching this
  * package would otherwise have had to write itself. `store.client` remains
  * reachable for the ~18 imperative operations (§6.2/§6.3).
+ *
+ * `rest` comes back alongside it because a couple of things the widget offers
+ * are plain REST calls with no state to subscribe to — emailing a transcript
+ * is the first. Handing the SAME client back, rather than letting a caller
+ * build a second one, is what keeps them on one token source: a second
+ * `RestClient` would mean a second `createTokenSource`, and therefore a
+ * second mint of a token the widget already holds.
  */
-export function createWidgetStore(config: ResolvedConfig): ChatStore {
+export interface WidgetStore {
+  readonly store: ChatStore;
+  readonly rest: RestClient;
+}
+
+export function createWidgetStore(config: ResolvedConfig): WidgetStore {
   const { publishableKey, tokens } = createTokenSource(config);
 
   const rest = new RestClient({
@@ -151,5 +163,8 @@ export function createWidgetStore(config: ResolvedConfig): ChatStore {
     },
   };
 
-  return createChatStore(createChatClient(clientConfig), { onError: config.onError });
+  return {
+    store: createChatStore(createChatClient(clientConfig), { onError: config.onError }),
+    rest,
+  };
 }

@@ -31,10 +31,16 @@ function build() {
   const onRetry = vi.fn();
   const onLoadOlder = vi.fn();
   const onStartNewConversation = vi.fn();
-  const view = createMessageList({ onRetry, onLoadOlder, onStartNewConversation });
+  const onEmailTranscript = vi.fn(async () => undefined);
+  const view = createMessageList({
+    onRetry,
+    onLoadOlder,
+    onStartNewConversation,
+    onEmailTranscript,
+  });
   // Attached so `getComputedStyle` and `scrollHeight` behave.
   document.body.append(view.log, view.liveRegion);
-  return { view, onRetry, onLoadOlder, onStartNewConversation };
+  return { view, onRetry, onLoadOlder, onStartNewConversation, onEmailTranscript };
 }
 
 beforeEach(() => {
@@ -746,5 +752,55 @@ describe('a conversation the agent closed', () => {
 
     expect(messageIndex).toBeLessThan(closureIndex);
     expect(closureIndex).toBeLessThan(typingIndex);
+  });
+});
+
+describe('the emailed transcript', () => {
+  // Off until the merchant's config says otherwise: a build whose config never
+  // landed must show no control rather than one that fails when pressed.
+  it('offers nothing until the merchant turns it on', () => {
+    const { view } = build();
+    view.setClosure('RESOLVED');
+    expect(view.log.querySelector<HTMLElement>('.dh-system-action[hidden]')).not.toBeNull();
+  });
+
+  // By POSITION, not by label: the label is the thing under test and changes
+  // to "Sending…" and then to an outcome, so matching on it would stop finding
+  // the button at exactly the moments these tests care about.
+  const transcriptButton = (view: ReturnType<typeof build>['view']) =>
+    view.log.querySelectorAll<HTMLButtonElement>('.dh-system-action')[1];
+
+  it('appears on a closed conversation once enabled', () => {
+    const { view } = build();
+    view.setTranscriptEmail(true);
+    view.setClosure('RESOLVED');
+    expect(transcriptButton(view)?.hidden).toBe(false);
+  });
+
+  it('reports success without ever naming the address', async () => {
+    const { view, onEmailTranscript } = build();
+    view.setTranscriptEmail(true);
+    view.setClosure('RESOLVED');
+
+    transcriptButton(view)!.click();
+    await vi.waitFor(() => expect(onEmailTranscript).toHaveBeenCalled());
+    await vi.waitFor(() => expect(transcriptButton(view)?.textContent).toBe('Transcript sent'));
+    // The widget never learns which address was used, so it cannot name one.
+    expect(view.log.textContent).not.toMatch(/@/);
+  });
+
+  // A control stuck on "Sending…" tells the customer their transcript is on
+  // its way when nothing was sent.
+  it('re-arms itself and says so when the send fails', async () => {
+    const { view, onEmailTranscript } = build();
+    onEmailTranscript.mockRejectedValueOnce(new Error('502'));
+    view.setTranscriptEmail(true);
+    view.setClosure('RESOLVED');
+
+    transcriptButton(view)!.click();
+    await vi.waitFor(() =>
+      expect(transcriptButton(view)?.textContent).toBe("Couldn't send — try again"),
+    );
+    expect(transcriptButton(view)?.disabled).toBe(false);
   });
 });
