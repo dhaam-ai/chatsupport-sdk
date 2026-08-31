@@ -2,59 +2,14 @@ import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// A [RemoteConfig] fixture with just the theme-relevant leaves overridable
-/// — mirrors `remote_config_client_test.dart`'s own `withOverrides` helper,
-/// scoped to what this file needs rather than a shared utility the codebase
-/// has not otherwise chosen to introduce.
+import '../support/remote_config_fixtures.dart';
+
+/// Scoped to just the theme-relevant leaves this file exercises — the
+/// shared [testRemoteConfig] takes every leaf, but repeating "accent:
+/// accent, theme: theme, ..." at each call site below would be its own kind
+/// of noise.
 RemoteConfig _config({String? accent, WidgetTheme? theme, String? fontFamily, double? cornerRadius}) {
-  return RemoteConfig(
-    enabled: true,
-    accent: accent,
-    title: null,
-    theme: theme,
-    position: null,
-    offsetX: null,
-    offsetY: null,
-    launcher: null,
-    launcherLabel: null,
-    launcherIcon: const LauncherIcon(),
-    launcherShadow: const LauncherShadow(),
-    design: null,
-    header: const HeaderAppearance(),
-    logoUrl: null,
-    subtitle: null,
-    avatarMode: null,
-    avatarInitials: null,
-    showBranding: null,
-    brandingText: null,
-    brandingUrl: null,
-    thread: const ThreadAppearance(),
-    cornerRadius: cornerRadius,
-    fontFamily: fontFamily,
-    greeting: null,
-    greetingDelaySec: 0,
-    autoOpen: AutoOpen.never,
-    autoOpenDelaySec: 12,
-    typingIndicator: true,
-    sound: false,
-    transcriptEmail: false,
-    consentRequired: false,
-    consentText: null,
-    handoffKeywords: const <String>[],
-    reportIssue: false,
-    preChatEnabled: false,
-    preChatFields: const <PreChatField>[],
-    commonQuestions: const <CommonQuestion>[],
-    conversationTopics: const <ConversationTopic>[],
-    csatStyle: CsatStyle.stars,
-    offlineMode: OfflineMode.showMessage,
-    offlineMessage: null,
-    fileUploads: true,
-    isOpenNow: null,
-    flows: const <PublishedFlow>[],
-    botDisplayName: null,
-    publishedVersion: 0,
-  );
+  return testRemoteConfig(accent: accent, theme: theme, fontFamily: fontFamily, cornerRadius: cornerRadius);
 }
 
 void main() {
