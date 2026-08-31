@@ -1415,6 +1415,11 @@ button {
   border-radius: var(--dh-radius);
   background: var(--dh-bubble-in);
 }
+/* 'behaviour.typingIndicator: false'. 'display: none' rather than
+   'visibility: hidden' on purpose — it takes the screen-reader label out of
+   the accessibility tree along with the dots, and a merchant who turned the
+   indicator off did not mean "keep announcing it to some people". */
+:host([data-typing="off"]) .dh-typing { display: none; }
 .dh-typing[hidden] { display: none; }
 .dh-typing-dot {
   width: 6px; height: 6px;

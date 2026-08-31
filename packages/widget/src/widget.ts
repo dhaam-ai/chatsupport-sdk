@@ -26,6 +26,7 @@ import type {
   WidgetConfig,
   WidgetDesign,
 } from './config.js';
+import { createChime } from './ui/chime.js';
 import { createComposer } from './ui/composer.js';
 import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl, safeLinkUrl } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
@@ -532,11 +533,27 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // Everything below reads `remote` through this holder rather than
   // capturing it, because it is replaced once, asynchronously, after mount.
   let remote: RemoteConfig = DEFAULT_REMOTE_CONFIG;
+
+  /**
+   * The last unread count seen, so the chime fires on a RISE and nothing else.
+   * Seeded from the store rather than from 0 — see the selector that reads it.
+   */
+  let lastUnread = store.getState().unreadCount;
+  const chime = createChime(config.onError);
   const remoteConfigAbort = new AbortController();
 
   /** Applies the parts of published config that are safe to change in place. */
   const applyRemoteConfig = (next: RemoteConfig): void => {
     remote = next;
+
+    // An attribute and a CSS rule rather than a flag threaded into
+    // `message-list.ts`: that component owns WHEN the indicator shows (the
+    // `typing.isTyping` state), and this setting is about whether it exists at
+    // all — two different questions, and giving the component both would make
+    // every one of its tests construct a config it does not otherwise need.
+    // `display: none` also takes it out of the accessibility tree, so the
+    // screen-reader label goes with it, which is what "turned off" has to mean.
+    host.setAttribute('data-typing', next.typingIndicator ? 'on' : 'off');
 
     // Accent goes on the host's inline style rather than by rewriting the
     // `<style>` element: an inline custom property outranks the `:host` rule
@@ -1251,7 +1268,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     ),
     store.select(
       (state) => state.unreadCount,
-      () => syncLauncher(store.getState()),
+      (unread) => {
+        // Strictly on the way UP, and never on the `immediate` first call:
+        // `unreadCount` also falls (to zero, when the panel opens), and a
+        // widget that chimed on a restored session's backlog would greet a
+        // returning visitor with a noise about messages they have already
+        // read. `lastUnread` starts at whatever the seeded state holds for
+        // exactly that reason.
+        if (remote.sound && unread > lastUnread) chime();
+        lastUnread = unread;
+        syncLauncher(store.getState());
+      },
       { immediate: true },
     ),
     // The pre-chat gate lifts on the first message, and the rating appears

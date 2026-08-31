@@ -68,6 +68,15 @@ function body(overrides: Record<string, unknown> = {}): unknown {
         csatStyle: 'emoji',
         offlineMessage: "We're closed right now.",
         fileUploads: true,
+        greetingDelaySec: 3,
+        autoOpen: 'delay',
+        autoOpenDelaySec: 12,
+        typingIndicator: true,
+        sound: true,
+        transcriptEmail: true,
+        consentRequired: true,
+        consentText: 'By starting a chat you agree to our privacy policy.',
+        handoffKeywords: ['agent', 'human'],
       },
       offlineMode: OFFLINE_MODE.COLLECT_MESSAGE,
       isOpenNow: false,
@@ -124,6 +133,14 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       offlineMode: OFFLINE_MODE.COLLECT_MESSAGE,
       offlineMessage: "We're closed right now.",
       fileUploads: true,
+      greetingDelaySec: 3,
+      autoOpen: 'delay',
+      autoOpenDelaySec: 12,
+      typingIndicator: true,
+      sound: true,
+      transcriptEmail: true,
+      consentRequired: true,
+      consentText: 'By starting a chat you agree to our privacy policy.',
       isOpenNow: false,
       botDisplayName: 'Dhaam Bot',
       publishedVersion: 4,
@@ -240,6 +257,58 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       ...DEFAULT_REMOTE_CONFIG,
       // `enabled` defaults true and there is no publishedVersion to read.
       publishedVersion: 0,
+    });
+  });
+
+  // `setTimeout` fires IMMEDIATELY once a delay overflows 32 bits, which turns
+  // "open after a very long time" into "open at once" — the exact opposite of
+  // what was configured, and the reason these are clamped rather than trusted.
+  it.each([
+    ['a negative delay', -5, 12],
+    ['a delay past the hour cap', 999_999, 3600],
+    ['a delay that is not a number', 'soon', 12],
+    // Both non-finite cases fall back rather than clamping: `num` refuses them
+    // outright, so they never reach the cap. Pinned so the two guards cannot
+    // drift into disagreeing about which one owns this.
+    ['NaN', Number.NaN, 12],
+    ['Infinity', Number.POSITIVE_INFINITY, 12],
+  ])('refuses %s', (_label, given, expected) => {
+    const config = parseRemoteConfig(body({ behaviour: { autoOpenDelaySec: given } }));
+    expect(config?.autoOpenDelaySec).toBe(expected);
+  });
+
+  it('falls back to never for an autoOpen it cannot name', () => {
+    expect(parseRemoteConfig(body({ behaviour: { autoOpen: 'on-scroll' } }))?.autoOpen).toBe('never');
+  });
+
+  describe('handoff keywords', () => {
+    const keywords = (value: unknown) =>
+      parseRemoteConfig(body({ behaviour: { handoffKeywords: value } }))?.handoffKeywords;
+
+    // The one failure mode of this feature worth a line of code: a stray blank
+    // in the array would match every message and escalate every conversation
+    // on its first word.
+    it('drops blanks, which would otherwise match everything', () => {
+      expect(keywords(['agent', '', '   ', 'human'])).toEqual(['agent', 'human']);
+    });
+
+    it('lower-cases, so a visitor’s capitals still match', () => {
+      expect(keywords(['Agent', 'HUMAN'])).toEqual(['agent', 'human']);
+    });
+
+    it('de-duplicates what lower-casing collapsed', () => {
+      expect(keywords(['Agent', 'agent', 'AGENT'])).toEqual(['agent']);
+    });
+
+    it.each([
+      ['not an array', 'agent'],
+      ['absent', undefined],
+    ])('answers an empty list when it is %s', (_label, value) => {
+      expect(keywords(value)).toEqual([]);
+    });
+
+    it('ignores non-string entries rather than stringifying them', () => {
+      expect(keywords(['agent', 7, null, { toString: () => 'human' }])).toEqual(['agent']);
     });
   });
 

@@ -579,6 +579,14 @@ describe('the merchant’s subtitle', () => {
   });
 });
 
+describe('the typing indicator’s off switch', () => {
+  // It ships ON, so a widget whose config never lands behaves as it always has.
+  it('is on before any config lands', () => {
+    mount(config());
+    expect(host().getAttribute('data-typing')).not.toBe('off');
+  });
+});
+
 describe('the §14 key split, end to end', () => {
   it('refuses to mount with a secret key and leaves nothing on the page', () => {
     expect(() =>

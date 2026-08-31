@@ -60,6 +60,15 @@ export interface PreChatField {
 export type CsatStyle = 'stars' | 'emoji';
 
 /**
+ * Whether the panel opens itself, and on what.
+ *
+ * `'exit-intent'` is the pointer leaving for the browser chrome — a desktop-only
+ * signal by nature, and one this package treats as `'never'` on a touch device
+ * rather than approximating it with something a merchant did not choose.
+ */
+export type AutoOpen = 'never' | 'delay' | 'exit-intent';
+
+/**
  * One console-defined quick question — `behaviour.commonQuestions[]`
  * (Chatbot → Behaviour → Common Questions). Declared here, alongside
  * {@link PreChatField}, rather than in `ui/common-questions.ts`: that module
@@ -166,6 +175,33 @@ export interface RemoteConfig {
   /** `appearance.fontFamily` — a console font NAME, not a CSS stack. */
   readonly fontFamily: string | undefined;
   readonly greeting: string | undefined;
+  /**
+   * `behaviour.greetingDelaySec` — how long the widget waits before the
+   * greeting appears. Seconds, because that is the unit the console's own
+   * control is labelled in.
+   */
+  readonly greetingDelaySec: number;
+  /** `behaviour.autoOpen` — whether the panel opens itself, and on what. */
+  readonly autoOpen: AutoOpen;
+  /** `behaviour.autoOpenDelaySec`, read only under {@link autoOpen} `'delay'`. */
+  readonly autoOpenDelaySec: number;
+  /** `behaviour.typingIndicator` — whether the three dots are shown at all. */
+  readonly typingIndicator: boolean;
+  /** `behaviour.sound` — a chime on the visitor's side when a reply lands. */
+  readonly sound: boolean;
+  /** `behaviour.transcriptEmail` — offer to email the conversation when it ends. */
+  readonly transcriptEmail: boolean;
+  /** `behaviour.consentRequired` — gate the composer until the visitor agrees. */
+  readonly consentRequired: boolean;
+  readonly consentText: string | undefined;
+  /**
+   * `behaviour.handoffKeywords[]` — words that take a visitor to a person.
+   *
+   * Lower-cased on the way in, because the console lower-cases them on the way
+   * out and a visitor types however they like. `[]` for a merchant who has set
+   * none, which disables the whole check rather than matching everything.
+   */
+  readonly handoffKeywords: readonly string[];
   readonly preChatEnabled: boolean;
   readonly preChatFields: readonly PreChatField[];
   /** `behaviour.commonQuestions[]`. `[]` for a merchant who has configured
@@ -209,6 +245,22 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   cornerRadius: undefined,
   fontFamily: undefined,
   greeting: undefined,
+  greetingDelaySec: 0,
+  // Never opens itself. The console's own default is `'delay'`, and this is
+  // deliberately not that: a panel that takes the screen on a page the visitor
+  // is actually using is the single most intrusive thing this widget can do,
+  // and it is not something to start doing because a config fetch failed.
+  // Same reasoning `openOnAgentInitiated` gives for defaulting off.
+  autoOpen: 'never',
+  autoOpenDelaySec: 12,
+  typingIndicator: true,
+  // Silent. A page that makes noise nobody asked for is a page people close,
+  // and an unreadable config is not consent to play a sound.
+  sound: false,
+  transcriptEmail: false,
+  consentRequired: false,
+  consentText: undefined,
+  handoffKeywords: [],
   preChatEnabled: false,
   preChatFields: [],
   commonQuestions: [],
@@ -440,6 +492,45 @@ function parseLauncherShadow(value: unknown): Partial<LauncherShadow> {
 
 const DESIGNS = ['classic', 'hero'] as const;
 const AVATAR_MODES = ['initials', 'logo'] as const;
+const AUTO_OPENS = ['never', 'delay', 'exit-intent'] as const;
+
+/**
+ * A delay in seconds, clamped to something a page can survive.
+ *
+ * Unlike the appearance numbers, these are turned into `setTimeout` calls, so
+ * a bad value is not a dropped CSS declaration but a timer that never fires or
+ * fires forever. Negative is refused outright; the upper bound is an hour,
+ * which is far past any delay a merchant means and far short of the 32-bit
+ * overflow that makes `setTimeout` fire IMMEDIATELY — the failure mode where
+ * "open after a very long time" becomes "open at once", which is the exact
+ * opposite of what was configured.
+ */
+const MAX_DELAY_SEC = 3600;
+
+function seconds(source: Record<string, unknown>, key: string, fallback: number): number {
+  const value = num(source, key);
+  if (value === undefined || value < 0) return fallback;
+  return Math.min(value, MAX_DELAY_SEC);
+}
+
+/**
+ * `behaviour.handoffKeywords` — the words that take a visitor to a person.
+ *
+ * Lower-cased and de-duplicated here so the matcher can stay a plain
+ * comparison, and blanks dropped: a stray empty string in the array would
+ * otherwise match EVERY message and escalate every conversation on its first
+ * word. That is the one failure mode of this feature worth spending a line on.
+ */
+function parseHandoffKeywords(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const word = entry.trim().toLowerCase();
+    if (word !== '') seen.add(word);
+  }
+  return [...seen];
+}
 const THREAD_BACKGROUNDS = ['mesh', 'solid', 'image', 'pattern'] as const;
 const THREAD_PATTERNS = ['dots', 'grid', 'diagonal', 'crosshatch'] as const;
 const IMAGE_FADES = ['light', 'dark'] as const;
@@ -609,6 +700,15 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     cornerRadius: num(appearance, 'cornerRadius'),
     fontFamily: str(appearance, 'fontFamily'),
     greeting: str(behaviour, 'greeting'),
+    greetingDelaySec: seconds(behaviour, 'greetingDelaySec', DEFAULT_REMOTE_CONFIG.greetingDelaySec),
+    autoOpen: oneOf(behaviour, 'autoOpen', AUTO_OPENS) ?? DEFAULT_REMOTE_CONFIG.autoOpen,
+    autoOpenDelaySec: seconds(behaviour, 'autoOpenDelaySec', DEFAULT_REMOTE_CONFIG.autoOpenDelaySec),
+    typingIndicator: bool(behaviour, 'typingIndicator', DEFAULT_REMOTE_CONFIG.typingIndicator),
+    sound: bool(behaviour, 'sound', DEFAULT_REMOTE_CONFIG.sound),
+    transcriptEmail: bool(behaviour, 'transcriptEmail', DEFAULT_REMOTE_CONFIG.transcriptEmail),
+    consentRequired: bool(behaviour, 'consentRequired', DEFAULT_REMOTE_CONFIG.consentRequired),
+    consentText: str(behaviour, 'consentText'),
+    handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),
