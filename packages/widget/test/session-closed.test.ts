@@ -205,7 +205,15 @@ describe('an agent closing the conversation', () => {
     socket.closeSession('sess_1', 'RESOLVED');
     await settle();
 
+    // `.dh-system-action` now opens the same new-conversation surface every
+    // other "start a conversation" affordance opens (Home's CTA, Messages'
+    // own button, the ⋯ menu) rather than minting a session on the spot —
+    // see widget.ts's `openNewConversationFlow`. The customer still has to
+    // type something and press Start.
     query<HTMLButtonElement>('.dh-system-action').click();
+    await settle();
+    query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'Actually, one more thing';
+    query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit').click();
     await settle();
 
     // A second socket, carrying a hello with NO resumeFrom — which is what
@@ -246,14 +254,22 @@ describe('an agent closing the conversation', () => {
     socket.closeSession('sess_1', 'RESOLVED');
     await settle();
 
-    const action = query<HTMLButtonElement>('.dh-system-action');
+    query<HTMLButtonElement>('.dh-system-action').click();
+    await settle();
+    query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'Actually, one more thing';
+
+    // The double-submit guard now lives on the new-conversation surface's
+    // own Start button (ui/forms.ts's submitOnce) rather than on
+    // `.dh-system-action`, which only ever navigates to that surface and has
+    // nothing async of its own to guard.
+    const start = query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit');
     const before = FakeWebSocket.instances.length;
-    action.click();
-    action.click();
-    action.click();
+    start.click();
+    start.click();
+    start.click();
     await settle();
 
-    expect(action.disabled).toBe(true);
+    expect(start.disabled).toBe(true);
     expect(FakeWebSocket.instances.length).toBe(before + 1);
   });
 });

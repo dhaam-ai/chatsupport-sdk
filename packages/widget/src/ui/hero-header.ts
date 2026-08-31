@@ -6,20 +6,25 @@
 // greeting and a "send us a message" card, and picking that card is what opens
 // a conversation. It collapses to a 66px bar once the visitor scrolls into one.
 //
-// This widget has no home/conversation split. Its panel IS the conversation:
-// it opens onto a transcript and a composer, and there is no screen in front of
-// them to put a hero on. So the mapping is to the state this widget actually
-// has — the hero renders while the transcript is EMPTY, which is exactly the
-// moment the React widget shows its home screen, and disappears on the first
-// message, which is exactly when the React widget collapses it. Same trigger,
-// same information, expressed against a different set of screens.
+// This widget NOW has that home/conversation split (`ui/screens.ts`,
+// `ui/home-screen.ts`), and the hero is mounted as the Home screen's own
+// banner — `widget.ts` shows it exactly while `screens.current() === 'home'`
+// and `design === 'hero'`. Before that wiring landed, this widget's panel WAS
+// the conversation, and the hero stood in for a home screen by keying off
+// "the transcript is EMPTY" instead; that is no longer how any of it works,
+// but it is worth naming here because the trigger below reads similarly and
+// is a different thing:  `.dh-hero[data-empty="true"]` — "this hero has
+// nothing to draw" — is unrelated to which SCREEN is showing.
 //
-// The one place that leaves a real gap is the CTA. There is no "start a
-// conversation" action to give it, because the conversation is already on
-// screen — so it focuses the composer, which is the thing "send us a message"
-// is asking the customer to do. That is a judgement call, and it is why the
-// button carries the merchant's own copy rather than any wording of ours.
+// The CTA calls `onCallToAction`, which `widget.ts` wires to the same
+// "open the new-conversation surface" flow the Home screen's own CTA card
+// uses (`ui/home-screen.ts`) and the Messages screen's "New conversation"
+// button uses — three affordances, one destination. A merchant who enables
+// both this CTA (`header.ctaEnabled`) and relies on Home's own card gets two
+// visually different buttons that do the same thing; that overlap is a
+// console/design question, not something this component resolves on its own.
 //
+
 // ── Everything here is merchant-supplied ────────────────────────────────
 //
 // Greetings, CTA copy, logo and avatar URLs all come from a console over a

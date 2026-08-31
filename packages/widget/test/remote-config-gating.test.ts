@@ -152,7 +152,11 @@ describe('the pre-chat gate is driven by published config', () => {
 
   it('does not gate when the merchant left pre-chat off', async () => {
     stubFetch(published({ behaviour: { preChatEnabled: false, preChatFields: [] } }));
-    mount(config());
+    // `sessionId` starts the panel on the conversation screen directly — the
+    // launcher now opens onto Home otherwise, and this test is about the
+    // composer once a conversation is actually showing, not about Home's
+    // own landing behavior (covered elsewhere).
+    mount(config({ sessionId: 'sess_1' }));
     await settle();
 
     expect(find('.dh-prechat-form')).toBeNull();
@@ -236,7 +240,9 @@ describe('the out-of-hours form is driven by isOpenNow + offlineMode', () => {
 
   it('leaves the composer alone under SHOW_MESSAGE', async () => {
     stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: false }));
-    mount(config());
+    // See "does not gate when the merchant left pre-chat off" above for why
+    // `sessionId` is what puts this test on the conversation screen.
+    mount(config({ sessionId: 'sess_1' }));
     await settle();
 
     expect(find('.dh-offline-form')).toBeNull();
@@ -623,7 +629,9 @@ describe('degrading when the config cannot be read', () => {
   // unlisted storefront gets a response the browser refuses to hand us.
   it('still mounts a working widget', async () => {
     stubFetch(null, { failConfig: true });
-    mount(config());
+    // See "does not gate when the merchant left pre-chat off" above for why
+    // `sessionId` is what puts this test on the conversation screen.
+    mount(config({ sessionId: 'sess_1' }));
     await settle();
 
     expect(find<HTMLElement>('.dh-launcher')?.hidden).toBe(false);
@@ -664,7 +672,10 @@ describe('the merchant’s greeting', () => {
   // used to end up.
   it('appears as its own line, not as the pre-chat form’s heading', async () => {
     stubFetch(published({ behaviour: { greeting: 'Hi from Acme!' } }));
-    mount(config());
+    // The greeting is conversation furniture, shown only while that screen
+    // is up — see "does not gate when the merchant left pre-chat off" above
+    // for why `sessionId` is what gets a test there directly.
+    mount(config({ sessionId: 'sess_1' }));
     await settle();
 
     expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(false);
@@ -673,14 +684,17 @@ describe('the merchant’s greeting', () => {
 
   it('stays hidden when the merchant wrote none', async () => {
     stubFetch(published());
-    mount(config());
+    // On the conversation screen, same as the test above — otherwise this
+    // would pass regardless of the greeting logic under test, simply
+    // because Home hides it too.
+    mount(config({ sessionId: 'sess_1' }));
     await settle();
     expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(true);
   });
 
   it('waits out the configured delay before showing', async () => {
     stubFetch(published({ behaviour: { greeting: 'Hi!', greetingDelaySec: 0.08 } }));
-    mount(config());
+    mount(config({ sessionId: 'sess_1' }));
     await settle();
 
     expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(true);

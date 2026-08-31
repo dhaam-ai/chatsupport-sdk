@@ -360,17 +360,28 @@ describe('the panel', () => {
     expect(panel.hasAttribute('aria-hidden')).toBe(false);
   });
 
-  it('moves focus into the composer on open and back to the opener on close', () => {
+  it('moves focus into the panel on open (Home, the default landing screen) and back to the opener on close', () => {
     const opener = document.createElement('button');
     document.body.appendChild(opener);
     opener.focus();
 
     const widget = mount(config());
     widget.open();
-    expect(shadow().activeElement).toBe(query('.dh-input'));
+    // The launcher opens onto Home, which has no single "first field" the
+    // way a conversation's composer or Messages' search box each do — see
+    // widget.ts's `openPanel`. The panel itself is the modal-dialog fallback
+    // every other screen's more specific target defers to.
+    expect(shadow().activeElement).toBe(query('.dh-panel'));
 
     widget.close();
     expect(document.activeElement).toBe(opener);
+  });
+
+  it('moves focus into the composer on open when the host named a session directly', () => {
+    const widget = mount(config({ sessionId: 'sess_1' }));
+    widget.open();
+    expect(shadow().activeElement).toBe(query('.dh-input'));
+    widget.close();
   });
 
   it('closes on Escape and does not let the key reach the host page', () => {

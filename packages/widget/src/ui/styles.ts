@@ -1011,10 +1011,12 @@ button {
   opacity: 0.92;
 }
 
-/* The card overhangs nothing here — the React design hangs it off the hero's
-   bottom edge onto a home screen, and there is no home screen underneath this
-   one to hang it over. It sits in flow instead, on the panel's own surface, so
-   it still reads as the thing you act on rather than as more header. */
+/* The card still sits in flow rather than overhanging the hero's bottom edge
+   the way the React design does. A negative-margin overhang here would land
+   it on top of .dh-home's own CTA card (ui/home-screen.ts), which mounts
+   directly below the hero once screens are wired — two overlapping "start a
+   conversation" cards is a worse bug than the one pixel of fidelity this
+   trades away. */
 .dh-hero-cta {
   display: flex;
   align-items: center;

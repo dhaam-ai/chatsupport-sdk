@@ -50,14 +50,20 @@ import {
 import { captureFocus, trapFocus } from './ui/focus.js';
 import type { FocusTrap } from './ui/focus.js';
 import { createHeroHeader, heroContentFrom } from './ui/hero-header.js';
+import { createHomeScreen, homeQuestionsSlot } from './ui/home-screen.js';
 import { createIdentityHeader } from './ui/identity-header.js';
 import { createMessageList } from './ui/message-list.js';
+import { createMessagesScreen } from './ui/messages-screen.js';
+import { createNav } from './ui/nav.js';
+import type { NavTab } from './ui/nav.js';
+import { createNewConversationScreen } from './ui/new-conversation.js';
+import type { NewConversationInput } from './ui/new-conversation.js';
 import { resolvePresentation } from './ui/presentation.js';
 import type { ResolvedPresentation } from './ui/presentation.js';
 import { samplePlatformColor } from './ui/platform-color.js';
 import { createWidgetRoot } from './ui/root.js';
-import { createPreChatScreen, createSessionSwitcher } from './ui/session-picker.js';
-import type { SessionPickerCallbacks } from './ui/session-picker.js';
+import { createScreens } from './ui/screens.js';
+import type { ScreenName } from './ui/screens.js';
 import {
   STYLES,
   cssColor,
@@ -348,6 +354,14 @@ function workingConnectionStatus(
  * one, because a blank circle reads as a broken widget rather than as a
  * customised one.
  */
+/**
+ * Heroicons' `chevron-left` outline, lifted verbatim from the installed
+ * package — `node_modules/@heroicons/react/24/outline/ChevronLeftIcon.js` in
+ * `chatsupport_react` — the same sourcing `ui/composer.ts`'s link icon and
+ * `ui/dom.ts`'s `LAUNCHER_ICONS` document for themselves.
+ */
+const BACK_ICON = ['M15.75 19.5 8.25 12l7.5-7.5'];
+
 function buildLauncherIcon(spec: LauncherIcon): Node {
   if (spec.source === 'emoji' && spec.emoji.trim() !== '') {
     // `text`, so it goes through `textContent` — a merchant's "emoji" field is
@@ -404,7 +418,7 @@ function buildHeaderAvatar(mode: AvatarMode, initials: string, logoUrl: string):
 }
 
 /** Which of the three data-collecting surfaces is standing in for the chat. */
-type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report';
+type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report' | 'composingNew';
 
 /** The shape all three surfaces share, so one slot can hold any of them. */
 interface ProductSurface {
@@ -495,11 +509,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * `openPanel`, which is the customer seeing it.
    */
   let agentInitiated = false;
-  let startingNewConversation = false;
   /** One escalation in flight at a time — see {@link requestHumanAgent}. */
   let requestingAgent = false;
-  /** Incremented by every `showConversation()`. See {@link maybeShowPreChat}. */
-  let conversationShownEpoch = 0;
   let reconnecting = false;
   let lastAutoReconnectAt = 0;
 
@@ -527,21 +538,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   /** Whether the list has been asked for yet. Asked once, on the first open. */
   let sessionsRequested = false;
-  /** Whether the pre-chat screen is the thing currently on screen. */
-  let preChatOpen = false;
   /**
-   * Whether the pre-chat screen may ever be shown for this widget.
+   * The screen a fresh panel opens on, and the one `close()` resets back to.
    *
-   * A host that passed `sessionId` has already named the conversation it wants
-   * on screen, and opening onto a chooser would override an explicit
-   * instruction. The header switcher still mounts in that case — being pointed
-   * at one conversation is not the same as being locked into it.
-   *
-   * This is screen flow, not guest detection. The one guest-facing gate is
-   * `sessions.length > 0` in `renderSessionPicker`, and there is no second one
+   * `'home'` for almost everyone — see the routing rule "launcher opens ->
+   * Home". The one exception is a host that passed `sessionId`: it has
+   * already named the conversation it wants on screen, and landing on a
+   * chooser-like Home instead would override an explicit instruction. This
+   * is screen flow, not guest detection — the one guest-facing gate is
+   * `sessions.length > 0` inside `ui/messages-screen.ts`'s and
+   * `ui/home-screen.ts`'s own empty states, and there is no second one
    * anywhere in this package.
    */
-  const preChatAllowed = config.sessionId === undefined;
+  const initialScreenName: ScreenName = config.sessionId === undefined ? 'home' : 'conversation';
 
   const report = (error: unknown): void => config.onError(error);
 
@@ -589,7 +598,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   const headerMenu = createHeaderMenu({
-    onStartNew: () => startNewConversation(),
+    onStartNew: () => openNewConversationFlow(),
     onEndConversation: () => endConversation(),
     onReportIssue: () => openReportIssue(),
     onMuteChange: (next) => {
@@ -831,7 +840,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         },
       }).node,
     );
-    syncPreConversationPanes();
+    syncScreens();
+    // A publish can move the subtitle Home's CTA card quotes, or (once
+    // `pastSessions` has already landed) nothing about the recent row at
+    // all — cheap and idempotent either way, so it is simplest to always
+    // re-run rather than track which specific fields changed.
+    syncSessionSurfaces();
 
     // Config is what decides whether a pre-chat gate or an out-of-hours form
     // exists at all, so it is also what first puts one on screen.
@@ -1087,20 +1101,22 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    *
    * Rebuilt whenever remote config changes (`applyRemoteConfig` below) —
    * `remote.commonQuestions` is not known at mount, only after the config
-   * fetch lands — and shown/hidden by {@link syncPreConversationPanes}, the
-   * one place that decides whether tapping a chip still makes sense right now.
+   * fetch lands. Mounted onto the Home screen (`homeQuestionsSlot`, below)
+   * and shown/hidden by {@link syncScreens}, the one place that decides
+   * whether tapping a chip still makes sense right now.
    */
   const commonQuestionsHost = el('div', { attrs: { class: 'dh-common-questions-host', hidden: true } });
 
   /**
    * The hero header's content block — greeting, faces, call to action.
    *
-   * Shown only while the transcript is empty, which is this widget's version
-   * of the React implementation's home screen; see `ui/hero-header.ts` for
-   * why that mapping is the honest one, and why the CTA focuses the composer
-   * rather than starting a conversation that is already open.
+   * Shown only on the Home screen and only under `design: 'hero'` — see
+   * {@link syncScreens}. The CTA opens the same new-conversation flow every
+   * other "start a conversation" affordance opens (Home's own CTA card,
+   * Messages' "New conversation" button); see `ui/hero-header.ts` for the
+   * one thing that stays a judgement call once three affordances lead there.
    */
-  const heroHeader = createHeroHeader({ onCallToAction: () => composer.input.focus() });
+  const heroHeader = createHeroHeader({ onCallToAction: () => openNewConversationFlow() });
 
   /**
    * The classic header's avatar slot.
@@ -1205,7 +1221,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   const messageList = createMessageList({
     onRetry: (message) => retry(message),
-    onStartNewConversation: () => startNewConversation(),
+    onStartNewConversation: () => openNewConversationFlow(),
     onEmailTranscript: () => emailTranscript(),
     // Sent as the customer's own message, exactly as if they had typed it —
     // the bot suggested the words, but the person chose them. Routed through
@@ -1264,24 +1280,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     onError: report,
   });
 
-  /**
-   * One set of callbacks behind both picker surfaces.
-   *
-   * The pre-chat screen and the header switcher are two views of the same two
-   * decisions — "take me back to that conversation" and "start a fresh one" —
-   * so they share one implementation of each. Giving them separate handlers
-   * would let the same click mean two different things depending on which
-   * surface the customer happened to use.
-   */
-  const pickerCallbacks: SessionPickerCallbacks = {
-    // `void`: every failure inside `selectSession` is already reported, and a
-    // promise handed back to a DOM click handler is a promise nothing awaits.
-    onSelect: (sessionId) => void selectSession(sessionId),
-    onStartNew: () => startNewConversation(),
-  };
-
-  const preChat = createPreChatScreen(pickerCallbacks);
-
   /** Slot for whichever product surface is standing in for the conversation. */
   const surfaceHost = el('div', { attrs: { class: 'dh-surface-host', hidden: true } });
 
@@ -1296,7 +1294,62 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   let preChatAnswered = false;
   /** A rating has been submitted (or the survey dismissed) for the current session. */
   let ratedSessionId: string | null = null;
-  const switcher = createSessionSwitcher(pickerCallbacks);
+
+  /**
+   * The screen stack — home / messages / conversation. See `ui/screens.ts`'s
+   * own header for the back-history rules; `onChange` is the one place every
+   * screen-driven repaint fans out from (`syncScreens`, defined below).
+   */
+  const screens = createScreens({
+    initial: initialScreenName,
+    onChange: (name) => {
+      syncScreens();
+      // Focus follows navigation, same as any single-page app's route
+      // change — but only while the panel is actually open and visible;
+      // stealing focus into a closed/animating panel would pull it out of
+      // whatever the host page was doing. `conversation` manages its own
+      // focus at each of its own entry points (`selectSession`,
+      // `openSurface`'s `view.focus?.()`) rather than here, because arriving
+      // there means either an EXISTING conversation (focus the composer) or
+      // a fresh surface (focus its own first field) — two different targets
+      // this single callback cannot tell apart.
+      if (!open) return;
+      if (name === 'messages') messagesScreen.focus();
+      else if (name === 'home') panel.focus({ preventScroll: true });
+    },
+  });
+
+  const nav = createNav((tab: NavTab) => screens.swap(tab));
+
+  const homeScreen = createHomeScreen({
+    onStartNew: () => openNewConversationFlow(),
+    onOpenConversation: (sessionId) => void selectSession(sessionId),
+    onSeeAll: () => screens.swap('messages'),
+  });
+  // Moved onto Home rather than rebuilt — see home-screen.ts's own header on
+  // why this screen arranges the shared component instead of owning a second
+  // renderer for it. A one-time move, not a per-render one: `commonQuestions
+  // Host`'s OWN visibility (set in `syncScreens`) is still what decides
+  // whether anything inside this slot is ever seen, exactly as it did when
+  // this node sat directly in the panel.
+  homeQuestionsSlot(homeScreen).hidden = false;
+  homeQuestionsSlot(homeScreen).appendChild(commonQuestionsHost);
+
+  const messagesScreen = createMessagesScreen({
+    onOpenConversation: (sessionId) => void selectSession(sessionId),
+    onStartNew: () => openNewConversationFlow(),
+  });
+
+  const backButton = el('button', {
+    attrs: {
+      class: 'dh-icon-button dh-back',
+      type: 'button',
+      'aria-label': 'Back',
+      hidden: true,
+    },
+    children: [icon(BACK_ICON, 18)],
+    on: { click: () => screens.back() },
+  });
 
   /**
    * The composer's ordinary prompt, read from the component rather than
@@ -1320,33 +1373,42 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // this a keyboard user tabs into an invisible panel, and a screen reader
       // reads a conversation that is not on screen.
       'aria-hidden': 'true',
+      // Focusable ONLY programmatically (never by Tab) — the one thing this
+      // enables is `panel.focus()` landing somewhere real when a navigation
+      // lands on Home, which has no single "first field" the way Messages
+      // (its search box) and a conversation (its composer) each do.
+      tabindex: '-1',
     },
     children: [
       el('span', { attrs: { class: 'dh-grip', 'aria-hidden': 'true' } }),
       el('header', {
         attrs: { class: 'dh-header' },
         children: [
+          // Shown only once there is somewhere to go back TO — see
+          // `screens.ts`'s own back-stack rules and this file's `onChange`
+          // above, which is the one place `backButton.hidden` is set.
+          backButton,
           avatarHost,
           el('div', { children: [identityHeader.node, status] }),
           el('div', { attrs: { class: 'dh-header-spacer' } }),
           reconnectButton,
-          // One self-contained node (its own positioning context), so it can
-          // sit here without the header having to know anything about the
-          // popover it opens. Hidden until there is something to switch to.
-          switcher.node,
           headerMenu.node,
           closeButton,
         ],
       }),
       // Directly under the header row and painted as its continuation, so the
       // two read as one tall header rather than as a banner stacked on a bar.
+      // Shown only on Home — see `syncScreens`.
       heroHeader.node,
-      // The pre-chat screen stands in for the log + composer rather than
-      // sitting above them — a chooser and the conversation it chooses between
-      // are alternatives, not a stack.
-      preChat.node,
-      // Same slot family as the chooser above: a form that gates the
-      // conversation replaces it rather than stacking on top of it.
+      // The three screens `ui/screens.ts` knows about. `conversation` has no
+      // node of its own here: it is whichever of surfaceHost/messageList.log
+      // is showing, exactly the same "stand in for the transcript" mechanism
+      // the product surfaces already used before screens existed.
+      homeScreen.node,
+      messagesScreen.node,
+      // A form or survey standing IN PLACE OF the conversation, never on top
+      // of it — a chooser and the conversation it chooses between are
+      // alternatives, not a stack.
       surfaceHost,
       messageList.log,
       // Above the chips and below the transcript: the greeting is the first
@@ -1356,11 +1418,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // starting point of a conversation, so they read most naturally right
       // above where the customer is about to type, not competing with the
       // header or buried inside the (empty) log.
-      commonQuestionsHost,
-      // Between the transcript and the composer: the customer looks here when
-      // the bot's last answer did not help, which is exactly when they want
-      // it. In the header it would compete with the conversation switcher for
-      // a glance, and inside the log it would scroll away.
       handoffButton,
       reportButton,
       // Directly above the composer it gates, so the notice and the control it
@@ -1371,6 +1428,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // important thing in the panel and must never sit between the customer
       // and the conversation.
       branding,
+      // The bottom tab bar. Shown on Home/Messages, hidden while a
+      // conversation is showing — same bottom-of-panel real estate the
+      // composer needs there, and a customer typing does not also need a
+      // tab bar competing for the same row. See `syncScreens`.
+      nav.node,
       messageList.liveRegion,
       // Its own channel, deliberately not folded into `status` or the message
       // log's region: `status` re-announces on every connection change, and
@@ -1400,11 +1462,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   applyHeaderAvatar(config.avatarMode, config.avatarInitials, config.logoUrl);
   applyBranding(config.showBranding, config.brandingText, config.brandingUrl);
 
-  // The conversation is the default screen. The pre-chat chooser only ever
-  // replaces it once a non-empty session list has actually arrived, so it
-  // starts hidden rather than being hidden later by a subscription that has
-  // no reason to fire on an empty list.
-  showConversation();
+  // Every pane needs an initial, correct visibility before anything else can
+  // run — `screens.current()` is already `initialScreenName` at this point
+  // (set at construction, above), so this is a plain repaint rather than a
+  // navigation: `showConversation()` would call `screens.go('conversation')`
+  // unconditionally and silently override "launcher opens -> Home" for
+  // every visitor, on every mount, before a single click happened.
+  syncScreens();
 
   // ── presentation ──────────────────────────────────────────────────────
   function applyPresentation(): void {
@@ -1555,7 +1619,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // their job.
     store.select((state) => state.messages.length, () => {
       syncProductSurfaces();
-      syncPreConversationPanes();
+      syncScreens();
     }),
     store.select(
       (state) => (state.session === null ? null : `${state.session.id}:${state.session.status}`),
@@ -1653,16 +1717,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     ),
     store.select(
       (state) => state.pastSessions,
-      (sessions) => renderSessionPicker(sessions),
+      () => syncSessionSurfaces(),
       { immediate: true },
     ),
-    // Keeps `aria-current` on the switcher's rows honest after a switch, a
-    // `startNewSession`, or a server-side reactivation moved which session is
-    // the current one. Renders from `pastSessions`, which this does not read
-    // — one input, two triggers.
+    // Keeps `aria-current` on the Messages screen's rows (and Home's
+    // "Recent conversation" row) honest after a switch, a `startNewSession`,
+    // or a server-side reactivation moved which session is the current one.
+    // Renders from `pastSessions`, which this does not read — one input, two
+    // triggers.
     store.select(
       (state) => state.session?.id ?? null,
-      () => renderSessionPicker(store.getState().pastSessions),
+      () => syncSessionSurfaces(),
     ),
     store.select(
       (state) => state.uploading,
@@ -1691,7 +1756,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * Shows or hides one pane of the panel.
    *
    * The `hidden` attribute alone is not enough here and the reason is worth
-   * stating: `.dh-log`, `.dh-prechat` and `.dh-switcher` all carry an explicit
+   * stating: `.dh-log`, `.dh-home` and `.dh-messages` all carry an explicit
    * `display` in styles.ts, and a stylesheet `display` beats the UA's
    * `[hidden] { display: none }`. The attribute still does the job that
    * matters most — taking the pane out of the tab order and the accessibility
@@ -1716,10 +1781,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     activeSurface.view.destroy();
     surfaceHost.replaceChildren();
     activeSurface = null;
-    setPaneVisible(surfaceHost, false);
     // Restores the transcript and composer the surface was standing in for.
     // Safe to call unconditionally: `showConversation` is idempotent and
-    // returns early while another surface is up.
+    // re-syncs every pane either way.
     showConversation();
   }
 
@@ -1731,17 +1795,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     closeSurface();
     const view = build();
     activeSurface = { kind, view };
-    syncPreConversationPanes();
+    // The surface stands IN PLACE OF the conversation — same rule every
+    // caller of this function already relied on before screens existed, just
+    // expressed as a screen transition now: an auto-triggered surface (the
+    // pre-chat gate, an out-of-hours form, a just-ended session's CSAT
+    // survey) is exactly as interruptive landing on Home or Messages as it
+    // was landing on the old single-panel conversation, and a user-triggered
+    // one (Report an issue, a fresh "new conversation") was always heading
+    // there anyway.
+    screens.go('conversation');
+    syncScreens();
     surfaceHost.replaceChildren(view.node);
-    setPaneVisible(surfaceHost, true);
-    // The surface stands IN PLACE OF the conversation, so everything it
-    // replaces goes away with it — including the session chooser, which would
-    // otherwise sit behind an out-of-hours form offering conversations the
-    // customer cannot currently have.
-    preChatOpen = false;
-    setPaneVisible(preChat.node, false);
-    setPaneVisible(messageList.log, false);
-    composer.node.hidden = true;
     if (open) view.focus?.();
   }
 
@@ -1870,153 +1934,66 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (sessionsRequested || destroyed) return;
     sessionsRequested = true;
 
-    store.client
-      .listSessions({ limit: SESSION_PICKER_LIMIT })
-      .then(() => {
-        // Revealing the chooser is deliberately tied to the DATA arriving
-        // rather than to the open, so the panel never flashes an empty picker
-        // on its way to the conversation.
-        //
-        // `void` with its own `.catch`: `maybeShowPreChat` now waits on
-        // core's history load before it can tell an empty conversation from
-        // one that has simply not loaded yet, and an unhandled rejection from
-        // this branch would surface on the HOST's window.
-        void maybeShowPreChat().catch(report);
-      })
-      .catch((error: unknown) => {
-        // An embed whose client has no `sessionSummarySource` is a
-        // CONFIGURATION fact, not a fault: core is telling us this deployment
-        // simply has no session list. Degrading to "no picker" is exactly
-        // right, and it is what keeps this change invisible to an existing
-        // embed built against an older client — so it is swallowed rather than
-        // pushed at the host's error tracker on every page load.
-        //
-        // Every other failure — a 5xx, a network drop, a malformed page — IS
-        // a fault and is reported. Distinguished by the error's type, not by
-        // its message.
-        if (error instanceof ChatClientConfigError) return;
-        report(error);
-      });
+    // The result is not read from this promise — `listSessions` writes the
+    // page to `ChatState.pastSessions` (§9.4-style wholesale replace), and
+    // the `pastSessions` subscription below re-renders Home and Messages
+    // from there, so this call has exactly one job: get the data into the
+    // store at all.
+    store.client.listSessions({ limit: SESSION_PICKER_LIMIT }).catch((error: unknown) => {
+      // An embed whose client has no `sessionSummarySource` is a
+      // CONFIGURATION fact, not a fault: core is telling us this deployment
+      // simply has no session list. Degrading to "no picker" is exactly
+      // right, and it is what keeps this change invisible to an existing
+      // embed built against an older client — so it is swallowed rather than
+      // pushed at the host's error tracker on every page load.
+      //
+      // Every other failure — a 5xx, a network drop, a malformed page — IS
+      // a fault and is reported. Distinguished by the error's type, not by
+      // its message.
+      if (error instanceof ChatClientConfigError) return;
+      report(error);
+    });
   }
 
   /**
-   * The one gate on both picker surfaces: `sessions.length > 0`, and nothing
-   * else.
-   *
-   * `GET /chat/sessions/customer` answers an unidentified caller with
-   * `200 { sessions: [] }` rather than a 403, so an empty page IS the guest
-   * signal — there is no second "is this a guest" check here, in the
-   * components (T11 left one out on purpose), or in `client.ts`. There is also
-   * deliberately no widget flag: emptiness already gates the rollout in both
-   * directions, and a flag on top would be a second off-switch that can
-   * express nothing emptiness cannot.
+   * The most recently active of `sessions`, or `null` — Home's "Recent
+   * conversation" row. Computed rather than trusted to arrive pre-sorted:
+   * nothing in this package's own contract with `listSessions` promises an
+   * order, and getting this one wrong shows a customer the wrong
+   * conversation under a label that says "Recent".
    */
-  function renderSessionPicker(sessions: readonly ChatSessionSummary[]): void {
-    const hasSessions = sessions.length > 0;
-    setPaneVisible(switcher.node, hasSessions);
-
-    if (!hasSessions) {
-      switcher.close();
-      // Never strand the customer on a chooser with nothing to choose.
-      if (preChatOpen) showConversation();
-      return;
-    }
-
-    switcher.render(sessions, store.getState().session?.id ?? null);
-    preChat.render(sessions);
+  function mostRecentSession(sessions: readonly ChatSessionSummary[]): ChatSessionSummary | null {
+    if (sessions.length === 0) return null;
+    return sessions.reduce((latest, candidate) => {
+      const latestWhen = new Date(latest.lastMessageAt ?? latest.createdAt).getTime();
+      const candidateWhen = new Date(candidate.lastMessageAt ?? candidate.createdAt).getTime();
+      return candidateWhen > latestWhen ? candidate : latest;
+    });
   }
 
   /**
-   * Reveals the chooser — but never in front of a conversation the customer is
-   * already in.
-   *
-   * ── The bug this rule exists to fix ──────────────────────────────────────
-   *
-   * The only gate used to be `pastSessions.length > 0`, and the picker is a
-   * FULL REPLACEMENT for the log and the composer. So any customer with
-   * history — which, after their second conversation, is every customer —
-   * opened the widget onto a list instead of onto the chat they were having.
-   * Reload the page mid-conversation and the transcript was fetched, applied
-   * to state, and then covered up: "my chat history is gone" from where the
-   * customer sits, with the messages sitting behind the pane the whole time.
-   *
-   * The chooser is worth showing only when there is nothing to interrupt:
-   *
-   *   - NO session at all — nothing to land in.
-   *   - A TERMINAL session (`CLOSED`/`RESOLVED`) — that conversation is over,
-   *     so a list of others, plus "Start a new conversation", is exactly the
-   *     right screen.
-   *   - A live session with an EMPTY transcript — nothing has been said yet,
-   *     so replacing it costs the customer nothing and reaching an older
-   *     conversation is the likelier intent.
-   *
-   * Anything else means a live conversation with words in it, and the
-   * customer's own history stays one click away in the header switcher, which
-   * is a popover rather than a replacement precisely so it can be reached
-   * from inside a conversation.
-   *
-   * `whenHistorySettles` first: "empty transcript" is only a fact once core's
-   * page-one load has finished. Read too early it is true of every session,
-   * which is the same bug again with an extra step.
+   * Feeds `pastSessions` to the two screens that render it. One function for
+   * both, not two: they read the exact same array on the exact same two
+   * triggers (the list arriving, the joined session changing), and separate
+   * functions would be separate places for one of the two to be forgotten.
    */
-  async function maybeShowPreChat(): Promise<void> {
-    if (destroyed || preChatOpen || !preChatAllowed) return;
-    if (store.getState().pastSessions.length === 0) return;
-
-    // Snapshotted BEFORE the await, checked after: waiting is what makes the
-    // "empty transcript" test meaningful, and it is also a window in which the
-    // customer can pick a row (or start a new conversation) and be put on the
-    // conversation pane. Re-covering it with the chooser they just dismissed
-    // would be this function undoing their click.
-    const shownAt = conversationShownEpoch;
-
-    await whenHistorySettles();
-    if (destroyed || preChatOpen || !preChatAllowed) return;
-    if (conversationShownEpoch !== shownAt) return;
-
+  function syncSessionSurfaces(): void {
+    if (destroyed) return;
     const state = store.getState();
-    if (state.pastSessions.length === 0) return;
-
-    const session = state.session;
-    const inLiveConversation =
-      session !== null &&
-      session.status !== 'CLOSED' &&
-      session.status !== 'RESOLVED' &&
-      state.messages.length > 0;
-    if (inLiveConversation) return;
-
-    preChatOpen = true;
-    setPaneVisible(preChat.node, true);
-    setPaneVisible(messageList.log, false);
-    composer.node.hidden = true;
-    syncPreConversationPanes();
-    if (open) preChat.focus();
+    homeScreen.update(mostRecentSession(state.pastSessions), subtitle ?? '');
+    messagesScreen.render(state.pastSessions, state.session?.id ?? null);
   }
 
   /** Puts the conversation back on screen. Idempotent. */
   function showConversation(): void {
-    // A product surface outranks the transcript: `showConversation` runs on
-    // every session switch and on mount, and without this it would reveal the
-    // log and composer straight through an out-of-hours form or a pre-chat
-    // gate that is still waiting for an answer.
-    if (activeSurface !== null) {
-      conversationShownEpoch += 1;
-      preChatOpen = false;
-      setPaneVisible(preChat.node, false);
-      setPaneVisible(messageList.log, false);
-      composer.node.hidden = true;
-      syncPreConversationPanes();
-      return;
-    }
-    // Bumped unconditionally, including on the idempotent re-call: it is a
-    // "the conversation pane has been asserted since you looked" marker for
-    // {@link maybeShowPreChat}'s pending reveal, not a state change counter.
-    conversationShownEpoch += 1;
-    preChatOpen = false;
-    setPaneVisible(preChat.node, false);
-    setPaneVisible(messageList.log, true);
-    composer.node.hidden = false;
-    syncPreConversationPanes();
+    // `go` is a no-op when already on 'conversation' (see screens.ts), which
+    // is exactly the common case here — a session switch, a surface closing
+    // — so the repaint cannot be left to `onChange` alone: it fires only on
+    // an ACTUAL screen change, and every one of those callers still needs
+    // messageList.log/composer/surfaceHost re-evaluated against the activeSurface
+    // that just changed underneath them.
+    screens.go('conversation');
+    syncScreens();
   }
 
   /**
@@ -2413,47 +2390,63 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
-   * Whether the "Common Questions" chip row is on screen right now.
+   * The one place every screen- and surface-driven repaint fans out from.
    *
-   * Three conditions, all required:
-   *   - The merchant configured at least one (`remote.commonQuestions`).
-   *   - No product surface is standing in for the conversation — a chip that
-   *     sends a message makes no sense in front of an out-of-hours form the
-   *     customer has not gotten past, or a CSAT survey for a session that
-   *     already ended.
-   *   - The conversation is still empty. The chips ARE the starting point;
-   *     once the customer has said anything (by tapping one or by typing)
-   *     the prompts have done their job and stay gone for this session, same
-   *     as the pre-chat gate never reappearing after its first answer.
+   * Runs on: a screen change (wired as `screens`'s own `onChange`), an
+   * `activeSurface` mutation (`openSurface`/`closeSurface`, via
+   * `showConversation`), a message arriving (the transcript's emptiness is
+   * part of the condition below), and a config publish (`applyRemoteConfig`,
+   * because `design` and `remote.commonQuestions` can both change under it).
+   * One function rather than several called in pairs is what
+   * `syncPreConversationPanes` — this function's single-panel-era ancestor —
+   * already established: splitting related visibility rules across call
+   * sites is how one of them ends up stale at a moment another is not.
    */
-  /**
-   * Shows or hides everything that only belongs in front of a conversation
-   * that has not started: the Common Questions chips, and the hero header's
-   * content block.
-   *
-   * One function rather than two called in pairs, because the condition is the
-   * SAME condition — no surface standing in for the chat, no pre-chat chooser,
-   * and an empty transcript. Both pieces are furniture the first message
-   * retires, and the React implementation collapses its hero on exactly this
-   * transition (see `ui/hero-header.ts` for why one widget's home screen is
-   * the other's empty transcript). Splitting them across six call sites is how
-   * one of them ends up shown at a moment the other is not.
-   */
-  function syncPreConversationPanes(): void {
+  function syncScreens(): void {
     if (destroyed) return;
+    const current = screens.current();
     const state = store.getState();
-    const beforeConversation =
-      activeSurface === null && !preChatOpen && state.messages.length === 0;
 
-    setPaneVisible(commonQuestionsHost, beforeConversation && remote.commonQuestions.length > 0);
-    setPaneVisible(heroHeader.node, beforeConversation && design === 'hero');
-    // `greetingDue` is the delay having elapsed — see `armGreeting`. Without
-    // it this pane would appear instantly and the merchant's configured wait
-    // would be invisible.
+    const onHome = current === 'home';
+    const onMessages = current === 'messages';
+    const onConversation = current === 'conversation';
+    // The transcript and composer show only on the conversation screen, and
+    // only while no product surface (an out-of-hours form, the pre-chat
+    // gate, a CSAT survey, the new-conversation composer) is standing in for
+    // them — the same "one at a time" rule `openSurface` always enforced,
+    // now with a screen layered on top of it.
+    const showingLog = onConversation && activeSurface === null;
+
+    setPaneVisible(homeScreen.node, onHome);
+    setPaneVisible(messagesScreen.node, onMessages);
+    setPaneVisible(surfaceHost, onConversation && activeSurface !== null);
+    setPaneVisible(messageList.log, showingLog);
+    composer.node.hidden = !showingLog;
+    // The tab bar and the composer trade the same bottom-of-panel row: a
+    // customer typing does not also need two tabs competing for a glance,
+    // and there is no tab for `conversation` to begin with (see nav.ts).
+    setPaneVisible(nav.node, !onConversation);
+    backButton.hidden = !screens.canGoBack();
+
+    // Common Questions and the hero banner are both Home furniture now —
+    // see home-screen.ts's own header on why it arranges rather than owns
+    // the shared Common Questions component, and hero-header.ts's on why its
+    // CTA now opens the same new-conversation flow Home's own CTA does.
+    setPaneVisible(commonQuestionsHost, onHome && remote.commonQuestions.length > 0);
+    setPaneVisible(heroHeader.node, onHome && design === 'hero');
+
+    // The greeting stays conversation furniture — it is styled as the first
+    // line of THIS chat, not a piece of Home, and disappears the moment
+    // there is a real first message. `greetingDue` is the delay having
+    // elapsed (see `armGreeting`); without it this pane would appear
+    // instantly and the merchant's configured wait would be invisible.
+    const beforeFirstMessage = showingLog && state.messages.length === 0;
     setPaneVisible(
       greetingBubble,
-      beforeConversation && greetingDue && greetingBubble.textContent !== '',
+      beforeFirstMessage && greetingDue && greetingBubble.textContent !== '',
     );
+
+    nav.update(current, state.unreadCount);
   }
 
   /**
@@ -2481,10 +2474,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       greetingTimer = setTimeout(() => {
         if (destroyed) return;
         greetingDue = true;
-        syncPreConversationPanes();
+        syncScreens();
       }, delaySec * 1000);
     }
-    syncPreConversationPanes();
+    syncScreens();
   }
 
   /**
@@ -2618,50 +2611,58 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
-   * The way out of a closed conversation.
-   *
-   * Explicit rather than automatic — see the widget's README note: an agent
-   * has just said "resolved", and silently re-opening on the customer's next
-   * keystroke would hide the boundary between two separate conversations at
-   * exactly the moment it matters most.
+   * Opens the "new conversation" surface — topic chips (when the merchant
+   * configured any) plus a message. Every entry point funnels through here:
+   * Home's own CTA card, the hero's CTA, the Messages screen's "New
+   * conversation" button, a closed conversation's own inline prompt
+   * (`messageList`'s `onStartNewConversation`), and the ⋯ menu's "Start new
+   * conversation". One destination rather than five, because this is the
+   * only place a customer ever gets to set the topic/subject pair
+   * `ui/new-conversation.ts` collects — see that module's own header.
    */
-  function startNewConversation(): void {
-    if (startingNewConversation) return;
-    startingNewConversation = true;
-    setStartingNewConversation(true);
+  function openNewConversationFlow(): void {
+    openSurface('composingNew', () =>
+      createNewConversationScreen([...remote.conversationTopics], {
+        onStart: (input) => startNewConversation(input),
+        onCancel: () => closeSurface(),
+        onError: report,
+      }),
+    );
+  }
 
+  /**
+   * Mints a session carrying `input`'s topic/subject, then sends the typed
+   * message as its opening line — the two-jobs-one-field design
+   * `ui/new-conversation.ts`'s own header documents.
+   *
+   * Rejects rather than catching: the surface this runs as `onStart` for
+   * already disables its own button and shows its own message on failure
+   * (`submitOnce`, ui/forms.ts), and a second recovery path here would be a
+   * second, possibly different, account of the same failure.
+   */
+  async function startNewConversation(input: NewConversationInput): Promise<void> {
     // `startNewSession`, never `switchSession`: a switch joins a session that
     // already exists and deliberately mints nothing, so using it here would
     // drop the customer into whichever conversation the server picked rather
     // than the fresh one they asked for.
-    store.client
-      .startNewSession()
-      .then(() => {
-        // Only on success. A rejected `startNewSession` leaves the old session
-        // abandoned but no new one in place, and dropping the customer onto an
-        // empty transcript there would hide the fact that nothing happened.
-        showConversation();
-        if (open) composer.input.focus({ preventScroll: true });
-      })
-      .catch(report)
-      .finally(() => {
-        startingNewConversation = false;
-        setStartingNewConversation(false);
-      });
-  }
-
-  /**
-   * One busy flag, three surfaces.
-   *
-   * All three offer the same "start a new conversation" action, so all three
-   * have to go busy together — a customer who pressed the button on the
-   * pre-chat screen must not find a live one waiting in the switcher, which is
-   * how a socket round trip's worth of impatience becomes two sessions.
-   */
-  function setStartingNewConversation(busy: boolean): void {
-    messageList.setStartingNewConversation(busy);
-    preChat.setStartingNew(busy);
-    switcher.setStartingNew(busy);
+    //
+    // `topic` spread conditionally, not passed as `undefined`:
+    // `exactOptionalPropertyTypes` treats an explicit `undefined` as a
+    // stated value, and core's own contract for this field is ABSENT means
+    // "no topic chosen" (see `ui/new-conversation.ts`'s header).
+    await store.client.startNewSession({
+      ...(input.topic === undefined ? {} : { topic: input.topic }),
+      subject: input.message,
+    });
+    await store.client.sendMessage(input.message);
+    // Only reached on success. `closeSurface` is idempotent — a config
+    // combination that also gates a pre-chat FORM on the new, still-empty
+    // session (`syncProductSurfaces`, reactive on the session-id change
+    // above) may already have replaced this surface with that one by the
+    // time execution gets here, and this call is then a no-op rather than a
+    // second transition fighting the first.
+    closeSurface();
+    if (open) composer.input.focus({ preventScroll: true });
   }
 
   // ── open / close ──────────────────────────────────────────────────────
@@ -2690,10 +2691,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     trap = trapFocus(panel, shadow);
 
     // Focus what is actually on screen. `preventScroll` stops the host page
-    // from jumping to the widget's position — on a fixed-position element that
-    // scroll is always wrong.
-    if (preChatOpen) preChat.focus();
-    else composer.input.focus({ preventScroll: true });
+    // from jumping to the widget's position — on a fixed-position element
+    // that scroll is always wrong. Conversation and Messages each have an
+    // obvious first control; Home does not, so it gets the panel itself
+    // (`tabindex="-1"`, see its own attrs) — the ordinary "focus the dialog"
+    // fallback every other modal on the page already uses.
+    const openingOn = screens.current();
+    if (openingOn === 'conversation') composer.input.focus({ preventScroll: true });
+    else if (openingOn === 'messages') messagesScreen.focus();
+    else panel.focus({ preventScroll: true });
 
     // Asked here rather than at mount: a widget nobody opens should cost the
     // host page nothing beyond the socket it already opens. Fires once — see
@@ -2723,9 +2729,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     launcher.setAttribute('aria-expanded', 'false');
     launcher.hidden = false;
 
-    // A popover left open over a closed panel re-appears on the next open,
-    // over whatever the customer came back for.
-    switcher.close();
+    // Forgets the back stack — see screens.ts's own contract for this
+    // method. A customer three rows deep in Messages who closes and reopens
+    // the widget gets the same landing screen everyone else does, not
+    // wherever they happened to leave off; `initialScreenName` is the one
+    // exception, for a host that named a specific `sessionId`.
+    screens.reset(initialScreenName);
 
     trap?.release();
     trap = null;
@@ -2786,7 +2795,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // releases the socket rather than leaving it to time out.
       remoteConfigAbort.abort();
       // A pending delay timer, or a document-level `mouseout` listener that
-      // outlives the shadow root — same reason the switcher's is released.
+      // would otherwise outlive the shadow root.
       releaseAutoOpen();
       clearTimeout(greetingTimer);
       window.removeEventListener('resize', onResize);
@@ -2807,10 +2816,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // Its own document-level pointerdown listener, same as the message menu.
       headerMenu.destroy();
       composer.destroy();
-      // The switcher owns a document-level `pointerdown` listener for its
-      // outside-click close, which outlives the shadow root unless released.
-      switcher.destroy();
-      preChat.destroy();
+      messagesScreen.destroy();
       // `disconnect: true` — this store built the client it wraps, so nothing
       // else on the page is using that socket.
       store.destroy({ disconnect: true });

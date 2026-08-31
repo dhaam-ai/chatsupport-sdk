@@ -170,12 +170,28 @@ const query = <T extends Element>(selector: string): T => {
 const transcript = (): string[] =>
   [...query('.dh-log').querySelectorAll('.dh-msg-body')].map((node) => node.textContent ?? '');
 
-const pickerRows = (root: ParentNode): HTMLButtonElement[] => [
-  ...root.querySelectorAll<HTMLButtonElement>('.dh-session-row'),
+const messagesRows = (): HTMLButtonElement[] => [
+  ...query('.dh-messages').querySelectorAll<HTMLButtonElement>('.dh-messages-row'),
 ];
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * `boot()` lands on Home, not the conversation — the screens rewrite made
+ * "launcher opens -> Home" universal. Picking a past session is now reached
+ * through the Messages tab rather than a chooser that stood in for the
+ * transcript, so every test below that used to read `.dh-prechat`'s rows
+ * navigates here first instead.
+ */
+async function goToMessages(): Promise<void> {
+  const tab = [...shadow().querySelectorAll<HTMLButtonElement>('.dh-nav-tab')].find(
+    (candidate) => candidate.querySelector('.dh-nav-label')?.textContent === 'Messages',
+  );
+  if (tab === undefined) throw new Error('Messages tab not found');
+  tab.click();
+  await settle();
 }
 
 /** Sockets whose `connection.hello` has already been answered. */
@@ -300,11 +316,14 @@ describe('bug 1 — picking a previous session', () => {
     sessionRows = [summaryRow(PAST), summaryRow(CURRENT, { status: 'ASSIGNED', closedAt: null })];
     const { socket } = await boot();
 
-    // Where the customer starts: the conversation the ack named.
+    // The transcript already holds the ack's session content — rendering is
+    // driven by `state.messages` regardless of which screen is showing, so
+    // this is true even while Home is what's actually on screen.
     expect(transcript()).toEqual([TRANSCRIPT[CURRENT]]);
 
-    const row = pickerRows(query('.dh-prechat')).find(
-      (candidate) => candidate.closest('.dh-session-item')?.getAttribute('data-status') === 'RESOLVED',
+    await goToMessages();
+    const row = messagesRows().find(
+      (candidate) => candidate.closest('.dh-messages-item')?.getAttribute('data-status') === 'RESOLVED',
     );
     if (row === undefined) throw new Error('no past-session row rendered');
     row.click();
@@ -323,7 +342,8 @@ describe('bug 1 — picking a previous session', () => {
     const { socket } = await boot();
     historyCalls = [];
 
-    const row = pickerRows(query('.dh-prechat'))[0];
+    await goToMessages();
+    const row = messagesRows()[0];
     if (row === undefined) throw new Error('no past-session row rendered');
     row.click();
     await settle();
@@ -352,7 +372,8 @@ describe('bug 1 — picking a previous session', () => {
     sessionRows = [summaryRow(PAST)];
     const { socket } = await boot();
 
-    const row = pickerRows(query('.dh-prechat'))[0];
+    await goToMessages();
+    const row = messagesRows()[0];
     if (row === undefined) throw new Error('no past-session row rendered');
     row.click();
     await settle();
@@ -370,14 +391,16 @@ describe('bug 1 — picking a previous session', () => {
     sessionRows = [summaryRow(PAST)];
     const { socket } = await boot();
 
-    const row = pickerRows(query('.dh-prechat'))[0];
+    await goToMessages();
+    const row = messagesRows()[0];
     if (row === undefined) throw new Error('no past-session row rendered');
     row.click();
     await settle();
 
-    // Before the round trip finishes: the chooser must not sit there looking
-    // like a dead click while the switch is in flight.
-    expect(query<HTMLElement>('.dh-prechat').hidden).toBe(true);
+    // Before the round trip finishes: Messages must not sit there looking
+    // like a dead click while the switch is in flight — picking a row is
+    // `go('conversation')`, which leaves Messages behind immediately.
+    expect(query<HTMLElement>('.dh-messages').hidden).toBe(true);
     expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
 
     await serverAcceptsJoin(socket, PAST);
@@ -390,7 +413,8 @@ describe('bug 1 — picking a previous session', () => {
     const { socket } = await boot({ onError: (error) => errors.push(error) });
     errors.length = 0;
 
-    const row = pickerRows(query('.dh-prechat'))[0];
+    await goToMessages();
+    const row = messagesRows()[0];
     if (row === undefined) throw new Error('no past-session row rendered');
     row.click();
     await settle();
@@ -430,8 +454,9 @@ describe('bug 2 — coming back to the page', () => {
     sessionRows = [summaryRow(PAST), summaryRow(CURRENT, { status: 'ASSIGNED', closedAt: null })];
     const first = await boot();
 
-    const row = pickerRows(query('.dh-prechat')).find(
-      (candidate) => candidate.closest('.dh-session-item')?.getAttribute('data-status') === 'RESOLVED',
+    await goToMessages();
+    const row = messagesRows().find(
+      (candidate) => candidate.closest('.dh-messages-item')?.getAttribute('data-status') === 'RESOLVED',
     );
     if (row === undefined) throw new Error('no past-session row rendered');
     row.click();

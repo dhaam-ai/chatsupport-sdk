@@ -120,11 +120,8 @@ async function bootUnconnected(overrides: Partial<WidgetConfig> = {}): Promise<C
   return widget;
 }
 
-const pickRow = (): HTMLButtonElement => {
-  const row = query('.dh-prechat').querySelector<HTMLButtonElement>('.dh-session-row');
-  if (row === null) throw new Error('no past-session row rendered');
-  return row;
-};
+/** The panel opens onto Home; with one past session, its own recent row is the click under test. */
+const pickRow = (): HTMLButtonElement => query('.dh-home-recent-row');
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
@@ -221,7 +218,7 @@ describe('a picker click on a connection that never comes up', () => {
     await vi.advanceTimersByTimeAsync(PATIENCE_MS);
     await settle();
 
-    expect(query<HTMLElement>('.dh-prechat').hidden).toBe(true);
+    expect(query<HTMLElement>('.dh-home').hidden).toBe(true);
     expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
   });
 });

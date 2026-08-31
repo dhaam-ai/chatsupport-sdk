@@ -1,17 +1,20 @@
 // @vitest-environment jsdom
 //
-// T11 built the two picker surfaces; this proves the widget mounts them, gates
-// them on the one rule that is allowed to gate them, and routes their two
-// actions to the two DIFFERENT core operations they mean.
+// T11 built the two picker surfaces (session-picker.ts's pre-chat screen and
+// header switcher); the screens rewrite retired both in favour of the Home
+// and Messages screens (ui/home-screen.ts, ui/messages-screen.ts) plus the
+// new-conversation surface (ui/new-conversation.ts). This file proves the
+// SAME invariants that mattered before still hold under the new mounting:
+// past sessions render, a terminal one stays pickable, picking one joins it,
+// and starting a new one mints rather than joins.
 //
-// ── The gate ──────────────────────────────────────────────────────────────
+// ── There is no more "gate that hides a whole surface" ────────────────────
 //
-// `sessions.length > 0`, and nothing else. `GET /chat/sessions/customer`
-// answers a guest with `200 { sessions: [] }` rather than a 403, so an empty
-// page IS the guest signal — a second "is this a guest" check anywhere would
-// be a second source of truth for a fact the wire already states once. There
-// is deliberately no widget flag either: emptiness already gates the rollout
-// in both directions.
+// Home and Messages are always mounted and always reachable via the nav
+// tabs, regardless of session count — `sessions.length > 0` no longer
+// decides whether a SURFACE shows, only whether a ROW does (Home's single
+// "Recent conversation" row, Messages' full list). Every test below reflects
+// that: "the gate" is now about row presence, not screen visibility.
 //
 // ── The two actions are not interchangeable ───────────────────────────────
 //
@@ -121,15 +124,46 @@ const query = <T extends Element>(selector: string): T => {
   return found;
 };
 
+/** Unlike `query`, returns `null` instead of throwing — for asserting a selector is genuinely ABSENT. */
+const find = <T extends Element>(selector: string): T | null => shadow().querySelector<T>(selector);
+
 const visible = (node: HTMLElement): boolean => !node.hidden && node.style.display !== 'none';
-const preChatPane = (): HTMLElement => query<HTMLElement>('.dh-prechat');
-const switcherPane = (): HTMLElement => query<HTMLElement>('.dh-switcher');
-const rows = (root: ParentNode): HTMLButtonElement[] => [
-  ...root.querySelectorAll<HTMLButtonElement>('.dh-session-row'),
+/** Whether `node` is on screen INCLUDING its ancestors — `hidden` on a parent (e.g. Home's recent-conversation section) hides everything inside it too. */
+const reallyVisible = (node: Element): boolean => {
+  let current: Element | null = node;
+  while (current !== null) {
+    if (current instanceof HTMLElement && !visible(current)) return false;
+    current = current.parentElement;
+  }
+  return true;
+};
+const homePane = (): HTMLElement => query<HTMLElement>('.dh-home');
+/** Home always BUILDS its recent-conversation row; `update()` hides the SECTION around it rather than removing it — see home-screen.ts. So presence alone proves nothing; visibility does. */
+const homeShowsRecentRow = (): boolean => {
+  const row = homePane().querySelector('.dh-home-recent-row');
+  return row !== null && reallyVisible(row);
+};
+const messagesPane = (): HTMLElement => query<HTMLElement>('.dh-messages');
+const messagesRows = (): HTMLButtonElement[] => [
+  ...messagesPane().querySelectorAll<HTMLButtonElement>('.dh-messages-row'),
 ];
+
+/** The nav bar has exactly two tabs; found by label rather than position so a reorder cannot silently break this. */
+function navTab(label: 'Home' | 'Messages'): HTMLButtonElement {
+  const tab = [...shadow().querySelectorAll<HTMLButtonElement>('.dh-nav-tab')].find(
+    (candidate) => candidate.querySelector('.dh-nav-label')?.textContent === label,
+  );
+  if (tab === undefined) throw new Error(`${label} tab not found`);
+  return tab;
+}
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function goToMessages(): Promise<void> {
+  navTab('Messages').click();
+  await settle();
 }
 
 /** Sockets whose `connection.hello` has already been answered. */
@@ -206,45 +240,47 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('the gate is exactly sessions.length > 0', () => {
-  it('shows neither surface for an empty page — which is what a guest gets', async () => {
+describe('the gate is exactly sessions.length > 0 — now expressed as rows, not surfaces', () => {
+  it('Home and Messages both mount for an empty page, with no rows — what a guest gets', async () => {
     sessionRows = [];
     await openedWidget();
 
-    expect(visible(preChatPane())).toBe(false);
-    expect(visible(switcherPane())).toBe(false);
-    // ...and the conversation is what is on screen instead.
-    expect(visible(query<HTMLElement>('.dh-log'))).toBe(true);
-    expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
+    // The launcher opens onto Home either way now — the "conversation is
+    // shown instead" behavior this test used to prove no longer applies,
+    // since there is no conversation to show yet and nothing was asked for.
+    expect(visible(homePane())).toBe(true);
+    expect(homeShowsRecentRow()).toBe(false);
+
+    await goToMessages();
+    expect(messagesRows()).toHaveLength(0);
+    expect(messagesPane().querySelector('.dh-messages-empty')?.textContent).toBe('No conversations yet.');
   });
 
-  it('shows both surfaces as soon as there is one session to offer', async () => {
-    sessionRows = [summaryRow()];
+  it('Home shows the most recent session as its own row', async () => {
+    sessionRows = [summaryRow({ id: 'sess_past' })];
     await openedWidget();
 
-    expect(visible(switcherPane())).toBe(true);
-    expect(visible(preChatPane())).toBe(true);
-    // The chooser replaces the conversation rather than stacking on it.
-    expect(visible(query<HTMLElement>('.dh-log'))).toBe(false);
-    expect(query<HTMLElement>('.dh-composer').hidden).toBe(true);
+    expect(visible(homePane())).toBe(true);
+    expect(homeShowsRecentRow()).toBe(true);
   });
 
-  it('renders one row per session, in both surfaces', async () => {
+  it('Messages renders one row per session', async () => {
     sessionRows = [summaryRow({ id: 'a' }), summaryRow({ id: 'b' })];
     await openedWidget();
+    await goToMessages();
 
-    expect(rows(preChatPane())).toHaveLength(2);
-    expect(rows(switcherPane())).toHaveLength(2);
+    expect(messagesRows()).toHaveLength(2);
   });
 
   it('keeps a terminal session pickable — reactivation is a real path back', async () => {
     sessionRows = [summaryRow({ id: 'closed_one', status: 'CLOSED' })];
     await openedWidget();
+    await goToMessages();
 
-    const row = rows(preChatPane())[0];
+    const row = messagesRows()[0];
     if (row === undefined) throw new Error('no row rendered');
     expect(row.disabled).toBe(false);
-    expect(row.closest('.dh-session-item')?.getAttribute('data-status')).toBe('CLOSED');
+    expect(row.closest('.dh-messages-item')?.getAttribute('data-status')).toBe('CLOSED');
   });
 });
 
@@ -252,8 +288,9 @@ describe('picking a conversation', () => {
   it('joins the chosen session and puts the conversation back on screen', async () => {
     sessionRows = [summaryRow({ id: 'sess_past' })];
     const { socket } = await openedWidget();
+    await goToMessages();
 
-    const row = rows(preChatPane())[0];
+    const row = messagesRows()[0];
     if (row === undefined) throw new Error('no row rendered');
     row.click();
     await settle();
@@ -266,7 +303,9 @@ describe('picking a conversation', () => {
     expect(joins).toHaveLength(1);
     expect(joins[0]?.d['sessionId']).toBe('sess_past');
 
-    expect(visible(preChatPane())).toBe(false);
+    // Picking a row is `go('conversation')` — Messages is left behind, not
+    // stacked under it.
+    expect(visible(messagesPane())).toBe(false);
     expect(visible(query<HTMLElement>('.dh-log'))).toBe(true);
     expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
   });
@@ -274,9 +313,10 @@ describe('picking a conversation', () => {
   it('does not optimistically flip a terminal session to open', async () => {
     sessionRows = [summaryRow({ id: 'sess_past', status: 'CLOSED' })];
     const { widget } = await openedWidget();
+    await goToMessages();
 
     const before = widget.store.getState().session;
-    const row = rows(preChatPane())[0];
+    const row = messagesRows()[0];
     if (row === undefined) throw new Error('no row rendered');
     row.click();
     await settle();
@@ -287,17 +327,26 @@ describe('picking a conversation', () => {
     expect(widget.store.getState().session).toBe(before);
   });
 
-  it('marks the current conversation in the switcher', async () => {
+  it('marks the current conversation in Messages', async () => {
     sessionRows = [summaryRow({ id: 'sess_current', status: 'ASSIGNED', closedAt: null }), summaryRow({ id: 'other' })];
     await openedWidget();
+    await goToMessages();
 
-    const current = rows(switcherPane()).find((row) => row.getAttribute('aria-current') === 'true');
+    const current = messagesRows().find((row) => row.getAttribute('aria-current') === 'true');
     expect(current).toBeDefined();
     expect(current?.getAttribute('aria-label')).toContain('current conversation');
   });
 });
 
 describe('starting a new conversation', () => {
+  /** Opens the new-conversation surface from Messages and fills in the one required field. */
+  async function reachStartSurface(): Promise<void> {
+    await goToMessages();
+    query<HTMLButtonElement>('.dh-messages-new').click();
+    await settle();
+    query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'Hello';
+  }
+
   it('mints a session rather than joining one', async () => {
     sessionRows = [summaryRow()];
     const { widget, socket } = await openedWidget();
@@ -305,7 +354,8 @@ describe('starting a new conversation', () => {
     const startNew = vi.spyOn(widget.store.client, 'startNewSession').mockResolvedValue();
     const switchTo = vi.spyOn(widget.store.client, 'switchSession');
 
-    query<HTMLButtonElement>('.dh-prechat-start').click();
+    await reachStartSurface();
+    query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit').click();
     await settle();
 
     expect(startNew).toHaveBeenCalledTimes(1);
@@ -315,19 +365,22 @@ describe('starting a new conversation', () => {
     expect(socket.frames('session.join')).toHaveLength(0);
   });
 
-  it('leaves the chooser for the conversation once the new session lands', async () => {
+  it('leaves the new-conversation surface for the conversation once the session lands', async () => {
     sessionRows = [summaryRow()];
     const { widget } = await openedWidget();
     vi.spyOn(widget.store.client, 'startNewSession').mockResolvedValue();
 
-    query<HTMLButtonElement>('.dh-prechat-start').click();
+    await reachStartSurface();
+    query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit').click();
     await settle();
 
-    expect(visible(preChatPane())).toBe(false);
+    // `query` throws rather than returning null, so absence is asserted with
+    // `find` instead — see this file's own note on the two helpers.
+    expect(find('.dh-newconvo-form')).toBeNull();
     expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
   });
 
-  it('goes busy on every surface at once, so one round trip cannot mint two sessions', async () => {
+  it('goes busy on the Start button so one round trip cannot mint two sessions', async () => {
     sessionRows = [summaryRow()];
     const { widget } = await openedWidget();
 
@@ -338,28 +391,37 @@ describe('starting a new conversation', () => {
       }),
     );
 
-    query<HTMLButtonElement>('.dh-prechat-start').click();
+    await reachStartSurface();
+    const start = query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit');
+    start.click();
     await settle();
 
-    expect(query<HTMLButtonElement>('.dh-prechat-start').disabled).toBe(true);
-    expect(query<HTMLButtonElement>('.dh-switcher-start').disabled).toBe(true);
+    expect(start.disabled).toBe(true);
 
+    // Once `startNewSession` resolves, `startNewConversation` also sends the
+    // typed message and closes the surface — so the button that was "busy"
+    // is gone by now, replaced by the live conversation. What matters is
+    // that exactly one mint happened and the composer is what is left.
     release();
     await settle();
-    expect(query<HTMLButtonElement>('.dh-switcher-start').disabled).toBe(false);
+    expect(find('.dh-newconvo-form')).toBeNull();
+    expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
+    expect(widget.store.client.startNewSession).toHaveBeenCalledTimes(1);
   });
 
-  it('stays on the chooser when the new session could not be opened', async () => {
+  it('stays on the surface when the new session could not be opened', async () => {
     sessionRows = [summaryRow()];
     const { widget } = await openedWidget();
     vi.spyOn(widget.store.client, 'startNewSession').mockRejectedValue(new Error('nope'));
 
-    query<HTMLButtonElement>('.dh-prechat-start').click();
+    await reachStartSurface();
+    query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit').click();
     await settle();
 
     // Dropping the customer onto an empty transcript would hide the fact that
-    // nothing actually happened.
-    expect(visible(preChatPane())).toBe(true);
+    // nothing actually happened, and the typed message would be lost with it.
+    expect(find('.dh-newconvo-form')).not.toBeNull();
+    expect(query<HTMLTextAreaElement>('.dh-newconvo-message').value).toBe('Hello');
   });
 });
 
@@ -367,8 +429,9 @@ describe('the SWITCHED-close pairing', () => {
   it('does not close the conversation the customer just switched INTO', async () => {
     sessionRows = [summaryRow({ id: 'sess_past', status: 'CLOSED' })];
     const { widget, socket } = await openedWidget();
+    await goToMessages();
 
-    const row = rows(preChatPane())[0];
+    const row = messagesRows()[0];
     if (row === undefined) throw new Error('no row rendered');
     row.click();
     await settle();
@@ -406,7 +469,7 @@ describe('the SWITCHED-close pairing', () => {
 });
 
 describe('an embed whose client has no session summary source', () => {
-  it('mounts, connects and chats exactly as before — with no picker and no error', async () => {
+  it('mounts, connects and chats exactly as before — with no rows and no error', async () => {
     const errors: unknown[] = [];
     const widget = mount(config({ onError: (error) => errors.push(error) }));
     await settle();
@@ -423,9 +486,10 @@ describe('an embed whose client has no session summary source', () => {
     widget.open();
     await settle();
 
-    expect(visible(preChatPane())).toBe(false);
-    expect(visible(switcherPane())).toBe(false);
-    expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
+    expect(homeShowsRecentRow()).toBe(false);
+    await goToMessages();
+    expect(messagesRows()).toHaveLength(0);
+
     // A configuration fact, not a fault: reporting it would fire on every page
     // load of an embed that simply has no session list.
     expect(errors).toHaveLength(0);
@@ -448,36 +512,23 @@ describe('an embed whose client has no session summary source', () => {
     await settle();
 
     expect(errors).toHaveLength(1);
-    expect(visible(preChatPane())).toBe(false);
+    expect(homeShowsRecentRow()).toBe(false);
   });
 });
 
 describe('a host that named the session it wants', () => {
-  it('mounts the switcher but never opens onto the chooser', async () => {
+  it('opens directly onto the conversation, with Messages still reachable', async () => {
     sessionRows = [summaryRow()];
     await openedWidget({ sessionId: 'sess_named' });
 
     // Being pointed at one conversation is not the same as being locked into
-    // it, so the switcher still mounts.
-    expect(visible(switcherPane())).toBe(true);
-    expect(visible(preChatPane())).toBe(false);
+    // it: the launcher opens straight onto it (skipping Home, which a host
+    // that named a session has effectively overridden), but the nav bar
+    // still gets there and Messages still renders the full list.
     expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
-  });
-});
+    expect(visible(homePane())).toBe(false);
 
-describe('teardown', () => {
-  it('releases the switcher’s document-level listener', async () => {
-    sessionRows = [summaryRow()];
-    const removed: string[] = [];
-    const original = document.removeEventListener.bind(document);
-    vi.spyOn(document, 'removeEventListener').mockImplementation(((type: string, ...rest: unknown[]) => {
-      removed.push(type);
-      return (original as (...args: never[]) => void)(type as never, ...(rest as never[]));
-    }) as typeof document.removeEventListener);
-
-    const { widget } = await openedWidget();
-    widget.destroy();
-
-    expect(removed).toContain('pointerdown');
+    await goToMessages();
+    expect(messagesRows()).toHaveLength(1);
   });
 });
