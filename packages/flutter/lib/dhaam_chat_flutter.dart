@@ -18,3 +18,6 @@ export 'src/config/remote_config_client.dart';
 export 'src/nav/chat_screens.dart';
 export 'src/session/chat_session_summary.dart';
 export 'src/session/session_display.dart';
+export 'src/state/chat_widget_cubit.dart';
+export 'src/state/chat_widget_state.dart';
+export 'src/state/widget_chat_client.dart';
