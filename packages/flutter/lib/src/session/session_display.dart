@@ -6,6 +6,8 @@ library;
 
 import 'package:dhaam_chat/dhaam_chat.dart' show ChatStatus, HandledBy;
 
+import 'chat_session_summary.dart';
+
 /// The full status vocabulary — every row on the Messages screen shows one
 /// of these. Mirrors `session-picker.ts`'s `STATUS_LABEL`.
 const Map<ChatStatus, String> chatStatusLabel = <ChatStatus, String>{
@@ -77,4 +79,28 @@ String relativeTimeLabel(DateTime? timestamp, {DateTime? now}) {
     return diffMs < 0 ? '$count $unit$plural ago' : 'in $count $unit$plural';
   }
   return 'Just now';
+}
+
+/// The Home screen's "Recent conversation" row — whichever [summaries] entry
+/// has the latest `lastMessageAt ?? createdAt`, or `null` for an empty list.
+///
+/// The same fallback [relativeTimeLabel] callers use to DISPLAY a row's time
+/// is what picks it here: `lastMessageAt` is absent only for a session with
+/// no messages yet, and `createdAt` is the next most recent fact about it —
+/// there is no third timestamp on [ChatSessionSummary] this could defer to
+/// instead. Host-supplied order is NOT trusted as "already sorted" — the
+/// header on [ChatSessionSummary] describes summaries a host fetched from
+/// its own backend, which this package has no way to verify sorted the same
+/// way, so it decides directly off the data rather than assuming index 0.
+ChatSessionSummary? mostRecentSummary(List<ChatSessionSummary> summaries) {
+  ChatSessionSummary? best;
+  DateTime? bestWhen;
+  for (final ChatSessionSummary summary in summaries) {
+    final DateTime when = summary.lastMessageAt ?? summary.createdAt;
+    if (bestWhen == null || when.isAfter(bestWhen)) {
+      best = summary;
+      bestWhen = when;
+    }
+  }
+  return best;
 }

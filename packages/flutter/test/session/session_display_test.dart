@@ -81,4 +81,49 @@ void main() {
       expect(relativeTimeLabel(now.subtract(const Duration(hours: 25)), now: now), '1 day ago');
     });
   });
+
+  group('mostRecentSummary', () {
+    ChatSessionSummary summary({required String id, required DateTime createdAt, DateTime? lastMessageAt}) {
+      return ChatSessionSummary(
+        id: id,
+        status: ChatStatus.open,
+        mode: ChatMode.human,
+        createdAt: createdAt,
+        lastMessageAt: lastMessageAt,
+      );
+    }
+
+    test('null for an empty list', () {
+      expect(mostRecentSummary(const []), isNull);
+    });
+
+    test('picks the summary with the latest lastMessageAt', () {
+      final older = summary(id: 'a', createdAt: DateTime.utc(2026, 1, 1), lastMessageAt: DateTime.utc(2026, 1, 2));
+      final newer = summary(id: 'b', createdAt: DateTime.utc(2026, 1, 1), lastMessageAt: DateTime.utc(2026, 1, 5));
+      expect(mostRecentSummary([older, newer])?.id, 'b');
+    });
+
+    test('falls back to createdAt for a session with no messages yet', () {
+      final noMessages = summary(id: 'a', createdAt: DateTime.utc(2026, 1, 10));
+      final oldWithMessage =
+          summary(id: 'b', createdAt: DateTime.utc(2026, 1, 1), lastMessageAt: DateTime.utc(2026, 1, 2));
+      expect(mostRecentSummary([oldWithMessage, noMessages])?.id, 'a');
+    });
+
+    test('does not trust host-supplied order — the latest wins regardless of position', () {
+      final newer = summary(
+        id: 'listed-second',
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastMessageAt: DateTime.utc(2026, 6, 1),
+      );
+      final older = summary(
+        id: 'listed-first',
+        createdAt: DateTime.utc(2026, 1, 1),
+        lastMessageAt: DateTime.utc(2026, 1, 1),
+      );
+      // `older` is index 0 and `newer` is index 1 — if the function trusted
+      // position it would return `older`.
+      expect(mostRecentSummary([older, newer])?.id, newer.id);
+    });
+  });
 }
