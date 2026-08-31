@@ -11,6 +11,7 @@
 library;
 
 // `remote_config.dart` re-exports `appearance.dart` itself (the two are one
-// module split across two files — see remote_config.dart's header), so this
-// one export line is the whole config surface.
+// module split across two files — see remote_config.dart's header), so these
+// two lines are the whole config surface.
 export 'src/config/remote_config.dart';
+export 'src/config/remote_config_client.dart';
