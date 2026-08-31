@@ -15,3 +15,4 @@ library;
 // two lines are the whole config surface.
 export 'src/config/remote_config.dart';
 export 'src/config/remote_config_client.dart';
+export 'src/nav/chat_screens.dart';
