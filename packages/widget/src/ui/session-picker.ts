@@ -44,7 +44,12 @@ export interface SessionPickerCallbacks {
   readonly onStartNew: () => void;
 }
 
-const STATUS_LABEL: Record<ChatStatus, string> = {
+/**
+ * Exported so `ui/messages-screen.ts` renders the exact same words for the
+ * exact same statuses — see that module's header for why a second status
+ * vocabulary is precisely the kind of drift this avoids.
+ */
+export const STATUS_LABEL: Record<ChatStatus, string> = {
   OPEN: 'Open',
   WAITING_FOR_AGENT: 'Waiting for an agent',
   ASSIGNED: 'Assigned',
