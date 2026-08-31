@@ -8,7 +8,11 @@
 // each one. Each `select` below re-runs only when its own slice changes, which
 // is the entire reason that package was built as this one's substrate.
 
-import { isParkedCloseReason } from '@dhaam-ccrm/core';
+import {
+  MemoryStorageAdapter,
+  createBrowserStorageAdapter,
+  isParkedCloseReason,
+} from '@dhaam-ccrm/core';
 import type { CloseReason } from '@dhaam-ccrm/core';
 import { ChatClientConfigError } from '@dhaam-ccrm/js';
 import type { ChatStore } from '@dhaam-ccrm/js';
@@ -26,7 +30,9 @@ import type {
   WidgetConfig,
   WidgetDesign,
 } from './config.js';
+import { asksForAHuman } from './handoff-keywords.js';
 import { createChime } from './ui/chime.js';
+import { createConsentGate } from './ui/consent.js';
 import { createComposer } from './ui/composer.js';
 import { ICONS, LAUNCHER_ICONS, el, icon, safeImageUrl, safeLinkUrl } from './ui/dom.js';
 import { captureFocus, trapFocus } from './ui/focus.js';
@@ -621,6 +627,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // here: a host that asked for an open panel has already got one, and a
     // console setting cannot un-ask for it.
     armAutoOpen(next.autoOpen, next.autoOpenDelaySec);
+    armGreeting(next.greeting ?? '', next.greetingDelaySec);
+    consent.update(next.consentRequired, next.consentText ?? '');
+    // The gate may have just opened or closed under the composer.
+    syncComposer();
 
     // Accent goes on the host's inline style rather than by rewriting the
     // `<style>` element: an inline custom property outranks the `:host` rule
@@ -992,6 +1002,35 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const avatarHost = el('div', { attrs: { class: 'dh-avatar-host' } });
 
   /**
+   * `behaviour.greeting`, shown while the transcript is still empty.
+   *
+   * `text` rather than any markup path: this is merchant free text arriving
+   * over a public endpoint and landing in a shadow root on someone else's
+   * checkout page.
+   */
+  const greetingBubble = el('p', { attrs: { class: 'dh-greeting', hidden: true } });
+  let greetingDue = false;
+  let greetingTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * The consent notice, and the record of whether it has been answered.
+   *
+   * Its own storage adapter rather than the store's: `createWidgetStore` hands
+   * core an adapter and does not expose it, and reaching through the store to
+   * borrow one would couple this to core's internals for the sake of avoiding
+   * a second `localStorage` handle — which is not a resource worth conserving.
+   * Both use the same factory and the same documented `MemoryStorageAdapter`
+   * fallback, so a browser with site data blocked behaves consistently: core
+   * forgets the session, this forgets the consent, and neither throws.
+   */
+  const consent = createConsentGate(
+    createBrowserStorageAdapter() ?? new MemoryStorageAdapter(),
+    config.auth.publishableKey,
+    { onAgree: () => syncComposer() },
+    report,
+  );
+
+  /**
    * The platform credit under the composer.
    *
    * An `<a>` only when the merchant gave a URL that survives
@@ -1060,7 +1099,23 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   });
 
   const composer = createComposer({
-    onSend: (text) => store.client.sendMessage(text),
+    onSend: async (text) => {
+      // SEND FIRST, then escalate, and only once the send has actually
+      // settled. The customer typed a sentence and expects it to arrive;
+      // swallowing it because it matched a keyword would lose the question,
+      // and an agent picking the conversation up would inherit a handoff with
+      // no context for it. A send that REJECTS escalates nothing, for the same
+      // reason: there would be nothing in the transcript for them to read.
+      await store.client.sendMessage(text);
+      // Only while the BOT is driving. `syncHandoff` already owns that rule
+      // for the button, and reusing its condition — rather than re-deriving
+      // one here — is what stops a keyword escalating a conversation a human
+      // is already handling, which would ask the agent to hand off to
+      // themselves.
+      if (!handoffButton.hidden && asksForAHuman(text, remote.handoffKeywords)) {
+        requestHumanAgent();
+      }
+    },
     onSendAttachment: (file) => store.client.sendAttachment(file, { fileName: file.name }),
     onTyping: () => {
       try {
@@ -1158,6 +1213,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // conversation replaces it rather than stacking on top of it.
       surfaceHost,
       messageList.log,
+      // Above the chips and below the transcript: the greeting is the first
+      // thing said, and the chips are the answers to it.
+      greetingBubble,
       // Sits right where the transcript is still empty — the chips ARE the
       // starting point of a conversation, so they read most naturally right
       // above where the customer is about to type, not competing with the
@@ -1168,6 +1226,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // it. In the header it would compete with the conversation switcher for
       // a glance, and inside the log it would scroll away.
       handoffButton,
+      // Directly above the composer it gates, so the notice and the control it
+      // disables are read as one thing rather than as an unrelated banner.
+      consent.node,
       composer.node,
       // Under the composer, which is where a credit belongs: it is the least
       // important thing in the panel and must never sit between the customer
@@ -1604,7 +1665,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
             },
             onError: report,
           },
-          remote.greeting,
+          // Deliberately NOT `remote.greeting` any more.
+          //
+          // The console has these as two separate controls — "Opening →
+          // Greeting" ("The first message") and "Before the chat starts →
+          // Ask for details first" — and borrowing one for the other's
+          // heading meant a merchant's opening line appeared as a form title
+          // and never as a message. Now that the greeting has a surface of
+          // its own (`armGreeting`), rendering it here too would show it
+          // twice on the one screen where both are on display.
         ),
       );
       return;
@@ -2053,7 +2122,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   function syncComposer(): void {
     const connectionState = store.getState().connectionState;
-    composer.setEnabled(closedSessionId === null && connectionState !== 'closed');
+    // Consent joins the existing two conditions rather than getting a gate of
+    // its own: this is already the ONE place that decides whether the composer
+    // is usable, and a second writer is how the status line and the composer
+    // ended up disagreeing about the connection before `syncConnection` was
+    // consolidated.
+    composer.setEnabled(
+      closedSessionId === null && connectionState !== 'closed' && consent.agreed(),
+    );
   }
 
   /** How long before an *automatic* recovery attempt may fire again. */
@@ -2209,6 +2285,44 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
     setPaneVisible(commonQuestionsHost, beforeConversation && remote.commonQuestions.length > 0);
     setPaneVisible(heroHeader.node, beforeConversation && design === 'hero');
+    // `greetingDue` is the delay having elapsed — see `armGreeting`. Without
+    // it this pane would appear instantly and the merchant's configured wait
+    // would be invisible.
+    setPaneVisible(
+      greetingBubble,
+      beforeConversation && greetingDue && greetingBubble.textContent !== '',
+    );
+  }
+
+  /**
+   * The merchant's opening line, after `behaviour.greetingDelaySec`.
+   *
+   * ── Why this is not a message ────────────────────────────────────────────
+   *
+   * It never came from the server, it has no id, and it is not in anybody's
+   * transcript — so putting it in the store would mean inventing a message
+   * that core would then have to replay, deduplicate and reconcile against
+   * history on every resume. It is presentation, and it lives where the other
+   * pre-conversation panes live.
+   *
+   * It is styled as an inbound bubble because that is what it is FOR: the
+   * console calls this field "The first message" and its help text is "Say
+   * what you can help with, not just hello." Rendering it as a system notice
+   * would tell the customer a different thing than the merchant wrote.
+   */
+  function armGreeting(text: string, delaySec: number): void {
+    clearTimeout(greetingTimer);
+    greetingBubble.textContent = text;
+    greetingDue = delaySec <= 0;
+
+    if (!greetingDue) {
+      greetingTimer = setTimeout(() => {
+        if (destroyed) return;
+        greetingDue = true;
+        syncPreConversationPanes();
+      }, delaySec * 1000);
+    }
+    syncPreConversationPanes();
   }
 
   /**
@@ -2413,6 +2527,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // A pending delay timer, or a document-level `mouseout` listener that
       // outlives the shadow root — same reason the switcher's is released.
       releaseAutoOpen();
+      clearTimeout(greetingTimer);
       window.removeEventListener('resize', onResize);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
@@ -2425,6 +2540,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       for (const cancel of [...pendingHistorySettles]) cancel();
       for (const unsubscribe of unsubscribers) unsubscribe();
       closeSurface();
+      // Its pending storage read resolves after teardown otherwise, and would
+      // touch a node that is on its way out.
+      consent.destroy();
       composer.destroy();
       // The switcher owns a document-level `pointerdown` listener for its
       // outside-click close, which outlives the shadow root unless released.

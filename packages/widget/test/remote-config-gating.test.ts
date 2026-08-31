@@ -133,8 +133,12 @@ describe('the pre-chat gate is driven by published config', () => {
       (l) => l.textContent,
     );
     expect(labels).toEqual(['Your name', 'Email address']);
-    // The merchant's greeting becomes the heading of the screen it precedes.
-    expect(find('.dh-prechat-form .dh-form-heading')?.textContent).toBe('Hi from Acme!');
+    // The form keeps its OWN heading. The console has "Greeting" and "Ask for
+    // details first" as two separate controls, and this screen used to borrow
+    // the first for the second — so a merchant's opening line showed up as a
+    // form title and never as the message it is configured to be. The greeting
+    // now has a surface of its own; see `the merchant's greeting` below.
+    expect(find('.dh-prechat-form .dh-form-heading')?.textContent).toBe('Before we start');
   });
 
   it('stands IN PLACE OF the transcript and composer, not on top of them', async () => {
@@ -651,5 +655,93 @@ describe('degrading when the config cannot be read', () => {
     const configCall = calls.find(([url]) => String(url).includes('/widget/config'));
     expect(configCall).toBeDefined();
     expect(String(configCall?.[0])).not.toContain(PUBLISHABLE);
+  });
+});
+
+describe('the merchant’s greeting', () => {
+  // It is "The first message" in the console, so it has to read as something
+  // said TO the customer — not as the heading of a form, which is where it
+  // used to end up.
+  it('appears as its own line, not as the pre-chat form’s heading', async () => {
+    stubFetch(published({ behaviour: { greeting: 'Hi from Acme!' } }));
+    mount(config());
+    await settle();
+
+    expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(false);
+    expect(find('.dh-greeting')?.textContent).toBe('Hi from Acme!');
+  });
+
+  it('stays hidden when the merchant wrote none', async () => {
+    stubFetch(published());
+    mount(config());
+    await settle();
+    expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(true);
+  });
+
+  it('waits out the configured delay before showing', async () => {
+    stubFetch(published({ behaviour: { greeting: 'Hi!', greetingDelaySec: 0.08 } }));
+    mount(config());
+    await settle();
+
+    expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 140));
+    expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(false);
+  });
+});
+
+describe('the consent gate', () => {
+  const consentConfig = published({
+    behaviour: { consentRequired: true, consentText: 'You agree to our privacy policy.' },
+  });
+
+  it('holds the composer shut until the visitor agrees', async () => {
+    stubFetch(consentConfig);
+    mount(config());
+    await settle();
+
+    expect(find<HTMLElement>('.dh-consent')?.hidden).toBe(false);
+    expect(find<HTMLTextAreaElement>('.dh-input')?.disabled).toBe(true);
+
+    find<HTMLButtonElement>('.dh-consent-agree')?.click();
+    expect(find<HTMLElement>('.dh-consent')?.hidden).toBe(true);
+    expect(find<HTMLTextAreaElement>('.dh-input')?.disabled).toBe(false);
+  });
+
+  it('leaves the composer alone when no consent is required', async () => {
+    stubFetch(published());
+    mount(config());
+    await settle();
+
+    expect(find<HTMLElement>('.dh-consent')?.hidden).toBe(true);
+    expect(find<HTMLTextAreaElement>('.dh-input')?.disabled).toBe(false);
+  });
+
+  // Consent fatigue is itself a reason people stop reading notices, so the
+  // answer is remembered — and remembered per publishable key, so two tenants
+  // sharing a browser cannot answer for one another.
+  it('does not ask a second time in the same browser', async () => {
+    stubFetch(consentConfig);
+    mount(config());
+    await settle();
+    find<HTMLButtonElement>('.dh-consent-agree')?.click();
+    // Let the storage write land before the remount reads it back.
+    await settle();
+    unmount();
+
+    stubFetch(consentConfig);
+    mount(config());
+    await settle();
+    expect(find<HTMLElement>('.dh-consent')?.hidden).toBe(true);
+    expect(find<HTMLTextAreaElement>('.dh-input')?.disabled).toBe(false);
+  });
+
+  // A notice switched on with nothing written in it has nothing to agree to,
+  // and must not strand the visitor with a composer they cannot use.
+  it('does not gate on an empty notice', async () => {
+    stubFetch(published({ behaviour: { consentRequired: true, consentText: '  ' } }));
+    mount(config());
+    await settle();
+    expect(find<HTMLElement>('.dh-consent')?.hidden).toBe(true);
+    expect(find<HTMLTextAreaElement>('.dh-input')?.disabled).toBe(false);
   });
 });

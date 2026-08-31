@@ -1415,6 +1415,60 @@ button {
   border-radius: var(--dh-radius);
   background: var(--dh-bubble-in);
 }
+/* 'behaviour.consentRequired' — the notice above the composer it gates.
+   Bordered off rather than tinted as a warning: this is a routine notice on
+   most storefronts, and painting it as an alert would make an ordinary privacy
+   line look like something went wrong. */
+.dh-consent {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 2);
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
+  border-top: 1px solid var(--dh-border);
+  background: var(--dh-surface);
+}
+.dh-consent-text {
+  margin: 0;
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dh-text-muted);
+  overflow-wrap: anywhere;
+}
+.dh-consent-agree {
+  flex: none;
+  padding: calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 3);
+  border: 0;
+  border-radius: var(--dh-radius);
+  background: var(--dh-accent);
+  color: var(--dh-on-accent, #fff);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dh-consent-agree:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+
+/* 'behaviour.greeting' — the merchant's opening line, shown while the
+   transcript is still empty. Painted as an INBOUND bubble because that is what
+   the console calls it ("The first message"), so it has to read as something
+   said to the customer rather than as chrome around the conversation. It
+   shares '--dh-bubble-in' and the radius with real inbound messages for
+   exactly that reason. */
+.dh-greeting {
+  align-self: flex-start;
+  max-width: 85%;
+  margin: 0 calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
+  border-radius: var(--dh-radius);
+  background: var(--dh-bubble-in);
+  color: var(--dh-text);
+  font-size: 14px;
+  line-height: 1.5;
+  /* Merchant free text, so a long unbroken string must not widen the panel. */
+  overflow-wrap: anywhere;
+}
 /* 'behaviour.typingIndicator: false'. 'display: none' rather than
    'visibility: hidden' on purpose — it takes the screen-reader label out of
    the accessibility tree along with the dots, and a merchant who turned the
