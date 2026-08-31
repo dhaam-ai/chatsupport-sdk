@@ -90,17 +90,20 @@ ChatMessage testMessage({
   String content = 'hello',
   int? seq,
   MessageDelivery delivery = MessageDelivery.confirmed,
+  SenderType senderType = SenderType.agent,
+  Map<String, Object?>? metadata,
 }) {
   return ChatMessage(
     id: id,
     sessionId: 's1',
-    senderId: 'agent-1',
-    senderType: SenderType.agent,
+    senderId: senderType == SenderType.customer ? '' : 'agent-1',
+    senderType: senderType,
     type: MessageType.text,
     content: content,
     seq: seq,
     createdAt: DateTime.utc(2026, 1, 1),
     delivery: delivery,
+    metadata: metadata,
   );
 }
 
