@@ -433,6 +433,23 @@ const DARK_TOKENS = `
 export const STYLES = `
 *, *::before, *::after { box-sizing: border-box; }
 
+/* ONE rule, so the hidden attribute cannot be defeated again.
+ *
+ * The UA's own [hidden] { display: none } has specificity (0,1,0), and so does
+ * any class rule — so a later '.dh-consent { display: flex }' in this sheet
+ * silently WINS, and an element built with hidden:true renders anyway. This
+ * sheet used to answer that one class at a time ('.dh-handoff[hidden]',
+ * '.dh-system[hidden]', and six more), which works only for as long as whoever
+ * adds the next flex container remembers to add a ninth — and the surfaces
+ * added in this pass all forgot, which put an open action menu on every
+ * message at once and a permanent "Replying to" chip above the composer.
+ *
+ * '!important' deliberately: the whole point is that no later declaration in
+ * this file can beat it. It is scoped to the shadow root, so it cannot reach
+ * the host page. The per-class rules below are now redundant and harmless;
+ * they are left where they are rather than swept up in this change. */
+[hidden] { display: none !important; }
+
 :host {
   /* Neutral by default. The AI-purple gradient is not a brand, and this ships
      onto someone else's page where it would clash with an actual one. */

@@ -21,6 +21,7 @@ import {
   launcherShadowCss,
   readableOn,
   themeCss,
+  STYLES,
   threadTokens,
 } from '../src/ui/styles.js';
 import type { HeaderAppearance, ThreadAppearance } from '../src/config.js';
@@ -310,5 +311,34 @@ describe('the conversation’s backdrop', () => {
     expect(
       threadTokens(thread({ background: 'image', imageUrl: 'javascript:alert(1)', color: '#eee' })),
     ).toEqual({ bg: '#eee', layers: 'none', size: 'auto', repeat: 'repeat' });
+  });
+});
+
+describe('the hidden attribute cannot be defeated by a class rule', () => {
+  // The bug this exists to prevent, seen in a real build: an open Copy/Reply
+  // menu on EVERY message at once, and a permanent "Replying to" chip above
+  // the composer. Every one of those elements is built with `hidden: true`,
+  // and every one had a later `display: flex` class rule of equal specificity
+  // silently overriding the UA's `[hidden] { display: none }`.
+  it('ships a global [hidden] rule that no later declaration can outrank', () => {
+    expect(STYLES).toMatch(/\[hidden\]\s*{\s*display:\s*none\s*!important/);
+  });
+
+  // Answering it per class is what failed: it works only until somebody adds
+  // the next flex container, which is exactly what happened.
+  it.each([
+    '.dh-msg-menu',
+    '.dh-quick-replies',
+    '.dh-consent',
+    '.dh-reply-chip',
+    '.dh-branding',
+    '.dh-avatar-host',
+  ])('covers %s, which sets display and is toggled with hidden', (selector) => {
+    // Present in the sheet at all…
+    expect(STYLES).toContain(`${selector} {`);
+    // …and the global rule above is what keeps it hidden, so no per-class
+    // guard is required for it. This asserts the pairing exists rather than
+    // the guard: the point is that the guard is no longer needed.
+    expect(STYLES).toMatch(/\[hidden\]\s*{\s*display:\s*none\s*!important/);
   });
 });
