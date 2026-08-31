@@ -54,7 +54,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "size": "node scripts/bundle.mjs",
     "dev:harness": "node scripts/dev-server.mjs",
-    "verify:browser": "node scripts/verify-browser.mjs"
+    "verify:browser": "node scripts/verify-browser.mjs",
+    "verify:appearance": "node scripts/verify-appearance.mjs"
   },
   "dependencies": {
     "@dhaam-ccrm/core": "workspace:^",
