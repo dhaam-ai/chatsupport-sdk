@@ -63,7 +63,7 @@ import {
   shouldCollectOffline,
   shouldMount,
 } from './remote-config.js';
-import type { RemoteConfig } from './remote-config.js';
+import type { AutoOpen, RemoteConfig } from './remote-config.js';
 
 /** How the host drives the widget after mounting it. */
 export interface ChatWidget {
@@ -540,6 +540,64 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   let lastUnread = store.getState().unreadCount;
   const chime = createChime(config.onError);
+
+  /**
+   * Releases whatever `behaviour.autoOpen` armed — a timer, a pointer
+   * listener, or nothing. Replaced wholesale each time config lands, and run
+   * on `destroy`.
+   *
+   * A no-op by default rather than `null`, so neither caller has to branch.
+   */
+  let releaseAutoOpen: () => void = () => undefined;
+
+  /**
+   * Arms the merchant's chosen self-opening behaviour.
+   *
+   * ── Why this fires at most once, and never after the visitor has acted ───
+   *
+   * Both triggers are one-shot. A panel that reopens itself after somebody
+   * closed it is not a greeting, it is an argument — and the customer closing
+   * it is the clearest possible statement that they did not want it. So the
+   * arming is released the first time it fires AND the first time the panel is
+   * opened by any other route, including by hand.
+   */
+  function armAutoOpen(mode: AutoOpen, delaySec: number): void {
+    releaseAutoOpen();
+    releaseAutoOpen = () => undefined;
+    if (mode === 'never' || open) return;
+
+    // Fires only while the panel is still shut and the widget is still alive.
+    // Both are checked at FIRING time rather than at arming time: seconds pass
+    // in between, and the visitor may have opened it themselves meanwhile.
+    const fire = (): void => {
+      releaseAutoOpen();
+      releaseAutoOpen = () => undefined;
+      if (!destroyed && !open) openPanel();
+    };
+
+    if (mode === 'delay') {
+      const timer = setTimeout(fire, delaySec * 1000);
+      releaseAutoOpen = () => clearTimeout(timer);
+      return;
+    }
+
+    // 'exit-intent' — the pointer heading for the browser chrome.
+    //
+    // Bound to `document`, and gated on a mouse: `mouseout` toward the top of
+    // the viewport is the conventional signal, and it is meaningless on a
+    // touch device, where the pointer never leaves because there is no
+    // pointer. Rather than approximate it with something a merchant did not
+    // choose (a scroll depth, a back gesture), a touch visitor simply gets
+    // nothing — the same answer `'never'` gives.
+    const onMouseOut = (event: MouseEvent): void => {
+      // `relatedTarget === null` means the pointer left the document itself
+      // rather than moving between two elements inside it.
+      if (event.relatedTarget !== null || event.clientY > 0) return;
+      fire();
+    };
+    document.addEventListener('mouseout', onMouseOut);
+    releaseAutoOpen = () => document.removeEventListener('mouseout', onMouseOut);
+  }
   const remoteConfigAbort = new AbortController();
 
   /** Applies the parts of published config that are safe to change in place. */
@@ -554,6 +612,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // `display: none` also takes it out of the accessibility tree, so the
     // screen-reader label goes with it, which is what "turned off" has to mean.
     host.setAttribute('data-typing', next.typingIndicator ? 'on' : 'off');
+
+    // Armed only now, never at mount: `autoOpen` is a merchant's setting and
+    // arrives with the config, so arming before it lands could only ever use
+    // the built-in default — and the built-in default is 'never'.
+    //
+    // `openOnLoad` is the host's own switch and is deliberately NOT consulted
+    // here: a host that asked for an open panel has already got one, and a
+    // console setting cannot un-ask for it.
+    armAutoOpen(next.autoOpen, next.autoOpenDelaySec);
 
     // Accent goes on the host's inline style rather than by rewriting the
     // `<style>` element: an inline custom property outranks the `:host` rule
@@ -2226,6 +2293,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   function openPanel(): void {
     if (open || destroyed) return;
     open = true;
+    // Whatever route opened it, the self-opening behaviour has no further job:
+    // a delay that fires into an already-open panel is a no-op, and an
+    // exit-intent listener left bound would reopen it after the visitor closes
+    // it — the "argument, not a greeting" case armAutoOpen exists to avoid.
+    releaseAutoOpen();
+    releaseAutoOpen = () => undefined;
     // Seeing the conversation is what clears the mark. Before `syncLauncher`
     // runs below, so the badge cannot survive the open that answered it.
     agentInitiated = false;
@@ -2337,6 +2410,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // down widget. The `destroyed` guard in there covers the race; this
       // releases the socket rather than leaving it to time out.
       remoteConfigAbort.abort();
+      // A pending delay timer, or a document-level `mouseout` listener that
+      // outlives the shadow root — same reason the switcher's is released.
+      releaseAutoOpen();
       window.removeEventListener('resize', onResize);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);

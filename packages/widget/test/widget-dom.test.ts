@@ -579,6 +579,99 @@ describe('the merchant’s subtitle', () => {
   });
 });
 
+describe('opening itself', () => {
+  /**
+   * Drives a published config into a mounted widget, as the fetch would.
+   *
+   * Real timers throughout, and the delays below are milliseconds rather than
+   * the seconds a merchant would set: the config arrives through a promise
+   * chain, so the arming happens on a macrotask that fake timers would have to
+   * be advanced past before the timer they are meant to control even exists.
+   * A 50ms delay is the same code path as a 12s one.
+   */
+  const publish = async (behaviour: Record<string, unknown>) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/widget/config')) {
+          return new Response(
+            JSON.stringify({ success: true, data: { enabled: true, appearance: {}, behaviour } }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return new Response(JSON.stringify({ accessToken: 'tok', expiresIn: 3600 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    mount(config());
+    // The same drain `remote-config-gating.test.ts` uses: the fetch, its
+    // `.json()`, and the caller's `.then` are each their own tick.
+    for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const isOpen = () => query<HTMLElement>('.dh-panel').getAttribute('data-open') === 'true';
+
+  it('stays shut when the merchant chose never', async () => {
+    await publish({ autoOpen: 'never' });
+    await wait(80);
+    expect(isOpen()).toBe(false);
+  });
+
+  it('opens itself after the configured delay', async () => {
+    await publish({ autoOpen: 'delay', autoOpenDelaySec: 0.05 });
+    expect(isOpen()).toBe(false);
+    await wait(120);
+    expect(isOpen()).toBe(true);
+  });
+
+  // The rule the one-shot arming exists for: a panel that reopens itself after
+  // somebody closed it is an argument, not a greeting.
+  it('does not reopen after the visitor closes it', async () => {
+    await publish({ autoOpen: 'delay', autoOpenDelaySec: 0.05 });
+    query<HTMLButtonElement>('.dh-launcher').click();
+    expect(isOpen()).toBe(true);
+    query<HTMLButtonElement>('.dh-icon-button[aria-label="Close chat"]').click();
+    expect(isOpen()).toBe(false);
+    await wait(120);
+    expect(isOpen()).toBe(false);
+  });
+
+  it('opens when the pointer leaves for the browser chrome', async () => {
+    await publish({ autoOpen: 'exit-intent' });
+    expect(isOpen()).toBe(false);
+    document.dispatchEvent(
+      new MouseEvent('mouseout', { relatedTarget: null, clientY: 0, bubbles: true }),
+    );
+    expect(isOpen()).toBe(true);
+  });
+
+  // Moving between two elements inside the page is not leaving it.
+  it('ignores a mouseout that stays inside the document', async () => {
+    await publish({ autoOpen: 'exit-intent' });
+    document.dispatchEvent(
+      new MouseEvent('mouseout', { relatedTarget: document.body, clientY: 0, bubbles: true }),
+    );
+    expect(isOpen()).toBe(false);
+  });
+
+  // The listener is on `document`, which outlives the shadow root.
+  it('releases the exit-intent listener on destroy', async () => {
+    await publish({ autoOpen: 'exit-intent' });
+    unmount();
+    expect(() =>
+      document.dispatchEvent(
+        new MouseEvent('mouseout', { relatedTarget: null, clientY: 0, bubbles: true }),
+      ),
+    ).not.toThrow();
+    expect(document.querySelector('dh-chat-widget')).toBeNull();
+  });
+});
+
 describe('the typing indicator’s off switch', () => {
   // It ships ON, so a widget whose config never lands behaves as it always has.
   it('is on before any config lands', () => {
