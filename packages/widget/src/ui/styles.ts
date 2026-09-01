@@ -1509,6 +1509,63 @@ button {
 .dh-report-details { min-height: 84px; resize: vertical; font: inherit; }
 .dh-form-done { padding: calc(var(--dh-space) * 2) 0; }
 
+/* The whole-panel "chat is unavailable" state. Centred and generous because
+   it replaces the conversation rather than annotating it — a dense error box
+   in the corner of an otherwise-normal panel reads as a warning somebody can
+   ignore, and the point here is that there is nothing else to do. */
+.dh-unavail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--dh-space) * 2);
+  padding: calc(var(--dh-space) * 6) calc(var(--dh-space) * 5);
+  text-align: center;
+  background: var(--dh-surface);
+}
+.dh-unavail-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px; height: 56px;
+  border-radius: 999px;
+  /* Tinted from the danger colour rather than a fixed pink, so it still reads
+     as a warning under a merchant's dark theme. */
+  background: color-mix(in srgb, var(--dh-danger) 12%, transparent);
+  color: var(--dh-danger);
+}
+.dh-unavail-title { margin: 0; font-size: 16px; font-weight: 600; color: var(--dh-text); }
+.dh-unavail-body {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--dh-text-muted);
+}
+.dh-unavail-retry {
+  margin-top: calc(var(--dh-space) * 1);
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 5);
+  border: 0;
+  border-radius: var(--dh-radius);
+  background: var(--dh-accent);
+  color: var(--dh-on-accent, #fff);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dh-unavail-retry:disabled { opacity: 0.6; cursor: default; }
+.dh-unavail-retry:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+.dh-unavail-email {
+  color: var(--dh-accent);
+  font-size: 13.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.dh-unavail-email:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+
 /* The conversation header's overflow menu. Anchored to its own toggle rather
    than to the header, so it stays put when the title beside it changes length. */
 .dh-hmenu-wrap { position: relative; flex: none; }

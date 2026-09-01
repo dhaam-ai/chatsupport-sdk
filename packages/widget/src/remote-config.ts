@@ -216,6 +216,11 @@ export interface RemoteConfig {
    */
   readonly privacyUrl: string | undefined;
   /**
+   * `behaviour.supportEmail` — where a visitor goes when the chat service
+   * cannot be reached at all. Absent shows no fallback rather than a guess.
+   */
+  readonly supportEmail: string | undefined;
+  /**
    * `behaviour.handoffKeywords[]` — words that take a visitor to a person.
    *
    * Lower-cased on the way in, because the console lower-cases them on the way
@@ -291,6 +296,7 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   consentRequired: false,
   consentText: undefined,
   privacyUrl: undefined,
+  supportEmail: undefined,
   handoffKeywords: [],
   // Off, like every other surface this pass added: a widget whose config never
   // landed must look exactly as it did before, and a form that files tickets
@@ -768,6 +774,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     consentRequired: bool(behaviour, 'consentRequired', DEFAULT_REMOTE_CONFIG.consentRequired),
     consentText: str(behaviour, 'consentText'),
     privacyUrl: str(behaviour, 'privacyUrl'),
+    supportEmail: str(behaviour, 'supportEmail'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
     reportIssue: bool(behaviour, 'reportIssue', DEFAULT_REMOTE_CONFIG.reportIssue),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),

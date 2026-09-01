@@ -34,6 +34,7 @@ import { asksForAHuman } from './handoff-keywords.js';
 import { createChime } from './ui/chime.js';
 import { createConsentGate } from './ui/consent.js';
 import { createHeaderMenu } from './ui/header-menu.js';
+import { createUnavailable } from './ui/unavailable.js';
 import { createReportIssueForm } from './ui/report-issue.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
@@ -596,6 +597,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   } catch {
     // Site data blocked. The visitor is simply not muted, and can mute again.
   }
+
+  const unavailable = createUnavailable({
+    // The SAME path the Reconnect control uses. A second retry route would be
+    // a second set of rules about when retrying is even allowed, and core
+    // already parks deliberately in states where it must not be forced.
+    onRetry: () => reconnect('manual'),
+  });
 
   const headerMenu = createHeaderMenu({
     onStartNew: () => openNewConversationFlow(),
@@ -1409,6 +1417,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // A form or survey standing IN PLACE OF the conversation, never on top
       // of it — a chooser and the conversation it chooses between are
       // alternatives, not a stack.
+      // Above every other pane, and replacing all of them: when the service
+      // cannot be reached there is no conversation, no list and no form worth
+      // showing behind it.
+      unavailable.node,
       surfaceHost,
       messageList.log,
       // Above the chips and below the transcript: the greeting is the first
@@ -2317,6 +2329,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     const connectionState = store.getState().connectionState;
     const status = resolveConnectionStatus(connectionState, online, failedAttempts);
 
+    // The whole-panel "we cannot reach the service" state, shown only once
+    // core has actually STOPPED — never over a reconnect it is still working
+    // through, which would tell the customer the service is down while it is
+    // coming back. See ui/unavailable.ts for why this is a screen and not
+    // just the status line it sits above.
+    const givenUp = TERMINAL_CONNECTION_STATES.has(connectionState);
+    unavailable.update(remote.supportEmail ?? '', reconnecting);
+    const wasUnreachable = !unavailable.node.hidden;
+    setPaneVisible(unavailable.node, givenUp);
+    // The screens below have to be told, or they keep painting a composer
+    // underneath it. Only on a CHANGE — `syncConnection` runs on every
+    // transport event, and a repaint per heartbeat is work nobody asked for.
+    if (wasUnreachable !== givenUp) syncScreens();
+
     // The merchant's subtitle stands in for `'Online'` and for nothing else.
     // Every other label is diagnostic, and a response-time promise painted
     // over "Not connected — use Reconnect to try again" would tell a customer
@@ -2456,9 +2482,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     const current = screens.current();
     const state = store.getState();
 
-    const onHome = current === 'home';
-    const onMessages = current === 'messages';
-    const onConversation = current === 'conversation';
+    // Everything else is suppressed while the service is unreachable. This is
+    // not decoration: leaving a composer that accepts text behind an "we
+    // couldn't reach the support service" notice invites the customer to type
+    // a message that has nowhere to go, which is the exact failure the whole
+    // screen exists to prevent.
+    const unreachable = !unavailable.node.hidden;
+
+    const onHome = current === 'home' && !unreachable;
+    const onMessages = current === 'messages' && !unreachable;
+    const onConversation = current === 'conversation' && !unreachable;
     // The transcript and composer show only on the conversation screen, and
     // only while no product surface (an out-of-hours form, the pre-chat
     // gate, a CSAT survey, the new-conversation composer) is standing in for
