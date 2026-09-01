@@ -158,9 +158,33 @@ check('design matches what was published', seen.design, (v) => v === (appearance
 check('corner radius is the published one', seen.panelRadius, (v) => String(v).startsWith(`${appearance.cornerRadius}px`), `${appearance.cornerRadius}px`);
 check('font is the published one', seen.panelFont, (v) => String(v).includes(String(appearance.fontFamily)), `a stack led by ${appearance.fontFamily}`);
 check('launcher carries its shadow', seen.launcherShadow, (v) => v && v !== 'none', 'a box-shadow');
-check('offsets match the published ones', seen.launcherRect, (v) => v.right === appearance.offsetX && v.bottom === appearance.offsetY, `{right:${appearance.offsetX},bottom:${appearance.offsetY}}`);
-check('thread paints the crosshatch texture', seen.threadImage, (v) => /repeating-linear-gradient/.test(String(v)), 'repeating-linear-gradient layers');
-check('thread base is the published colour', seen.threadColor, (v) => v === hexToRgb(appearance.thread?.color) || appearance.thread?.color === undefined, String(appearance.thread?.color));
+// A `tab` launcher is EDGE-MOUNTED by definition — that is what makes it a
+// tab rather than a floating bubble — so it ignores the horizontal offset on
+// purpose. Asserting 20px there was asserting that a side tab is not a side
+// tab.
+if (appearance.launcher === 'tab') {
+  check('the side tab sits flush to its edge', seen.launcherRect, (v) => v.right === 0, '{right:0}');
+  check('the side tab still honours the vertical offset', seen.launcherRect, (v) => v.bottom === appearance.offsetY, `{bottom:${appearance.offsetY}}`);
+} else {
+  check('offsets match the published ones', seen.launcherRect, (v) => v.right === appearance.offsetX && v.bottom === appearance.offsetY, `{right:${appearance.offsetX},bottom:${appearance.offsetY}}`);
+}
+// What the backdrop paints with depends on its KIND, so the assertion has to
+// as well. `mesh` deliberately defers to a palette token pair rather than to
+// `thread.color` — it is the one backdrop needing different artwork per colour
+// scheme — so comparing it against the merchant's colour asserts the opposite
+// of what the code is documented to do.
+const threadKind = appearance.thread?.background ?? 'solid';
+if (threadKind === 'pattern') {
+  check('thread paints the published texture', seen.threadImage, (v) => /gradient/.test(String(v)), `the ${appearance.thread?.pattern} texture`);
+  check('thread base is the published colour', seen.threadColor, (v) => v === hexToRgb(appearance.thread?.color), String(appearance.thread?.color));
+} else if (threadKind === 'mesh') {
+  check('thread paints the mesh wash', seen.threadImage, (v) => /radial-gradient/.test(String(v)), 'four radial-gradient corners');
+  check('thread base is the mesh token, not the merchant colour', seen.threadColor, (v) => v !== hexToRgb(appearance.thread?.color), 'the palette --dh-mesh-bg');
+} else if (threadKind === 'image') {
+  check('thread paints the artwork behind a scrim', seen.threadImage, (v) => /url\(/.test(String(v)), 'a url() layer');
+} else {
+  check('thread is the published flat colour', seen.threadColor, (v) => v === (hexToRgb(appearance.thread?.color) ?? v), String(appearance.thread?.color));
+}
 // The classic header's avatar is deliberately NOT drawn under the hero
 // design — that layout has its own face row, and two avatars in one header is
 // one more than anybody asked for. So what is asserted depends on the design.
