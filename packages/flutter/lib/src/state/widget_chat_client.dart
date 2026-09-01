@@ -29,7 +29,31 @@ abstract interface class WidgetChatClient {
   Stream<SessionSnapshot> get sessions;
   Stream<TypingEvent> get typing;
 
+  /// One event per scheduled reconnect (§6.5).
+  ///
+  /// The one input no state snapshot carries. `connectionState` cycles
+  /// `connecting → reconnecting → connecting` indefinitely, so it says whether
+  /// an attempt is in flight but never how many have already failed — and that
+  /// missing number is the whole difference between a healthy first connect
+  /// and an outage worth putting a banner up for.
+  Stream<ReconnectingEvent> get reconnecting;
+
+  /// How many composed messages are held for the connection to come back.
+  ///
+  /// The number the offline banner names. Counts only sends that will go out
+  /// by themselves; a send the server REFUSED is not in here, because
+  /// promising its delivery would be a lie.
+  int get queuedCount;
+
   Future<void> connect();
+
+  /// Abandons an armed reconnect backoff and attempts immediately, returning
+  /// whether an attempt actually started.
+  ///
+  /// A no-op outside [ConnectionState.reconnecting] — see
+  /// `ChatClient.retryNow`. Safe to call on a cadence, which is exactly what
+  /// [ChatWidgetCubit] does with it.
+  bool retryNow();
 
   /// Sends [content] and returns the optimistic local echo immediately —
   /// see `ChatClient.sendMessage` for why there is no `Future` here.
@@ -69,7 +93,16 @@ class ChatClientAdapter implements WidgetChatClient {
   Stream<TypingEvent> get typing => _client.typing;
 
   @override
+  Stream<ReconnectingEvent> get reconnecting => _client.reconnecting;
+
+  @override
+  int get queuedCount => _client.queuedCount;
+
+  @override
   Future<void> connect() => _client.connect();
+
+  @override
+  bool retryNow() => _client.retryNow();
 
   @override
   ChatMessage sendMessage(String content, {String? replyToMessageId}) =>

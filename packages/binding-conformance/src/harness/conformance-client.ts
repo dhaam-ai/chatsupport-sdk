@@ -210,6 +210,11 @@ export function createConformanceChatClient(initial?: Partial<ChatState>): Confo
     },
 
     connect: async () => {},
+    // Reports `false`, matching the real contract: `retryNow()` acts only
+    // while core is waiting out a backoff, and this double never is. A
+    // binding under conformance must be able to call it without the harness
+    // pretending an attempt started.
+    retryNow: () => false,
     disconnect: () => {},
     joinSession: (_sessionId: string) => {},
     leaveSession: () => {},

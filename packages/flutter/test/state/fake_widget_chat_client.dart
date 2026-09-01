@@ -14,9 +14,22 @@ class FakeWidgetChatClient implements WidgetChatClient {
   final StreamController<ChatMessage> _messages = StreamController<ChatMessage>.broadcast();
   final StreamController<SessionSnapshot> _sessions = StreamController<SessionSnapshot>.broadcast();
   final StreamController<TypingEvent> _typing = StreamController<TypingEvent>.broadcast();
+  final StreamController<ReconnectingEvent> _reconnecting = StreamController<ReconnectingEvent>.broadcast();
 
   ConnectionState _state = ConnectionState.idle;
   int connectCalls = 0;
+
+  /// Every state `retryNow()` was called in, oldest first — so a test can
+  /// assert both that it fired and that it fired where it was meant to.
+  final List<ConnectionState> retryNowCalls = <ConnectionState>[];
+
+  /// What `retryNow()` reports. Defaults to the real contract: it acts only
+  /// while a backoff is armed, and a fake that always claimed success would
+  /// let a caller that fires in the wrong state pass.
+  bool retryNowSucceeds = true;
+
+  /// What `queuedCount` reports. Set by a test standing in for an outbox.
+  int queued = 0;
   final List<String> joinedSessionIds = <String>[];
   final List<String> sentContent = <String>[];
   final List<String?> markReadCalls = <String?>[];
@@ -31,10 +44,24 @@ class FakeWidgetChatClient implements WidgetChatClient {
   Stream<SessionSnapshot> get sessions => _sessions.stream;
   @override
   Stream<TypingEvent> get typing => _typing.stream;
+  @override
+  Stream<ReconnectingEvent> get reconnecting => _reconnecting.stream;
+  @override
+  int get queuedCount => queued;
 
   @override
   Future<void> connect() async {
     connectCalls += 1;
+  }
+
+  @override
+  bool retryNow() {
+    retryNowCalls.add(_state);
+    if (!retryNowSucceeds || _state != ConnectionState.reconnecting) {
+      return false;
+    }
+    emitConnectionState(ConnectionState.connecting);
+    return true;
   }
 
   @override
@@ -75,7 +102,12 @@ class FakeWidgetChatClient implements WidgetChatClient {
 
   void emitTyping(bool isTyping) => _typing.add(TypingEvent(isTyping: isTyping));
 
+  /// One scheduled-retry event, as `ChatClient` emits per backoff arming.
+  void emitReconnecting({int attempt = 0, Duration delay = const Duration(milliseconds: 500)}) =>
+      _reconnecting.add(ReconnectingEvent(attempt: attempt, delay: delay));
+
   Future<void> dispose() async {
+    await _reconnecting.close();
     await _connectionStates.close();
     await _messages.close();
     await _sessions.close();

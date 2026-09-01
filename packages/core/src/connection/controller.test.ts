@@ -370,6 +370,76 @@ describe('ConnectionController — transport reconnect (§8.2)', () => {
     expect(h.timers.pendingCount).toBe(1);
   });
 
+  it('retryNow() abandons the armed backoff and attempts immediately', async () => {
+    const h = await connected();
+    h.transport.drop();
+    expect(h.controller.state).toBe('reconnecting');
+    expect(h.timers.pendingCount).toBe(1);
+
+    expect(h.controller.retryNow()).toBe(true);
+    await tick();
+
+    // The attempt ran off retryNow(), not off the timer: no time passed.
+    expect(h.controller.state).toBe('connecting');
+    expect(h.transport.connects).toHaveLength(2);
+
+    // ...and the timer it replaced cannot fire a third socket later.
+    h.timers.advance(60_000);
+    await tick();
+    expect(h.transport.connects).toHaveLength(2);
+  });
+
+  it('retryNow() resets the transport attempt counter, so backoff restarts at base', async () => {
+    const h = await connected();
+    const delays: number[] = [];
+    h.store.on('reconnecting', (payload) => delays.push(payload.delayMs));
+
+    // Climb the curve: 500, 1000, 2000. The last drop is left un-advanced so
+    // the controller is sitting in `reconnecting`, which is where retryNow()
+    // applies.
+    for (let i = 0; i < 3; i += 1) {
+      h.transport.drop();
+      if (i === 2) break;
+      h.timers.advance(60_000);
+      await tick();
+      h.transport.open();
+    }
+    expect(delays).toEqual([500, 1000, 2000]);
+
+    // The network came back. The next failure is charged as a first one.
+    expect(h.controller.retryNow()).toBe(true);
+    await tick();
+    h.transport.open();
+    h.transport.drop();
+    expect(delays).toEqual([500, 1000, 2000, 500]);
+  });
+
+  it('retryNow() is a no-op in every state but `reconnecting`', async () => {
+    const idle = harness();
+    expect(idle.controller.retryNow()).toBe(false);
+    expect(idle.controller.state).toBe('idle');
+
+    const live = await connected();
+    expect(live.controller.retryNow()).toBe(false);
+    expect(live.controller.state).toBe('connected');
+    expect(live.transport.connects).toHaveLength(1);
+
+    // An attempt already in flight is not superseded — it may be one frame
+    // from open.
+    live.transport.drop();
+    live.timers.advance(60_000);
+    await tick();
+    expect(live.controller.state).toBe('connecting');
+    expect(live.controller.retryNow()).toBe(false);
+    expect(live.transport.connects).toHaveLength(2);
+
+    // `closed` stays closed: §8.1 gives it exactly one way out, and this is
+    // not it.
+    live.controller.disconnect();
+    expect(live.controller.retryNow()).toBe(false);
+    expect(live.controller.state).toBe('closed');
+  });
+
   it('follows the policy’s delay sequence across consecutive failures', async () => {
     const h = await connected();
     const delays: number[] = [];

@@ -340,6 +340,25 @@ export interface ChatClient {
   /** User-initiated, terminal (§8.1). No auto-reconnect follows. */
   disconnect(): void;
   /**
+   * Abandons the armed reconnect backoff and attempts immediately.
+   *
+   * For a binding that has learned the reason the last attempts failed is
+   * gone — the platform reporting the network back is the only real case.
+   * Backoff has by then usually grown to its 30s cap, and waiting it out on a
+   * device that is plainly online again is what "it just says Connecting…" is.
+   *
+   * Deliberately narrow, and NOT a second `connect()`: it creates and settles
+   * no promise, leaves the auth escalation counter alone (a network blip is no
+   * evidence a rejected token was fixed), and resets only the transport
+   * attempt counter. It acts ONLY while core is waiting out a backoff
+   * (`connectionState === 'reconnecting'`) and returns `false` — a pure no-op,
+   * safe to call on any cadence — in every other state, including `suspended`
+   * and `closed`, which §8.1 makes recoverable only by an explicit `connect()`.
+   *
+   * @returns whether an attempt was actually started.
+   */
+  retryNow(): boolean;
+  /**
    * Sends the raw `session.join` frame and nothing else.
    *
    * Fire-and-forget, like `leaveSession`/`requestAgent`: a successful join is

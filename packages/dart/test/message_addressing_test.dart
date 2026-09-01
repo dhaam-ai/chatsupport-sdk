@@ -225,12 +225,16 @@ void main() {
         'send composed before the drop', () async {
       // README drift #5: the server resolves a session during the handshake
       // and puts it in `connection.ack`, so a reconnect can hand this client a
-      // session it never asked for. The sends orphaned by that same drop are
-      // exactly the ones a host renders a Retry button for.
+      // session it never asked for — and the sends orphaned by that same drop
+      // are the ones the queue is about to replay onto it, automatically.
+      //
+      // This is where the address earns its keep. Without it the replay is
+      // filed under whatever the CONNECTION last joined, and the customer's
+      // message lands in a conversation they were never in — acked as success.
       final Harness harness = Harness();
       await harness.connected();
 
-      final ChatMessage echo = harness.client.sendMessage('meant for s1');
+      harness.client.sendMessage('meant for s1');
       await harness.socket.drop();
       await flush();
       await harness.scheduler.advanceToNextTimer();
@@ -238,10 +242,10 @@ void main() {
       harness.socket.deliver(ackJson(sessionId: 's2'));
       await flush();
 
-      expect(harness.client.retry(echo.id), isA<RetryRetried>());
-
+      // Nobody pressed anything: the drain wrote it.
       expect(harness.sends, hasLength(2));
       expect(harness.sends[1]['sessionId'], equals('s1'));
+      expect(harness.client.queuedCount, isZero);
 
       await harness.client.dispose();
     });
@@ -280,22 +284,26 @@ void main() {
         'in', () async {
       // Distinct from the orphaned-in-flight path: this frame never reached
       // the transport at all, so its address is the only record of where it
-      // was going. The reconnect then lands a different session.
+      // was going. The reconnect then lands a different session, and the queue
+      // drains onto it without asking anyone.
       final Harness harness = Harness();
       await harness.connected();
 
       await harness.socket.drop();
       await flush();
       final ChatMessage echo = harness.client.sendMessage('typed offline');
-      expect(echo.delivery, equals(MessageDelivery.failed));
+      expect(echo.delivery, equals(MessageDelivery.queued));
 
       await harness.scheduler.advanceToNextTimer();
       await flush();
       harness.socket.deliver(ackJson(sessionId: 's2'));
       await flush();
 
-      expect(harness.client.retry(echo.id), isA<RetryRetried>());
+      // `sends` in this file unwraps to the PAYLOAD, so the envelope id is not
+      // visible here — retry_test.dart pins that half. What this one is about
+      // is the address, and it survived a reconnect into another session.
       expect(harness.sends.single['sessionId'], equals('s1'));
+      expect(echo.delivery, equals(MessageDelivery.queued));
 
       await harness.client.dispose();
     });

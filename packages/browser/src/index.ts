@@ -65,3 +65,29 @@ export type {
 // ---------------------------------------------------------------------------
 export { createReadTracker, DEFAULT_READ_DEBOUNCE_MS, DEFAULT_READ_THRESHOLD } from './read-tracker.js';
 export type { ReadTracker, ReadTrackerOptions, TrackedMessage } from './read-tracker.js';
+
+// ---------------------------------------------------------------------------
+// Offline — the platform's connectivity signal, the retry cadence that caps
+// how long a recoverable outage looks stuck, and the copy every binding shows.
+// ---------------------------------------------------------------------------
+export {
+  countQueuedSends,
+  createNetworkStatus,
+  createReconnectPump,
+  DEFAULT_RECONNECT_INTERVAL_MS,
+  isNavigatorOnline,
+  OUTAGE_ATTEMPT_THRESHOLD,
+  resolveOfflineBanner,
+} from './offline.js';
+export type {
+  CancelInterval,
+  NetworkStatus,
+  OfflineBannerInput,
+  OfflineBannerTone,
+  OfflineBannerView,
+  QueueableMessage,
+  ReconnectPump,
+  ReconnectPumpOptions,
+  ReconnectTarget,
+  ScheduleInterval,
+} from './offline.js';

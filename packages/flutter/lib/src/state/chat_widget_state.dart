@@ -21,6 +21,9 @@ class ChatWidgetState extends Equatable {
     required this.isTyping,
     required this.sessionSummaries,
     required this.unreadCount,
+    required this.online,
+    required this.failedAttempts,
+    required this.queuedCount,
     this.selectedTopic,
   });
 
@@ -42,6 +45,11 @@ class ChatWidgetState extends Equatable {
         isTyping: false,
         sessionSummaries: const <ChatSessionSummary>[],
         unreadCount: 0,
+        // Optimistic, and the only safe default: a widget that has not been
+        // told otherwise must not paint an offline notice on its first frame.
+        online: true,
+        failedAttempts: 0,
+        queuedCount: 0,
       );
 
   final ConnectionState connectionState;
@@ -86,6 +94,28 @@ class ChatWidgetState extends Equatable {
   /// data.
   final int unreadCount;
 
+  /// Whether the DEVICE has a network, as last reported by the host.
+  ///
+  /// Not something this package can determine on its own — see
+  /// [ChatWidgetCubit.setOnline] for why the connectivity plugin is the host's
+  /// dependency and not this library's. `true` until told otherwise.
+  ///
+  /// Read `false` as hard evidence and `true` as no evidence at all: an
+  /// interface existing says nothing about whether anything can be reached
+  /// through it. `resolveOfflineBanner` is where the two are combined, and it
+  /// treats them exactly that asymmetrically.
+  final bool online;
+
+  /// Consecutive failed connection attempts since the last successful connect.
+  ///
+  /// Counted from `ChatClient.reconnecting`, which fires once per scheduled
+  /// retry, and reset by a `connected` transition — the only proof the run is
+  /// over. See [WidgetChatClient.reconnecting] on why no snapshot carries it.
+  final int failedAttempts;
+
+  /// Composed messages waiting on the connection. They send themselves (§8.4).
+  final int queuedCount;
+
   /// The New Conversation screen's chosen topic chip, or `null` — nothing
   /// picked, which is the default and stays valid: a topic is an optional
   /// refinement on a new conversation, never a requirement to start one.
@@ -107,6 +137,9 @@ class ChatWidgetState extends Equatable {
     bool? isTyping,
     List<ChatSessionSummary>? sessionSummaries,
     int? unreadCount,
+    bool? online,
+    int? failedAttempts,
+    int? queuedCount,
     ConversationTopic? selectedTopic,
     // Unlike every other field here, "clear selectedTopic" IS something a
     // real caller needs (see the field's own doc: three different Cubit
@@ -129,6 +162,9 @@ class ChatWidgetState extends Equatable {
       isTyping: isTyping ?? this.isTyping,
       sessionSummaries: sessionSummaries ?? this.sessionSummaries,
       unreadCount: unreadCount ?? this.unreadCount,
+      online: online ?? this.online,
+      failedAttempts: failedAttempts ?? this.failedAttempts,
+      queuedCount: queuedCount ?? this.queuedCount,
       selectedTopic: clearSelectedTopic ? null : (selectedTopic ?? this.selectedTopic),
     );
   }
@@ -145,6 +181,9 @@ class ChatWidgetState extends Equatable {
         isTyping,
         sessionSummaries,
         unreadCount,
+        online,
+        failedAttempts,
+        queuedCount,
         selectedTopic,
       ];
 }

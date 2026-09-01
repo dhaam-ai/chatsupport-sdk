@@ -245,6 +245,50 @@ class ConnectionController {
     return completer.future;
   }
 
+  /// Abandons the armed backoff and attempts NOW, from attempt 0.
+  ///
+  /// For one caller: something outside this controller has learned that the
+  /// reason the last attempts failed has gone away. On a phone that is not
+  /// hypothetical — it is a connectivity stream reporting wifi or mobile data
+  /// back after a tunnel, a lift, or airplane mode. Backoff is a guess about
+  /// when to try again, and a host holding that fact has better information
+  /// than the guess. Without this the customer waits out a delay that has
+  /// already grown toward [BackoffPolicy.cap] (30s) while their signal bar is
+  /// plainly full again.
+  ///
+  /// ── Why this is not [connect] ─────────────────────────────────────────
+  ///
+  /// [connect] returns the in-flight completer's future whenever one is
+  /// pending, and on a client that has never reached `connection.ack` that is
+  /// the whole retry loop — so it would open no socket at all in exactly the
+  /// case that matters. It also resets the auth failure counter, and a network
+  /// blip is not evidence that a rejected credential has been fixed.
+  ///
+  /// So this takes neither liberty: no completer is created or completed, the
+  /// auth counter is untouched, and only the TRANSPORT attempt counter — the
+  /// one the network genuinely invalidated — goes back to 0.
+  ///
+  /// Returns whether an attempt was actually started. `false` is a pure no-op
+  /// and is safe to call on any cadence. It covers every other state:
+  /// [ConnectionState.connecting] and [ConnectionState.authenticating] already
+  /// have an attempt in flight, which must not be superseded a frame before it
+  /// opens; [ConnectionState.connected] has nothing to retry; and §8.1 makes
+  /// [ConnectionState.suspended] and [ConnectionState.closed] recoverable only
+  /// by an explicit [connect], because a credential fault or the host's own
+  /// [disconnect] is not something coming back online has fixed.
+  bool retryNow() {
+    if (_disposed || _state != ConnectionState.reconnecting) return false;
+
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _transportAttempt = 0;
+    // Every terminal callback carries the generation it was armed for, and
+    // [_openSocket] bumps it — so a retry timer callback that had already been
+    // dispatched cannot terminate the attempt this starts.
+    unawaited(_openSocket());
+    return true;
+  }
+
   /// User-initiated close. Terminal — no auto-reconnect follows (§8.1).
   Future<void> disconnect() async {
     _attemptLive = false;

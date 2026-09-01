@@ -44,6 +44,28 @@ export type { UseUnreadCountResult } from './use-unread-count.js';
 export { useChatError } from './use-chat-error.js';
 
 // ---------------------------------------------------------------------------
+// Offline. The banner's state and the reconnect behaviour behind it, plus the
+// one rendered component this package ships — see offline-banner.tsx for why
+// that exception exists in an otherwise headless package.
+// ---------------------------------------------------------------------------
+
+export {
+  DEFAULT_RECONNECT_INTERVAL_MS,
+  isNavigatorOnline,
+  useNetworkStatus,
+  useOfflineBanner,
+} from './use-offline-banner.js';
+export type {
+  OfflineBannerTone,
+  OfflineBannerView,
+  UseOfflineBannerOptions,
+  UseOfflineBannerResult,
+} from './use-offline-banner.js';
+
+export { OfflineBanner } from './offline-banner.js';
+export type { OfflineBannerProps } from './offline-banner.js';
+
+// ---------------------------------------------------------------------------
 // DOM-side hooks. Unlike everything above, these are not selectors over
 // `ChatState` — they are the browser-facing half a chat UI needs and core
 // deliberately does not own (§4: core has "ZERO framework, UI, and DOM-document

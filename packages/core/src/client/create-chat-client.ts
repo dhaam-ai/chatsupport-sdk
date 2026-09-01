@@ -1785,6 +1785,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       startIdentifyOnce();
       return connecting;
     },
+    retryNow: () => connectionController.retryNow(),
     disconnect: () => {
       connectionController.disconnect();
       presenceCoordinator.reset();

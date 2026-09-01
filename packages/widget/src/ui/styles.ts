@@ -420,6 +420,14 @@ const DARK_TOKENS = `
   --dh-focus: #7aa5ff;
   --dh-danger: #f97066;
   --dh-shadow: 0 6px 24px -4px rgb(0 0 0 / 0.55), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+  /* The offline banner's band. See '.dh-offline-banner' for why these are a
+     fixed pair rather than derived from the merchant's accent. */
+  --dh-warn-bg: #3a2c12;
+  --dh-warn-fg: #fbdca6;
+  --dh-warn-border: #55411b;
+  --dh-alarm-bg: #3d201a;
+  --dh-alarm-fg: #f9c8bd;
+  --dh-alarm-border: #5a2f26;
   /* A pastel wash that works on white is mud on near-black, so the mesh gets
      its own dark artwork rather than an opacity applied to the light one. */
   --dh-mesh-bg: #1c1a24;
@@ -463,6 +471,16 @@ export const STYLES = `
   --dh-focus: #2563eb;
   --dh-bubble-in: #f1f3f5;
   --dh-shadow: 0 6px 24px -4px rgb(16 18 24 / 0.18), 0 2px 6px -2px rgb(16 18 24 / 0.12);
+
+  /* The offline banner's band — amber for "your network", a warmer red for
+     "our service". Both checked against their own background rather than
+     against '--dh-surface': the band paints its own. */
+  --dh-warn-bg: #fef4e6;
+  --dh-warn-fg: #7a4a02;
+  --dh-warn-border: #f3ddb8;
+  --dh-alarm-bg: #fdece9;
+  --dh-alarm-fg: #8a2c1c;
+  --dh-alarm-border: #f6cfc7;
 
   /* The console's 'thread.background: mesh' — a four-corner pastel wash.
      CSS has no mesh gradient, so this is one radial per corner over a lilac
@@ -888,6 +906,51 @@ button {
   flex: none;
 }
 .dh-header-spacer { flex: 1; }
+
+/* ── The offline banner ───────────────────────────────────────────────────
+
+   Directly under the header row and painted as its own band, because it is a
+   statement about the whole panel rather than about any one screen: it stays
+   put while the customer moves between Home, Messages and a conversation, and
+   'flex: none' keeps it out of the space the transcript scrolls in.
+
+   Amber, not red — see ui/offline-banner.ts. Nothing has failed; every message
+   is held and the connection is retrying. The two tones differ only in how
+   warm they are: 'offline' is the customer's own network and reads as
+   information, 'unreachable' is our service and is a shade more insistent.
+
+   The two colour pairs are palette TOKENS ('--dh-warn-*', '--dh-alarm-*') so
+   they follow the same three-way light/dark/pinned switch as everything else,
+   but they are deliberately NOT derived from the merchant's accent the way the
+   header and bubbles are. A status band tinted with the brand colour goes
+   invisible on the merchant whose brand IS amber, and this is the one surface
+   whose whole job is to be noticed.
+
+   'position: sticky' with 'top: 0' costs nothing where the banner is already
+   in flow, and holds it in place if a future layout ever scrolls this column.
+*/
+.dh-offline-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 2);
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 4);
+  background: var(--dh-warn-bg);
+  color: var(--dh-warn-fg);
+  border-bottom: 1px solid var(--dh-warn-border);
+  font-size: 12.5px;
+  line-height: 1.4;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.dh-offline-banner[data-tone="unreachable"] {
+  background: var(--dh-alarm-bg);
+  color: var(--dh-alarm-fg);
+  border-bottom-color: var(--dh-alarm-border);
+}
+.dh-offline-banner svg { flex: none; }
+.dh-offline-text { overflow-wrap: anywhere; }
 
 /* ── The hero header ──────────────────────────────────────────────────────
 

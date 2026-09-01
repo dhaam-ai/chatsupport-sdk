@@ -298,13 +298,25 @@ void main() {
     });
   });
 
+  // ── What retry() is NOT for any more ───────────────────────────────────
+  //
+  // Both groups below used to end in a Retry press, because a send that never
+  // reached the wire was marked `failed` and a human was the only thing that
+  // could move it. The queue moves it now, so these pin the same properties —
+  // the original id, the original address, nothing lost — through the path
+  // that no longer asks the customer for anything.
+  //
+  // retry() keeps exactly one job: a send the SERVER refused. Replaying that
+  // on a timer would collect the same verdict, so it stays manual and stays
+  // gated on the server's own `retryable` flag (the groups above).
+
   group('a send that was in flight when the connection dropped', () {
-    test('is failed rather than left pending forever', () async {
+    test('goes back in the queue rather than sitting pending forever',
+        () async {
       // The commonest real failure on a phone, and the one with no ack to
       // settle it: the frame reached the wire and the tunnel arrived before
       // the reply did. Nothing else will ever resolve this send, so leaving it
-      // `pending` means a spinner that never stops and a Retry button a host
-      // has no reason to render.
+      // `pending` means a spinner that never stops.
       final Harness harness = Harness();
       await harness.connected();
 
@@ -316,12 +328,14 @@ void main() {
       await flush();
 
       expect(seen.last.id, equals(echo.id));
-      expect(seen.last.delivery, equals(MessageDelivery.failed));
+      expect(seen.last.delivery, equals(MessageDelivery.queued));
+      expect(harness.client.queuedCount, equals(1));
 
       await harness.client.dispose();
     });
 
-    test('is retryable, and replays under the original id', () async {
+    test('replays under the original id, with nobody pressing anything',
+        () async {
       final Harness harness = Harness();
       await harness.connected();
 
@@ -335,38 +349,47 @@ void main() {
       harness.socket.deliver(ackJson());
       await flush();
 
-      expect(harness.client.retry(echo.id), isA<RetryRetried>());
+      // The id is the point: the server dedupes on it, so replaying a frame
+      // it had already persisted before the drop resolves to one message
+      // rather than two.
       expect(harness.sends.single['id'], equals(original));
       expect(original, equals(echo.id));
+      expect(harness.client.queuedCount, isZero);
+
+      // And there is nothing left for a Retry button to act on.
+      expect(
+        harness.client.retry(echo.id),
+        isA<RetryRefused>().having(
+          (RetryRefused r) => r.reason,
+          'reason',
+          equals(RetryRefusalReason.notFound),
+        ),
+      );
 
       await harness.client.dispose();
     });
   });
 
   group('a send that never reached the transport', () {
-    test('defaults to retryable — there was no server flag to read', () async {
-      // kDefaultRetryable. The flag gates a Retry affordance, so defaulting to
-      // false silently removes a button that would have worked.
+    test('is queued, and sends itself once there is a connection', () async {
       final Harness harness = Harness();
       final ChatMessage echo = harness.client.sendMessage('offline');
-      expect(echo.delivery, equals(MessageDelivery.failed));
+      expect(echo.delivery, equals(MessageDelivery.queued));
 
       await harness.connected();
 
-      final RetryOutcome outcome = harness.client.retry(echo.id);
-
-      expect(outcome, isA<RetryRetried>());
       expect(harness.sends, hasLength(1));
       expect(harness.sends.single['id'], equals(echo.id));
+      expect(harness.client.queuedCount, isZero);
 
       await harness.client.dispose();
     });
 
-    test('a retry with nowhere to send is refused and stays retryable',
+    test('is not something retry() will touch — it needs no affordance',
         () async {
-      // There is no durable queue behind this method, so "accepted" would be
-      // a promise nothing keeps. The record survives the refusal, so the same
-      // press succeeds once the connection is back.
+      // The queue is the drain. A Retry button offered over a queued send
+      // would either double-send it or, worse, invite the customer to babysit
+      // something already handled.
       final Harness harness = Harness();
       final ChatMessage echo = harness.client.sendMessage('offline');
 
@@ -375,12 +398,14 @@ void main() {
         isA<RetryRefused>().having(
           (RetryRefused r) => r.reason,
           'reason',
-          equals(RetryRefusalReason.disconnected),
+          equals(RetryRefusalReason.notFound),
         ),
       );
+      // Refused, and still queued — the refusal did not consume it.
+      expect(harness.client.queuedCount, equals(1));
 
       await harness.connected();
-      expect(harness.client.retry(echo.id), isA<RetryRetried>());
+      expect(harness.sends, hasLength(1));
 
       await harness.client.dispose();
     });

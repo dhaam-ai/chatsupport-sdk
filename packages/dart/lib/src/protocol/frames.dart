@@ -554,6 +554,29 @@ class ChatMessage {
         delivery: MessageDelivery.confirmed,
       );
 
+  /// A copy marked [MessageDelivery.queued] — held for the connection to come
+  /// back, not lost.
+  ///
+  /// The id is not a parameter here either, and that is the load-bearing part
+  /// of the whole queue: a queued send is replayed under the envelope id it
+  /// was minted with, which is what the server dedupes on (D1, §9.3). A copy
+  /// that could re-mint an id would turn one held message into two delivered
+  /// ones.
+  ChatMessage queued() => ChatMessage(
+        id: id,
+        sessionId: sessionId,
+        senderId: senderId,
+        senderType: senderType,
+        type: type,
+        content: content,
+        seq: seq,
+        createdAt: createdAt,
+        replyToMessageId: replyToMessageId,
+        attachment: attachment,
+        metadata: metadata,
+        delivery: MessageDelivery.queued,
+      );
+
   /// A copy marked failed.
   ChatMessage failed() => ChatMessage(
         id: id,
@@ -585,8 +608,25 @@ enum MessageDelivery {
   /// Acknowledged by the server, or received from it. [ChatMessage.seq] is set.
   confirmed,
 
-  /// Could not be handed to the transport. NOT retried — §8.4 requires a
-  /// durable queue for that and this pass does not have one.
+  /// Composed while there was no wire to write to, and HELD.
+  ///
+  /// The client replays these in FIFO order the moment the connection is back
+  /// (§8.4), under their original envelope ids, without the host doing
+  /// anything. This is the state a message spends a tunnel in, and the reason
+  /// a composer must stay usable while offline: what is typed is not lost.
+  ///
+  /// Distinct from [failed] on exactly one axis — whether anything will
+  /// happen by itself. A queued send needs no affordance; a failed one needs
+  /// [ChatClient.retry].
+  queued,
+
+  /// The server refused this send, or it was abandoned.
+  ///
+  /// NOT retried automatically. The queue exists (see [queued]) and
+  /// deliberately does not swallow this case: a send the server REJECTED will
+  /// be rejected again, so replaying it on a timer would spend the customer's
+  /// battery producing the same verdict. [ChatClient.retry] is the manual
+  /// drain, gated on the server's own `retryable` flag.
   failed,
 }
 

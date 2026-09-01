@@ -342,6 +342,52 @@ export class ConnectionController {
     this.#settlePendingConnect(new ConnectionAbortedError());
   }
 
+  /**
+   * Abandons the armed backoff and attempts NOW, from attempt 0.
+   *
+   * For one caller: something outside core learned that the reason the last
+   * attempts failed has gone away — most concretely, the platform reporting
+   * the network back (`window.online`, a `Connectivity` stream). Backoff is a
+   * guess about when to try again, and a binding holding that fact has better
+   * information than the guess. Without this the customer waits out a delay
+   * that has already grown to the 30s cap while their phone is plainly online
+   * again, which is precisely how "it says Connecting… forever" is reported.
+   *
+   * ── Why this is not `connect()` ──────────────────────────────────────────
+   *
+   * `connect()` is the wrong tool for this and every binding that reached for
+   * it found out the hard way (see @dhaam-ccrm/widget's `WorkingConnectionState`
+   * note). It returns the in-flight promise whenever one is pending — which,
+   * on a client that has never reached `connection.ack`, is the whole retry
+   * loop — so it opens no socket at all in exactly the case that matters. Where
+   * it does run it also resets the AUTH escalation counter, and a network blip
+   * is not evidence that a rejected credential has been fixed.
+   *
+   * So this method takes neither liberty: no promise is created or settled, the
+   * auth counter is untouched, and only the TRANSPORT attempt counter (the one
+   * the network genuinely invalidated) goes back to 0.
+   *
+   * Returns whether an attempt was actually started. `false` — a no-op, safe to
+   * call on any cadence — covers every other state:
+   *   - `connecting`/`authenticating`: an attempt is already in flight, and a
+   *     second one would supersede a socket that may be one frame from open.
+   *   - `connected`: nothing to retry.
+   *   - `suspended`/`closed`: §8.1 makes both recoverable only by an explicit
+   *     `connect()`, and a credential fault or a user's `disconnect()` is not
+   *     something coming back online has fixed.
+   */
+  retryNow(): boolean {
+    if (this.#machine.state !== 'reconnecting') return false;
+
+    this.#cancelReconnectTimer();
+    this.#attempt = 0;
+    // `#beginAttempt` bumps the generation, so the timer callback cancelled
+    // above could not have raced its way to a second socket even if it had
+    // already fired.
+    void this.#beginAttempt();
+    return true;
+  }
+
   // -------------------------------------------------------------------------
   // Attempt lifecycle
   // -------------------------------------------------------------------------

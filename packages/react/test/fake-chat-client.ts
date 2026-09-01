@@ -106,6 +106,10 @@ export function createFakeChatClient(initial?: Partial<ChatState>): FakeChatClie
     },
 
     connect: vi.fn(async () => {}),
+    // Reports `false` by default, matching the real contract: `retryNow()`
+    // acts only while core is waiting out a backoff, and a fake that always
+    // claimed success would let a hook that calls it in the wrong state pass.
+    retryNow: vi.fn(() => false),
     disconnect: vi.fn(() => {}),
     joinSession: vi.fn((_sessionId: string) => {}),
     switchSession: vi.fn(async (_sessionId: string) => {}),

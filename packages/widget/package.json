@@ -58,6 +58,7 @@
     "verify:appearance": "node scripts/verify-appearance.mjs"
   },
   "dependencies": {
+    "@dhaam-ccrm/browser": "workspace:^",
     "@dhaam-ccrm/core": "workspace:^",
     "@dhaam-ccrm/js": "workspace:^",
     "@dhaam-ccrm/rest": "workspace:^"

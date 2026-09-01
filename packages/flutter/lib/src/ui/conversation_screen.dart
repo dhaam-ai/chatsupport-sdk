@@ -141,6 +141,19 @@ class _DeliveryTick extends StatelessWidget {
     return switch (delivery) {
       MessageDelivery.pending => Icon(Icons.schedule, size: 12, color: scheme.onSurfaceVariant),
       MessageDelivery.confirmed => Icon(Icons.done, size: 12, color: scheme.onSurfaceVariant),
+      // The same clock as `pending`, and deliberately not a distinct glyph.
+      //
+      // The two differ in where the message is (a socket's write buffer vs
+      // this client's outbox) and not in anything the customer can act on: it
+      // has not arrived yet, and it is going to. A third icon here would ask
+      // them to learn a distinction that changes nothing they can do, while
+      // the OfflineBanner above already explains, in a sentence, the one thing
+      // this state means — and does it once for the whole thread instead of
+      // once per bubble.
+      //
+      // `failed` is the one that gets its own treatment, because it is the one
+      // where nothing further happens without a tap.
+      MessageDelivery.queued => Icon(Icons.schedule, size: 12, color: scheme.onSurfaceVariant),
       MessageDelivery.failed => Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[

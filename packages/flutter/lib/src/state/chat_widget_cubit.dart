@@ -27,22 +27,57 @@ import '../session/chat_session_summary.dart';
 import 'chat_widget_state.dart';
 import 'widget_chat_client.dart';
 
+/// The longest a recoverable outage is allowed to look stuck.
+///
+/// `dhaam_chat`'s full-jitter backoff (§8.2) is right about servers and wrong
+/// about phones. Its whole job is to protect a recovering server from every
+/// client it dropped reconnecting in lockstep, and it does that by growing the
+/// delay to a 30-second cap. But the commonest outage a chat widget actually
+/// sees is not a server restart — it is one handset losing signal for ninety
+/// seconds. That handset is not part of a thundering herd, and making it wait
+/// out a 30-second delay after its signal is back is how "it just says
+/// Connecting…" gets reported.
+///
+/// Three seconds is the ceiling this puts on that wait. It does not replace
+/// backoff: the client's early attempts are all faster than this (500ms, 1s,
+/// 2s), so for the first several failures this timer never wins. It only bites
+/// once the curve has climbed past it, which is exactly the regime where one
+/// device's retry rate is nobody's problem.
+///
+/// The same number as `DEFAULT_RECONNECT_INTERVAL_MS` in `@dhaam-ccrm/browser`.
+const Duration kReconnectInterval = Duration(seconds: 3);
+
 class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   ChatWidgetCubit({
     required WidgetChatClient client,
     RemoteConfig initialConfig = defaultRemoteConfig,
     ScreenName initialScreen = ScreenName.home,
+    Scheduler scheduler = const SystemScheduler(),
+    Duration reconnectInterval = kReconnectInterval,
   })  : _client = client,
         _screens = ChatScreens(initial: initialScreen),
+        _scheduler = scheduler,
+        _reconnectInterval = reconnectInterval,
         super(ChatWidgetState.initial(config: initialConfig, screen: initialScreen)) {
     _connectionSub = _client.connectionStates.listen(_onConnectionState);
     _messagesSub = _client.messages.listen(_onMessage);
     _sessionsSub = _client.sessions.listen(_onSession);
     _typingSub = _client.typing.listen(_onTyping);
+    _reconnectingSub = _client.reconnecting.listen(_onReconnecting);
   }
 
   final WidgetChatClient _client;
   final ChatScreens _screens;
+
+  /// `dhaam_chat`'s own timer seam, reused rather than reinvented: the whole
+  /// reconnect cadence below is then drivable from a test with a
+  /// `FakeScheduler` and no real clock, exactly as that package's own
+  /// connection tests are.
+  final Scheduler _scheduler;
+  final Duration _reconnectInterval;
+
+  /// The armed cadence tick, or null when there is nothing to cap.
+  Cancellable? _reconnectTimer;
 
   /// Keyed by id so the optimistic-echo-then-confirmed pair `ChatClient`
   /// emits for one send (see its class doc) collapses to one entry rather
@@ -60,6 +95,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   late final StreamSubscription<ChatMessage> _messagesSub;
   late final StreamSubscription<SessionSnapshot> _sessionsSub;
   late final StreamSubscription<TypingEvent> _typingSub;
+  late final StreamSubscription<ReconnectingEvent> _reconnectingSub;
 
   /// For a screen that needs to call something this Cubit does not wrap
   /// (none does yet) — kept `WidgetChatClient`-typed, not `ChatClient`, so a
@@ -74,6 +110,51 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// construction, and the root widget (which owns this Cubit's lifetime)
   /// is the natural, single place to call this once, from `initState`.
   Future<void> connect() => _client.connect();
+
+  // ── Connectivity ──────────────────────────────────────────────────────
+
+  /// Tells this Cubit what the DEVICE says about the network.
+  ///
+  /// ── Why the host supplies this rather than this package reading it ────
+  ///
+  /// Knowing whether a handset has a route means a platform channel —
+  /// `connectivity_plus`, in practice — and both sibling apps
+  /// (dh-customer-app-flutter, dh-merchant-app-flutter) already depend on it
+  /// and already run a `ConnectivityCubit` over it. A library sitting between
+  /// those apps and `dhaam_chat` taking the same plugin again would add a
+  /// second listener to the same platform stream, a second dependency to
+  /// resolve, and a second answer to a question the app has already answered.
+  /// So this is a setter, and the host pipes its existing stream into it:
+  ///
+  /// ```dart
+  /// _connectivitySub = connectivity.onConnectivityChanged.listen(
+  ///   (List<ConnectivityResult> r) =>
+  ///       cubit.setOnline(!r.contains(ConnectivityResult.none)),
+  /// );
+  /// ```
+  ///
+  /// Calling it is optional. Left alone the widget behaves as it did before
+  /// this existed — the banner still appears on a real outage, off the failed
+  /// attempt count, just a few seconds later than a host that wires this up.
+  ///
+  /// The transition to `true` is not merely recorded: it is the single most
+  /// valuable reconnect signal there is, because it means the reason the last
+  /// attempts failed is provably gone. It retries immediately rather than
+  /// waiting out a backoff computed while the network was still down.
+  void setOnline(bool online) {
+    if (online == state.online) return;
+    emit(state.copyWith(online: online));
+    if (online) _client.retryNow();
+  }
+
+  /// Abandons an armed reconnect backoff and attempts now.
+  ///
+  /// Wired to [setOnline] and to the cadence already; this is for an explicit
+  /// "Try again" control. A no-op unless the client is waiting out a backoff —
+  /// in particular it will NOT revive a suspended or closed client, which §8.1
+  /// makes recoverable only by [connect]. That is what [UnavailableView]'s own
+  /// Try Again button is for.
+  bool retryNow() => _client.retryNow();
 
   // ── Config ────────────────────────────────────────────────────────────
 
@@ -174,12 +255,70 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   // ── Inbound ───────────────────────────────────────────────────────────
 
-  void _onConnectionState(ConnectionState connectionState) =>
-      emit(state.copyWith(connectionState: connectionState));
+  void _onConnectionState(ConnectionState connectionState) {
+    emit(
+      state.copyWith(
+        connectionState: connectionState,
+        // A completed handshake is the only proof the run of failures is over.
+        // Without this reset the banner stays up forever after one bad minute.
+        failedAttempts: connectionState == ConnectionState.connected ? 0 : null,
+        // The drain happens on this same edge, so the count is read after the
+        // client has had it — see ChatClient._onConnectionState.
+        queuedCount: _client.queuedCount,
+      ),
+    );
+    _syncReconnectCadence(connectionState);
+  }
+
+  void _onReconnecting(ReconnectingEvent event) =>
+      emit(state.copyWith(failedAttempts: state.failedAttempts + 1));
+
+  /// Arms the cadence while — and only while — a backoff is counting down.
+  ///
+  /// ── Why this cannot become a second retry loop ────────────────────────
+  ///
+  /// A UI layer retrying on its own timer while the client retries on its is
+  /// the classic way to hammer a server that is already struggling. This
+  /// cannot become that, for a reason in `dhaam_chat` rather than a rule here:
+  /// `retryNow()` acts ONLY in [ConnectionState.reconnecting] — a state that
+  /// by definition means no socket is open and a timer is counting down —
+  /// and returns false everywhere else, including the `connecting` of an
+  /// attempt already in flight. So it can never supersede a live attempt, open
+  /// a second socket, or shorten anything below the client's own first delay.
+  ///
+  /// One-shot and re-armed rather than [Scheduler.periodic], because leaving
+  /// `connecting` cancels it and re-entering `reconnecting` starts a fresh
+  /// three seconds — which is the behaviour wanted, and a periodic timer would
+  /// instead fire on whatever phase it happened to be in.
+  void _syncReconnectCadence(ConnectionState connectionState) {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    if (connectionState != ConnectionState.reconnecting) return;
+
+    _reconnectTimer = _scheduler.schedule(_reconnectInterval, () {
+      _reconnectTimer = null;
+      // Re-checked rather than trusted: a tick that fires in the same turn as
+      // a transition must not act on the state it was armed for.
+      if (_client.connectionState != ConnectionState.reconnecting) return;
+      if (_client.retryNow()) return;
+      // It refused — the state moved under us between the check and the call.
+      // Re-arm rather than going quiet, so a client that lands back in
+      // `reconnecting` without a transition event is still capped.
+      _syncReconnectCadence(_client.connectionState);
+    });
+  }
 
   void _onMessage(ChatMessage message) {
     _byId[message.id] = message;
-    emit(state.copyWith(messages: _byId.values.toList(growable: false)));
+    emit(
+      state.copyWith(
+        messages: _byId.values.toList(growable: false),
+        // Read on every message rather than tracked separately: a send joins
+        // the queue and leaves it without any connection transition, and the
+        // client is the one place that knows the real number.
+        queuedCount: _client.queuedCount,
+      ),
+    );
   }
 
   void _onSession(SessionSnapshot session) => emit(state.copyWith(session: session));
@@ -188,6 +327,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   @override
   Future<void> close() async {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    await _reconnectingSub.cancel();
     await _connectionSub.cancel();
     await _messagesSub.cancel();
     await _sessionsSub.cancel();

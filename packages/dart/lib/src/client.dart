@@ -122,12 +122,13 @@ class _FailedSend {
 ///
 /// ── Out of scope for this pass, with the seams left open ──────────────────
 ///
-///  * The durable offline queue (§9.1). [sendMessage] marks a send it cannot
-///    hand to the transport as [MessageDelivery.failed] rather than queueing
-///    it. The seam is [ConnectionController.send] returning a bool. [retry]
-///    is the in-memory half of what that queue would do — it replays a failed
-///    send under its original id — but it is not durable, not ordered, and
-///    does not survive a restart.
+///  * PERSISTENCE for the offline queue (§9.1). The queue itself is here —
+///    [sendMessage] holds a send it cannot hand to the transport, and the
+///    client replays the whole outbox in FIFO order on reconnect (§8.4) — but
+///    it lives in memory only. A process restart loses it. The seam for the
+///    durable half is [_outbox]: it is a plain FIFO list of frames already
+///    built, so persisting it is serialising `ClientFrame`s, not reworking
+///    the send path.
 ///  * Delivery ticks (`message.markDelivered`/`message.delivered`). The frames
 ///    decode; nothing acts on them.
 ///  * Voice and attachments. [AttachmentMetadata] decodes so an inbound
@@ -184,9 +185,35 @@ class ChatClient {
   /// v1 needed (§12.9) does not exist here.
   final Map<String, _InFlightSend> _pending = <String, _InFlightSend>{};
 
-  /// Failed sends, keyed by the same permanent id, each holding the frame AS
-  /// SENT so [retry] can replay it rather than rebuild it.
+  /// Sends the server REFUSED, keyed by the same permanent id, each holding
+  /// the frame as sent so [retry] can replay it rather than rebuild it.
+  ///
+  /// Deliberately not the same thing as [_outbox]. A send the server rejected
+  /// will be rejected again, so it must not be replayed on a timer — the
+  /// customer would spend their battery collecting the same verdict. These
+  /// need [retry], gated on the server's own `retryable` flag.
   final Map<String, _FailedSend> _failed = <String, _FailedSend>{};
+
+  /// Sends waiting for a connection, oldest first — the offline queue (§9.1).
+  ///
+  /// ── The one invariant, and what it buys ───────────────────────────────
+  ///
+  /// An entry leaves this list only when it has been written to a live socket.
+  /// Not when it is composed, not when the connection drops, not when the
+  /// customer navigates. §8.4's "an unacked frame moves into the queue when
+  /// the transport drops" therefore needs no move at all for anything still
+  /// held here — it never left.
+  ///
+  /// FIFO by construction rather than by a sort: new sends append to the tail
+  /// and the drain reads from the head, so a message composed now cannot
+  /// overtake one composed a minute ago in a tunnel. Orphans recovered from
+  /// [_pending] go to the FRONT ([_onConnectionState]) because they were
+  /// composed before everything already in the list.
+  ///
+  /// A `List` rather than a `Map` for exactly that reason: order IS the data
+  /// structure's job here, and the id lookup [_pending] and [_failed] need is
+  /// not something the drain ever performs.
+  final List<_InFlightSend> _outbox = <_InFlightSend>[];
 
   /// The conversation this client is in — the session a message composed now
   /// is addressed to.
@@ -226,6 +253,40 @@ class ChatClient {
 
   /// User-initiated close. Terminal (§6.2, §8.1).
   Future<void> disconnect() => _connection.disconnect();
+
+  /// Abandons an armed reconnect backoff and attempts immediately.
+  ///
+  /// For a host that has learned the reason the last attempts failed is gone —
+  /// on a phone, that is a connectivity stream reporting wifi or mobile data
+  /// back. Backoff will by then have grown toward its 30-second cap, and
+  /// waiting it out on a device that is plainly online again is what "it just
+  /// says Connecting…" is.
+  ///
+  /// Narrow on purpose, and NOT a second [connect]: it completes no future,
+  /// leaves the auth escalation counter alone (a network blip is no evidence a
+  /// rejected token was fixed), and resets only the transport attempt counter.
+  /// It acts ONLY while a backoff is counting down
+  /// ([ConnectionState.reconnecting]) and returns `false` — a pure no-op, safe
+  /// to call on any cadence — everywhere else, including
+  /// [ConnectionState.suspended] and [ConnectionState.closed], which §8.1
+  /// makes recoverable only by an explicit [connect].
+  bool retryNow() => _connection.retryNow();
+
+  /// How many composed messages are waiting for a connection.
+  ///
+  /// The number an "offline, your messages are safe" banner names. It counts
+  /// only sends that WILL go out by themselves — never a
+  /// [MessageDelivery.failed] one, which needs [retry] and its own affordance,
+  /// and promising its delivery would be a lie.
+  int get queuedCount => _outbox.length;
+
+  /// The queued sends themselves, oldest first, as their optimistic echoes.
+  ///
+  /// An unmodifiable view: mutating the outbox from outside would break the
+  /// ordering the drain depends on.
+  List<ChatMessage> get queuedMessages => List<ChatMessage>.unmodifiable(
+        _outbox.map((_InFlightSend entry) => entry.message.queued()),
+      );
 
   // ── Inbound ─────────────────────────────────────────────────────────────
 
@@ -347,12 +408,18 @@ class ChatClient {
       return optimistic;
     }
 
-    // Nowhere to put it. The frame is kept anyway so [retry] can replay this
-    // exact envelope — dropping it here is what forces a host to "retry" by
-    // calling sendMessage again, which mints a fresh ULID and turns one failed
-    // message into two.
-    _failed[id] = _FailedSend(frame, optimistic, null);
-    final ChatMessage echo = optimistic.failed();
+    // No wire to write to. HELD, not failed — this is the case §6.3 means by
+    // "sending never throws for offline", and it is the commonest thing that
+    // happens to a message on a phone.
+    //
+    // The frame is kept rather than the content, and that is the whole reason
+    // this replays safely: the envelope id is the permanent message id (D1)
+    // and the server dedupes on it, so an entry written just before the socket
+    // dropped and replayed on the next one is deduped rather than delivered
+    // twice. Rebuilding the frame at drain time would mint a fresh ULID and
+    // turn exactly that case into two messages.
+    _outbox.add(_InFlightSend(frame, optimistic));
+    final ChatMessage echo = optimistic.queued();
     _emit(_messages, echo);
     return echo;
   }
@@ -494,29 +561,65 @@ class ChatClient {
 
   // ── Routing ─────────────────────────────────────────────────────────────
 
-  /// Fails every send that was still awaiting an `ack` when the connection
-  /// left [ConnectionState.connected].
+  /// The two halves of §8.4, on the one edge that produces both.
   ///
-  /// Nothing else will ever settle those: the ack they were waiting for was
-  /// on a socket that is gone, and the server will not re-send it. Left alone
-  /// they stay [MessageDelivery.pending] for the life of the process — a
-  /// spinner that never stops, and no Retry affordance, for what is the
-  /// commonest failure on a phone: the frame reached the wire and the tunnel
-  /// arrived before the reply did.
+  /// ── Leaving `connected`: unacked sends go back in the queue ───────────
   ///
-  /// Marked failed with no server verdict, so [retry] resolves them through
-  /// [kDefaultRetryable] — a dropped connection is the archetypal retryable
-  /// failure. §8.4 says these belong in the durable offline queue; until that
-  /// exists, this is the honest report and [retry] is the manual drain.
+  /// Nothing will ever settle a send that was awaiting an `ack` on a socket
+  /// that is gone — the server does not re-send the reply. Left alone they
+  /// stay [MessageDelivery.pending] for the life of the process: a spinner
+  /// that never stops, for what is the commonest failure on a phone, where the
+  /// frame reached the wire and the tunnel arrived before the reply did.
+  ///
+  /// They are put at the FRONT of [_outbox] rather than marked failed. Front,
+  /// because they were composed before anything already waiting there, and
+  /// FIFO is a claim about the order the customer typed in. Replaying one the
+  /// server actually persisted is safe, and is why the ORIGINAL frame is what
+  /// gets held: the server dedupes on the envelope id (D1, §9.3).
+  ///
+  /// This is the behaviour change from the first pass, which marked these
+  /// [MessageDelivery.failed] and left the customer to press Retry. That was
+  /// honest when there was no queue; with one, it is a message the SDK could
+  /// have delivered and asked a human to deliver instead.
+  ///
+  /// ── Reaching `connected`: the queue drains ────────────────────────────
+  ///
+  /// In list order, onto the socket that has just come up. Written straight
+  /// through rather than one-ack-at-a-time: writes on a single WebSocket
+  /// arrive in the order they were made, so the order the customer typed in is
+  /// preserved by the transport rather than by a second state machine here. An
+  /// entry the write refuses stays queued, at the head, for the next
+  /// connection — which is the invariant [_outbox] exists to hold.
   void _onConnectionState(ConnectionState state) {
-    if (state == ConnectionState.connected || _pending.isEmpty) return;
+    if (state == ConnectionState.connected) {
+      _drainOutbox();
+      return;
+    }
+
+    if (_pending.isEmpty) return;
 
     final List<_InFlightSend> orphans = _pending.values.toList();
     _pending.clear();
+    _outbox.insertAll(0, orphans);
     for (final _InFlightSend orphan in orphans) {
-      _failed[orphan.frame.id] =
-          _FailedSend(orphan.frame, orphan.message, null);
-      _emit(_messages, orphan.message.failed());
+      _emit(_messages, orphan.message.queued());
+    }
+  }
+
+  /// Writes the queue to the live socket, oldest first.
+  ///
+  /// Each entry is removed only once [ConnectionController.send] has taken it,
+  /// so a write that refuses stops the drain with the queue intact and in
+  /// order. The alternative — clearing the list first and re-adding the
+  /// failures — has a window in which a send the customer made is in neither
+  /// place.
+  void _drainOutbox() {
+    while (_outbox.isNotEmpty) {
+      final _InFlightSend entry = _outbox.first;
+      if (!_connection.send(entry.frame)) return;
+      _outbox.removeAt(0);
+      _pending[entry.frame.id] = entry;
+      _emit(_messages, entry.message);
     }
   }
 

@@ -48,6 +48,7 @@ import 'ui/chat_bottom_nav.dart';
 import 'ui/conversation_screen.dart';
 import 'ui/home_screen.dart';
 import 'ui/messages_screen.dart';
+import 'ui/offline_banner.dart';
 import 'ui/unavailable_view.dart';
 
 /// The [ConnectionState]s that mean the client has stopped on purpose rather
@@ -122,11 +123,39 @@ class _ChatWidgetState extends State<ChatWidget> {
                 // a conversation that has nowhere to go.
                 body: kTerminalConnectionStates.contains(state.connectionState)
                     ? UnavailableView(config: state.config, onTryAgain: widget.cubit.connect)
-                    : switch (state.screen) {
-                        ScreenName.home => const HomeScreen(),
-                        ScreenName.messages => const MessagesScreen(),
-                        ScreenName.conversation => const ConversationScreen(),
-                      },
+                    // The bar sits ABOVE whichever screen is active and
+                    // outside it, because it is not a fact about any one
+                    // screen: it survives every move between Home, Messages
+                    // and a conversation, exactly as losing your signal does.
+                    //
+                    // Above the app bar would be wrong for a different reason
+                    // — the app bar only exists on a drill-down (see
+                    // `canGoBack`), so a banner anchored to it would be
+                    // invisible on the two screens a customer starts on.
+                    //
+                    // Never over UnavailableView: `resolveOfflineBanner`
+                    // returns null for both terminal states anyway, and the
+                    // branch above means there is no composer left underneath
+                    // to make a promise about.
+                    : Column(
+                        children: <Widget>[
+                          OfflineBanner(
+                            view: resolveOfflineBanner(
+                              connectionState: state.connectionState,
+                              online: state.online,
+                              failedAttempts: state.failedAttempts,
+                              queuedCount: state.queuedCount,
+                            ),
+                          ),
+                          Expanded(
+                            child: switch (state.screen) {
+                              ScreenName.home => const HomeScreen(),
+                              ScreenName.messages => const MessagesScreen(),
+                              ScreenName.conversation => const ConversationScreen(),
+                            },
+                          ),
+                        ],
+                      ),
                 bottomNavigationBar: ChatBottomNav(
                   active: state.screen,
                   unreadCount: state.unreadCount,

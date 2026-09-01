@@ -139,12 +139,15 @@ void main() {
       await harness.client.dispose();
     });
 
-    test('marks a send failed when the socket is not connected', () async {
-      // §8.4 wants this queued durably. That queue is out of scope, so the
-      // failure is reported rather than silently swallowed.
+    test('holds a send when the socket is not connected', () async {
+      // §6.3: sending never throws for "offline", because offline is a QUEUED
+      // state and not a failure. The echo says so, so a host renders a clock
+      // rather than a warning triangle, and the composer stays usable.
       final Harness harness = Harness();
       final ChatMessage echo = harness.client.sendMessage('offline');
-      expect(echo.delivery, equals(MessageDelivery.failed));
+
+      expect(echo.delivery, equals(MessageDelivery.queued));
+      expect(harness.client.queuedCount, equals(1));
 
       await harness.client.dispose();
     });

@@ -18,6 +18,15 @@ import { ChatClientConfigError } from '@dhaam-ccrm/js';
 import type { ChatStore } from '@dhaam-ccrm/js';
 import type { ChatMessage, ChatSessionSummary, ChatState, ConnectionState } from '@dhaam-ccrm/js';
 
+import {
+  countQueuedSends,
+  createNetworkStatus,
+  createReconnectPump,
+  isNavigatorOnline,
+  OUTAGE_ATTEMPT_THRESHOLD,
+  resolveOfflineBanner,
+} from '@dhaam-ccrm/browser';
+
 import { createWidgetStore } from './client.js';
 import { resolveConfig } from './config.js';
 import type {
@@ -79,6 +88,7 @@ import {
   threadTokens,
 } from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
+import { createOfflineBanner } from './ui/offline-banner.js';
 import { createOfflineForm } from './ui/offline-form.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
 import { createCommonQuestions } from './ui/common-questions.js';
@@ -206,17 +216,14 @@ function isSettledConnection(state: ConnectionState): state is SettledConnection
   return state in SETTLED_CONNECTION_LABEL;
 }
 
-/**
- * How many consecutive failed attempts before this stops being called a blip.
- *
- * One failure is the commonest event the transport has — a wifi handover, a
- * proxy recycling a socket — and core is usually back inside a second.
- * Escalated copy and a visible control on the FIRST failure would fire
- * constantly, on a healthy connection, for a condition that resolves itself
- * before the customer finishes reading it. Two consecutive failures is the
- * cheapest honest evidence that something is actually wrong.
- */
-const OUTAGE_ATTEMPT_THRESHOLD = 2;
+// `OUTAGE_ATTEMPT_THRESHOLD` — "how many consecutive failures before this stops
+// being a blip" — used to be declared here. It now comes from
+// @dhaam-ccrm/browser, alongside `resolveOfflineBanner`, which is the OTHER
+// surface that has to answer the same question. Two copies of that number
+// would put the status line and the banner on different sides of the same
+// failure, and the reason for the value is unchanged: one failure is the
+// commonest event the transport has (a wifi handover, a proxy recycling a
+// socket) and core is usually back inside a second.
 
 /**
  * More specific than "still trying", and it names something the customer can
@@ -523,7 +530,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * `navigator` (SSR bundling a host page), where "assume online" is the only
    * answer that does not put a false offline notice on a server render.
    */
-  let online = typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+  let online = isNavigatorOnline();
 
   /**
    * Consecutive failed connection attempts, reset on every successful connect.
@@ -1366,6 +1373,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   const composerPlaceholder = composer.input.placeholder;
 
+  /**
+   * The bar that says the network is gone and the messages are safe.
+   *
+   * Built here, beside the panel it belongs to, rather than with the other
+   * screens: it is not a screen. It survives every navigation between Home,
+   * Messages and a conversation, because losing your signal is a fact about
+   * the whole panel.
+   */
+  const offlineBanner = createOfflineBanner();
+
   const panel = el('div', {
     attrs: {
       class: 'dh-panel',
@@ -1404,6 +1421,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
           closeButton,
         ],
       }),
+      // Above the hero header and every screen, because it outranks all of
+      // them: a customer with no signal needs to know that before they read a
+      // greeting. Its own band rather than a line inside the header — see
+      // ui/offline-banner.ts for why the status line under the title was not
+      // enough on its own.
+      offlineBanner.node,
       // Directly under the header row and painted as its continuation, so the
       // two read as one tall header rather than as a banner stacked on a bar.
       // Shown only on Home — see `syncScreens`.
@@ -1522,17 +1545,36 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * backoff — see {@link WorkingConnectionState}. `reconnect('auto')` is
    * still called and still self-gates, so the terminal case is unchanged.
    */
-  const onOnline = (): void => {
-    online = true;
+  const network = createNetworkStatus();
+  const unsubscribeNetwork = network.subscribe((isOnline) => {
+    online = isOnline;
     syncConnection();
-    reconnect('auto');
-  };
-  const onOffline = (): void => {
-    online = false;
-    syncConnection();
-  };
-  window.addEventListener('online', onOnline);
-  window.addEventListener('offline', onOffline);
+    // Still called, and still self-gating: `reconnect` returns immediately
+    // unless core has PARKED (suspended/closed), which is the one case
+    // `reconnectPump` below deliberately will not touch — §8.1 gives those two
+    // states exactly one way out and it is an explicit `connect()`.
+    if (isOnline) reconnect('auto');
+  });
+
+  /**
+   * The other half of coming back online, and the one that fixes the reported
+   * "it just says Connecting… forever".
+   *
+   * `reconnect('auto')` above only ever applies where core has stopped. The
+   * common case is the opposite: core is still retrying, but its full-jitter
+   * backoff (§8.2) has climbed to the 30-second cap while the customer was in
+   * a tunnel, so the signal returns and nothing visible happens for another
+   * half a minute. The pump collapses that wait — immediately on the network
+   * event, and otherwise capping any armed backoff at three seconds.
+   *
+   * It cannot become a second retry loop competing with core's: it drives
+   * `retryNow()`, which acts only while `connectionState === 'reconnecting'`
+   * (no socket open, a timer counting down) and is a no-op everywhere else.
+   * That is the property the Reconnect button could not have, and the reason
+   * that button stays inert while core is working — see
+   * {@link WorkingConnectionState}.
+   */
+  const reconnectPump = createReconnectPump({ target: store.client, network });
 
   // ── state → DOM ───────────────────────────────────────────────────────
   function syncLauncher(state: ChatState): void {
@@ -1646,6 +1688,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       },
       { immediate: true },
     ),
+    // The banner names how many messages are waiting, and that number moves
+    // on its own clock: a send made while offline joins the queue without any
+    // connection transition, and a flush on reconnect empties it without one
+    // either. Selected on the COUNT rather than on `messages`, so the
+    // once-per-message churn of a live conversation does not repaint a banner
+    // that is not even showing.
+    store.select((state) => countQueuedSends(state.messages), () => syncConnection()),
     // The count core's state cannot supply. `#scheduleRetry` emits this once
     // per scheduled retry, immediately after moving to `reconnecting` — so the
     // selector above has already re-rendered with the OLD count by the time
@@ -2326,8 +2375,23 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * button and the composer said nothing at all.
    */
   function syncConnection(): void {
-    const connectionState = store.getState().connectionState;
+    const state = store.getState();
+    const connectionState = state.connectionState;
     const status = resolveConnectionStatus(connectionState, online, failedAttempts);
+
+    // The banner, from the same three inputs the status line above is resolved
+    // from — plus the one thing only the transcript knows: how many messages
+    // the customer has already composed that are waiting on the connection.
+    // That count is what turns "you're offline" from a warning into a promise,
+    // and it is the half a status line could never carry.
+    offlineBanner.update(
+      resolveOfflineBanner({
+        connectionState,
+        online,
+        failedAttempts,
+        queuedCount: countQueuedSends(state.messages),
+      }),
+    );
 
     // The whole-panel "we cannot reach the service" state, shown only once
     // core has actually STOPPED — never over a reconnect it is still working
@@ -2872,8 +2936,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       releaseAutoOpen();
       clearTimeout(greetingTimer);
       window.removeEventListener('resize', onResize);
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
+      // Both hold a window listener or a timer that would otherwise outlive
+      // the shadow root. The pump goes first: it subscribes to `network`.
+      reconnectPump.destroy();
+      unsubscribeNetwork();
+      network.destroy();
       trap?.release();
       restoreFocus?.();
       // Before `store.destroy()`: these settle by unsubscribing from the
