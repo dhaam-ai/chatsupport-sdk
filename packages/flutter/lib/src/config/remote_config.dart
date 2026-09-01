@@ -220,6 +220,7 @@ class RemoteConfig extends Equatable {
     required this.transcriptEmail,
     required this.consentRequired,
     required this.consentText,
+    required this.supportEmail,
     required this.handoffKeywords,
     required this.reportIssue,
     required this.preChatEnabled,
@@ -268,6 +269,12 @@ class RemoteConfig extends Equatable {
   final bool transcriptEmail;
   final bool consentRequired;
   final String? consentText;
+
+  /// `behaviour.supportEmail` — where a visitor goes when the chat service
+  /// cannot be reached at all. Absent shows no fallback rather than a guess —
+  /// see `ui/unavailable_view.dart`, the one place this is read: an address
+  /// nobody monitors is worse than admitting there is no second route.
+  final String? supportEmail;
   final List<String> handoffKeywords;
   final bool reportIssue;
   final bool preChatEnabled;
@@ -321,6 +328,7 @@ class RemoteConfig extends Equatable {
         transcriptEmail,
         consentRequired,
         consentText,
+        supportEmail,
         handoffKeywords,
         reportIssue,
         preChatEnabled,
@@ -377,6 +385,7 @@ const RemoteConfig defaultRemoteConfig = RemoteConfig(
   transcriptEmail: false,
   consentRequired: false,
   consentText: null,
+  supportEmail: null,
   handoffKeywords: <String>[],
   // Off, like every other surface this default touches: a widget whose
   // config never landed must look exactly as it did before.
@@ -616,6 +625,7 @@ RemoteConfig? parseRemoteConfig(Object? body) {
       defaultRemoteConfig.consentRequired,
     ),
     consentText: readString(behaviour, 'consentText'),
+    supportEmail: readString(behaviour, 'supportEmail'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
     reportIssue:
         readBool(behaviour, 'reportIssue', defaultRemoteConfig.reportIssue),

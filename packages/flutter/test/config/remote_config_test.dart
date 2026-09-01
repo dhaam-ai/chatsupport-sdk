@@ -314,6 +314,23 @@ void main() {
       expect(parseRemoteConfig(_body(behaviour: {'csatStyle': 'stars'}))!.csatStyle, CsatStyle.stars);
       expect(parseRemoteConfig(_body(behaviour: {'csatStyle': 'thumbs'}))!.csatStyle, CsatStyle.stars);
     });
+
+    group('supportEmail', () {
+      test('reads the merchant address', () {
+        final config = parseRemoteConfig(_body(behaviour: {'supportEmail': 'help@example.com'}));
+        expect(config!.supportEmail, 'help@example.com');
+      });
+
+      test('absent when the merchant never set one — no guessed fallback', () {
+        final config = parseRemoteConfig(_body());
+        expect(config!.supportEmail, isNull);
+      });
+
+      test('a blank string is treated the same as absent', () {
+        final config = parseRemoteConfig(_body(behaviour: {'supportEmail': '   '}));
+        expect(config!.supportEmail, isNull);
+      });
+    });
   });
 
   group('parseRemoteConfig — flows', () {

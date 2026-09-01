@@ -319,6 +319,7 @@ extension on RemoteConfig {
         transcriptEmail: transcriptEmail,
         consentRequired: consentRequired,
         consentText: consentText,
+        supportEmail: supportEmail,
         handoffKeywords: handoffKeywords,
         reportIssue: reportIssue,
         preChatEnabled: preChatEnabled,
