@@ -2,7 +2,7 @@
   "name": "dhaam-ccrm-sdk",
   "version": "0.0.0",
   "private": true,
-  "description": "Framework-agnostic chat SDK — plain-TypeScript core plus thin framework bindings",
+  "description": "Framework-agnostic chat SDK \u2014 plain-TypeScript core plus thin framework bindings",
   "packageManager": "pnpm@10.34.5",
   "scripts": {
     "build": "pnpm -r build",
@@ -12,7 +12,7 @@
     "typecheck": "pnpm -r typecheck",
     "verify": "pnpm build && pnpm typecheck && pnpm test",
     "pack:check": "pnpm -r --filter \"./packages/*\" exec pnpm pack --dry-run",
-    "pack:local": "pnpm build && pnpm -r --filter \"@dhaam-ccrm/core\" --filter \"@dhaam-ccrm/js\" --filter \"@dhaam-ccrm/rest\" --filter \"@dhaam-ccrm/widget\" exec pnpm pack --pack-destination .",
+    "pack:local": "pnpm build && pnpm -r --filter \"@dhaam-ccrm/browser\" --filter \"@dhaam-ccrm/core\" --filter \"@dhaam-ccrm/js\" --filter \"@dhaam-ccrm/rest\" --filter \"@dhaam-ccrm/widget\" exec pnpm pack --pack-destination .",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm verify && changeset publish"
