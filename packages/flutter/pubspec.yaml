@@ -37,10 +37,26 @@ dependencies:
   # mirroring an external stream into widget-renderable state.
   flutter_bloc: ^9.1.1
   equatable: ^2.0.7
+  # For the "chat is unavailable" panel's `mailto:` link — the one place this
+  # package opens anything outside its own widget tree. Both
+  # dh-customer-app-flutter (^6.3.1) and dh-merchant-app-flutter (^6.3.2)
+  # already depend on it, checked first per this package's own precedent (see
+  # the flutter_bloc note above). ^6.3.1, not the newer sibling pin: 6.3.2
+  # requires Dart SDK ^3.6.0 and `flutter pub get` here resolves Dart 3.5.4 —
+  # verified by running it, not assumed — so 6.3.1 is the one both apps and
+  # this package can actually share. https://pub.dev/packages/url_launcher
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # Only for unavailable_view_test.dart's UrlLauncherPlatform fake — the
+  # plugin's own documented test seam (its `instance` setter exists so
+  # platform calls can be swapped out under test). A direct dev dependency
+  # rather than relying on it transitively through url_launcher: it is
+  # imported by name in test code, and pinning it to what url_launcher
+  # ^6.3.1 already resolves (2.3.2) is what keeps that import honest.
+  url_launcher_platform_interface: ^2.3.2
   # Matches the sibling apps' lint package (they use flutter_lints ^5.0.0);
   # `dhaam_chat` uses plain `lints` because it has no Flutter to lint against.
   flutter_lints: ^5.0.0

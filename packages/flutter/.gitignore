@@ -7,6 +7,14 @@
 .packages
 build/
 
+# Plugin registration cache, written by `flutter pub get` the moment a
+# dependency is an actual Flutter PLUGIN (native platform code) rather than a
+# pure-Dart package. url_launcher is the first one this package has ever
+# depended on — http/flutter_bloc/equatable are all pure Dart — so these two
+# did not exist before it.
+.flutter-plugins
+.flutter-plugins-dependencies
+
 # A library commits no lockfile — only an application should, per Dart's own
 # guidance (dart.dev/guides/libraries/private-files#pubspeclock). Pinning
 # exact transitive versions here would fight every app that depends on this
