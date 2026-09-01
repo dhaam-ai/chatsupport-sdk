@@ -31,7 +31,13 @@
 /// ancestor.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:dhaam_chat/dhaam_chat.dart' show ConnectionState;
+// Flutter's own async.dart (re-exported through material.dart) declares a
+// SECOND, unrelated ConnectionState (AsyncSnapshot's none/waiting/active/
+// done) — hidden here because this file needs dhaam_chat's §8.1 one and
+// never uses Flutter's, so there is nothing lost by resolving the name to
+// the one this file actually means.
+import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'nav/chat_screens.dart';
@@ -42,6 +48,21 @@ import 'ui/chat_bottom_nav.dart';
 import 'ui/conversation_screen.dart';
 import 'ui/home_screen.dart';
 import 'ui/messages_screen.dart';
+import 'ui/unavailable_view.dart';
+
+/// The [ConnectionState]s that mean the client has stopped on purpose rather
+/// than being mid-retry — `packages/dart`'s own §8.1 doc comments for
+/// [ConnectionState.suspended] ("auto-retry stopped") and
+/// [ConnectionState.closed] ("terminal"), read directly rather than assumed.
+/// Everything else — `idle`, `connecting`, `authenticating`, `connected`,
+/// `reconnecting` — is either healthy or a blip core is still working
+/// through, and showing [UnavailableView] over one of those would tell a
+/// customer the service is down while it is coming back. Mirrors
+/// `ui/widget.ts`'s identically-purposed `TERMINAL_CONNECTION_STATES`.
+const Set<ConnectionState> kTerminalConnectionStates = <ConnectionState>{
+  ConnectionState.suspended,
+  ConnectionState.closed,
+};
 
 class ChatWidget extends StatefulWidget {
   const ChatWidget({super.key, required this.cubit});
@@ -93,11 +114,19 @@ class _ChatWidgetState extends State<ChatWidget> {
                 // own HeroHeader — a second, generic bar above it would be
                 // a redundant header, not a helpful one.
                 appBar: state.canGoBack ? _ConversationAppBar(state: state, cubit: widget.cubit) : null,
-                body: switch (state.screen) {
-                  ScreenName.home => const HomeScreen(),
-                  ScreenName.messages => const MessagesScreen(),
-                  ScreenName.conversation => const ConversationScreen(),
-                },
+                // The unavailable panel takes over the whole body, in place
+                // of whichever screen was active, the moment the connection
+                // has genuinely given up (see kTerminalConnectionStates) —
+                // never layered alongside the screen it replaces, so there is
+                // no composer left underneath it for a customer to type into
+                // a conversation that has nowhere to go.
+                body: kTerminalConnectionStates.contains(state.connectionState)
+                    ? UnavailableView(config: state.config, onTryAgain: widget.cubit.connect)
+                    : switch (state.screen) {
+                        ScreenName.home => const HomeScreen(),
+                        ScreenName.messages => const MessagesScreen(),
+                        ScreenName.conversation => const ConversationScreen(),
+                      },
                 bottomNavigationBar: ChatBottomNav(
                   active: state.screen,
                   unreadCount: state.unreadCount,

@@ -1,10 +1,39 @@
+import 'package:dhaam_chat/dhaam_chat.dart' show ConnectionState;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
-import 'package:flutter/material.dart';
+// Flutter's own async.dart (re-exported through material.dart) declares a
+// SECOND, unrelated ConnectionState (AsyncSnapshot's none/waiting/active/
+// done) — hidden here for the same reason chat_widget.dart's own import
+// hides it: this suite drives dhaam_chat's §8.1 one and never touches
+// Flutter's.
+import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'state/fake_widget_chat_client.dart';
+import 'support/remote_config_fixtures.dart';
 
 Widget _wrap(ChatWidgetCubit cubit) => MaterialApp(home: ChatWidget(cubit: cubit));
+
+/// Lets a queued connection-state event actually reach [ChatWidgetCubit]
+/// before the next pump captures a frame. Same helper, same reasoning, as
+/// `test/ui/conversation_screen_test.dart`'s own `flush` — copied rather
+/// than shared, since that one lives under `test/ui/` and importing across
+/// test-directory siblings is not a pattern this suite otherwise uses.
+///
+/// `StreamController.add` (the default, non-`sync` controller
+/// [FakeWidgetChatClient] uses) schedules delivery on a MICROTASK, so the
+/// event has to be drained before an assertion can see its effect.
+///
+/// This is `tester.pump()`, NOT `Future.delayed(Duration.zero)`: widget
+/// tests run inside a `FakeAsync` zone whose clock only advances when the
+/// harness advances it, so a timer awaited directly — even a zero-duration
+/// one — never fires and the test hangs until the runner kills it.
+/// `tester.runAsync` steps OUT to the real clock for the queued microtask to
+/// actually be delivered; the `pump()` after it turns the resulting Cubit
+/// state into a frame.
+Future<void> flush(WidgetTester tester) async {
+  await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  await tester.pump();
+}
 
 void main() {
   late FakeWidgetChatClient client;
@@ -110,5 +139,76 @@ void main() {
     final ThemeData panelTheme = Theme.of(tester.element(find.byType(HomeScreen)));
     // Falls back to kDefaultAccent (#1f2937), not the host app's purple.
     expect(panelTheme.colorScheme.primary, isNot(Colors.purple));
+  });
+
+  group('the unavailable panel', () {
+    // The gate is the client having GIVEN UP, not it having failed. Showing
+    // this over a reconnect that is about to succeed would tell a customer the
+    // service is down while it is coming back.
+    testWidgets('stays hidden while the client is still working', (tester) async {
+      await tester.pumpWidget(_wrap(cubit));
+      for (final ConnectionState state in <ConnectionState>[
+        ConnectionState.idle,
+        ConnectionState.connecting,
+        ConnectionState.connected,
+        ConnectionState.reconnecting,
+      ]) {
+        client.emitConnectionState(state);
+        await flush(tester);
+        expect(find.byType(UnavailableView), findsNothing, reason: '$state is not terminal');
+      }
+    });
+
+    testWidgets('appears once the client has given up', (tester) async {
+      await tester.pumpWidget(_wrap(cubit));
+      for (final ConnectionState state in kTerminalConnectionStates) {
+        client.emitConnectionState(state);
+        await flush(tester);
+        expect(find.byType(UnavailableView), findsOneWidget, reason: '$state is terminal');
+        expect(find.text('Chat is temporarily unavailable'), findsOneWidget);
+        // Nothing else is left behind it — a live composer under this notice
+        // would invite a message that has nowhere to go.
+        expect(find.byType(HomeScreen), findsNothing);
+      }
+    });
+
+    testWidgets('Try again reconnects through the Cubit', (tester) async {
+      await tester.pumpWidget(_wrap(cubit));
+      client.emitConnectionState(ConnectionState.closed);
+      await flush(tester);
+
+      final int before = client.connectCalls;
+      await tester.tap(find.text('Try again'));
+      await flush(tester);
+      expect(client.connectCalls, before + 1);
+    });
+
+    // The rule shared with the JS widget: an address nobody monitors is worse
+    // than admitting there is no second route, because the customer waits on a
+    // reply that never comes.
+    testWidgets('offers no email when the merchant configured none', (tester) async {
+      await tester.pumpWidget(_wrap(cubit));
+      client.emitConnectionState(ConnectionState.closed);
+      await flush(tester);
+      expect(find.textContaining('Email '), findsNothing);
+    });
+
+    testWidgets('offers the merchant address when there is one', (tester) async {
+      cubit.applyRemoteConfig(testRemoteConfig(supportEmail: 'support@dhaam.com'));
+      await tester.pumpWidget(_wrap(cubit));
+      client.emitConnectionState(ConnectionState.closed);
+      await flush(tester);
+      expect(find.text('Email support@dhaam.com'), findsOneWidget);
+    });
+
+    // Merchant-supplied and lands in a mailto:, where a newline can append
+    // HEADERS to the message the customer is about to send.
+    testWidgets('offers nothing rather than an address it could not make safe', (tester) async {
+      cubit.applyRemoteConfig(testRemoteConfig(supportEmail: 'a@b.com\nbcc:x@evil.test'));
+      await tester.pumpWidget(_wrap(cubit));
+      client.emitConnectionState(ConnectionState.closed);
+      await flush(tester);
+      expect(find.textContaining('Email '), findsNothing);
+    });
   });
 }
