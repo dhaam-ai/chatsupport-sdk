@@ -168,6 +168,24 @@ export class ConnectionController {
   #pendingNewSessionTopic: string | undefined;
 
   /**
+   * Contact-info enrichment (IP watermark / device / GPS location) for the
+   * console's contact-info panel — see {@link setContactInfo}. Unlike
+   * `#pendingNewSession*` above, NOT cleared by `connection.ack`: this is not
+   * a one-shot intent that gets fulfilled, it is "what the widget currently
+   * knows about this visitor", and it stays correct to keep resending on
+   * every reconnect for the life of the connection (the server only actually
+   * persists it on the branch that mints a session — see
+   * `ConnectionHelloPayload.ip`'s doc, protocol/frames.ts — so resending it on
+   * a resume is harmless).
+   */
+  #contactInfo: {
+    ip?: string;
+    ipWatermark?: string;
+    userAgent?: string;
+    geo?: { lat: number; lng: number };
+  } = {};
+
+  /**
    * Bumped by every action that invalidates work already in flight — a new
    * attempt, a disconnect, a refresh. Async continuations (`getToken()`
    * resolving, a `connection.reauth` ack arriving) compare the generation they
@@ -283,6 +301,41 @@ export class ConnectionController {
     this.#pendingNewSession = true;
     this.#pendingNewSessionSubject = payload?.subject;
     this.#pendingNewSessionTopic = payload?.topic;
+  }
+
+  /**
+   * Record whatever the widget has learned about this visitor so far, for the
+   * NEXT `connection.hello` this controller builds.
+   *
+   * Merged, not replaced: the widget calls this incrementally as each piece
+   * resolves — `navigator.userAgent` is synchronous and available
+   * immediately, the ip-watermark fetch and the GPS fix are both async and
+   * arrive later, independently, or not at all. A later call updates only the
+   * keys it names; a key never passed here is simply never sent, forever
+   * (there is no "clear" — a visitor's device/UA does not change mid-session,
+   * and a GPS fix that failed once is not retried by this layer at all, per
+   * the product decision behind it — see chatsupport_react's ContextPanel.tsx
+   * for the console side of the same "never invent a value" rule).
+   *
+   * Deliberately SYNCHRONOUS and side-effect-free beyond the assignment: this
+   * is core's framework-agnostic half of the contract, so it does no
+   * `fetch()` and touches no `navigator` global itself (see this method's
+   * counterpart in packages/widget, which does both and calls this once each
+   * resolves). Calling this does not itself send anything — a value recorded
+   * after the socket already sent its hello simply waits for the next one
+   * (a reconnect, or nothing at all if the session never reconnects), which
+   * is why the widget is expected to call this as early as possible rather
+   * than gate `connect()` on any of it: `connect()` proceeds regardless, and
+   * this never becomes a reason to delay it (§ the product decision that GPS
+   * in particular must never gate the chat opening).
+   */
+  setContactInfo(info: {
+    readonly ip?: string;
+    readonly ipWatermark?: string;
+    readonly userAgent?: string;
+    readonly geo?: { readonly lat: number; readonly lng: number };
+  }): void {
+    this.#contactInfo = { ...this.#contactInfo, ...info };
   }
 
   /**
@@ -450,6 +503,15 @@ export class ConnectionController {
       // different thing from an absent key under this compiler option.
       ...(this.#pendingNewSessionSubject === undefined ? {} : { subject: this.#pendingNewSessionSubject }),
       ...(this.#pendingNewSessionTopic === undefined ? {} : { topic: this.#pendingNewSessionTopic }),
+      // Contact-info enrichment — see `setContactInfo`. Whatever is known AT
+      // THE MOMENT this hello is built; a value the widget records later
+      // simply misses this particular hello (harmless — see that method's
+      // doc). Same `=== undefined` guard as every other optional field above,
+      // for the same `exactOptionalPropertyTypes` reason.
+      ...(this.#contactInfo.ip === undefined ? {} : { ip: this.#contactInfo.ip }),
+      ...(this.#contactInfo.ipWatermark === undefined ? {} : { ipWatermark: this.#contactInfo.ipWatermark }),
+      ...(this.#contactInfo.userAgent === undefined ? {} : { userAgent: this.#contactInfo.userAgent }),
+      ...(this.#contactInfo.geo === undefined ? {} : { geo: this.#contactInfo.geo }),
     };
 
     try {

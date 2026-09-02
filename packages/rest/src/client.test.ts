@@ -721,6 +721,85 @@ describe('session actions', () => {
   });
 });
 
+describe('session actions — submitCsat', () => {
+  /** `chat.routes.ts`'s own `/csat` response shape — `{success, data: CsatRecord}`. */
+  function csatResponse(overrides: Record<string, unknown> = {}) {
+    return {
+      success: true,
+      data: {
+        sessionId: 's1',
+        rating: 4,
+        comment: null,
+        submittedAt: '2026-08-19T09:30:00.000Z',
+        ...overrides,
+      },
+    };
+  }
+
+  it('is ONE round trip, unlike reopen/close — no /full read-back', async () => {
+    const h = harness(() => jsonResponse(csatResponse()));
+
+    await createSessionActions(h.client).submitCsat('s1', 4);
+
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]?.init.method).toBe('POST');
+    expect(h.calls[0]?.url.pathname).toBe('/chat-services/api/v1/chat/sessions/s1/csat');
+  });
+
+  it('sends the rating and comment as the JSON body', async () => {
+    const h = harness(() => jsonResponse(csatResponse()));
+
+    await createSessionActions(h.client).submitCsat('s1', 5, 'great help');
+
+    expect(JSON.parse(String(h.calls[0]?.init.body))).toEqual({ rating: 5, comment: 'great help' });
+  });
+
+  it('omits comment from the body rather than sending it as null/undefined', async () => {
+    const h = harness(() => jsonResponse(csatResponse()));
+
+    await createSessionActions(h.client).submitCsat('s1', 3);
+
+    const body = JSON.parse(String(h.calls[0]?.init.body)) as Record<string, unknown>;
+    expect('comment' in body).toBe(false);
+    expect(body).toEqual({ rating: 3 });
+  });
+
+  it('returns the stored rating field-for-field', async () => {
+    const h = harness(() => jsonResponse(csatResponse({ rating: 2, comment: 'meh' })));
+
+    const record = await createSessionActions(h.client).submitCsat('s1', 2, 'meh');
+
+    expect(record).toEqual({
+      sessionId: 's1',
+      rating: 2,
+      comment: 'meh',
+      submittedAt: '2026-08-19T09:30:00.000Z',
+    });
+  });
+
+  it('rejects an unenveloped response as MALFORMED_RESPONSE, never a hollow record', async () => {
+    const h = harness(() => jsonResponse({ rating: 4 }));
+
+    const error: unknown = await createSessionActions(h.client)
+      .submitCsat('s1', 4)
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RestApiError);
+    expect((error as RestApiError).code).toBe('MALFORMED_RESPONSE');
+  });
+
+  it('propagates a refused rating (e.g. another customer\'s session) as RestApiError', async () => {
+    const h = harness(() =>
+      jsonResponse({ error: { code: 'UNAUTHORIZED', message: 'not your session' } }, 403),
+    );
+
+    await expect(createSessionActions(h.client).submitCsat('s1', 4)).rejects.toBeInstanceOf(
+      RestApiError,
+    );
+  });
+});
+
 describe('upload -> history round trip', () => {
   // Neither adapter is exercised against the other anywhere else: the upload
   // tests only look at what `upload()` returns, and the history tests only

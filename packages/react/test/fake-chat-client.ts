@@ -26,6 +26,7 @@ import type {
   ChatSession,
   ChatSessionSummary,
   ChatState,
+  CsatSubmission,
   RetryOutcome,
   SendAttachmentOptions,
   SendMessageOptions,
@@ -120,6 +121,18 @@ export function createFakeChatClient(initial?: Partial<ChatState>): FakeChatClie
       throw new Error('createFakeChatClient: reopenSession has no default — override it for this test.');
     }),
     closeSession: vi.fn(async () => {}),
+    // Recording contact info is inert by contract (no fetches, no frames), so
+    // an inert spy IS the real behavior at test-double scale.
+    setContactInfo: vi.fn((_info: Parameters<ChatClient['setContactInfo']>[0]) => {}),
+    // Default: echoes the submission back, the ordinary "server recorded it"
+    // outcome — mirroring the real contract's promise shape (comment omitted
+    // comes back as null, never undefined). Override per test for rejections.
+    submitCsat: vi.fn(async (sessionId: string, rating: number, comment?: string): Promise<CsatSubmission> => ({
+      sessionId,
+      rating,
+      comment: comment ?? null,
+      submittedAt: '2026-01-01T00:00:00.000Z',
+    })),
     // Default: no sessions — matches the guest-signal shape (§6.2's "200 with
     // []") described on `SessionSummarySource`, so a test that doesn't care
     // about the list gets the ordinary "nothing yet" outcome rather than

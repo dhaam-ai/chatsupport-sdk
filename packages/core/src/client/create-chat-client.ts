@@ -1880,6 +1880,9 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     requestAgent: (reason) => {
       realTransport.send('session.requestAgent', reason === undefined ? {} : { reason });
     },
+    // Pure delegation — `ConnectionController.setContactInfo` owns the
+    // merge/latch semantics documented on the public method above.
+    setContactInfo: (info) => connectionController.setContactInfo(info),
     reopenSession: async (sessionId): Promise<ChatSession> => {
       if (config.sessionActions === undefined) {
         throw new ChatClientConfigError(
@@ -1917,6 +1920,18 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
         throw error;
       }
       commitSession(session);
+    },
+    submitCsat: async (sessionId, rating, comment) => {
+      if (config.sessionActions === undefined) {
+        throw new ChatClientConfigError(
+          'submitCsat() requires config.sessionActions to be supplied to createChatClient().',
+        );
+      }
+      // No `commitSession`/`reportIfSessionChangedAnyway` here, deliberately:
+      // unlike reopen/close, a rating never mutates `ChatState.session`, so
+      // there is no read-back that could apply-but-fail independently of the
+      // POST itself — see `SessionActions.submitCsat`'s own doc.
+      return config.sessionActions.submitCsat(sessionId, rating, comment);
     },
     listSessions: async (query): Promise<readonly ChatSessionSummary[]> => {
       if (config.sessionSummarySource === undefined) {

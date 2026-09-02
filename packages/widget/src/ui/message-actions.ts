@@ -42,23 +42,82 @@ export interface MessageActionsView {
  * listener is document-level and therefore MUST be released on destroy or it
  * outlives the shadow root.
  */
+/**
+ * How long the Copy item shows its outcome before the menu closes itself.
+ *
+ * Long enough to be read, short enough that the menu does not feel stuck.
+ * The old flow closed the menu FIRST and then announced the outcome to a
+ * visually-hidden live region only — which is why the reported bug reads
+ * "tapping Copy gives no feedback": for a sighted user there was none.
+ */
+const COPY_OUTCOME_MS = 1200;
+
 export function createMessageActions(callbacks: MessageActionsCallbacks): MessageActionsView {
+  // The label is its own node so the outcome can swap the WORD without
+  // rebuilding the button (which would drop focus mid-confirmation).
+  const copyLabel = el('span', { text: 'Copy' });
   const copy = el('button', {
     attrs: { class: 'dh-msg-action', type: 'button' },
-    children: [icon(ICONS.copy, 14), el('span', { text: 'Copy' })],
+    children: [icon(ICONS.copy, 14), copyLabel],
     on: {
       click: () => {
-        close();
+        // Not closed here. The confirmation IS the label swapping in place,
+        // so the menu has to stay open long enough to show it; `close()` is
+        // the outcome timer's job now.
+        if (outcomeTimer !== null || copy.disabled) return;
+        copy.disabled = true;
         void callbacks
           .onCopy()
-          .then(() => announce('Copied'))
+          .then(() => showCopyOutcome('Copied', 'ok'))
           // Clipboard access is refused outright in some browsers without a
           // permission the host page has not asked for. Saying so is better
           // than a button that silently does nothing.
-          .catch(() => announce("Couldn't copy"));
+          .catch(() => showCopyOutcome("Couldn't copy", 'failed'));
       },
     },
   });
+
+  /** Pending auto-close after a copy outcome; cleared by `resetCopy`. */
+  let outcomeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showCopyOutcome(text: string, state: 'ok' | 'failed'): void {
+    // Spoken as well as shown: the label swap is invisible to a screen
+    // reader whose focus is elsewhere.
+    announce(text);
+    // The menu can already be gone — an outside click or Escape landed while
+    // the clipboard promise was still pending, and `close()` ran `resetCopy`
+    // against a still-plain label. Swapping the label NOW would strand
+    // "Copied" on a closed menu for the next open to show about a different
+    // moment, so the visual outcome is skipped and only the announcement
+    // stands.
+    if (menu.hidden) {
+      resetCopy();
+      return;
+    }
+    copyLabel.textContent = text;
+    copy.setAttribute('data-outcome', state);
+    outcomeTimer = setTimeout(() => {
+      outcomeTimer = null;
+      close();
+    }, COPY_OUTCOME_MS);
+  }
+
+  /**
+   * Back to a plain "Copy". Runs inside `close()` — after the menu is hidden,
+   * so the restore is never visible — because every way the menu can go away
+   * (outcome timer, outside click, Escape, row re-render) funnels through
+   * `close()`, and a menu re-opened later must not still say "Copied" about a
+   * different moment.
+   */
+  function resetCopy(): void {
+    if (outcomeTimer !== null) {
+      clearTimeout(outcomeTimer);
+      outcomeTimer = null;
+    }
+    copy.disabled = false;
+    copy.removeAttribute('data-outcome');
+    copyLabel.textContent = 'Copy';
+  }
 
   const reply = el('button', {
     attrs: { class: 'dh-msg-action', type: 'button' },
@@ -124,10 +183,19 @@ export function createMessageActions(callbacks: MessageActionsCallbacks): Messag
     menu.hidden = true;
     toggle.setAttribute('aria-expanded', 'false');
     document.removeEventListener('pointerdown', onOutside);
+    resetCopy();
   }
 
+  // `composedPath()[0]`, not `event.target`: this listener lives on the
+  // document, OUTSIDE the shadow tree, so a press on one of our own items is
+  // retargeted and reports the shadow HOST as its target — which
+  // `node.contains` rejects, closing the menu DURING the press and swallowing
+  // the click a real pointer was producing (synthetic `.click()` dispatches
+  // no pointerdown, which is how automation passed while a human failed).
+  // Full story on header-menu.ts's onOutside; same cure as session-picker.ts.
   const onOutside = (event: Event): void => {
-    if (!node.contains(event.target as Node)) close();
+    const pressed = event.composedPath()[0] ?? event.target;
+    if (!node.contains(pressed as Node)) close();
   };
 
   // Escape closes the menu without closing the PANEL. Without stopping it, the
@@ -145,6 +213,9 @@ export function createMessageActions(callbacks: MessageActionsCallbacks): Messag
     close,
     destroy() {
       document.removeEventListener('pointerdown', onOutside);
+      // The outcome timer holds this row's closure alive and would fire
+      // `close()` against a node already evicted from the log.
+      resetCopy();
     },
   };
 }

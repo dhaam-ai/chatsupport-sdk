@@ -446,8 +446,8 @@ export const STYLES = `
  * The UA's own [hidden] { display: none } has specificity (0,1,0), and so does
  * any class rule — so a later '.dh-consent { display: flex }' in this sheet
  * silently WINS, and an element built with hidden:true renders anyway. This
- * sheet used to answer that one class at a time ('.dh-handoff[hidden]',
- * '.dh-system[hidden]', and six more), which works only for as long as whoever
+ * sheet used to answer that one class at a time ('.dh-system[hidden]',
+ * '.dh-reconnect[hidden]', and six more), which works only for as long as whoever
  * adds the next flex container remembers to add a ninth — and the surfaces
  * added in this pass all forgot, which put an open action menu on every
  * message at once and a permanent "Replying to" chip above the composer.
@@ -868,8 +868,11 @@ button {
   flex: none;
 }
 .dh-title { font-size: 15px; font-weight: 600; margin: 0; }
-/* The classic header's avatar. Sized off the accent rather than a neutral so
-   an initials disc reads as the merchant's brand and not as a placeholder;
+/* The header's avatar — the merchant's brand face (logo or initials) until an
+   agent is on the chat, then that agent's single letter, and nothing at all
+   while the out-of-hours surface is up; widget.ts's 'syncHeaderAvatar' owns
+   that state machine. Painted off the accent rather than a neutral so an
+   initials disc reads as the merchant's brand and not as a placeholder;
    'readableOn' picks the letter colour, so a pale accent still has legible
    text on it. Hidden entirely when there is nothing to draw — see
    'buildHeaderAvatar'. */
@@ -891,6 +894,16 @@ button {
   overflow: hidden;
 }
 .dh-avatar-image { object-fit: cover; background: none; }
+/* The agent's letter shares the brand disc wholesale — a second palette for
+   "person" vs "brand" is a distinction the 32px circle cannot carry; the class
+   exists as the styling/testing hook for WHICH identity is drawn, same job as
+   '#dh-title's 'data-handled-by'. */
+/* Under the hero design the header row is painted in the brand colour, and an
+   accent disc can vanish into it (accent IS the usual header colour). The same
+   '--dh-header-fg' ring '.dh-hero-avatar' already wears keeps it separable
+   over a flat colour, a gradient and an image alike; border-box sizing keeps
+   the disc 32px. */
+:host([data-design="hero"]) .dh-avatar { border: 2px solid var(--dh-header-fg); }
 .dh-status {
   display: flex;
   align-items: center;
@@ -1000,9 +1013,37 @@ button {
    'flex: none' for the same reason .dh-composer has it: the transcript is the
    only element in the panel column allowed to absorb spare height. The hero
    only ever renders while that transcript is EMPTY (see widget.ts), so what
-   it takes costs nothing that was being used. */
+   it takes costs nothing that was being used.
+
+   Collapsed means GONE, not shorter: '[data-collapsed="true"]' snaps the
+   band to zero height (the product owner rejected the earlier 66px compact
+   bar — an empty dead strip on tenants with no logo/faces — see
+   ui/hero-header.ts's module header). A HEIGHT snap, not an animation, is
+   what actually gives that space back to '.dh-home'; 'overflow: hidden' is
+   what keeps the still-present '.dh-hero-full' content from painting out of
+   a zero-height box while it fades. Nothing else is needed — at height 0
+   the box's own background (colour and gradient layers alike) has no pixels
+   to paint, which also retires the re-stretched-gradient regression the
+   66px bar needed a 'background-image: none' carve-out for. */
 .dh-hero {
   flex: none;
+  background-color: var(--dh-header-bg);
+  background-image: var(--dh-header-layers);
+  background-size: cover;
+  background-position: center;
+  color: var(--dh-header-fg);
+}
+.dh-hero[hidden], .dh-hero[data-empty="true"] { display: none; }
+.dh-hero[data-collapsed="true"] { height: 0; overflow: hidden; }
+
+/* The hero's content block — everything the band draws. Its own opacity
+   transition (not the hero's) is the entire animation: no width, height or
+   position on THIS rule ever animates, which is what keeps a customer's
+   scroll from paying for a layout recalculation on every frame. The fade
+   only ever shows on RE-EXPAND — collapsed, the parent's zero-height clip
+   hides this layer before any fade could finish — and that is the point:
+   the returning hero fades in over one 180ms beat instead of popping. */
+.dh-hero-full {
   display: flex;
   flex-direction: column;
   /* Widened one step (space*3 -> space*4) so the logo, the avatar stack and
@@ -1013,13 +1054,10 @@ button {
      that seam is the one edge this reconciliation pass does not touch. */
   gap: calc(var(--dh-space) * 4);
   padding: 0 calc(var(--dh-space) * 4) calc(var(--dh-space) * 6);
-  background-color: var(--dh-header-bg);
-  background-image: var(--dh-header-layers);
-  background-size: cover;
-  background-position: center;
-  color: var(--dh-header-fg);
+  opacity: 1;
+  transition: opacity 180ms ease;
 }
-.dh-hero[hidden], .dh-hero[data-empty="true"] { display: none; }
+.dh-hero[data-collapsed="true"] .dh-hero-full { opacity: 0; pointer-events: none; }
 
 .dh-hero-logo {
   height: 40px;
@@ -1054,6 +1092,18 @@ button {
   border-radius: 999px;
   border: 2px solid var(--dh-header-fg);
   background: #118d57;
+}
+
+/* The IntersectionObserver marker ui/hero-header.ts's 'watchScroll' inserts
+   at the top of '.dh-home' (above). Absolutely positioned against that
+   element's new 'position: relative' so it never becomes a real flow child —
+   '.dh-home' lays its children out with 'gap', which would otherwise widen
+   the space above the CTA card by one gap's worth for a pixel nobody sees. */
+.dh-hero-sentinel {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  pointer-events: none;
 }
 
 /* One step up (22px -> 24px) and tightened (1.25 -> 1.2): this is the one
@@ -1122,15 +1172,19 @@ button {
 .dh-reconnect[hidden] { display: none; }
 .dh-reconnect[disabled] { opacity: 0.45; cursor: not-allowed; }
 
-/* ── Human hand-off ───────────────────────────────────────────────────── */
+/* ── Report an issue ──────────────────────────────────────────────────── */
 
 /*
+ * Was '.dh-handoff', shared with a visible "Talk to a human" button that no
+ * longer exists — escalation is handoff-keyword-only now (widget.ts). The
+ * outline treatment stays for the report button, which still earns it.
+ *
  * Sits on the seam between the transcript and the composer. flex: none for
  * the same reason .dh-composer has it: the log is the only element in the
  * panel column allowed to absorb the spare height, and a growable strip here
  * would take it from the conversation.
  */
-.dh-handoff {
+.dh-report-open {
   flex: none;
   align-self: stretch;
   margin: 0 calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
@@ -1142,16 +1196,16 @@ button {
   color: var(--dh-accent);
   background: transparent;
 }
-.dh-handoff:hover { background: var(--dh-surface-sunken); }
+.dh-report-open:hover { background: var(--dh-surface-sunken); }
 /* An explicit rule, not the UA default: display here is set by this sheet,
  * and a stylesheet declaration beats the UA's [hidden] rule. */
-.dh-handoff[hidden] { display: none; }
-.dh-handoff[disabled] { opacity: 0.45; cursor: not-allowed; }
+.dh-report-open[hidden] { display: none; }
+.dh-report-open[disabled] { opacity: 0.45; cursor: not-allowed; }
 
 /* ── Common Questions ─────────────────────────────────────────────────── */
 
 /*
- * Same seam as .dh-handoff above (flex: none, same rationale) — it sits in
+ * Same seam as .dh-report-open above (flex: none, same rationale) — it sits in
  * the same "between the log and the composer" position, just shown at the
  * opposite moment: before the first message rather than mid-conversation.
  */
@@ -1161,25 +1215,51 @@ button {
 }
 .dh-common-questions-host[hidden] { display: none; }
 
+/*
+ * A single bordered box (borrowing '.dh-messages-row's radius/border
+ * tokens), not a wrapped row of independent pills — see this file's own
+ * header comment for why the pill shape shipped once and was wrong: it read
+ * as tags, not as a list of tappable questions, and gave no "this opens
+ * something" affordance at all. 'list-style'/'margin'/'padding' reset because
+ * the node is a '<ul>' now (see 'role="list"' in common-questions.ts for why
+ * that tag survives the reset instead of switching to a '<div>').
+ */
 .dh-common-questions {
   display: flex;
-  flex-wrap: wrap;
-  gap: calc(var(--dh-space) * 1);
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  overflow: hidden;
+  background: var(--dh-surface);
 }
 
-.dh-common-question-chip {
-  flex: none;
-  padding: calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 2.5);
-  border-radius: 999px;
-  border: 1px solid var(--dh-border);
-  background: var(--dh-surface);
-  font-size: 12.5px;
+/* Hairline between rows, not around each one — the border above is the
+   list's own edge. '+' rather than ':not(:first-child)' for the same
+   "read the relationship, not an exclusion" reason this package's other
+   adjacent-sibling rules (e.g. '.dh-hero-avatar + .dh-hero-avatar') are
+   written that way. */
+.dh-common-question-item + .dh-common-question-item { border-top: 1px solid var(--dh-border); }
+
+.dh-common-question-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--dh-space) * 2);
+  width: 100%;
+  padding: calc(var(--dh-space) * 3);
+  border: 0;
+  background: transparent;
+  font-size: 13px;
   font-weight: 500;
   color: var(--dh-text);
-  cursor: pointer;
   text-align: left;
+  cursor: pointer;
 }
-.dh-common-question-chip:hover { background: var(--dh-surface-sunken); }
+.dh-common-question-row:hover { background: var(--dh-surface-sunken); }
+.dh-common-question-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Message list ─────────────────────────────────────────────────────── */
 
@@ -1221,17 +1301,31 @@ button {
 }
 .dh-more[hidden] { display: none; }
 
+/* '.dh-msg' is the ROW — it holds the sender's avatar beside the bubble, not
+   the bubble's own look. That look (background, padding, shape) lives on
+   '.dh-msg-bubble' instead, so an avatar sitting next to it is never painted
+   into the bubble's own coloured background. */
 .dh-msg {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--dh-space) * 2);
   max-width: 82%;
+}
+.dh-msg[data-mine="false"] { align-self: flex-start; }
+.dh-msg[data-mine="true"] { align-self: flex-end; }
+
+.dh-msg-bubble {
+  /* Without this, a flex item's default 'min-width: auto' refuses to shrink
+     below its content's intrinsic width, and 'overflow-wrap' below never
+     gets the chance to fire — the exact "pasted URL widens the panel" bug
+     that rule exists to prevent. */
+  min-width: 0;
   padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
   border-radius: var(--dh-radius);
   overflow-wrap: anywhere;           /* a pasted URL must not widen the panel */
   white-space: pre-wrap;             /* newlines the user typed are content */
 }
-.dh-msg[data-mine="false"] {
-  align-self: flex-start;
+.dh-msg[data-mine="false"] .dh-msg-bubble {
   background: var(--dh-bubble-in);
   border-bottom-left-radius: 4px;
 }
@@ -1245,15 +1339,28 @@ button {
   margin-bottom: calc(var(--dh-space) * 0.5);
 }
 .dh-msg-author[hidden] { display: none; }
-.dh-msg[data-mine="true"] {
-  align-self: flex-end;
+.dh-msg[data-mine="true"] .dh-msg-bubble {
   background: var(--dh-accent);
   color: var(--dh-accent-text);
   border-bottom-right-radius: 4px;
 }
-.dh-msg[data-failed="true"] {
+.dh-msg[data-failed="true"] .dh-msg-bubble {
   border: 1px solid var(--dh-danger);
 }
+
+/* The sender's avatar — see message-list.ts's construction comment for why
+   it exists and why it always draws from the SENDER's own resolved name,
+   never the merchant's header initial. Same disc as '.dh-avatar' above
+   (inherits its accent background, '--dh-on-accent' text and uppercase
+   transform); only its size is its own, scaled down from the header's 32px
+   because this one sits beside a line of chat text, not a page title. */
+.dh-msg-avatar {
+  width: calc(var(--dh-space) * 6);
+  height: calc(var(--dh-space) * 6);
+  font-size: 11px;
+  flex: none;
+}
+.dh-msg-avatar[hidden] { display: none; }
 .dh-msg-sender {
   font-size: 12px;
   font-weight: 600;
@@ -1734,6 +1841,12 @@ button {
 }
 .dh-msg-action:hover { background: var(--dh-bubble-in); }
 .dh-msg-action:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
+/* Copy's in-place confirmation (message-actions.ts): the label swaps to the
+   outcome and the menu lingers just long enough to show it. Colour says which
+   outcome at a glance; the swapped word is what a screen reader gets. */
+.dh-msg-action[data-outcome="ok"] { color: var(--dh-accent); font-weight: 600; }
+.dh-msg-action[data-outcome="failed"] { color: var(--dh-danger); }
+.dh-msg-action:disabled { cursor: default; }
 
 /* The quoted message above the composer while a reply is being written. */
 .dh-reply-chip {
@@ -1747,10 +1860,18 @@ button {
   background: var(--dh-bubble-in);
   font-size: 12px;
 }
-.dh-reply-label { flex: none; font-weight: 600; color: var(--dh-text-muted); }
-.dh-reply-excerpt {
+/* Two stacked lines: WHO on top in the accent (it is the reply mechanism's
+   own colour — the quote block in the bubbles uses the same cue), their words
+   below, one line, ellipsised. */
+.dh-reply-body {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.dh-reply-name { font-weight: 600; color: var(--dh-accent); }
+.dh-reply-excerpt {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1767,6 +1888,33 @@ button {
   cursor: pointer;
 }
 .dh-reply-clear:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 1px; }
+
+/* The quoted message inside a bubble that replies to another — both
+   directions. Quiet on purpose: smaller than the message's own words, a thin
+   accent bar instead of a boxed panel, two lines at most. On the customer's
+   own bubble the ground is the accent itself, so the bar and text shift to
+   translucent '--dh-accent-text' — the same trick '.dh-failure' uses for its
+   own on-accent legibility. */
+.dh-msg-quote {
+  display: block;
+  margin-bottom: calc(var(--dh-space) * 1);
+  padding-inline-start: calc(var(--dh-space) * 1.5);
+  border-inline-start: 2px solid var(--dh-accent);
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--dh-text-muted);
+}
+.dh-quote-name { display: block; font-weight: 600; }
+.dh-quote-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.dh-msg[data-mine="true"] .dh-msg-quote {
+  border-inline-start-color: color-mix(in srgb, var(--dh-accent-text) 55%, transparent);
+  color: color-mix(in srgb, var(--dh-accent-text) 85%, transparent);
+}
 
 /* Links inside message text. Underlined, not colour-only: WCAG 1.4.1, and on
    a merchant accent that happens to sit close to the bubble's own text colour
@@ -1873,8 +2021,19 @@ button {
 /* The safe-area clearance belongs to whichever element is actually last. With
    a credit below it the composer would otherwise reserve room for the iOS
    home indicator that the credit then reserves again, leaving a visible gap
-   between the two. */
-.dh-composer:has(+ .dh-branding:not([hidden])) {
+   between the two.
+
+   The second selector in each pair exists only because '.dh-ended-footer'
+   now sits between the composer and the credit in the DOM (see widget.ts) —
+   ':has(+ …)' matches the immediate next sibling regardless of '[hidden]',
+   so without it a HIDDEN ended-footer would still break the adjacency the
+   first selector relies on, and the composer would double up on safe-area
+   padding with the credit every time both happen to be mounted. */
+.dh-composer:has(+ .dh-branding:not([hidden])),
+.dh-composer:has(+ .dh-ended-footer + .dh-branding:not([hidden])) {
+  padding-bottom: calc(var(--dh-space) * 2);
+}
+.dh-ended-footer:has(+ .dh-branding:not([hidden])) {
   padding-bottom: calc(var(--dh-space) * 2);
 }
 .dh-branding-link {
@@ -1887,6 +2046,53 @@ button {
   outline-offset: 2px;
   border-radius: 2px;
 }
+
+/* ── Ended-conversation footer (ui/ended-footer.ts) ───────────────────────
+
+   Trades places with .dh-composer directly above it — same seam, same
+   'flex: none' rationale that comment states, and the same safe-area
+   handling (see the ':has()' pair above .dh-branding-link). widget.ts's
+   syncScreens is the one place that decides which of the two is visible;
+   this file only has to make sure hiding it actually hides it, which
+   'display: flex' below requires spelling out for '[hidden]' explicitly —
+   same reason .dh-report-open[hidden] and .dh-topics[hidden] both exist. */
+.dh-ended-footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 2);
+  border-top: 1px solid var(--dh-border);
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
+  padding-bottom: max(calc(var(--dh-space) * 2), env(safe-area-inset-bottom));
+  background: var(--dh-surface);
+}
+.dh-ended-footer[hidden] { display: none; }
+.dh-ended-actions {
+  display: flex;
+  gap: calc(var(--dh-space) * 2);
+}
+/* The primary action reuses .dh-form-submit itself (see ui/ended-footer.ts) —
+   same accent-filled button the three data-collecting surfaces already use
+   for their one commit action, just placed two-up in a row instead of full
+   width. Only the secondary action is new, and it borrows .dh-report-open's own
+   outline treatment (accent border, transparent fill) rather than inventing
+   a second "secondary button" look. */
+.dh-ended-footer .dh-form-submit { flex: 1; }
+.dh-ended-secondary {
+  flex: 1;
+  min-height: 44px;
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
+  border-radius: 10px;
+  border: 1px solid var(--dh-accent);
+  background: transparent;
+  color: var(--dh-accent);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+}
+.dh-ended-secondary:hover { background: var(--dh-surface-sunken); }
+.dh-ended-secondary[disabled] { opacity: 0.6; cursor: not-allowed; }
+
 /* The slot a product surface occupies — same "stands in for the conversation"
    role as .dh-prechat, so it takes the same remaining height. */
 .dh-surface-host { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow-y: auto; }
@@ -2187,6 +2393,11 @@ button {
   flex-direction: column;
   gap: calc(var(--dh-space) * 5);
   padding: calc(var(--dh-space) * 4);
+  /* The containing block '.dh-hero-sentinel' (ui/styles.ts, further down)
+     positions itself against — see ui/hero-header.ts's 'watchScroll' for why
+     that marker has to be a zero-space absolute child of THIS element rather
+     than a normal flow one. */
+  position: relative;
 }
 
 .dh-home-cta {
@@ -2281,11 +2492,31 @@ button {
    selector — see messages-screen.ts's own header on why this is a fresh
    component rather than session-picker.ts's row factory reused, and why
    duplicating a few small rules here is the safer trade against editing an
-   already-shipped block those tests already pin. */
+   already-shipped block those tests already pin.
+
+   ── Why the scroll boundary is NOT here any more ─────────────────────────
+
+   This element used to carry 'overflow-y: auto' directly, with the search
+   box, the row list AND the "New conversation" button all as its normal-flow
+   children. That made the button "flex: none" — which stops it from being
+   squished, and nothing else — but it was still an ordinary child of the one
+   box that scrolled, so it scrolled away with the rows exactly like every
+   row above it. Confirmed live: scrolling the row list carried the button
+   off the bottom of the panel with it, which is the reported bug ("has to
+   scroll to find it").
+   'flex: none' only ever meant "don't grow or shrink"; it was never a
+   pinning declaration, and nothing else in this rule made it one.
+
+   The fix moves the scrollable region down one level, onto
+   '.dh-messages-list' alone (below) — search and the button stay here, in
+   this NON-scrolling flex column, so they never move regardless of how long
+   the row list gets. This element keeps 'flex: 1; min-height: 0' because it
+   is still the one child of '.dh-panel's screen column allowed to grow into
+   the space Home/the transcript would otherwise use — see '.dh-home's
+   identical pair, just above, for the same contract with the SAME ancestor. */
 .dh-messages {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: calc(var(--dh-space) * 3);
@@ -2328,7 +2559,24 @@ button {
   appearance: none;
 }
 
-.dh-messages-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: calc(var(--dh-space) * 2); }
+/* The ACTUAL scroll region, moved here from '.dh-messages' above (see that
+   rule's comment for why). 'flex: 1; min-height: 0' claims whatever height
+   '.dh-messages-search' and '.dh-messages-new' — both 'flex: none' — leave
+   behind in the parent's column, and 'overflow-y: auto' scrolls exactly that
+   claimed space. Search stays above it and the button stays below it as
+   plain siblings, so neither one is ever a child of the box that scrolls and
+   neither can be carried off screen by it. */
+.dh-messages-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 2);
+}
 .dh-messages-empty {
   text-align: center;
   color: var(--dh-text-muted);

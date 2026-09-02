@@ -24,6 +24,7 @@ export type {
   AuthToken,
   ChatClient,
   ChatClientConfig,
+  CsatSubmission,
   LocalSender,
   MessageHistorySource,
   SendAttachmentOptions,

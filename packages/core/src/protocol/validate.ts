@@ -355,6 +355,26 @@ function validatePresenceEntry(value: unknown, path: string, frameType: string):
 const MAX_SESSION_SUBJECT_LENGTH = 200;
 /** `connection.hello.topic` cap — a merchant-configured chip label, not prose. */
 const MAX_SESSION_TOPIC_LENGTH = 64;
+/** `connection.hello.ip` cap — comfortably covers the longest textual IPv6 form. Mirrors chat-service-node's own bound. */
+const MAX_IP_LENGTH = 45;
+/** `connection.hello.ipWatermark` cap — mirrors chat-service-node's own bound. */
+const MAX_IP_WATERMARK_LENGTH = 512;
+/** `connection.hello.userAgent` cap — mirrors chat-service-node's own bound. */
+const MAX_USER_AGENT_LENGTH = 512;
+
+/**
+ * `connection.hello.geo` — the browser's own GPS fix. Range-checked, not just
+ * shape-checked, for the same reason the server-side mirror of this guard is
+ * (chat-service-node's `protocol/validate.ts`): `{ lat: 999, lng: 999 }` is a
+ * well-formed pair of finite numbers that is not a place on Earth.
+ */
+function isGeoCoordinates(value: unknown): value is { lat: number; lng: number } {
+  if (!isPlainObject(value)) return false;
+  const { lat, lng } = value;
+  return (
+    isFiniteNumber(lat) && lat >= -90 && lat <= 90 && isFiniteNumber(lng) && lng >= -180 && lng <= 180
+  );
+}
 
 function validateConnectionHello(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
@@ -392,7 +412,27 @@ function validateConnectionHello(d: unknown, path: string, frameType: string): F
       path,
       `a string of at most ${MAX_SESSION_TOPIC_LENGTH} characters`,
       frameType,
-    )
+    ) ??
+    // Contact-info enrichment (ConnectionHelloPayload.ip/.ipWatermark/
+    // .userAgent/.geo). All independent and optional — see that type's doc.
+    optionalField(d, 'ip', isBoundedString(MAX_IP_LENGTH), path, `a string of at most ${MAX_IP_LENGTH} characters`, frameType) ??
+    optionalField(
+      d,
+      'ipWatermark',
+      isBoundedString(MAX_IP_WATERMARK_LENGTH),
+      path,
+      `a string of at most ${MAX_IP_WATERMARK_LENGTH} characters`,
+      frameType,
+    ) ??
+    optionalField(
+      d,
+      'userAgent',
+      isBoundedString(MAX_USER_AGENT_LENGTH),
+      path,
+      `a string of at most ${MAX_USER_AGENT_LENGTH} characters`,
+      frameType,
+    ) ??
+    optionalField(d, 'geo', isGeoCoordinates, path, 'an object with numeric lat/lng in range', frameType)
   );
 }
 

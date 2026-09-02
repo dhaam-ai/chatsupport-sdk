@@ -139,3 +139,39 @@ describe('the link affordance', () => {
     expect(linkButton(composer).disabled).toBe(true);
   });
 });
+
+describe('the reply chip', () => {
+  const chip = (composer: ReturnType<typeof build>['composer']) =>
+    composer.node.querySelector<HTMLElement>('.dh-reply-chip')!;
+
+  it('is hidden until a reply starts', () => {
+    const { composer } = build();
+    expect(chip(composer).hidden).toBe(true);
+  });
+
+  it('shows WHO is being quoted above their words — not a bare excerpt', () => {
+    const { composer } = build();
+    composer.setReplyTo({ senderName: 'Priya', excerpt: 'Refunded.' });
+
+    expect(chip(composer).hidden).toBe(false);
+    expect(chip(composer).querySelector('.dh-reply-name')?.textContent).toBe('Priya');
+    expect(chip(composer).querySelector('.dh-reply-excerpt')?.textContent).toBe('Refunded.');
+  });
+
+  it('clears back to hidden, with no stale text for the next reply to flash', () => {
+    const { composer } = build();
+    composer.setReplyTo({ senderName: 'Priya', excerpt: 'Refunded.' });
+    composer.setReplyTo(null);
+
+    expect(chip(composer).hidden).toBe(true);
+    expect(chip(composer).querySelector('.dh-reply-name')?.textContent).toBe('');
+    expect(chip(composer).querySelector('.dh-reply-excerpt')?.textContent).toBe('');
+  });
+
+  it('routes the × through onCancelReply — the widget owns the reply state', () => {
+    const { composer, onCancelReply } = build();
+    composer.setReplyTo({ senderName: 'Priya', excerpt: 'Refunded.' });
+    chip(composer).querySelector<HTMLButtonElement>('.dh-reply-clear')!.click();
+    expect(onCancelReply).toHaveBeenCalledTimes(1);
+  });
+});

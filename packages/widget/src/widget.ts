@@ -11,6 +11,7 @@
 import {
   MemoryStorageAdapter,
   createBrowserStorageAdapter,
+  isHandledByCurrent,
   isParkedCloseReason,
 } from '@dhaam-ccrm/core';
 import type { CloseReason } from '@dhaam-ccrm/core';
@@ -88,10 +89,12 @@ import {
   threadTokens,
 } from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
+import { createEndedFooter } from './ui/ended-footer.js';
 import { createOfflineBanner } from './ui/offline-banner.js';
 import { createOfflineForm } from './ui/offline-form.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
 import { createCommonQuestions } from './ui/common-questions.js';
+import type { CommonQuestion } from './ui/common-questions.js';
 import {
   DEFAULT_REMOTE_CONFIG,
   fetchRemoteConfig,
@@ -99,6 +102,7 @@ import {
   shouldMount,
 } from './remote-config.js';
 import type { AutoOpen, RemoteConfig } from './remote-config.js';
+import { captureContactInfo } from './contact-info.js';
 
 /** How the host drives the widget after mounting it. */
 export interface ChatWidget {
@@ -396,7 +400,8 @@ function buildLauncherIcon(spec: LauncherIcon): Node {
 }
 
 /**
- * The classic header's avatar, or `null` when there is nothing to draw.
+ * The header's BRAND avatar — the merchant's own face — or `null` when there
+ * is nothing to draw.
  *
  * `null` rather than an empty circle is the whole contract: this widget has
  * never drawn an avatar, so a merchant who has set neither initials nor a logo
@@ -423,6 +428,28 @@ function buildHeaderAvatar(mode: AvatarMode, initials: string, logoUrl: string):
   return letters === ''
     ? null
     : el('span', { attrs: { class: 'dh-avatar', 'aria-hidden': 'true' }, text: letters });
+}
+
+/**
+ * The header's AGENT avatar: one letter, the handler's first initial.
+ *
+ * One letter rather than the brand avatar's two, because it stands for a
+ * person's name and not a company's — the same reading the console's own
+ * agent chips use. `null` for a blank display name (a degenerate record, not
+ * a state the protocol promises), so the caller can fall back to the brand
+ * face rather than mount an empty disc.
+ *
+ * `aria-hidden` for exactly `buildHeaderAvatar`'s reason: the title beside it
+ * (identity-header.ts) already names this person.
+ */
+function buildAgentAvatar(displayName: string): HTMLElement | null {
+  const letter = displayName.trim().slice(0, 1);
+  return letter === ''
+    ? null
+    : el('span', {
+        attrs: { class: 'dh-avatar dh-avatar-agent', 'aria-hidden': 'true' },
+        text: letter,
+      });
 }
 
 /** Which of the three data-collecting surfaces is standing in for the chat. */
@@ -507,6 +534,33 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * still on screen".
    */
   let closedSessionId: string | null = null;
+  /**
+   * The id of a session THIS TAB watched get closed with a PARKED reason
+   * (`SWITCHED` — §12.5: the customer, or another of their own tabs/devices,
+   * started a different conversation; nobody ended this one) — or `null`.
+   *
+   * Exists for the same reason `closedSessionId` does, and is deliberately
+   * its own variable rather than folded into it: `closedSessionId` is "tell
+   * the customer their conversation ended" and must stay empty for a parked
+   * close (`isParkedCloseReason` already gates it, below). This is the
+   * opposite list — "a status of CLOSED/RESOLVED on THIS session must NOT be
+   * read as genuinely over" — and it is consulted by `syncProductSurfaces`'s
+   * CSAT-due check and `syncScreens`'s ended-footer check, neither of which
+   * used to look past `session.status` at all. Before this exi​sted, a
+   * session SWITCHED-closed while still on screen in this tab was
+   * indistinguishable, to both of those, from one an agent had genuinely
+   * resolved — the CSAT survey and "Reopen / Start new" footer would offer
+   * to rate and re-litigate a conversation nobody actually ended.
+   *
+   * Same scoping limitation `closedSessionId` already accepts: only a LIVE
+   * `sessionClosed` event can supply the reason (see that variable's own
+   * doc), so a session reached cold — a reload, or picking a past
+   * conversation from Messages — that happens to have been SWITCHED rather
+   * than genuinely resolved is not caught here. Nothing on the wire or in
+   * `ChatSession` carries a close reason for a session not live-witnessed
+   * closing, so no purely client-side check can close that gap.
+   */
+  let parkedSessionId: string | null = null;
   /**
    * An agent opened a conversation while the panel was shut, and the customer
    * has not looked at it yet.
@@ -795,8 +849,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
     // Unconditional for the same reason `applyHeaderAppearance` is: the avatar
     // reads `logoUrl`, which a publish can move without saying anything about
-    // `avatarMode` — and it reads `design`, which the branch above may just
-    // have changed out from under it.
+    // `avatarMode` — and its out-of-hours gate reads `remote`, which this
+    // whole function just replaced.
     applyHeaderAvatar(
       rawConfig.avatarMode === undefined ? (next.avatarMode ?? config.avatarMode) : config.avatarMode,
       rawConfig.avatarInitials === undefined
@@ -850,9 +904,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // makes for `surfaceHost`, for the same reason.
     commonQuestionsHost.replaceChildren(
       createCommonQuestions(next.commonQuestions, {
-        onSelect: (question) => {
-          void store.client.sendMessage(question.prompt).catch(report);
-        },
+        onSelect: (question) => void startCommonQuestion(question),
       }).node,
     );
     syncScreens();
@@ -899,16 +951,60 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
-   * The classic header's avatar. Rebuilt rather than patched — see
-   * {@link buildHeaderAvatar} for why the slot holds three shapes.
+   * The brand inputs the avatar draws from when no agent is on the chat.
    *
-   * The hero design is skipped outright rather than hidden in CSS: its own
-   * face row already answers "who am I talking to", and building an element
-   * only to have a stylesheet refuse to show it is a node that exists to be
-   * invisible.
+   * Recorded by {@link applyHeaderAvatar} (mount, then every publish) so that
+   * {@link syncHeaderAvatar} can repaint on a SESSION change too — an agent
+   * joining knows nothing about `avatarMode`, and asking it to carry these
+   * three strings around would put config plumbing on a session subscription.
    */
+  let brandAvatar = {
+    mode: config.avatarMode,
+    initials: config.avatarInitials,
+    logoUrl: config.logoUrl,
+  };
+
+  /** Records the published brand inputs, then repaints. */
   function applyHeaderAvatar(mode: AvatarMode, initials: string, logoUrl: string): void {
-    const avatar = design === 'hero' ? null : buildHeaderAvatar(mode, initials, logoUrl);
+    brandAvatar = { mode, initials, logoUrl };
+    syncHeaderAvatar();
+  }
+
+  /**
+   * The header avatar's whole state machine, in precedence order:
+   *
+   *   1. OUT OF HOURS (`shouldCollectOffline`) — no avatar at all. The panel
+   *      is showing the "leave a message" surface, and a face implies someone
+   *      is there to answer. The same predicate `syncProductSurfaces` raises
+   *      that surface from, so the two cannot disagree.
+   *   2. An agent is on the chat — that person's letter avatar. Gated on
+   *      core's `isHandledByCurrent`, the exact gate identity-header.ts names
+   *      the handler with, so the face and the name beside it always agree
+   *      about whether an agent is present (an absent `handledBy` and a stale
+   *      one on a reactivated session both fail it — see that file's header).
+   *   3. Otherwise — the merchant's configured brand face (logo or initials),
+   *      or nothing when they configured neither.
+   *
+   * Mounted under EVERY design now. This used to skip the hero design on the
+   * theory that its face row answers "who am I talking to" — but that row
+   * only renders on Home, so a hero-design conversation had no avatar at all
+   * (reported issue 9). Rebuilt rather than patched — see
+   * {@link buildHeaderAvatar} for why the slot holds several shapes.
+   */
+  function syncHeaderAvatar(): void {
+    const session = store.getState().session;
+    let avatar: HTMLElement | null = null;
+    if (!shouldCollectOffline(remote)) {
+      avatar =
+        session !== null && isHandledByCurrent(session)
+          ? // Read back through the object, never asserted — the same caution
+            // identity-header.ts documents for wire-sourced data. The brand
+            // fallback also covers a blank display name (buildAgentAvatar
+            // returns null for it).
+            (buildAgentAvatar(session.handledBy?.displayName ?? '') ??
+            buildHeaderAvatar(brandAvatar.mode, brandAvatar.initials, brandAvatar.logoUrl))
+          : buildHeaderAvatar(brandAvatar.mode, brandAvatar.initials, brandAvatar.logoUrl);
+    }
     avatarHost.hidden = avatar === null;
     avatarHost.replaceChildren(...(avatar === null ? [] : [avatar]));
   }
@@ -917,18 +1013,39 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * The message this reply is addressed to, or `null`.
    *
    * Held here rather than in the composer because it is the WIDGET that calls
-   * `sendMessage`, and the id only ever travels on that call. The composer
-   * renders the quote and knows nothing else about it.
+   * `sendMessage`, and the reference only ever travels on that call. The
+   * composer renders the quote and knows nothing else about it.
+   *
+   * The excerpt and name are captured NOW, not at send time: they are what
+   * the chip showed the customer, and the sent quote must match it — and by
+   * send time the quoted message may have been evicted from the loaded page.
    */
-  let replyingTo: ChatMessage | null = null;
+  let replyingTo: { messageId: string; excerpt: string; senderName: string } | null = null;
 
-  function startReply(message: ChatMessage): void {
-    replyingTo = message;
+  /**
+   * The wire cap on a reply excerpt — the shape agreed with the console team:
+   * `metadata: { kind: 'reply', replyTo: { messageId, excerpt, senderName } }`
+   * with the excerpt at most 120 characters, ellipsis included.
+   */
+  const MAX_REPLY_EXCERPT = 120;
+
+  function startReply(message: ChatMessage, senderName: string): void {
     // The excerpt is the message's own text, trimmed to one line's worth. Long
     // enough to identify which message, short enough not to become a second
-    // transcript above the composer.
-    const text = (message.content ?? '').trim().replace(/\s+/g, ' ');
-    composer.setReplyTo(text.length > 90 ? `${text.slice(0, 90)}…` : text);
+    // transcript above the composer. An attachment-only message has no words —
+    // its `content` is the attachment URL placeholder (§12.10), which would
+    // quote a signed storage URL at the customer — so the file stands in.
+    const raw = (message.content ?? '').trim().replace(/\s+/g, ' ');
+    const text = message.attachment?.url !== undefined && raw === message.attachment.url ? '' : raw;
+    const excerpt =
+      text === ''
+        ? 'Attachment'
+        : text.length > MAX_REPLY_EXCERPT
+          ? `${text.slice(0, MAX_REPLY_EXCERPT - 1)}…`
+          : text;
+
+    replyingTo = { messageId: message.id, excerpt, senderName };
+    composer.setReplyTo({ senderName, excerpt });
     composer.input.focus();
   }
 
@@ -1077,36 +1194,23 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     on: { click: () => close() },
   });
 
-  /**
-   * "Talk to a human" — the customer's way off the bot.
-   *
-   * Core has had `requestAgent()` since the protocol was written and
-   * chat-service has always handled `session.requestAgent`, but no surface in
-   * this package ever called either: the ONLY route out of a bot conversation
-   * was to phrase a sentence the bot's own intent classifier happened to
-   * recognise. A customer who could not find those words could not reach a
-   * person at all, which is the reported bug.
-   *
-   * Shown only while the bot is actually handling the conversation — see
-   * {@link syncHandoff} for the exact rule. Offering it beside a human agent
-   * would ask the customer to escalate to the person already typing to them.
-   */
-  const handoffButton = el('button', {
-    attrs: { class: 'dh-handoff', type: 'button', hidden: true },
-    text: 'Talk to a human',
-    on: { click: () => requestHumanAgent() },
-  });
+  // There is deliberately NO visible "Talk to a human" button here. One
+  // shipped briefly and was removed on the owner's call: the only escalation
+  // path is the customer's own words — `asksForAHuman` on every send (the
+  // composer's `onSend` below), which fires {@link requestHumanAgent}. A
+  // persistent button invited every conversation to skip the bot, which is
+  // the opposite of what the bot is for.
 
   /**
    * The way to a ticket without a conversation.
    *
    * Hidden until published config turns it on — see `reportIssue` in
-   * remote-config.ts. Sits beside "Talk to a human" because the two are the
-   * same kind of offer: both are the customer deciding the bot is not the
-   * route to their answer.
+   * remote-config.ts. Lives on the seam between the transcript and the
+   * composer: it is the customer deciding the bot is not the route to their
+   * answer, so it sits where they are about to type.
    */
   const reportButton = el('button', {
-    attrs: { class: 'dh-handoff dh-report-open', type: 'button', hidden: true },
+    attrs: { class: 'dh-report-open', type: 'button', hidden: true },
     text: 'Report an issue',
     on: { click: () => openReportIssue() },
   });
@@ -1134,17 +1238,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const heroHeader = createHeroHeader({ onCallToAction: () => openNewConversationFlow() });
 
   /**
-   * The classic header's avatar slot.
+   * The header's avatar slot.
    *
    * A wrapper rather than the avatar itself, for the reason the launcher's
-   * glyph is one: three element shapes (img / span / nothing at all) share
-   * this position, and a publish can swap between them. `replaceChildren` on
-   * an empty wrapper is one line where patching in place would be three
-   * branches of DOM surgery.
+   * glyph is one: several element shapes (brand img / brand initials / an
+   * agent's letter / nothing at all) share this position, and a publish or a
+   * session change can swap between them. `replaceChildren` on an empty
+   * wrapper is one line where patching in place would be that many branches
+   * of DOM surgery.
    *
-   * Never mounted under the hero design — that layout has its own, richer
-   * face row (`header.avatars`, `header.showLogo`), and two avatars in one
-   * header is one more than any of them is asking for.
+   * Mounted under the hero design too — see {@link syncHeaderAvatar} for the
+   * state machine and for why the old "hero has its own face row" skip left
+   * every hero-design conversation with no avatar at all.
    */
   const avatarHost = el('div', { attrs: { class: 'dh-avatar-host' } });
 
@@ -1244,7 +1349,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // typed message is, the consent gate and handoff keywords included.
     onQuickReply: (text) => void composer.submit(text),
     onCopyMessage: (message) => copyMessage(message),
-    onReplyToMessage: (message) => startReply(message),
+    onReplyToMessage: (message, senderName) => startReply(message, senderName),
+    // Read through `remote` at call time, never captured: a config publish
+    // replaces `remote` wholesale, and the suggestion filter must judge by
+    // the same list the composer's own keyword trigger is using right now.
+    handoffKeywords: () => remote.handoffKeywords,
     onLoadOlder: () => {
       // `.catch`, not `void`: an unhandled rejection here surfaces on the
       // HOST's window and lands in the host's error tracker as a bug in their
@@ -1269,16 +1378,38 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // rejected send must not silently re-address the retry.
       const addressedTo = replyingTo;
       cancelReply();
+      // Both halves of the reference travel: `replyToMessageId` is the
+      // protocol-native field core has always had on the send frame, and the
+      // `reply` metadata is the RENDERABLE half — the exact shape agreed with
+      // the console team (see `MAX_REPLY_EXCERPT`), following the same
+      // metadata-kind precedent as `pre_chat` and `offline_message` below.
+      // The excerpt rides along because the quoted message may not be in the
+      // reader's loaded page at all.
       await store.client.sendMessage(
         text,
-        addressedTo === null ? undefined : { replyToMessageId: addressedTo.id },
+        addressedTo === null
+          ? undefined
+          : {
+              replyToMessageId: addressedTo.messageId,
+              metadata: {
+                kind: 'reply',
+                replyTo: {
+                  messageId: addressedTo.messageId,
+                  excerpt: addressedTo.excerpt,
+                  senderName: addressedTo.senderName,
+                },
+              },
+            },
       );
-      // Only while the BOT is driving. `syncHandoff` already owns that rule
-      // for the button, and reusing its condition — rather than re-deriving
-      // one here — is what stops a keyword escalating a conversation a human
-      // is already handling, which would ask the agent to hand off to
-      // themselves.
-      if (!handoffButton.hidden && asksForAHuman(text, remote.handoffKeywords)) {
+      // Only while the BOT is driving a conversation that is still live —
+      // `botHoldsLiveConversation` owns that rule. Read AFTER the send has
+      // settled, from fresh state, which is what stops a keyword escalating
+      // a conversation a human is already handling — that would ask the
+      // agent to hand off to themselves.
+      if (
+        botHoldsLiveConversation(store.getState()) &&
+        asksForAHuman(text, remote.handoffKeywords)
+      ) {
         requestHumanAgent();
       }
     },
@@ -1292,6 +1423,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         report(error);
       }
     },
+    onError: report,
+  });
+
+  // Trades places with `composer` — never stacks with it — once the session
+  // on screen is CLOSED/RESOLVED and the CSAT survey is done or not due. See
+  // this module's own header for why it is a sibling of the composer rather
+  // than a fourth `ProductSurface`, and `syncScreens` below for exactly when
+  // it shows.
+  const endedFooter = createEndedFooter({
+    onReopen: () => reopenConversation(),
+    onStartNew: () => openNewConversationFlow(),
     onError: report,
   });
 
@@ -1349,6 +1491,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // this node sat directly in the panel.
   homeQuestionsSlot(homeScreen).hidden = false;
   homeQuestionsSlot(homeScreen).appendChild(commonQuestionsHost);
+
+  // Tells the hero where Home's own scroll container is, so it can collapse
+  // into its pinned compact bar once the visitor scrolls it away from the
+  // top — see ui/hero-header.ts's module header for the whole mechanism.
+  // `homeScreen.node` (`.dh-home`) IS that container: `ui/styles.ts` gives it
+  // `flex: 1; overflow-y: auto` as the one child of the panel's column
+  // allowed to scroll while Home is showing, the same role `.dh-messages` and
+  // `.dh-surface-host` play for the screens they stand in for.
+  heroHeader.watchScroll(homeScreen.node);
 
   const messagesScreen = createMessagesScreen({
     onOpenConversation: (sessionId) => void selectSession(sessionId),
@@ -1449,16 +1600,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // Above the chips and below the transcript: the greeting is the first
       // thing said, and the chips are the answers to it.
       greetingBubble,
-      // Sits right where the transcript is still empty — the chips ARE the
-      // starting point of a conversation, so they read most naturally right
-      // above where the customer is about to type, not competing with the
-      // header or buried inside the (empty) log.
-      handoffButton,
+      // Sits right where the transcript is still empty — it reads most
+      // naturally right above where the customer is about to type, not
+      // competing with the header or buried inside the (empty) log.
       reportButton,
       // Directly above the composer it gates, so the notice and the control it
       // disables are read as one thing rather than as an unrelated banner.
       consent.node,
       composer.node,
+      // Same seam as the composer above it — `syncScreens` hides whichever
+      // of the two does not apply, and only one of them is ever visible.
+      endedFooter.node,
       // Under the composer, which is where a credit belongs: it is the least
       // important thing in the panel and must never sit between the customer
       // and the conversation.
@@ -1732,7 +1884,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // conversation is over would be false. `isParkedCloseReason` is core's
       // own predicate for this, so the distinction cannot drift from the
       // protocol's.
-      if (isParkedCloseReason(closeReason)) return;
+      if (isParkedCloseReason(closeReason)) {
+        // Recorded rather than merely ignored: `session.status` still moves
+        // to CLOSED on the server for a SWITCHED close, and neither
+        // `syncProductSurfaces`'s CSAT-due check nor `syncScreens`'s
+        // ended-footer check used to know the difference between that and a
+        // genuine resolution — see `parkedSessionId`'s own doc for the bug
+        // this closes.
+        parkedSessionId = store.getState().session?.id ?? null;
+        return;
+      }
 
       closedSessionId = store.getState().session?.id ?? null;
       messageList.setClosure(closeReason);
@@ -1746,6 +1907,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         // as "recovered" would drop the closing line — and the button on it —
         // in the exact window where a failed reconnect leaves the customer
         // needing both.
+        if (sessionId !== null && sessionId !== parkedSessionId) parkedSessionId = null;
         if (sessionId === null || closedSessionId === null) return;
         if (sessionId === closedSessionId) return;
         closedSessionId = null;
@@ -1760,13 +1922,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // and would silently stop firing the day a third field joins them.
     store.select(
       (state) => state.session,
-      (session) => identityHeader.update(session),
+      (session) => {
+        identityHeader.update(session);
+        // The avatar names the same identity the title does, so it rides the
+        // SAME subscription — a second session listener for it would be two
+        // places that could disagree about whether an agent is present.
+        syncHeaderAvatar();
+      },
       { immediate: true },
     ),
     // Same `state.session` reference trigger, its own subscription: the
-    // header renders an identity and this renders an action, and folding two
-    // unrelated jobs into one listener is how the second one gets forgotten
-    // the day the first is changed.
+    // header renders an identity and this maintains the escalation latch,
+    // and folding two unrelated jobs into one listener is how the second one
+    // gets forgotten the day the first is changed.
     store.select(
       (state) => state.session,
       () => {
@@ -1961,11 +2129,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
           {
             onSubmit: async (answers) => {
               // Sent as a MESSAGE, not as an identity upsert. The answers are
-              // free text a customer typed on a storefront page; promoting
-              // them to a Contact would let anyone claim any email address by
-              // typing it, which is the hole §14's key split exists to close.
-              // The agent reads the lines; `metadata` carries the same facts
-              // structured, for whatever consumes them later.
+              // free text a customer typed on a storefront page, so nothing
+              // here may claim an identity — that is the hole §14's key split
+              // exists to close. The agent reads the lines; `metadata` is the
+              // structured copy, and chat-service consumes it server-side
+              // (pre-chat-contact.service.ts) into a CUSTOMER-ASSERTED contact
+              // on the session: fill-empty only, marked `source: 'pre_chat'`,
+              // and a typed email/phone already owned by another contact is
+              // dropped there rather than adopted, so typing an address still
+              // grants nothing.
               const lines = remote.preChatFields
                 .filter((field) => answers[field.id] !== undefined)
                 .map((field) => `${field.label}: ${answers[field.id] ?? ''}`)
@@ -1997,20 +2169,30 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
 
     const session = state.session;
-    const ended = session !== null && (session.status === 'CLOSED' || session.status === 'RESOLVED');
+    // `session.id !== parkedSessionId`: a session THIS TAB watched get
+    // SWITCHED-closed is CLOSED/RESOLVED by status alone, but it was PARKED,
+    // not ended (§12.5) — see `parkedSessionId`'s own doc. Without this, a
+    // customer whose conversation was superseded (by another tab/device
+    // starting a new one) would be asked to rate a conversation nobody
+    // actually resolved.
+    const ended =
+      session !== null &&
+      (session.status === 'CLOSED' || session.status === 'RESOLVED') &&
+      session.id !== parkedSessionId;
     if (ended && session.id !== ratedSessionId && state.messages.length > 0) {
       const sessionId = session.id;
       openSurface('csat', () =>
         createCsatSurvey(remote.csatStyle, {
           onSubmit: async (score, comment) => {
-            // No CSAT endpoint exists on chat-service, so the rating travels
-            // the one channel that does work end to end. Stated plainly rather
-            // than pretending: a survey that silently discards the answer is
-            // worse than no survey.
-            await store.client.sendMessage(
-              comment === undefined ? `Rating: ${score}/5` : `Rating: ${score}/5 — ${comment}`,
-              { metadata: { kind: 'csat', score, ...(comment === undefined ? {} : { comment }) } },
-            );
+            // `POST /chat/sessions/{id}/csat`, via core's `SessionActions` seam
+            // — the same REST-only pattern `reopenSession`/`closeSession`
+            // already use (see `ui/csat.ts`'s own header: chat-service now has
+            // a real endpoint, and the rating stops travelling disguised as a
+            // chat message). Records the rating against the SESSION itself
+            // (and, server-side, rolls it up onto the session's linked support
+            // ticket when it has one) rather than merely appending a line to
+            // the transcript that nothing structured ever reads back.
+            await store.client.submitCsat(sessionId, score, comment);
             ratedSessionId = sessionId;
           },
           onError: report,
@@ -2020,6 +2202,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
 
     closeSurface();
+    // `closeSurface` itself only repaints when it actually HAD a surface to
+    // tear down (its own early `if (activeSurface === null) return`) — so a
+    // session that reaches CLOSED/RESOLVED with no surface ever having been
+    // open (an empty thread, or a rating already on file from a prior visit)
+    // would otherwise leave `syncScreens` never re-run, and the composer
+    // showing from whatever it was before the session ended. `syncScreens`
+    // itself is idempotent, so calling it again on the ordinary path (where
+    // `closeSurface` or `openSurface` above already called it) costs nothing.
+    syncScreens();
   }
 
   function setPaneVisible(node: HTMLElement, visible: boolean): void {
@@ -2471,9 +2662,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
-   * Should the "Talk to a human" control be on screen, and what should it say?
-   *
-   * Visible only while the BOT holds the conversation and it is still live:
+   * May a handoff keyword escalate right now? True only while the BOT holds
+   * the conversation and it is still live:
    *
    *   - `mode: 'HUMAN'` already means the hand-off happened. Whether an agent
    *     has picked it up yet (`WAITING_FOR_AGENT`) or is already replying
@@ -2488,9 +2678,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * Driven off `mode`/`status` rather than `handledBy` on purpose:
    * `handledBy` is presentation-only and documented as able to lag `status`
    * on a reactivated session (core's `isHandledByCurrent`), so gating a real
-   * ACTION on it would show this button to someone already talking to a
-   * person.
+   * ACTION on it would escalate a conversation someone is already talking to
+   * a person in.
    */
+  function botHoldsLiveConversation(state: ChatState): boolean {
+    const session = state.session;
+    return (
+      session !== null &&
+      session.mode === 'BOT' &&
+      session.status !== 'CLOSED' &&
+      session.status !== 'RESOLVED'
+    );
+  }
+
   /**
    * What the header menu offers right now.
    *
@@ -2510,21 +2710,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     });
   }
 
+  /**
+   * Re-arms the keyword escalation once the bot no longer holds a live
+   * conversation. The visible "Talk to a human" button this used to
+   * show/hide is gone — escalation is keyword-only now (see the composer's
+   * `onSend`) — but the in-flight latch must still reset: a customer whose
+   * escalated conversation was handed back to the bot, or who starts a fresh
+   * one, must be able to escalate again.
+   */
   function syncHandoff(state: ChatState): void {
-    const session = state.session;
-    const live =
-      session !== null &&
-      session.mode === 'BOT' &&
-      session.status !== 'CLOSED' &&
-      session.status !== 'RESOLVED';
-
-    handoffButton.hidden = !live;
-    if (!live) {
-      // Reset, so a session that comes back round does not inherit the busy
-      // label from the last time it was escalated.
+    if (!botHoldsLiveConversation(state)) {
+      // Reset, so a session that comes back round does not inherit the spent
+      // latch from the last time it was escalated.
       requestingAgent = false;
-      handoffButton.disabled = false;
-      handoffButton.textContent = 'Talk to a human';
     }
   }
 
@@ -2563,11 +2761,44 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // now with a screen layered on top of it.
     const showingLog = onConversation && activeSurface === null;
 
+    // A CLOSED/RESOLVED session with no surface standing in for it — the
+    // CSAT survey already submitted, or never due — still leaves `showingLog`
+    // true (`activeSurface` is null) with nothing useful for the composer to
+    // do: `syncComposer`'s `closedSessionId` gate only fires for a session
+    // this TAB watched get closed (the `sessionClosed` event, below), so a
+    // terminal session reached any other way — a Messages-screen row, a
+    // reload landing back on an old conversation, a rating that just landed —
+    // left the composer fully visible and enabled with nowhere for a send to
+    // go. `ui/ended-footer.ts`'s "Reopen" / "New conversation" pair replaces
+    // it for exactly that span; see that module's own header for why this is
+    // a footer beside the composer rather than a fourth `ProductSurface`.
+    //
+    // `session.id !== ratedSessionId && state.messages.length > 0` is
+    // `syncProductSurfaces`'s own CSAT-due condition, deliberately repeated
+    // rather than factored out: that survey still outranks this footer, and
+    // this footer is what is left once CSAT is done — one precedence step
+    // past the one `syncProductSurfaces`'s own comment already states for
+    // CSAT itself ("the rating is what is left once a session has ended").
+    const session = state.session;
+    // Kept in lockstep with `syncProductSurfaces`'s own `ended` — see that
+    // one's comment on `parkedSessionId` for why a SWITCHED-closed session
+    // must not read as ended here either: this footer's "Reopen" would
+    // otherwise offer to reopen a conversation that was not the one that
+    // actually ended, and its "Start new" is redundant with the one the
+    // customer already used to get here.
+    const ended =
+      session !== null &&
+      (session.status === 'CLOSED' || session.status === 'RESOLVED') &&
+      session.id !== parkedSessionId;
+    const csatDue = ended && session.id !== ratedSessionId && state.messages.length > 0;
+    const showingEndedFooter = showingLog && ended && !csatDue;
+
     setPaneVisible(homeScreen.node, onHome);
     setPaneVisible(messagesScreen.node, onMessages);
     setPaneVisible(surfaceHost, onConversation && activeSurface !== null);
     setPaneVisible(messageList.log, showingLog);
-    composer.node.hidden = !showingLog;
+    composer.node.hidden = !showingLog || showingEndedFooter;
+    endedFooter.node.hidden = !showingEndedFooter;
     // The tab bar and the composer trade the same bottom-of-panel row: a
     // customer typing does not also need two tabs competing for a glance,
     // and there is no tab for `conversation` to begin with (see nav.ts).
@@ -2627,19 +2858,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
-   * Ask for a human.
+   * Ask for a human. Reached only by the handoff-keyword match in the
+   * composer's `onSend` — there is deliberately no visible control for it.
    *
    * `requestAgent` is fire-and-forget on the wire (core writes the frame and
    * returns), so there is no promise to await and no ack to hang the UI on.
    * What settles this is the server's own `session.updated` — the session
-   * flips to `HUMAN`, and {@link syncHandoff} hides the button in response.
-   * Until then it stays disabled with a "Connecting you…" label, because a
-   * control that looks pressable after a press invites a second escalation of
-   * a session that is already queued.
+   * flips to `HUMAN`. Until then `requestingAgent` stays latched, because a
+   * second keyword in the queue-wait would be a second escalation of a
+   * session that is already queued.
    *
    * The throw path is real: core rejects a send with no session or no open
-   * socket. Reported, and the button re-armed — leaving it disabled would
-   * strand the customer with a dead control and no way to try again.
+   * socket. Reported, and the latch released — leaving it set would strand
+   * the customer with no way to ask again.
    */
   /**
    * Emails the customer their own conversation.
@@ -2714,11 +2945,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * `POST /chat/sessions/:id/close`, which is customer-owned — so this is the
    * customer closing THEIR session, not an agent action borrowed.
    *
-   * Confirmed first, and it is the only control in this widget that asks. It
-   * is not reversible from this side: chat-service reopens a session on an
-   * AGENT's say-so, not a customer's, so a mis-tap ends the conversation
-   * somebody was in the middle of and leaves them starting a new one with no
-   * history in it.
+   * Confirmed first, and it is the only control in this widget that asks. A
+   * mis-tap here still costs something even though `reopenSession` (below)
+   * exists now: it ends the conversation somebody was in the middle of, and
+   * the reopen returns the SAME session but not the composer state — the
+   * customer has to notice the "Reopen" button and press it before they can
+   * carry on, rather than never having lost the thread at all.
    *
    * `confirm` rather than a bespoke sheet: it is the host page's own modal, it
    * is unmissable, and building a second confirmation UI for the one place
@@ -2740,19 +2972,48 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       });
   }
 
+  /**
+   * Reopens a CLOSED/RESOLVED conversation, at the customer's own request —
+   * `ui/ended-footer.ts`'s "Reopen" button, which stands in for the composer
+   * once a session has ended and CSAT is done or not due (see `syncScreens`).
+   *
+   * Goes through the real endpoint, not a client-side re-enable:
+   * `store.client.reopenSession` is core's `ChatClient.reopenSession`, backed
+   * by `POST /chat/sessions/{id}/reopen` (`@dhaam-ccrm/rest`'s adapter) — the
+   * same customer-facing action the React/Vue/Angular bindings already
+   * expose and this widget alone was missing. Faking it locally (just
+   * flipping the composer back on) would leave the server still holding the
+   * session CLOSED, so a reload — or any other client watching the same
+   * session — would show it terminated again while this tab disagreed.
+   *
+   * No busy latch of its own, unlike `endConversation` above: the button that
+   * calls this owns its own busy/error state via `submitOnce`
+   * (`ui/ended-footer.ts`), which is also why this rejects rather than
+   * catching — a swallowed rejection here would leave that button unable to
+   * tell the difference between "worked" and "failed silently".
+   *
+   * Nothing else has to be re-synced on success. `reopenSession` commits the
+   * resolved session through the same `commitSession` path `closeSession`
+   * uses (core's `create-chat-client.ts`), and the `state.session` id/status
+   * subscription already wired above (`syncProductSurfaces`) reacts to that
+   * commit and repaints the panel — the identical reactive path that already
+   * puts the composer back once a CSAT rating is submitted.
+   */
+  function reopenConversation(): Promise<void> {
+    const session = store.getState().session;
+    if (session === null) return Promise.reject(new Error('No conversation to reopen'));
+    return store.client.reopenSession(session.id).then(() => undefined);
+  }
+
   function requestHumanAgent(): void {
     if (requestingAgent) return;
     requestingAgent = true;
-    handoffButton.disabled = true;
-    handoffButton.textContent = 'Connecting you to an agent…';
 
     try {
       store.client.requestAgent();
     } catch (error) {
       report(error);
       requestingAgent = false;
-      handoffButton.disabled = false;
-      handoffButton.textContent = 'Talk to a human';
     }
   }
 
@@ -2809,6 +3070,44 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // second transition fighting the first.
     closeSurface();
     if (open) composer.input.focus({ preventScroll: true });
+  }
+
+  /**
+   * A Common Questions row was tapped (`ui/common-questions.ts`).
+   *
+   * ── The real bug this replaces ────────────────────────────────────────
+   *
+   * The previous wiring called `store.client.sendMessage(question.prompt)`
+   * directly. Common Questions render only while `ui/common-questions.ts`'s
+   * own precondition holds — "before a conversation exists" — which means
+   * `state.session` is `null` exactly when a customer can see a row to tap.
+   * Core's `MessageController.sendMessage` throws `NoActiveSessionError` with
+   * no session joined (see `packages/core/src/messages/controller.ts`), so
+   * that call REJECTED on essentially every real tap, and `.catch(report)`
+   * routed the failure straight to the console. Nothing the customer did was
+   * wrong and nothing was visibly broken — the send simply never reached the
+   * wire, which is indistinguishable from "tapping does nothing" from where
+   * they were sitting. Confirmed live: a tap threw `NoActiveSessionError`
+   * every time in the running widget.
+   *
+   * The fix mints a session first, exactly like `startNewConversation`
+   * above — no topic/subject pair here, because a tapped question already
+   * IS the subject — then sends the prompt as that session's opening line,
+   * then puts the resulting conversation on screen via `showConversation`
+   * (the same call `selectSession` uses), which is the second half of the
+   * report: even a send that HAD succeeded left the customer looking at
+   * whichever screen they tapped from, with no visible sign anything
+   * happened.
+   */
+  async function startCommonQuestion(question: CommonQuestion): Promise<void> {
+    try {
+      await store.client.startNewSession({ subject: question.prompt });
+      await store.client.sendMessage(question.prompt);
+      showConversation();
+      if (open) composer.input.focus({ preventScroll: true });
+    } catch (error) {
+      report(error);
+    }
   }
 
   // ── open / close ──────────────────────────────────────────────────────
@@ -2889,6 +3188,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     else openPanel();
   }
 
+  // Contact-info enrichment for the console's contact-info panel — IP
+  // watermark, raw user agent, best-effort GPS — captured ONCE per widget
+  // session, here, "very early". Fire-and-forget and NOT awaited: per the
+  // product decision behind this feature, none of this may gate the chat
+  // opening (a slow ip-watermark fetch, and especially a GPS permission
+  // prompt the visitor may never answer, must never delay `connect()` below).
+  // Each piece reaches core independently via `client.setContactInfo()`
+  // whenever (if ever) it resolves — see contact-info.ts's header for what
+  // happens when that is after the first `connection.hello` already went out.
+  void captureContactInfo(store.client, config.apiUrl);
+
   // Nothing above this point opened a socket. Connecting last means a config
   // or DOM failure surfaces before any network cost is incurred.
   //
@@ -2956,7 +3266,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // Its own document-level pointerdown listener, same as the message menu.
       headerMenu.destroy();
       composer.destroy();
+      endedFooter.destroy();
       messagesScreen.destroy();
+      // Its scroll IntersectionObserver, and the marker it inserted into
+      // `.dh-home` — both would otherwise outlive the shadow root.
+      heroHeader.destroy();
       // `disconnect: true` — this store built the client it wraps, so nothing
       // else on the page is using that socket.
       store.destroy({ disconnect: true });

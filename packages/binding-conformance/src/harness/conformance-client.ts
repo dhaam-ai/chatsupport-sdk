@@ -32,6 +32,7 @@ import type {
   ChatEventName,
   ChatSession,
   ChatState,
+  CsatSubmission,
   SendAttachmentOptions,
   SendMessageOptions,
   Unsubscribe,
@@ -222,6 +223,17 @@ export function createConformanceChatClient(initial?: Partial<ChatState>): Confo
     requestAgent: (_reason?: string) => {},
     reopenSession: notConfigured('reopenSession') as unknown as (sessionId: string) => Promise<ChatSession>,
     closeSession: async () => {},
+    // Inert by contract (types.ts's own doc: "does NOT fetch anything, does
+    // not touch `navigator`, and does not itself send a frame") — a plain
+    // no-op matches that, not `notConfigured`, since a conformance suite
+    // calling this is exercising real (if trivial) behaviour, not hitting an
+    // operation this harness has no story for.
+    setContactInfo: () => {},
+    submitCsat: notConfigured('submitCsat') as unknown as (
+      sessionId: string,
+      rating: number,
+      comment?: string,
+    ) => Promise<CsatSubmission>,
 
     sendMessage: async (_content: string, _opts?: SendMessageOptions) => {},
 

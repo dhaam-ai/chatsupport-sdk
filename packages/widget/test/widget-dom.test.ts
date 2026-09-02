@@ -309,13 +309,17 @@ describe('borrowing the host page’s colour', () => {
     expect(headerBg()).toBe('#123456');
   });
 
+  // A near-white body (the old fixture used pure white) no longer counts as a
+  // colour worth borrowing — the sampler treats it as "nothing to borrow" and
+  // keeps the accent (see platform-color.test.ts for that refusal) — so the
+  // fall-through is exercised with a body that genuinely carries a colour.
   it('falls through to the body when there is no top bar to sample', () => {
-    document.body.style.backgroundColor = 'rgb(255, 255, 255)';
+    document.body.style.backgroundColor = 'rgb(34, 34, 34)';
     mount(config({ design: 'hero', header: { colorSource: 'platform' } }));
 
-    expect(headerBg()).toBe('#ffffff');
-    // …and the text follows the colour rather than staying hardcoded white.
-    expect(host().style.getPropertyValue('--dh-header-fg')).toBe('#1a1a1a');
+    expect(headerBg()).toBe('#222222');
+    // …and the text follows the colour rather than staying hardcoded dark.
+    expect(host().style.getPropertyValue('--dh-header-fg')).toBe('#ffffff');
     document.body.style.backgroundColor = '';
   });
 
@@ -552,11 +556,14 @@ describe('the classic header’s avatar', () => {
     expect(shadow().querySelector('.dh-avatar')).toBeNull();
   });
 
-  // The hero design has its own face row; two avatars in one header is one
-  // more than anybody asked for.
-  it('stays out of the hero header entirely', () => {
+  // Reversed from the original "stays out of the hero header entirely" pin:
+  // the hero's own face row renders only on Home, so skipping the header
+  // avatar there left every hero-design conversation with no avatar at all
+  // (reported issue 9). The full state machine lives in header-avatar.test.ts;
+  // this only pins that `design` no longer suppresses the mount.
+  it('mounts in the hero header too', () => {
     mount(config({ design: 'hero', avatarInitials: 'DH' }));
-    expect(shadow().querySelector('.dh-avatar')).toBeNull();
+    expect(query('.dh-avatar').textContent).toBe('DH');
   });
 });
 

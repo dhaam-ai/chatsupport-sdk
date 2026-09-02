@@ -25,6 +25,7 @@
 // a non-array, a non-string entry, a blank, or an absurd count is dropped
 // rather than rendered.
 
+import { asksForAHuman } from '../handoff-keywords.js';
 import { el } from './dom.js';
 
 /**
@@ -44,9 +45,23 @@ const MAX_LABEL = 80;
  * `metadata.options` → the chips to draw. Never throws.
  *
  * Exported for tests: this is the half worth asserting exhaustively, and it is
- * a pure function of the bag.
+ * a pure function of the bag and the keyword list.
+ *
+ * `handoffKeywords` is the tenant's `behaviour.handoffKeywords`, and any
+ * suggestion that matches one is dropped. The only escalation path is the
+ * customer typing those words themselves — a "Talk to a human"-type chip
+ * would be the removed handoff button back under another name, this time
+ * authored per-reply by a language model. Judged by `asksForAHuman`, the
+ * SAME matcher the composer escalates on, not a second regex: a chip is sent
+ * verbatim as the customer's message, so "would this chip escalate when
+ * tapped?" and "should this chip render?" must be one question. This is
+ * defence in depth — the server drops these before they are stored — but the
+ * producer is an LLM two services away, and this row is where they render.
  */
-export function readQuickReplies(metadata: unknown): readonly string[] {
+export function readQuickReplies(
+  metadata: unknown,
+  handoffKeywords: readonly string[] = [],
+): readonly string[] {
   if (typeof metadata !== 'object' || metadata === null) return [];
   const raw = (metadata as Record<string, unknown>)['options'];
   if (!Array.isArray(raw)) return [];
@@ -58,6 +73,7 @@ export function readQuickReplies(metadata: unknown): readonly string[] {
     // De-duplicated because a model asked for four options will sometimes
     // return the same one twice, and two identical chips read as a bug.
     if (label === '' || label.length > MAX_LABEL || seen.has(label)) continue;
+    if (asksForAHuman(label, handoffKeywords)) continue;
     seen.add(label);
     if (seen.size === MAX_OPTIONS) break;
   }

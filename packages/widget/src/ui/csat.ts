@@ -14,12 +14,17 @@
 //           "cumulative" row of faces would claim the customer felt every mood
 //           up to and including the one they chose.
 //
-// ── There is no server endpoint for this yet ─────────────────────────────
+// ── Where the score goes is the HOST's decision, not this module's ──────────
 //
-// chat-service has no CSAT route, and the React widget's `submitCsat` is a
-// mock that mutates local state. So this module takes a callback and the host
-// decides where the score goes. That is stated rather than hidden: a survey
-// that silently discards the answer is worse than no survey.
+// This module takes a callback rather than owning the submit itself:
+// `widget.ts`'s `syncProductSurfaces` wires `onSubmit` to core's
+// `ChatClient.submitCsat`, which goes over `POST /chat/sessions/{id}/csat` —
+// a real chat-service route that records the rating against the session (and,
+// server-side, the session's linked support ticket) rather than a disguised
+// chat message. Kept as a callback anyway, the same reason `onError` is:
+// a survey that silently discards the answer if the host wired nothing up
+// is worse than no survey, and this module has no business knowing chat-service's
+// URL shape.
 
 import { el } from './dom.js';
 import { createStatusLine, createSubmitButton, submitOnce } from './forms.js';

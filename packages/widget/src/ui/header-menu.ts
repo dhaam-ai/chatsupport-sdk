@@ -156,8 +156,18 @@ export function createHeaderMenu(callbacks: HeaderMenuCallbacks): HeaderMenuView
 
   const node = el('div', { attrs: { class: 'dh-hmenu-wrap' }, children: [toggle, menu] });
 
+  // `composedPath()[0]`, not `event.target`: this listener lives on the
+  // document, OUTSIDE the shadow tree, so a press on one of our own items is
+  // retargeted and reports the shadow HOST as its target — which
+  // `node.contains` rejects, closing the menu DURING the press. A menu hidden
+  // between pointerdown and pointerup swallows the click those events were
+  // producing, so under a real pointer every item "did nothing", while a
+  // synthetic `.click()` (which dispatches no pointerdown) worked — which is
+  // exactly how automation passed this menu and a human failed it. Same trap,
+  // same cure as session-picker.ts's onOutsidePointerDown.
   const onOutside = (event: Event): void => {
-    if (!node.contains(event.target as Node)) close();
+    const pressed = event.composedPath()[0] ?? event.target;
+    if (!node.contains(pressed as Node)) close();
   };
 
   function open(): void {

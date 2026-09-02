@@ -132,6 +132,43 @@ export type { LocalSender, AttachmentUploader, MessageHistorySource, SendAttachm
 export interface SessionActions {
   reopenSession(sessionId: string): Promise<ChatSession>;
   closeSession(sessionId: string): Promise<ChatSession>;
+
+  /**
+   * `POST /chat/sessions/{id}/csat` — record the customer's rating for their
+   * own conversation.
+   *
+   * Deliberately NOT under the "reporting a change the server applied but
+   * could not confirm" contract above: unlike `reopenSession`/`closeSession`,
+   * this does not mutate `ChatState.session` — a rating is not a session
+   * status — so there is no second round trip to fail independently of the
+   * first, and no `sessionMutationApplied` case for an implementation to
+   * signal. One request either recorded the rating and returned it, or it
+   * did not; a rejection here is never ambiguous the way a read-back failure
+   * is.
+   *
+   * `comment` omitted (not `undefined` explicitly passed) means no comment,
+   * mirroring `SendMessageOptions`'s own optional-field convention.
+   */
+  submitCsat(sessionId: string, rating: number, comment?: string): Promise<CsatSubmission>;
+}
+
+/**
+ * The stored result of a customer's post-conversation rating —
+ * `SessionActions.submitCsat`'s return value and `ChatClient.submitCsat`'s.
+ *
+ * Not part of `ChatSession`: a rating describes the conversation but is not a
+ * property of its lifecycle state the way `status`/`mode` are, and CSAT is
+ * this client's only consumer of `chat_csat` — nothing else in `ChatState`
+ * needs it merged into the session object.
+ */
+export interface CsatSubmission {
+  readonly sessionId: string;
+  /** 1-5. */
+  readonly rating: number;
+  /** `null` when the customer left no comment — never `undefined`, since this came back from a server response, not from an optional argument. */
+  readonly comment: string | null;
+  /** ISO-8601. */
+  readonly submittedAt: string;
 }
 
 /**
@@ -556,10 +593,58 @@ export interface ChatClient {
    */
   startNewSession(payload?: { readonly topic?: string; readonly subject?: string }): Promise<void>;
   requestAgent(reason?: string): void;
+  /**
+   * Record contact-info enrichment for the console's contact-info panel — the
+   * IP-watermark pair, the raw user agent, and/or a GPS fix — for the NEXT
+   * `connection.hello` this client sends (`ConnectionHelloPayload.ip`/
+   * `.ipWatermark`/`.userAgent`/`.geo`, protocol/frames.ts).
+   *
+   * Merged, not replaced, and callable more than once: the embedding widget
+   * is expected to call this incrementally as each piece resolves —
+   * `navigator.userAgent` synchronously at session start, the ip-watermark
+   * fetch and the Geolocation permission prompt later and independently, each
+   * on its own schedule. A key omitted from a given call is left exactly as
+   * it was; there is no way to un-set one once recorded.
+   *
+   * Deliberately synchronous and inert beyond recording the values: this does
+   * NOT fetch anything, does not touch `navigator`, and does not itself send
+   * a frame or gate `connect()` — core stays framework/environment-agnostic
+   * (no HTTP calls, no browser globals; see client/types.ts's header on
+   * `apiUrl`). The widget owns gathering these values and is expected to call
+   * `connect()` immediately regardless of whether any of them are ready yet:
+   * a value recorded after the hello already went out simply waits for the
+   * next one (typically a reconnect), which is an accepted trade-off — GPS in
+   * particular must never gate the chat opening, and an IP-watermark fetch
+   * that is merely slow should not either.
+   */
+  setContactInfo(info: {
+    readonly ip?: string;
+    readonly ipWatermark?: string;
+    readonly userAgent?: string;
+    readonly geo?: { readonly lat: number; readonly lng: number };
+  }): void;
   /** REST-only (§6.2, §12.5). Throws {@link ChatClientConfigError} if `config.sessionActions` was not supplied. */
   reopenSession(sessionId: string): Promise<ChatSession>;
   /** REST-only (§6.2). Throws {@link ChatClientConfigError} if `config.sessionActions` was not supplied. */
   closeSession(): Promise<void>;
+  /**
+   * Records the customer's rating for `sessionId` — the post-conversation
+   * CSAT survey's `onSubmit`.
+   *
+   * REST-only, and — unlike `reopenSession`/`closeSession` — never touches
+   * `ChatState.session`: a rating is not part of the session's lifecycle
+   * state, so there is nothing here for a subscriber watching `session` to
+   * react to. A binding that wants to know a rating was given tracks that
+   * itself (the widget's own `ratedSessionId`, keyed off this call
+   * resolving), the same way `SessionActions.submitCsat`'s own doc explains
+   * why this is not under the "session mutation applied" reporting contract.
+   *
+   * Throws {@link ChatClientConfigError} if `config.sessionActions` was not
+   * supplied. Otherwise rejects with whatever the adapter rejects with — the
+   * survey's own submit button (`ui/csat.ts`) needs a direct signal to show
+   * its own retry state, not a side channel.
+   */
+  submitCsat(sessionId: string, rating: number, comment?: string): Promise<CsatSubmission>;
   /**
    * The session-picker's data source (T10) — the customer's own recent
    * sessions, most recent first.

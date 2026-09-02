@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 
 import { createMessagesScreen } from '../src/ui/messages-screen.js';
+import { STYLES } from '../src/ui/styles.js';
 
 function summary(overrides: Partial<ChatSessionSummary> = {}): ChatSessionSummary {
   return {
@@ -206,5 +207,44 @@ describe('createMessagesScreen — actions', () => {
     screen.render([summary()], null);
     screen.focus();
     expect(document.activeElement).toBe(screen.node.querySelector('.dh-messages-search-input'));
+  });
+});
+
+describe('createMessagesScreen — DOM shape the sticky-button fix depends on', () => {
+  it('keeps the search box and "New conversation" button as DIRECT children of .dh-messages, siblings of the row list — never inside it', () => {
+    // jsdom computes no layout, so it cannot prove the button stays on
+    // screen while the rows scroll (that is verify-browser's job — see
+    // scripts/verify-browser.mjs). What it CAN prove is the structural
+    // precondition the CSS fix depends on: search/list/button have always
+    // been siblings here, and this pins that so a future refactor that
+    // nests the button INSIDE the list (undoing the fix) fails loudly.
+    const { screen } = build();
+    screen.render([summary()], null);
+
+    const list = screen.node.querySelector('.dh-messages-list');
+    const search = screen.node.querySelector('.dh-messages-search');
+    const newButton = screen.node.querySelector('.dh-messages-new');
+    expect(list?.parentElement).toBe(screen.node);
+    expect(search?.parentElement).toBe(screen.node);
+    expect(newButton?.parentElement).toBe(screen.node);
+    expect(list?.contains(newButton)).toBe(false);
+  });
+});
+
+describe('the sticky "New conversation" button — CSS ownership of the scroll boundary', () => {
+  // Regression pinned live in real Chrome: '.dh-messages' used to carry
+  // 'overflow-y: auto' itself, with search/list/button all as its ordinary
+  // flow children — which put the button INSIDE the one box that scrolled,
+  // so it scrolled away with the rows above it despite its own
+  // 'flex: none'. See styles.ts's '.dh-messages' / '.dh-messages-list'
+  // comments for the full account.
+  it('moves the scroll boundary onto .dh-messages-list, not .dh-messages itself', () => {
+    const messagesRule = /\.dh-messages\s*\{([^}]*)\}/.exec(STYLES)?.[1] ?? '';
+    expect(messagesRule).not.toMatch(/overflow-y:\s*auto/);
+
+    const listRule = /\.dh-messages-list\s*\{([^}]*)\}/.exec(STYLES)?.[1] ?? '';
+    expect(listRule).toMatch(/overflow-y:\s*auto/);
+    expect(listRule).toMatch(/flex:\s*1/);
+    expect(listRule).toMatch(/min-height:\s*0/);
   });
 });

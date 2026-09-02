@@ -15,13 +15,28 @@
 // idioms (`el()`, no innerHTML — see `dom.ts`'s header) rather than ported
 // from JSX.
 //
+// ── Rows, not chips ───────────────────────────────────────────────────────
+//
+// This shipped once as a wrapped row of pill-shaped `<button>`s
+// (`border-radius: 999px`), which read as tags rather than as tappable
+// questions and gave no affordance at all for "this opens something" — no
+// chevron, no row boundary. Rebuilt as a `<ul>` of hairline-separated rows
+// inside one bordered box, matching the two other list-style surfaces this
+// package already ships: `ui/messages-screen.ts`'s `.dh-messages-row` (the
+// border/radius/padding this box's OWN rule borrows) and `ui/home-screen.ts`'s
+// two CTA rows, which are the one place already drawing exactly the trailing
+// '›' this component now reuses (`.dh-home-chevron` — a plain character, not
+// an SVG: this package's `ICONS` in `ui/dom.ts` has no dedicated chevron/arrow
+// glyph, and home-screen.ts's own precedent is the closer match than
+// inventing a new path set for one glyph).
+//
 // ── Where this stands, and where it does not ────────────────────────────
 // Shown only when there is no conversation yet AND nothing else is gating
-// the panel (`widget.ts`'s `syncCommonQuestions` is the one place that
-// decides — see it for the exact rule). Once the customer sends any message,
-// by tapping a chip or by typing, the chips do not come back for that
-// session: a customer who has already started talking does not need the
-// starting prompts a second time.
+// the panel (`widget.ts`'s `syncScreens` is the one place that decides — see
+// it for the exact rule). Once the customer sends any message, by tapping a
+// row or by typing, the rows do not come back for that session: a customer
+// who has already started talking does not need the starting prompts a
+// second time.
 //
 // Unlike `reco-engine-react`'s `resolveCommonQuestions`, this does NOT fall
 // back to a built-in default list when the console has configured none.
@@ -36,7 +51,14 @@ import type { CommonQuestion } from '../remote-config.js';
 export type { CommonQuestion };
 
 export interface CommonQuestionsCallbacks {
-  /** The customer tapped one. Sends `prompt` as their first message. */
+  /**
+   * The customer tapped one.
+   *
+   * This component sends nothing itself — see `widget.ts`'s wiring for why:
+   * turning a tap into a visible conversation takes minting a session AND
+   * navigating to it, both of which are the widget's job (`startNewSession`,
+   * `showConversation`), not this presentational component's.
+   */
   readonly onSelect: (question: CommonQuestion) => void;
 }
 
@@ -48,13 +70,27 @@ export function createCommonQuestions(
   questions: readonly CommonQuestion[],
   callbacks: CommonQuestionsCallbacks,
 ): CommonQuestionsView {
-  const node = el('div', {
-    attrs: { class: 'dh-common-questions', role: 'group', 'aria-label': 'Common questions' },
+  // `role="list"` stated explicitly, like `ui/messages-screen.ts`'s own list —
+  // Safari/VoiceOver drops the implicit list role once `list-style` is styled
+  // away, so restoring it here is not decoration.
+  const node = el('ul', {
+    attrs: { class: 'dh-common-questions', role: 'list', 'aria-label': 'Common questions' },
     children: questions.map((question) =>
-      el('button', {
-        attrs: { class: 'dh-common-question-chip', type: 'button' },
-        text: question.label,
-        on: { click: () => callbacks.onSelect(question) },
+      el('li', {
+        attrs: { class: 'dh-common-question-item' },
+        children: [
+          el('button', {
+            attrs: { class: 'dh-common-question-row', type: 'button' },
+            children: [
+              el('span', { attrs: { class: 'dh-common-question-label' }, text: question.label }),
+              // Same glyph, same class, as `ui/home-screen.ts`'s two CTA rows —
+              // one "this row opens something" affordance across the panel
+              // rather than a second one invented here.
+              el('span', { attrs: { class: 'dh-home-chevron', 'aria-hidden': 'true' }, text: '›' }),
+            ],
+            on: { click: () => callbacks.onSelect(question) },
+          }),
+        ],
       }),
     ),
   });

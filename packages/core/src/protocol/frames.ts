@@ -103,6 +103,47 @@ export interface ConnectionHelloPayload {
    */
   subject?: string;
   topic?: string;
+
+  // ── Contact-info panel enrichment (IP / device / GPS location) ───────────
+  // All four optional and independent, set via `ChatClient.setContactInfo()`
+  // (client/types.ts) rather than at `connect()` call time — see that
+  // method's doc for why: `ip`/`ipWatermark` and `geo` are resolved
+  // asynchronously (a REST round trip and a Geolocation permission prompt,
+  // respectively) and neither is allowed to gate `connect()`, so they may be
+  // absent on an early hello and present on a later one purely because of
+  // WHEN they happened to resolve. `userAgent` is synchronous and normally
+  // present from the very first hello.
+
+  /**
+   * The visitor's public IP, as issued by chat-service's
+   * `GET /chat-services/api/v1/ip-watermark` — NOT a value the widget
+   * determined itself (a browser cannot know its own public IP). Meaningless
+   * without `ipWatermark` alongside it: the server verifies the pair before
+   * trusting either, and drops both silently if the watermark does not check
+   * out, is expired, or is missing (never falls back to its own observed
+   * connection address instead — see that endpoint's server-side doc for why
+   * a fallback there would defeat the point of watermarking at all).
+   */
+  ip?: string;
+  /** The HMAC chat-service issued for `ip` above. Required together with it. */
+  ipWatermark?: string;
+  /**
+   * `navigator.userAgent`, verbatim. Parsed into a human-readable device
+   * summary SERVER-SIDE, on receipt — not here — so every consumer (this
+   * console, a future integration) renders the identical parsed string
+   * instead of each re-parsing the raw UA independently.
+   */
+  userAgent?: string;
+  /**
+   * The browser's own GPS fix (`navigator.geolocation.getCurrentPosition`),
+   * when the visitor granted permission and it resolved. Absence is the
+   * NORMAL outcome of a denied/unavailable/timed-out prompt, not an error —
+   * the server falls back to IP-geolocation on the verified `ip` above
+   * rather than treating a missing `geo` as anything to retry, and this SDK
+   * never retries the browser prompt either (§ the product decision that GPS
+   * is enrichment, never a gate).
+   */
+  geo?: { lat: number; lng: number };
 }
 
 /**

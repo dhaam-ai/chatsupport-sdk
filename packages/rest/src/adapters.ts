@@ -218,9 +218,30 @@ function isWorthRetrying(error: unknown): boolean {
  * with `customer: null` and an epoch `createdAt` looks like data rather than
  * like the missing fields it is.
  */
+/**
+ * `POST /chat/sessions/{id}/csat`'s response body, field-for-field —
+ * `csat.service.ts`'s `CsatRecord` serialized straight to JSON, with no
+ * integer-enum projection to undo (unlike `RestChatSession`'s `status`/`mode`):
+ * this route has never carried a database-integer field, so there is nothing
+ * here for `projection.ts`'s enum tables to translate.
+ *
+ * Declared locally rather than as core's own `CsatSubmission`, for the exact
+ * reason `WireMessagePage` above is: this package stays usable with no
+ * value-level dependency on `@dhaam-ccrm/core`, and a shape mismatch between
+ * the two is caught at the consumer's `createChatClient(...)` call, not here.
+ */
+interface RestCsatSubmission {
+  sessionId: string;
+  rating: number;
+  comment: string | null;
+  /** ISO-8601. */
+  submittedAt: string;
+}
+
 export function createSessionActions<TSession>(client: RestClient): {
   reopenSession(sessionId: string): Promise<TSession>;
   closeSession(sessionId: string): Promise<TSession>;
+  submitCsat(sessionId: string, rating: number, comment?: string): Promise<RestCsatSubmission>;
 } {
   /**
    * Reads back the session the mutation settled on.
@@ -302,6 +323,25 @@ export function createSessionActions<TSession>(client: RestClient): {
     },
     closeSession(sessionId) {
       return mutate('close', sessionId, 'POST /chat/sessions/{sessionId}/close');
+    },
+    // ONE round trip, deliberately unlike `mutate` above: the route's own
+    // response already carries the whole rating (chat.routes.ts's
+    // `/csat` handler answers `{success: true, data: record}` directly from
+    // `submitCsat`'s return value), so there is no partial receipt here
+    // needing a `GET /full` to fill in — and nothing about a rating changes
+    // `ChatState.session` for that read to refresh in the first place.
+    async submitCsat(sessionId, rating, comment) {
+      const body = await client.request<unknown>(
+        'POST',
+        `/chat/sessions/${encodeURIComponent(sessionId)}/csat`,
+        // `comment` omitted rather than sent as `undefined`: the route's own
+        // validator (`csatBodySchema`) treats an absent field and a blank one
+        // differently only in that the service trims/nulls it either way, but
+        // omitting keeps this call's body honest about what the customer
+        // actually typed rather than asserting an explicit empty value.
+        { body: comment === undefined ? { rating } : { rating, comment } },
+      );
+      return unwrapEnvelope<RestCsatSubmission>(body, 'POST /chat/sessions/{sessionId}/csat');
     },
   };
 }

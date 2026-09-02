@@ -143,8 +143,15 @@ export function createEmojiPicker(callbacks: EmojiPickerCallbacks): EmojiPickerV
     }
   }
 
+  // `composedPath()[0]`, not `event.target`: this listener lives on the
+  // document, OUTSIDE the shadow tree, so a press on one of our own cells is
+  // retargeted and reports the shadow HOST as its target — which
+  // `node.contains` rejects, closing the popover DURING the press and
+  // swallowing the click a real pointer was producing. Full story on
+  // header-menu.ts's onOutside; same cure as session-picker.ts.
   function onDocumentPointerDown(event: Event): void {
-    if (!node.contains(event.target as Node)) close();
+    const pressed = event.composedPath()[0] ?? event.target;
+    if (!node.contains(pressed as Node)) close();
   }
 
   function onDocumentKeydown(event: Event): void {

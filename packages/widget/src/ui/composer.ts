@@ -31,6 +31,19 @@ const LINK_ICON = [
   'M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244',
 ];
 
+/**
+ * What the reply chip shows about the message being replied to.
+ *
+ * Name and excerpt only — never the message id. See `setReplyTo`'s own doc
+ * for why the id stays with the widget.
+ */
+export interface ReplyTarget {
+  /** Who wrote the quoted message, as the transcript itself names them. */
+  readonly senderName: string;
+  /** The quoted text, already trimmed to chip length by the caller. */
+  readonly excerpt: string;
+}
+
 export interface ComposerCallbacks {
   readonly onSend: (text: string) => Promise<void>;
   readonly onSendAttachment: (file: File) => Promise<void>;
@@ -69,7 +82,7 @@ export interface ComposerView {
    * because it is the widget that calls `sendMessage`; giving the composer an
    * id it would only hand back would be two owners for one fact.
    */
-  setReplyTo(excerpt: string | null): void;
+  setReplyTo(target: ReplyTarget | null): void;
   setEnabled(enabled: boolean): void;
   setUploading(uploading: boolean): void;
   destroy(): void;
@@ -197,12 +210,16 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   });
 
   // The quoted message, shown above the input while a reply is being composed.
+  // Two stacked lines — WHO on top, their words below — because the chip used
+  // to show a bare excerpt behind the word "Replying to", which on a
+  // transcript with two other parties (agent and bot) left the customer to
+  // guess whose words they were quoting.
+  const replyName = el('span', { attrs: { class: 'dh-reply-name' } });
   const replyExcerpt = el('span', { attrs: { class: 'dh-reply-excerpt' } });
   const replyChip = el('div', {
     attrs: { class: 'dh-reply-chip', hidden: true },
     children: [
-      el('span', { attrs: { class: 'dh-reply-label' }, text: 'Replying to' }),
-      replyExcerpt,
+      el('span', { attrs: { class: 'dh-reply-body' }, children: [replyName, replyExcerpt] }),
       el('button', {
         attrs: { class: 'dh-reply-clear', type: 'button', 'aria-label': 'Cancel reply' },
         children: [icon(ICONS.close, 14)],
@@ -421,10 +438,12 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   return {
     node,
     input,
-    setReplyTo(excerpt) {
-      replyChip.hidden = excerpt === null;
-      // `textContent`: this is another party's message text.
-      replyExcerpt.textContent = excerpt ?? '';
+    setReplyTo(target) {
+      replyChip.hidden = target === null;
+      // `textContent` on both: a display name and a message body are another
+      // party's data.
+      replyName.textContent = target?.senderName ?? '';
+      replyExcerpt.textContent = target?.excerpt ?? '';
     },
     async submit(text) {
       // Both guards are refusals, not races. `disabled` is the consent gate

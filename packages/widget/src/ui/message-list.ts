@@ -83,8 +83,22 @@ export interface MessageListCallbacks {
   readonly onQuickReply: (text: string) => void;
   /** Puts the message's text on the clipboard. Rejects if the browser refuses. */
   readonly onCopyMessage: (message: ChatMessage) => Promise<void>;
-  /** Starts a reply addressed to this message — `replyToMessageId` on the send. */
-  readonly onReplyToMessage: (message: ChatMessage) => void;
+  /**
+   * Starts a reply addressed to this message.
+   *
+   * `senderName` rides along because only THIS file can resolve it: a
+   * `ChatMessage` carries no display name (see {@link senderLabel}), and the
+   * widget needs the name for the composer's quote chip and for the send's
+   * `reply` metadata without re-deriving it from state a second way.
+   */
+  readonly onReplyToMessage: (message: ChatMessage, senderName: string) => void;
+  /**
+   * The tenant's live `behaviour.handoffKeywords`, for filtering the bot's
+   * suggested replies — see `readQuickReplies`. A getter rather than an
+   * array because a config publish can change the list under a mounted
+   * widget, and this list does not hear about publishes.
+   */
+  readonly handoffKeywords?: () => readonly string[];
 }
 
 export interface MessageListView {
@@ -276,17 +290,19 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
 
       // Only incoming messages are named. "You" over the customer's own
       // bubble tells them nothing they do not already know, and the bubble is
-      // already aligned and coloured as theirs.
-      const author = isOutgoing(message) ? null : senderLabel(message, state, lastBotName);
-      const showAuthor = author !== null && author !== previousAuthor ? author : null;
-      previousAuthor = author;
+      // already aligned and coloured as theirs. `senderName` (unlike
+      // `showAuthorName` below) is not suppressed for a continued run — the
+      // avatar draws from it on every row; see `MessageRow.update`'s doc.
+      const senderName = isOutgoing(message) ? null : senderLabel(message, state, lastBotName);
+      const showAuthorName = senderName !== null && senderName !== previousAuthor;
+      previousAuthor = senderName;
 
       row.update(message, deriveTickState({
         message,
         localParticipantId,
         deliveredWatermarks: state.deliveredWatermarks,
         readWatermarks: state.readWatermarks,
-      }), showAuthor);
+      }), senderName, showAuthorName);
 
       // Keeps DOM order equal to core's array order without a full rebuild.
       // Core may reorder on a `seq` arriving late (D2), so position is
@@ -317,7 +333,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     const newestMessage = state.messages[state.messages.length - 1];
     const suggestions =
       closedReason === null && newestMessage !== undefined && !isOutgoing(newestMessage)
-        ? readQuickReplies(newestMessage.metadata)
+        ? readQuickReplies(newestMessage.metadata, callbacks.handoffKeywords?.() ?? [])
         : [];
     quickReplies.update(suggestions);
     log.appendChild(quickReplies.node);
@@ -403,10 +419,73 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   return { log, liveRegion, render, setClosure, setStartingNewConversation, setTranscriptEmail };
 }
 
+/**
+ * What a reply-carrying message quotes. Parsed from the metadata bag, never
+ * trusted — see {@link readReplyQuote}.
+ */
+export interface ReplyQuote {
+  readonly senderName: string;
+  readonly excerpt: string;
+}
+
+/**
+ * Longest excerpt a quote block will render.
+ *
+ * The wire contract (agreed with the console team) caps the excerpt at 120
+ * characters, but this record arrives over the socket from another
+ * participant's client, so the cap is enforced again here rather than assumed
+ * — the quote is context for a message, and one that outgrows the message it
+ * sits above has inverted the hierarchy.
+ */
+const MAX_QUOTE_EXCERPT = 160;
+
+/**
+ * `metadata: { kind: 'reply', replyTo: {…} }` → the quote to draw, or `null`.
+ * Never throws — same defensive posture as `readQuickReplies`, for the same
+ * reason: the bag is another client's data.
+ *
+ * Exported for tests: a pure function of the bag, and the half worth
+ * asserting exhaustively.
+ */
+export function readReplyQuote(metadata: unknown): ReplyQuote | null {
+  if (typeof metadata !== 'object' || metadata === null) return null;
+  const bag = metadata as Record<string, unknown>;
+  if (bag['kind'] !== 'reply') return null;
+
+  const ref = bag['replyTo'];
+  if (typeof ref !== 'object' || ref === null) return null;
+  const { senderName, excerpt } = ref as Record<string, unknown>;
+  if (typeof senderName !== 'string' || typeof excerpt !== 'string') return null;
+
+  const name = senderName.trim();
+  const text = excerpt.trim();
+  // Both or nothing: a quote naming nobody, or naming someone who said
+  // nothing, reads as a rendering bug rather than as context.
+  if (name === '' || text === '') return null;
+
+  return {
+    senderName: name,
+    excerpt: text.length > MAX_QUOTE_EXCERPT ? `${text.slice(0, MAX_QUOTE_EXCERPT - 1)}…` : text,
+  };
+}
+
 interface MessageRow {
   readonly node: HTMLElement;
-  /** @param authorName the name to show above the bubble, or `null` for none. */
-  update(message: ChatMessage, tick: MessageTickState | null, authorName: string | null): void;
+  /**
+   * @param senderName who actually wrote this message (agent/bot/system),
+   *   or `null` for the customer's own — the source for the avatar, which
+   *   this file draws on EVERY such row.
+   * @param showAuthorName whether `senderName` should also be printed as
+   *   text above the bubble — only the first bubble of a run from the same
+   *   sender; see the module's note on why the avatar does not share this
+   *   gate.
+   */
+  update(
+    message: ChatMessage,
+    tick: MessageTickState | null,
+    senderName: string | null,
+    showAuthorName: boolean,
+  ): void;
   /** Releases the row's document-level listeners. See `createMessageActions`. */
   destroy(): void;
 }
@@ -417,6 +496,31 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
   // the words, and a name discovered underneath them arrives too late to
   // frame what they just read.
   const author = el('span', { attrs: { class: 'dh-msg-author', hidden: true } });
+  // The per-message identity cue the module header calls out as the gap this
+  // whole file otherwise has: before this, the only place a customer ever
+  // saw WHO they were talking to was the panel's title bar. Present on EVERY
+  // incoming row, not just the first of a run — unlike `author` above, which
+  // is deliberately a heading for the run rather than a per-line label.
+  //
+  // The disc reuses the header avatar's OWN class (`.dh-avatar`, styled off
+  // `--dh-accent` — see ui/styles.ts) so the two read as the same component
+  // family, but never the header's actual content: that disc's letters come
+  // from the merchant's own configured initials, which name the BRAND, not
+  // whoever sent this particular message. The letter here always comes from
+  // `senderName` below — the exact same resolution `senderLabel` already
+  // does for the visible author heading — so an agent's or the bot's own
+  // resolved name is what shows, never a stand-in for it.
+  //
+  // `aria-hidden`: a screen reader already gets this message's sender from
+  // the visible `author` text when this is the first bubble of a run, and
+  // gets nothing extra for a later bubble in the same run today — same as a
+  // sighted reader, who has only the earlier heading and alignment to go on.
+  // This disc is a sighted-only convenience on top of that existing rule,
+  // not a new source of truth, so hiding it from assistive tech announces
+  // nothing twice and withholds nothing that was available before.
+  const avatar = el('span', {
+    attrs: { class: 'dh-avatar dh-msg-avatar', 'aria-hidden': 'true', hidden: true },
+  });
   const body = el('span', { attrs: { class: 'dh-msg-body' } });
   const time = el('time', { attrs: { class: 'dh-msg-time' } });
   const tickGlyph = el('span', { attrs: { class: 'dh-tick', 'aria-hidden': 'true' } });
@@ -436,17 +540,43 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
 
   // Copy and Reply. Built per row because both act on THIS message; the
   // menu's own document listener is released through `destroy` below.
+  // `currentSenderLabel` (kept fresh by `update`) is the resolved name the
+  // reply quote will carry — the customer's own rows resolve to 'You', which
+  // is also what WhatsApp prints when someone quotes themselves.
   const actions = createMessageActions({
     onCopy: () => callbacks.onCopyMessage(current),
-    onReply: () => callbacks.onReplyToMessage(current),
+    onReply: () => callbacks.onReplyToMessage(current, currentSenderLabel),
+  });
+
+  // The quoted message this one replies to, WhatsApp-style: a quiet strip
+  // above the message's own words, name on top. Drawn from the message's OWN
+  // `reply` metadata — the quoted message may have scrolled out of the loaded
+  // page entirely, so the excerpt travels with the reply rather than being
+  // looked up.
+  const quoteName = el('span', { attrs: { class: 'dh-quote-name' } });
+  const quoteText = el('span', { attrs: { class: 'dh-quote-text' } });
+  const quote = el('span', {
+    attrs: { class: 'dh-msg-quote', hidden: true },
+    children: [quoteName, quoteText],
+  });
+
+  // The bubble's own visual — background, padding, shape — lives on this
+  // inner element rather than on `node` itself, so `node` can be a plain row
+  // holding the avatar BESIDE the bubble without painting the avatar into
+  // the bubble's own coloured background.
+  const bubble = el('div', {
+    attrs: { class: 'dh-msg-bubble' },
+    children: [author, quote, body, meta],
   });
 
   const node = el('div', {
     attrs: { class: 'dh-msg' },
-    children: [author, body, meta, actions.node],
+    children: [avatar, bubble, actions.node],
   });
 
   let current = initial;
+  /** The resolved name for this row's sender — see the actions comment above. */
+  let currentSenderLabel = 'You';
   retry.addEventListener('click', () => callbacks.onRetry(current));
 
   let attachmentNode: HTMLElement | null = null;
@@ -456,20 +586,51 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
     destroy() {
       actions.destroy();
     },
-    update(message, tick, authorName) {
+    update(message, tick, senderName, showAuthorName) {
       current = message;
+      currentSenderLabel = senderName ?? 'You';
 
-      // `null` means "do not name this one" — the customer's own messages,
+      // The quote is compared before rewriting, like `body` below, and for
+      // the same reason: an unrelated re-render (a tick change, a typing
+      // flap) must not destroy a text selection inside it.
+      const replyQuote = readReplyQuote(message.metadata);
+      quote.hidden = replyQuote === null;
+      if (replyQuote !== null) {
+        // `textContent` on both — a name and an excerpt are another party's
+        // data, exactly as `author` above says of its own.
+        if (quoteName.textContent !== replyQuote.senderName) {
+          quoteName.textContent = replyQuote.senderName;
+        }
+        if (quoteText.textContent !== replyQuote.excerpt) {
+          quoteText.textContent = replyQuote.excerpt;
+        }
+      }
+
+      // `false` means "do not name this one" — the customer's own messages,
       // and every message after the first in a run from the same sender.
       // Repeating the name on each of five consecutive bot replies is noise
       // that pushes the words themselves off the screen.
-      if (authorName === null) {
+      if (!showAuthorName) {
         author.hidden = true;
         author.textContent = '';
       } else {
         author.hidden = false;
         // `textContent`: a display name is another party's data.
-        if (author.textContent !== authorName) author.textContent = authorName;
+        if (author.textContent !== senderName) author.textContent = senderName ?? '';
+      }
+
+      // The avatar, unlike the heading above, is not gated on being first in
+      // a run — see its construction comment for why every incoming row
+      // carries one.
+      if (senderName === null) {
+        avatar.hidden = true;
+      } else {
+        avatar.hidden = false;
+        // One character: `.dh-avatar`'s CSS uppercases it, matching the
+        // header avatar's own convention of leaving case to CSS rather than
+        // baking it into the string (ui/styles.ts).
+        const letter = senderName.trim().slice(0, 1);
+        if (avatar.textContent !== letter) avatar.textContent = letter;
       }
 
       node.setAttribute('data-mine', String(isOutgoing(message)));
@@ -496,7 +657,7 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
 
       if (attachmentNode === null && message.attachment !== undefined) {
         attachmentNode = renderAttachment(message.attachment);
-        node.insertBefore(attachmentNode, meta);
+        bubble.insertBefore(attachmentNode, meta);
       }
 
       const presentation = tick === null ? null : TICK_PRESENTATION[tick];

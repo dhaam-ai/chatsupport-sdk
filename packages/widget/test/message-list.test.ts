@@ -3,9 +3,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createInitialChatState } from '@dhaam-ccrm/core';
-import type { AttachmentMetadata, ChatMessage, ChatState } from '@dhaam-ccrm/core';
+import type { AttachmentMetadata, ChatMessage, ChatSession, ChatState } from '@dhaam-ccrm/core';
 
-import { createMessageList } from '../src/ui/message-list.js';
+import { createMessageList, readReplyQuote } from '../src/ui/message-list.js';
 
 const ME = 'cus_1';
 const AGENT = 'agt_9';
@@ -27,6 +27,20 @@ function state(overrides: Partial<ChatState> = {}): ChatState {
   return { ...createInitialChatState(), ...overrides };
 }
 
+function session(overrides: Partial<ChatSession> = {}): ChatSession {
+  return {
+    id: 's1',
+    status: 'ASSIGNED',
+    mode: 'HUMAN',
+    createdAt: '2026-08-19T09:00:00.000Z',
+    closedAt: null,
+    assignedAgent: null,
+    customer: null,
+    ticket: null,
+    ...overrides,
+  };
+}
+
 function build() {
   const onRetry = vi.fn();
   const onLoadOlder = vi.fn();
@@ -34,7 +48,7 @@ function build() {
   const onEmailTranscript = vi.fn(async () => undefined);
   const onQuickReply = vi.fn();
   const onCopyMessage = vi.fn(async (_message: ChatMessage) => undefined);
-  const onReplyToMessage = vi.fn((_message: ChatMessage) => undefined);
+  const onReplyToMessage = vi.fn((_message: ChatMessage, _senderName: string) => undefined);
   const view = createMessageList({
     onRetry,
     onLoadOlder,
@@ -942,34 +956,133 @@ describe('per-message actions', () => {
     expect(view.log.querySelector('.dh-msg-more')!.getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('copies the message it belongs to, then closes', async () => {
-    const { view, onCopyMessage } = render1();
-    const menu = openMenu(view);
-    menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!.click();
+  // The reported bug: tapping Copy gave no visible feedback at all — the menu
+  // closed immediately and the outcome went to a screen-reader-only region.
+  // The confirmation is now the label itself, in place, in the open menu.
+  it('copies the message it belongs to, confirms in place, then closes on its own', async () => {
+    vi.useFakeTimers();
+    try {
+      const { view, onCopyMessage } = render1();
+      const menu = openMenu(view);
+      const copyButton = menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!;
+      copyButton.click();
 
-    expect(onCopyMessage).toHaveBeenCalledTimes(1);
-    expect(onCopyMessage.mock.calls[0]![0]).toMatchObject({ content: 'where is my order' });
-    expect(menu.hidden).toBe(true);
+      expect(onCopyMessage).toHaveBeenCalledTimes(1);
+      expect(onCopyMessage.mock.calls[0]![0]).toMatchObject({ content: 'where is my order' });
+
+      // Visible confirmation: the menu stays open and the label says so.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(menu.hidden).toBe(false);
+      expect(copyButton.querySelector('span')?.textContent).toBe('Copied');
+      expect(copyButton.getAttribute('data-outcome')).toBe('ok');
+
+      // …and the menu retires itself, restored for the next open.
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(menu.hidden).toBe(true);
+      expect(copyButton.querySelector('span')?.textContent).toBe('Copy');
+      expect(copyButton.disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('replies to the message it belongs to, then closes', () => {
+  it('replies to the message it belongs to, naming its sender, then closes', () => {
     const { view, onReplyToMessage } = render1();
     const menu = openMenu(view);
     menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[1]!.click();
 
     expect(onReplyToMessage).toHaveBeenCalledTimes(1);
     expect(onReplyToMessage.mock.calls[0]![0]).toMatchObject({ content: 'where is my order' });
+    // The rendered message is the customer's own, so the quote names 'You' —
+    // the same word WhatsApp prints when someone quotes themselves.
+    expect(onReplyToMessage.mock.calls[0]![1]).toBe('You');
     expect(menu.hidden).toBe(true);
   });
 
+  it("hands Reply the AGENT's resolved name on an incoming message", () => {
+    const { view, onReplyToMessage } = build();
+    view.render(
+      state({
+        session: session({
+          assignedAgent: { participantId: AGENT, displayName: 'Priya', email: null, avatarUrl: null },
+        }),
+        messages: [message({ id: 'm2', senderId: AGENT, senderType: 'AGENT' })],
+      }),
+      ME,
+    );
+    view.log.querySelector<HTMLButtonElement>('.dh-msg-more')!.click();
+    view.log.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[1]!.click();
+
+    expect(onReplyToMessage.mock.calls[0]![1]).toBe('Priya');
+  });
+
   // Clipboard access is genuinely refused in some embedded webviews, so the
-  // rejection path is real. It must not surface as an unhandled rejection.
-  it('survives a clipboard the browser refuses', async () => {
-    const { view, onCopyMessage } = render1();
-    onCopyMessage.mockRejectedValueOnce(new Error('denied'));
-    const menu = openMenu(view);
-    expect(() => menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!.click()).not.toThrow();
-    await new Promise((r) => setTimeout(r, 0));
+  // rejection path is real. It must not surface as an unhandled rejection —
+  // and unlike before, it must SAY so where the user is looking.
+  it('says so, in place, when the clipboard refuses', async () => {
+    vi.useFakeTimers();
+    try {
+      const { view, onCopyMessage } = render1();
+      onCopyMessage.mockRejectedValueOnce(new Error('denied'));
+      const menu = openMenu(view);
+      const copyButton = menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!;
+      expect(() => copyButton.click()).not.toThrow();
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(copyButton.querySelector('span')?.textContent).toBe("Couldn't copy");
+      expect(copyButton.getAttribute('data-outcome')).toBe('failed');
+
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(menu.hidden).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The menu closed while the clipboard promise was still PENDING: the
+  // outcome must not strand "Copied" on the closed menu for the next open.
+  it('drops the visual outcome when the menu closed before the clipboard settled', async () => {
+    vi.useFakeTimers();
+    try {
+      const { view, onCopyMessage } = render1();
+      let settle!: () => void;
+      onCopyMessage.mockReturnValueOnce(new Promise((r) => { settle = () => r(undefined); }));
+      const menu = openMenu(view);
+      const copyButton = menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!;
+      copyButton.click();
+
+      document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(menu.hidden).toBe(true);
+
+      settle();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(copyButton.querySelector('span')?.textContent).toBe('Copy');
+      expect(copyButton.disabled).toBe(false);
+      expect(copyButton.getAttribute('data-outcome')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // An outside click mid-confirmation closes the menu; the pending auto-close
+  // must not fire against it later, and a re-open must offer a plain Copy.
+  it('resets a pending confirmation when closed from outside', async () => {
+    vi.useFakeTimers();
+    try {
+      const { view } = render1();
+      const menu = openMenu(view);
+      const copyButton = menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!;
+      copyButton.click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(copyButton.querySelector('span')?.textContent).toBe('Copied');
+
+      document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(menu.hidden).toBe(true);
+      expect(copyButton.querySelector('span')?.textContent).toBe('Copy');
+      await vi.advanceTimersByTimeAsync(1500); // the cleared timer must not throw
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('closes on a click outside it', () => {
@@ -1004,5 +1117,213 @@ describe('per-message actions', () => {
     expect(() =>
       document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })),
     ).not.toThrow();
+  });
+});
+
+describe('the reply quote in a bubble', () => {
+  const replyMetadata = (overrides: Record<string, unknown> = {}) => ({
+    kind: 'reply',
+    replyTo: {
+      messageId: 'm0',
+      excerpt: 'the fries were cold',
+      senderName: 'You',
+      ...overrides,
+    },
+  });
+
+  it('renders sender name and excerpt above the message text on an incoming reply', () => {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({
+            id: 'm2',
+            senderId: AGENT,
+            senderType: 'AGENT',
+            content: 'Sorry about that — refunding now.',
+            metadata: replyMetadata(),
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    const quote = view.log.querySelector<HTMLElement>('.dh-msg-quote')!;
+    expect(quote.hidden).toBe(false);
+    expect(quote.querySelector('.dh-quote-name')?.textContent).toBe('You');
+    expect(quote.querySelector('.dh-quote-text')?.textContent).toBe('the fries were cold');
+    // The quote is CONTEXT: it sits above the message's own words, inside the
+    // same bubble.
+    const bubble = view.log.querySelector('.dh-msg-bubble')!;
+    expect(bubble.textContent).toContain('Sorry about that');
+    expect(quote.compareDocumentPosition(bubble.querySelector('.dh-msg-body')!))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("renders the quote on the customer's own sent bubble too", () => {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({
+            content: 'thanks!',
+            metadata: replyMetadata({ senderName: 'Priya', excerpt: 'Refunded.' }),
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    const row = view.log.querySelector<HTMLElement>('.dh-msg')!;
+    expect(row.getAttribute('data-mine')).toBe('true');
+    expect(row.querySelector<HTMLElement>('.dh-msg-quote')?.hidden).toBe(false);
+    expect(row.querySelector('.dh-quote-name')?.textContent).toBe('Priya');
+  });
+
+  it('draws no quote on a message whose metadata is not a reply', () => {
+    const { view } = build();
+    view.render(
+      state({ messages: [message({ metadata: { kind: 'pre_chat', answers: [] } })] }),
+      ME,
+    );
+    expect(view.log.querySelector<HTMLElement>('.dh-msg-quote')?.hidden).toBe(true);
+  });
+});
+
+// The parser is the half that faces another client's data, so it is the half
+// asserted exhaustively — same split as `readQuickReplies`.
+describe('readReplyQuote', () => {
+  const good = {
+    kind: 'reply',
+    replyTo: { messageId: 'm0', excerpt: 'hello', senderName: 'Priya' },
+  };
+
+  it('reads the agreed wire shape', () => {
+    expect(readReplyQuote(good)).toEqual({ senderName: 'Priya', excerpt: 'hello' });
+  });
+
+  it.each([
+    ['not an object', 'reply'],
+    ['null', null],
+    ['wrong kind', { ...good, kind: 'csat' }],
+    ['missing replyTo', { kind: 'reply' }],
+    ['replyTo not an object', { kind: 'reply', replyTo: 'm0' }],
+    ['non-string excerpt', { kind: 'reply', replyTo: { ...good.replyTo, excerpt: 7 } }],
+    ['non-string senderName', { kind: 'reply', replyTo: { ...good.replyTo, senderName: null } }],
+    ['blank excerpt', { kind: 'reply', replyTo: { ...good.replyTo, excerpt: '   ' } }],
+    ['blank senderName', { kind: 'reply', replyTo: { ...good.replyTo, senderName: '' } }],
+  ])('refuses %s', (_label, bag) => {
+    expect(readReplyQuote(bag)).toBeNull();
+  });
+
+  it('re-caps an excerpt that ignored the wire limit', () => {
+    const oversized = {
+      kind: 'reply',
+      replyTo: { messageId: 'm0', excerpt: 'x'.repeat(500), senderName: 'Priya' },
+    };
+    const quote = readReplyQuote(oversized)!;
+    expect(quote.excerpt.length).toBe(160);
+    expect(quote.excerpt.endsWith('…')).toBe(true);
+  });
+});
+
+describe('the sender avatar', () => {
+  // The disc lives inside the bubble's own row wrapper, so it is found by
+  // class regardless of nesting; there is exactly one per `.dh-msg`.
+  const avatarOf = (row: Element | null) => row?.querySelector<HTMLElement>('.dh-msg-avatar') ?? null;
+
+  it("draws no avatar on the customer's own message — no reminder needed of who wrote it", () => {
+    const { view } = build();
+    view.render(state({ messages: [message()] }), ME);
+
+    const avatar = avatarOf(view.log.querySelector('.dh-msg'));
+    expect(avatar).not.toBeNull();
+    expect(avatar?.hidden).toBe(true);
+  });
+
+  it('appears on EVERY incoming message, not just the first of a run — unlike the name heading above it', () => {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({ id: 'a', senderId: AGENT, senderType: 'AGENT', content: 'hi there' }),
+          message({ id: 'b', senderId: AGENT, senderType: 'AGENT', content: 'still here' }),
+        ],
+      }),
+      ME,
+    );
+
+    const rows = [...view.log.querySelectorAll('.dh-msg')];
+    expect(rows).toHaveLength(2);
+    expect(avatarOf(rows[0]!)?.hidden).toBe(false);
+    expect(avatarOf(rows[1]!)?.hidden).toBe(false);
+    // Confirms this fixture really does exercise the "continued run" path —
+    // the name heading is suppressed on the second bubble, the avatar is not.
+    expect(rows[1]!.querySelector('.dh-msg-author')?.textContent).toBe('');
+  });
+
+  it("letters the avatar with the AGENT actually assigned, never a generic placeholder", () => {
+    const { view } = build();
+    view.render(
+      state({
+        session: session({ assignedAgent: { participantId: AGENT, displayName: 'Sarah', email: null, avatarUrl: null } }),
+        messages: [message({ senderId: AGENT, senderType: 'AGENT' })],
+      }),
+      ME,
+    );
+
+    expect(avatarOf(view.log.querySelector('.dh-msg'))?.textContent).toBe('S');
+  });
+
+  it("letters the avatar with the tenant's own bot name, not a hardcoded word", () => {
+    const { view } = build();
+    view.render(
+      state({
+        session: session({ handledBy: { kind: 'BOT', id: 'bot_1', displayName: 'Kai' } }),
+        messages: [message({ senderId: 'bot_1', senderType: 'BOT' })],
+      }),
+      ME,
+    );
+
+    expect(avatarOf(view.log.querySelector('.dh-msg'))?.textContent).toBe('K');
+  });
+
+  it('falls back to the generic word\'s own initial when nothing more specific has resolved', () => {
+    const cases: Array<[Partial<ChatMessage>, string]> = [
+      [{ senderId: AGENT, senderType: 'AGENT' }, 'A'], // no assignedAgent, no handledBy
+      [{ senderId: 'sys', senderType: 'SYSTEM' }, 'S'],
+    ];
+
+    for (const [messageOverrides, expected] of cases) {
+      document.body.innerHTML = '';
+      const { view } = build();
+      view.render(state({ messages: [message(messageOverrides)] }), ME);
+      expect(avatarOf(view.log.querySelector('.dh-msg'))?.textContent).toBe(expected);
+    }
+  });
+
+  it('is decorative — a screen reader already gets the sender from the visible name heading', () => {
+    const { view } = build();
+    view.render(
+      state({ messages: [message({ senderId: AGENT, senderType: 'AGENT' })] }),
+      ME,
+    );
+
+    expect(avatarOf(view.log.querySelector('.dh-msg'))?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('hides again once the row it belongs to goes back to being the customer\'s own', () => {
+    // Not a realistic transition for one message id in production, but this
+    // proves the avatar is patched from the current message on every render
+    // rather than fixed at row creation.
+    const { view } = build();
+    view.render(
+      state({ messages: [message({ id: 'a', senderId: AGENT, senderType: 'AGENT' })] }),
+      ME,
+    );
+    expect(avatarOf(view.log.querySelector('.dh-msg'))?.hidden).toBe(false);
+
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    expect(avatarOf(view.log.querySelector('.dh-msg'))?.hidden).toBe(true);
   });
 });

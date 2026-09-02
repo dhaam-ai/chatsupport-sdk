@@ -84,6 +84,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
       closeSession: async () => {
         throw readBackFailure();
       },
+      submitCsat: neverCalled,
     });
     const errors: ChatError[] = [];
     h.client.on('error', (error) => errors.push(error));
@@ -109,6 +110,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
           { sessionMutationApplied: true },
         );
       },
+      submitCsat: neverCalled,
     });
 
     await expect(h.client.closeSession()).rejects.toThrow();
@@ -123,6 +125,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
       closeSession: async () => {
         throw readBackFailure();
       },
+      submitCsat: neverCalled,
     });
 
     await expect(h.client.closeSession()).rejects.toThrow();
@@ -139,6 +142,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
       closeSession: async () => {
         throw new Error('connection refused');
       },
+      submitCsat: neverCalled,
     });
     const errors: ChatError[] = [];
     h.client.on('error', (error) => errors.push(error));
@@ -161,7 +165,11 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
       customer: null,
       ticket: null,
     };
-    const h = await connected({ reopenSession: neverCalled, closeSession: async () => closed });
+    const h = await connected({
+      reopenSession: neverCalled,
+      closeSession: async () => closed,
+      submitCsat: neverCalled,
+    });
 
     await h.client.closeSession();
     await tick();
@@ -178,6 +186,7 @@ describe('reopenSession — same window, same handling', () => {
         throw readBackFailure();
       },
       closeSession: neverCalled,
+      submitCsat: neverCalled,
     });
     const errors: ChatError[] = [];
     h.client.on('error', (error) => errors.push(error));
