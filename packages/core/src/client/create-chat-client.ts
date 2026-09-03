@@ -1933,6 +1933,17 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       // POST itself — see `SessionActions.submitCsat`'s own doc.
       return config.sessionActions.submitCsat(sessionId, rating, comment);
     },
+    getCsat: async (sessionId) => {
+      if (config.sessionActions === undefined) {
+        throw new ChatClientConfigError(
+          'getCsat() requires config.sessionActions to be supplied to createChatClient().',
+        );
+      }
+      // Read-only, so nothing here commits to state — see `submitCsat` above,
+      // and `SessionActions.getCsat`'s own doc for why the answer belongs to
+      // the server rather than to a caller's in-process flag.
+      return config.sessionActions.getCsat(sessionId);
+    },
     listSessions: async (query): Promise<readonly ChatSessionSummary[]> => {
       if (config.sessionSummarySource === undefined) {
         throw new ChatClientConfigError(

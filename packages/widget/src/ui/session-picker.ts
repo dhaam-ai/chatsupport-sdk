@@ -32,10 +32,11 @@
 // in wording but never in the underlying facts. Same split message-list.ts
 // uses for a tick's glyph vs its `.dh-sr` text.
 
-import type { ChatStatus, HandledBy } from '@dhaam-ccrm/core';
+import type { HandledBy } from '@dhaam-ccrm/core';
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 
 import { ICONS, el, icon } from './dom.js';
+import { statusLabel } from './session-status.js';
 
 export interface SessionPickerCallbacks {
   /** The customer picked a row — including a terminal one, which reactivates it server-side. */
@@ -43,20 +44,6 @@ export interface SessionPickerCallbacks {
   /** The customer asked for a fresh conversation instead of any listed one. */
   readonly onStartNew: () => void;
 }
-
-/**
- * Exported so `ui/messages-screen.ts` renders the exact same words for the
- * exact same statuses — see that module's header for why a second status
- * vocabulary is precisely the kind of drift this avoids.
- */
-export const STATUS_LABEL: Record<ChatStatus, string> = {
-  OPEN: 'Open',
-  WAITING_FOR_AGENT: 'Waiting for an agent',
-  ASSIGNED: 'Assigned',
-  CLOSED: 'Closed',
-  RESOLVED: 'Resolved',
-  ON_HOLD: 'On hold',
-};
 
 const RELATIVE_UNITS: ReadonlyArray<readonly [Intl.RelativeTimeFormatUnit, number]> = [
   ['year', 365 * 24 * 60 * 60 * 1000],
@@ -99,7 +86,7 @@ function handledByText(handledBy: HandledBy | undefined): string {
 
 /** The one spoken account of a row — see the module header on why this is never derived from the visible spans. */
 function describeRow(summary: ChatSessionSummary, isCurrent: boolean): string {
-  const parts = [STATUS_LABEL[summary.status]];
+  const parts = [statusLabel(summary.status)];
   if (isCurrent) parts.push('current conversation');
   const whenIso = summary.lastMessageAt ?? summary.createdAt;
   const relative = relativeTimeLabel(whenIso);
@@ -150,7 +137,7 @@ function createSessionRow(callbacks: SessionPickerCallbacks): SessionRow {
       if (isCurrent) button.setAttribute('aria-current', 'true');
       else button.removeAttribute('aria-current');
 
-      status.textContent = STATUS_LABEL[summary.status];
+      status.textContent = statusLabel(summary.status);
 
       const whenIso = summary.lastMessageAt ?? summary.createdAt;
       if (time.getAttribute('datetime') !== whenIso) time.setAttribute('datetime', whenIso);

@@ -32,6 +32,7 @@ import type {
   ChatEventName,
   ChatSession,
   ChatState,
+  CsatStatus,
   CsatSubmission,
   SendAttachmentOptions,
   SendMessageOptions,
@@ -234,6 +235,11 @@ export function createConformanceChatClient(initial?: Partial<ChatState>): Confo
       rating: number,
       comment?: string,
     ) => Promise<CsatSubmission>,
+    // Read-only, and answerable without a service: a harness with no CSAT
+    // store has genuinely never recorded a rating, so `{rated: false}` is the
+    // truth here rather than a stub — unlike `submitCsat`, which would have to
+    // invent a receipt.
+    getCsat: async (_sessionId: string): Promise<CsatStatus> => ({ rated: false }),
 
     sendMessage: async (_content: string, _opts?: SendMessageOptions) => {},
 

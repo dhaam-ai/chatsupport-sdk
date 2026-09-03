@@ -16,6 +16,7 @@ import type { ConnectionAckPayload, SessionSnapshot } from '../protocol/index.js
 import { MemoryStorageAdapter } from '../storage/index.js';
 import { StubSocketFactory } from '../transport/index.js';
 import { createChatClient } from './create-chat-client.js';
+import { ChatClientConfigError } from './types.js';
 import type { ChatClientConfig, SessionActions } from './types.js';
 import type { ChatError, ChatSession } from '../state/index.js';
 
@@ -85,6 +86,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
         throw readBackFailure();
       },
       submitCsat: neverCalled,
+      getCsat: neverCalled,
     });
     const errors: ChatError[] = [];
     h.client.on('error', (error) => errors.push(error));
@@ -111,6 +113,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
         );
       },
       submitCsat: neverCalled,
+      getCsat: neverCalled,
     });
 
     await expect(h.client.closeSession()).rejects.toThrow();
@@ -126,6 +129,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
         throw readBackFailure();
       },
       submitCsat: neverCalled,
+      getCsat: neverCalled,
     });
 
     await expect(h.client.closeSession()).rejects.toThrow();
@@ -143,6 +147,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
         throw new Error('connection refused');
       },
       submitCsat: neverCalled,
+      getCsat: neverCalled,
     });
     const errors: ChatError[] = [];
     h.client.on('error', (error) => errors.push(error));
@@ -169,6 +174,7 @@ describe('closeSession — the mutation landed but the read-back did not', () =>
       reopenSession: neverCalled,
       closeSession: async () => closed,
       submitCsat: neverCalled,
+      getCsat: neverCalled,
     });
 
     await h.client.closeSession();
@@ -187,6 +193,7 @@ describe('reopenSession — same window, same handling', () => {
       },
       closeSession: neverCalled,
       submitCsat: neverCalled,
+      getCsat: neverCalled,
     });
     const errors: ChatError[] = [];
     h.client.on('error', (error) => errors.push(error));
@@ -198,5 +205,97 @@ describe('reopenSession — same window, same handling', () => {
 
     expect(errors).toHaveLength(1);
     expect(h.client.getState().lastError?.message).toContain('could not be read back');
+  });
+});
+
+
+// ── `getCsat` — the read half, and why core owns none of the answer ────────
+//
+// `submitCsat` is an UPSERT server-side, so a binding whose only memory of
+// "already rated" is its own in-process flag re-offers the survey after a
+// reload and silently overwrites the score. This is the call that lets it ask
+// instead. It is REST-only and non-mutating: it must not touch
+// `ChatState.session`, and a caller has to be able to tell "not rated"
+// (a resolved `{rated: false}`) from "I could not find out" (a rejection),
+// because those lead to opposite decisions about showing a survey.
+describe('getCsat', () => {
+  it('delegates to the adapter and returns its answer untouched', async () => {
+    const asked: string[] = [];
+    const h = await connected({
+      reopenSession: neverCalled,
+      closeSession: neverCalled,
+      submitCsat: neverCalled,
+      getCsat: async (sessionId) => {
+        asked.push(sessionId);
+        return { rated: true, rating: 5, comment: 'spot on', submittedAt: '2026-08-19T09:30:00.000Z' };
+      },
+    });
+
+    await expect(h.client.getCsat('session_1')).resolves.toEqual({
+      rated: true,
+      rating: 5,
+      comment: 'spot on',
+      submittedAt: '2026-08-19T09:30:00.000Z',
+    });
+    expect(asked).toEqual(['session_1']);
+  });
+
+  it('answers for a session that is NOT the current one — the list case', async () => {
+    // Unlike `closeSession`, this takes an explicit id and never consults
+    // `ChatState.session`, so a binding can ask about any conversation the
+    // customer owns without switching into it.
+    const h = await connected({
+      reopenSession: neverCalled,
+      closeSession: neverCalled,
+      submitCsat: neverCalled,
+      getCsat: async () => ({ rated: false }),
+    });
+
+    await expect(h.client.getCsat('some_other_session')).resolves.toEqual({ rated: false });
+  });
+
+  it('leaves ChatState.session completely alone', async () => {
+    const h = await connected({
+      reopenSession: neverCalled,
+      closeSession: neverCalled,
+      submitCsat: neverCalled,
+      getCsat: async () => ({ rated: true, rating: 1, comment: null }),
+    });
+    const before = h.client.getState().session;
+
+    await h.client.getCsat('session_1');
+
+    expect(h.client.getState().session).toBe(before);
+  });
+
+  it('propagates the adapter\'s rejection rather than folding it into "unrated"', async () => {
+    const h = await connected({
+      reopenSession: neverCalled,
+      closeSession: neverCalled,
+      submitCsat: neverCalled,
+      getCsat: async () => {
+        throw new Error('lookup failed');
+      },
+    });
+
+    await expect(h.client.getCsat('session_1')).rejects.toThrow('lookup failed');
+  });
+
+  it('throws ChatClientConfigError when no sessionActions were supplied', async () => {
+    const sockets = new StubSocketFactory();
+    const timers = new ManualTimers();
+    const client = createChatClient({
+      publishableKey: 'dhp' + '_test_actions1',
+      getToken: async () => 'tok',
+      wsUrl: 'wss://example.test/chat-services/v2/ws',
+      storage: new MemoryStorageAdapter(),
+      localSender: { senderId: CUSTOMER_ID, senderType: 'CUSTOMER' },
+      history: { listMessages: async () => ({ messages: [], hasMore: false }) },
+      webSocketFactory: sockets.create,
+      schedule: timers.schedule,
+      now: timers.clock,
+    });
+
+    await expect(client.getCsat('session_1')).rejects.toBeInstanceOf(ChatClientConfigError);
   });
 });

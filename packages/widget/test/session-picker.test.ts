@@ -64,7 +64,11 @@ describe('status labels — every real backend status renders distinctly', () =>
   const cases: Array<[ChatStatus, string]> = [
     ['OPEN', 'Open'],
     ['WAITING_FOR_AGENT', 'Waiting for an agent'],
-    ['ASSIGNED', 'Assigned'],
+    // NOT "Assigned": that is a queue fact about which agent owns the row,
+    // not something the customer can act on. See ui/session-status.ts, which
+    // now owns this vocabulary for the picker, the Messages list AND Home's
+    // pill so the three cannot drift.
+    ['ASSIGNED', 'With an agent'],
     ['CLOSED', 'Closed'],
     ['RESOLVED', 'Resolved'],
     ['ON_HOLD', 'On hold'],
@@ -111,14 +115,14 @@ describe('createPreChatScreen', () => {
 
     const row = screen.node.querySelector<HTMLButtonElement>('.dh-session-row');
     expect(row).not.toBeNull();
-    expect(row?.querySelector('.dh-session-status')?.textContent).toBe('Assigned');
+    expect(row?.querySelector('.dh-session-status')?.textContent).toBe('With an agent');
     expect(row?.querySelector('.dh-session-preview')?.textContent).toBe('Where is my order?');
     expect(row?.querySelector('.dh-session-handler')?.textContent).toBe('with Ada');
     expect(row?.querySelector('.dh-session-unread')?.textContent).toBe('3 unread');
     // The accessible name is built from the same fields, independently of
     // the visible spans' exact wording — see session-picker.ts's header.
     const label = row?.getAttribute('aria-label') ?? '';
-    expect(label).toContain('Assigned');
+    expect(label).toContain('With an agent');
     expect(label).toContain('with Ada');
     expect(label).toContain('Where is my order?');
     expect(label).toContain('3 unread messages');

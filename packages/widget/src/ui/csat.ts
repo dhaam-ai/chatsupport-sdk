@@ -26,6 +26,16 @@
 // is worse than no survey, and this module has no business knowing chat-service's
 // URL shape.
 
+// ── Two cards, one factory: ask, or show what was already answered ─────────
+//
+// `POST /chat/sessions/{id}/csat` is an UPSERT server-side, so a survey shown
+// over an already-rated session does not fail — it quietly replaces the score
+// the customer gave. The widget therefore asks the server first
+// (`ChatClient.getCsat`) and, when a rating comes back, builds this card in its
+// LOCKED form: filled in, read-only, and with no submit control at all. That
+// is the only shape in which a rated session can be shown its rating without
+// also handing the customer a way to overwrite it.
+
 import { el } from './dom.js';
 import { createStatusLine, createSubmitButton, submitOnce } from './forms.js';
 
@@ -44,6 +54,24 @@ export interface CsatCallbacks {
   readonly onError: (error: unknown) => void;
 }
 
+/**
+ * A rating this session ALREADY carries, read back from the server
+ * (`ChatClient.getCsat`).
+ *
+ * Passing it builds the card in its locked, read-only form: the score is
+ * filled in, nothing is clickable, and there is no submit — because
+ * `POST /chat/sessions/{id}/csat` is an UPSERT, so a second survey over a
+ * rated session does not fail loudly, it silently overwrites the score the
+ * customer already gave. Withholding the controls is the only place that can
+ * be prevented in this module.
+ */
+export interface CsatExistingRating {
+  /** 1-5. */
+  readonly rating: number;
+  /** `null` when the customer left none. */
+  readonly comment: string | null;
+}
+
 export interface CsatView {
   readonly node: HTMLElement;
   /** Renders the "thanks" state directly, for a thread already rated. */
@@ -51,8 +79,14 @@ export interface CsatView {
   destroy(): void;
 }
 
-export function createCsatSurvey(style: CsatStyle, callbacks: CsatCallbacks): CsatView {
+export function createCsatSurvey(
+  style: CsatStyle,
+  callbacks: CsatCallbacks,
+  existing?: CsatExistingRating,
+): CsatView {
   let score = 0;
+  /** Read-only: this session was already rated. See {@link CsatExistingRating}. */
+  const locked = existing !== undefined;
 
   const heading = el('h3', {
     attrs: { class: 'dh-form-heading', id: 'dh-csat-heading' },
@@ -127,9 +161,14 @@ export function createCsatSurvey(style: CsatStyle, callbacks: CsatCallbacks): Cs
     text: 'Thanks for your feedback!',
   });
 
+  // The comment the customer left last time, shown as text rather than in the
+  // textarea above: a filled-in `<textarea>` reads as something still being
+  // edited, which is the opposite of what a locked card is saying.
+  const lockedComment = el('p', { attrs: { class: 'dh-csat-your-comment', hidden: true } });
+
   const form = el('form', {
     attrs: { class: 'dh-form dh-csat', novalidate: true },
-    children: [heading, group, scaleLabel, commentRow],
+    children: [heading, group, scaleLabel, lockedComment, commentRow],
     on: {
       submit: (event) => {
         event.preventDefault();
@@ -152,15 +191,20 @@ export function createCsatSurvey(style: CsatStyle, callbacks: CsatCallbacks): Cs
       if (glyph !== null && style === 'stars') glyph.textContent = lit ? STAR_FILLED : STAR_EMPTY;
     });
     scaleLabel.textContent = score === 0 ? '' : (LABELS[score - 1] ?? '');
-    commentRow.hidden = score === 0;
+    // Never in the locked card: `commentRow` carries the submit button, and a
+    // rated session must have no way to send a second rating at all — not a
+    // disabled button, which still invites the press.
+    commentRow.hidden = locked || score === 0;
   }
 
   function choose(value: number): void {
+    if (locked) return;
     score = value;
     paint();
   }
 
   function onKeydown(event: KeyboardEvent, index: number): void {
+    if (locked) return;
     const delta = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
     if (delta === 0) return;
     event.preventDefault();
@@ -174,7 +218,7 @@ export function createCsatSurvey(style: CsatStyle, callbacks: CsatCallbacks): Cs
   }
 
   async function run(): Promise<void> {
-    if (score === 0) return;
+    if (locked || score === 0) return;
     const text = comment.value.trim();
     const sent = await submitOnce(
       () => callbacks.onSubmit(score, text === '' ? undefined : text),
@@ -190,6 +234,32 @@ export function createCsatSurvey(style: CsatStyle, callbacks: CsatCallbacks): Cs
 
   function markSubmitted(): void {
     form.hidden = true;
+    thanks.hidden = false;
+  }
+
+  if (existing !== undefined) {
+    // ── The locked, already-rated card ────────────────────────────────────
+    //
+    // `aria-readonly` on the group rather than `disabled` on the options: the
+    // score is the whole point of this card, and a disabled control is skipped
+    // by some screen-reader browse modes — locking the rating must not make it
+    // unreadable. `aria-disabled` on each option says the same thing to a user
+    // who lands on one anyway, and `choose`/`onKeydown` above are the actual
+    // enforcement.
+    score = existing.rating;
+    node.setAttribute('data-locked', 'true');
+    heading.textContent = 'Your rating';
+    group.setAttribute('aria-readonly', 'true');
+    for (const option of options) option.setAttribute('aria-disabled', 'true');
+    const previous = existing.comment ?? '';
+    lockedComment.textContent = previous;
+    lockedComment.hidden = previous.trim() === '';
+    // The same acknowledgement a just-submitted rating gets, for the same
+    // reason — the customer needs to see that the score on screen is one the
+    // server holds, not one they are being asked for again. Shown alongside
+    // the (locked) scale rather than instead of it, which is why this is not
+    // `markSubmitted()`: that hides the form, and hiding the form here would
+    // hide the very rating this card exists to show.
     thanks.hidden = false;
   }
 

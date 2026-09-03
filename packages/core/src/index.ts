@@ -110,6 +110,7 @@ export type {
   AuthToken,
   ChatClient,
   ChatClientConfig,
+  CsatStatus,
   CsatSubmission,
   LocalSender,
   MessageHistorySource,

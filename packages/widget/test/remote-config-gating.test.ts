@@ -1126,18 +1126,21 @@ describe('the conversation menu', () => {
     expect(labels()).not.toContain('Privacy');
   });
 
-  it('reports the mute state as a checkbox, and flips it', async () => {
+  // The label names the ACTION and flips with the state — see header-menu.ts's
+  // `setMuted` for why that ruled out `menuitemcheckbox`/`aria-checked`, and
+  // header-menu.test.ts for the a11y contract that replaced them.
+  it('offers Mute while sound is on and Unmute once it is off', async () => {
     stubFetch(published());
     mount(config());
     await settle();
     openMenu();
 
     const mute = find<HTMLElement>('.dh-hmenu-item')!;
-    expect(mute.getAttribute('role')).toBe('menuitemcheckbox');
-    expect(mute.getAttribute('aria-checked')).toBe('false');
+    expect(mute.getAttribute('role')).toBe('menuitem');
+    expect(mute.textContent).toBe('Mute notifications');
     mute.click();
 
     openMenu();
-    expect(find<HTMLElement>('.dh-hmenu-item')?.getAttribute('aria-checked')).toBe('true');
+    expect(find<HTMLElement>('.dh-hmenu-item')?.textContent).toBe('Unmute notifications');
   });
 });

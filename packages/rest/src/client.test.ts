@@ -800,6 +800,119 @@ describe('session actions — submitCsat', () => {
   });
 });
 
+describe('session actions — getCsat', () => {
+  /** The route's own two shapes: an answered rating, and an honest "not yet". */
+  const rated = (overrides: Record<string, unknown> = {}) => ({
+    success: true,
+    data: {
+      rated: true,
+      rating: 4,
+      comment: 'quick and clear',
+      submittedAt: '2026-08-19T09:30:00.000Z',
+      ...overrides,
+    },
+  });
+
+  it('is a GET on the same path the POST uses, in one round trip', async () => {
+    const h = harness(() => jsonResponse(rated()));
+
+    await createSessionActions(h.client).getCsat('s1');
+
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]?.init.method).toBe('GET');
+    expect(h.calls[0]?.url.pathname).toBe('/chat-services/api/v1/chat/sessions/s1/csat');
+  });
+
+  it('returns the stored rating', async () => {
+    const h = harness(() => jsonResponse(rated()));
+
+    await expect(createSessionActions(h.client).getCsat('s1')).resolves.toEqual({
+      rated: true,
+      rating: 4,
+      comment: 'quick and clear',
+      submittedAt: '2026-08-19T09:30:00.000Z',
+    });
+  });
+
+  it('normalises a missing comment to null — the route documents `string | null`', async () => {
+    const h = harness(() => jsonResponse(rated({ comment: undefined })));
+
+    const status = await createSessionActions(h.client).getCsat('s1');
+
+    expect(status).toEqual({
+      rated: true,
+      rating: 4,
+      comment: null,
+      submittedAt: '2026-08-19T09:30:00.000Z',
+    });
+  });
+
+  it('reports an unrated session as an ANSWER, not an absence', async () => {
+    const h = harness(() => jsonResponse({ success: true, data: { rated: false } }));
+
+    // The caller acts on this: it is what lets the survey be offered at all,
+    // and it must be distinguishable from a lookup that failed.
+    await expect(createSessionActions(h.client).getCsat('s1')).resolves.toEqual({ rated: false });
+  });
+
+  it('rejects a body with no boolean `rated` rather than reading it as unrated', async () => {
+    // Reading a malformed body as "not rated yet" would offer the survey
+    // again over a rated session, and the POST is an upsert — the exact
+    // duplicate this call exists to prevent.
+    const h = harness(() => jsonResponse({ success: true, data: { rating: 4 } }));
+
+    const error: unknown = await createSessionActions(h.client)
+      .getCsat('s1')
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RestApiError);
+    expect((error as RestApiError).code).toBe('MALFORMED_RESPONSE');
+  });
+
+  it('rejects `rated: true` with no numeric rating — a locked card with nothing in it', async () => {
+    const h = harness(() => jsonResponse({ success: true, data: { rated: true, comment: 'hm' } }));
+
+    const error: unknown = await createSessionActions(h.client)
+      .getCsat('s1')
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RestApiError);
+    expect((error as RestApiError).code).toBe('MALFORMED_RESPONSE');
+  });
+
+  it('rejects an unenveloped response as MALFORMED_RESPONSE', async () => {
+    const h = harness(() => jsonResponse({ rated: false }));
+
+    await expect(createSessionActions(h.client).getCsat('s1')).rejects.toBeInstanceOf(RestApiError);
+  });
+
+  it("propagates the POST's own owner guards — 403 and 404 — as RestApiError", async () => {
+    const forbidden = harness(() =>
+      jsonResponse({ error: { code: 'UNAUTHORIZED', message: 'not your session' } }, 403),
+    );
+    await expect(createSessionActions(forbidden.client).getCsat('s1')).rejects.toBeInstanceOf(
+      RestApiError,
+    );
+
+    const missing = harness(() =>
+      jsonResponse({ error: { code: 'SESSION_NOT_FOUND', message: 'nope' } }, 404),
+    );
+    await expect(createSessionActions(missing.client).getCsat('s1')).rejects.toBeInstanceOf(
+      RestApiError,
+    );
+  });
+
+  it('percent-encodes the session id into the path', async () => {
+    const h = harness(() => jsonResponse({ success: true, data: { rated: false } }));
+
+    await createSessionActions(h.client).getCsat('a/b');
+
+    expect(h.calls[0]?.url.pathname).toBe('/chat-services/api/v1/chat/sessions/a%2Fb/csat');
+  });
+});
+
 describe('upload -> history round trip', () => {
   // Neither adapter is exercised against the other anywhere else: the upload
   // tests only look at what `upload()` returns, and the history tests only

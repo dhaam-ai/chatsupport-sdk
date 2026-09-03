@@ -6,23 +6,39 @@ void main() {
   group('chatStatusLabel', () {
     test('names every ChatStatus value — a forgotten one reads as a blank row', () {
       for (final status in ChatStatus.values) {
-        expect(chatStatusLabel.containsKey(status), isTrue, reason: '$status has no label');
+        expect(chatStatusLabel(status), isNotEmpty, reason: '\$status has no label');
       }
+    });
+
+    test('ASSIGNED reads as what it means to a customer, not as a queue fact', () {
+      expect(chatStatusLabel(ChatStatus.assigned), 'With an agent');
     });
   });
 
   group('homeStatusPill', () {
-    test('only the customer-actionable states get a pill', () {
-      expect(homeStatusPill.keys.toSet(), <ChatStatus>{
-        ChatStatus.resolved,
-        ChatStatus.closed,
-        ChatStatus.waitingForAgent,
-      });
+    // The Home pill used to come from a three-entry map, so OPEN, ASSIGNED and
+    // ON_HOLD rendered no pill at all — the conversation a customer is most
+    // likely still in the middle of was the one row that would not say where it
+    // stood. Every status now answers.
+    test('every status gets a pill, including the in-progress ones', () {
+      for (final status in ChatStatus.values) {
+        expect(homeStatusPill(status), isNotEmpty, reason: '\$status has no pill');
+      }
     });
 
-    test('ASSIGNED and ON_HOLD are internal routing facts with no pill', () {
-      expect(homeStatusPill.containsKey(ChatStatus.assigned), isFalse);
-      expect(homeStatusPill.containsKey(ChatStatus.onHold), isFalse);
+    test('the short wording is used where the row is one line', () {
+      expect(homeStatusPill(ChatStatus.waitingForAgent), 'Waiting');
+      expect(chatStatusLabel(ChatStatus.waitingForAgent), 'Waiting for an agent');
+    });
+
+    test('matches the web widget word for word on the statuses it shares', () {
+      // `ui/session-status.ts`'s SESSION_STATUS_WORDS — one merchant, one
+      // vocabulary, whichever binding the customer happens to be on.
+      expect(homeStatusPill(ChatStatus.assigned), 'With an agent');
+      expect(homeStatusPill(ChatStatus.onHold), 'On hold');
+      expect(homeStatusPill(ChatStatus.open), 'Open');
+      expect(homeStatusPill(ChatStatus.resolved), 'Resolved');
+      expect(homeStatusPill(ChatStatus.closed), 'Closed');
     });
   });
 

@@ -50,6 +50,8 @@ const press = (target: EventTarget) =>
 
 const toggle = () => shadow.querySelector<HTMLButtonElement>('.dh-hmenu-toggle')!;
 const menuEl = () => shadow.querySelector<HTMLElement>('.dh-hmenu')!;
+/** The mute item — the first row in the menu, and the only one that toggles. */
+const muteItem = () => menuEl().querySelector<HTMLButtonElement>('.dh-hmenu-item')!;
 
 describe('outside-dismiss vs shadow retargeting', () => {
   it('sanity: the document really does see our presses retargeted to the host', () => {
@@ -62,7 +64,7 @@ describe('outside-dismiss vs shadow retargeting', () => {
       seen = event.target;
     };
     document.addEventListener('pointerdown', spy);
-    press(menuEl().querySelector('[role="menuitemcheckbox"]')!);
+    press(muteItem());
     document.removeEventListener('pointerdown', spy);
     expect(seen).toBe(host);
   });
@@ -72,7 +74,7 @@ describe('outside-dismiss vs shadow retargeting', () => {
     toggle().click();
     expect(menuEl().hidden).toBe(false);
 
-    const mute = menuEl().querySelector<HTMLButtonElement>('[role="menuitemcheckbox"]')!;
+    const mute = muteItem();
     press(mute);
     // Still open at "release" time — the click this press produces can land.
     expect(menuEl().hidden).toBe(false);
@@ -98,5 +100,57 @@ describe('outside-dismiss vs shadow retargeting', () => {
 
     press(document.body);
     expect(menuEl().hidden).toBe(true);
+  });
+});
+
+// ── The mute item's label (reported issue 2) ──────────────────────────────
+//
+// It used to read "Mute notifications" in both states — only the bell glyph
+// changed — so a customer who had muted the chime was offered "Mute
+// notifications" again and could not tell what pressing it would do. The item
+// is now a plain `menuitem` whose label names the ACTION, which is why the
+// `menuitemcheckbox` role and `aria-checked` had to go with it: a checkbox
+// announcing "Unmute notifications, checked" states the opposite of what the
+// control does. See `setMuted`'s own comment in ui/header-menu.ts.
+describe('the mute item states what pressing it will do', () => {
+  it('reads "Mute notifications" while sound is on and "Unmute notifications" once muted', () => {
+    const { menu } = build();
+    toggle().click();
+    expect(muteItem().textContent).toBe('Mute notifications');
+
+    muteItem().click();
+    toggle().click();
+    expect(muteItem().textContent).toBe('Unmute notifications');
+
+    // And back — the label is derived from the state, not toggled blindly.
+    muteItem().click();
+    toggle().click();
+    expect(muteItem().textContent).toBe('Mute notifications');
+    menu.close();
+  });
+
+  it('renders the muted label from an `update()` that arrives already muted', () => {
+    // The persisted preference path: the widget reads the stored mute flag and
+    // pushes it in through `update`, which must paint the same label a click
+    // would have.
+    const { menu } = build();
+    menu.update({ canEnd: true, privacyUrl: '', reportIssue: true, muted: true });
+    toggle().click();
+    expect(muteItem().textContent).toBe('Unmute notifications');
+  });
+
+  it('is a plain menuitem with no contradictory checked state', () => {
+    build();
+    toggle().click();
+    expect(muteItem().getAttribute('role')).toBe('menuitem');
+    expect(muteItem().hasAttribute('aria-checked')).toBe(false);
+    // The accessible name IS the visible label — nothing overrides it, so
+    // WCAG 2.5.3 (Label in Name) holds in both states.
+    expect(muteItem().hasAttribute('aria-label')).toBe(false);
+
+    muteItem().click();
+    toggle().click();
+    expect(muteItem().hasAttribute('aria-checked')).toBe(false);
+    expect(muteItem().hasAttribute('aria-label')).toBe(false);
   });
 });

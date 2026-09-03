@@ -12,7 +12,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { AgentEventPayload, ParticipantSnapshot, SessionSnapshot } from '../protocol/index.js';
 import type { ChatParticipantProfile, ChatSession } from '../state/index.js';
-import { applyAgentJoined, applyAgentLeft, isHandledByCurrent, sessionSnapshotToChatSession } from './session.js';
+import {
+  applyAgentJoined,
+  applyAgentLeft,
+  applySessionClosed,
+  isHandledByCurrent,
+  sessionSnapshotToChatSession,
+} from './session.js';
 
 const CUSTOMER_ID = 'p_cust_1';
 const AGENT_ID = 'p_agent_1';
@@ -307,5 +313,58 @@ describe('isHandledByCurrent', () => {
     expect(isHandledByCurrent({ status: 'ON_HOLD', handledBy })).toBe(true);
     expect(isHandledByCurrent({ status: 'CLOSED', handledBy })).toBe(true);
     expect(isHandledByCurrent({ status: 'RESOLVED', handledBy })).toBe(true);
+  });
+});
+
+
+// ── `session.closed` has to produce the same state a REST close does ───────
+//
+// The reported symptom was a conversation an AGENT ended that went on
+// rendering as live in the widget — no survey, no ended footer, composer
+// still enabled. The cause was here: this applied `closedAt` and nothing
+// else, while every reader in the repo decides "is this over?" from `status`.
+// See `applySessionClosed`'s own doc.
+describe('applySessionClosed', () => {
+  const live: ChatSession = {
+    id: 'sess_1',
+    status: 'ASSIGNED',
+    mode: 'HUMAN',
+    createdAt: '2026-08-20T00:00:00.000Z',
+    closedAt: null,
+    assignedAgent: null,
+    customer: null,
+    ticket: null,
+  };
+  const CLOSED_AT = '2026-08-20T10:00:00.000Z';
+
+  it('moves status to CLOSED, not merely closedAt', () => {
+    const result = applySessionClosed(live, 'sess_1', CLOSED_AT);
+    expect(result?.status).toBe('CLOSED');
+    expect(result?.closedAt).toBe(CLOSED_AT);
+  });
+
+  it('reads as terminal to the same test every binding actually runs', () => {
+    const result = applySessionClosed(live, 'sess_1', CLOSED_AT);
+    expect(result !== null && (result.status === 'CLOSED' || result.status === 'RESOLVED')).toBe(true);
+  });
+
+  it('closes a RESOLVED session too — CLOSED is the later of the two facts', () => {
+    const resolved: ChatSession = { ...live, status: 'RESOLVED' };
+    expect(applySessionClosed(resolved, 'sess_1', CLOSED_AT)?.status).toBe('CLOSED');
+  });
+
+  it('leaves everything else on the session alone', () => {
+    const result = applySessionClosed(live, 'sess_1', CLOSED_AT);
+    expect(result).toEqual({ ...live, status: 'CLOSED', closedAt: CLOSED_AT });
+  });
+
+  it('is a no-op for a close naming some OTHER session', () => {
+    // The stale-close guard: a `session.closed` for a session already
+    // replaced by a newer snapshot must not close the one now on screen.
+    expect(applySessionClosed(live, 'sess_other', CLOSED_AT)).toBe(live);
+  });
+
+  it('returns null when there is no session to apply to', () => {
+    expect(applySessionClosed(null, 'sess_1', CLOSED_AT)).toBeNull();
   });
 });

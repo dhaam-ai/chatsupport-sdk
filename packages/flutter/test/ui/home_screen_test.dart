@@ -93,17 +93,19 @@ void main() {
     expect(cubit.state.composingNew, isFalse);
   });
 
-  testWidgets('a recent conversation nobody has picked up shows no title crash and no pill', (tester) async {
+  testWidgets('a recent conversation nobody has picked up still says where it stands', (tester) async {
     cubit = ChatWidgetCubit(client: client);
     cubit.updateSessionSummaries(<ChatSessionSummary>[
       ChatSessionSummary(id: 'x', status: ChatStatus.open, mode: ChatMode.bot, createdAt: DateTime.utc(2026, 1, 1)),
     ]);
     await tester.pumpWidget(_wrap(cubit));
 
-    // OPEN has no entry in homeStatusPill, and no handledBy -> falls back to
-    // "Conversation" rather than inventing a title.
+    // No handledBy -> falls back to "Conversation" rather than inventing a
+    // title. The status pill is NOT part of that fallback: OPEN used to have
+    // no entry in the pill map and rendered nothing, which left the row unable
+    // to say anything about itself at all.
     expect(find.text('Conversation'), findsOneWidget);
-    expect(find.text('Open'), findsNothing);
+    expect(find.text('Open'), findsOneWidget);
   });
 
   testWidgets('See all switches to the Messages tab', (tester) async {

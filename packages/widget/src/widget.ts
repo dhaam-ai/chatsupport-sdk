@@ -89,6 +89,7 @@ import {
   threadTokens,
 } from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
+import type { CsatExistingRating } from './ui/csat.js';
 import { createEndConversationConfirm } from './ui/end-conversation.js';
 import { createEndedFooter } from './ui/ended-footer.js';
 import { createOfflineBanner } from './ui/offline-banner.js';
@@ -457,6 +458,38 @@ function buildAgentAvatar(displayName: string): HTMLElement | null {
 /** Which surface is standing in for the chat. */
 type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report' | 'composingNew' | 'confirmEnd';
 
+/** What is known about one session's CSAT rating — see `csatBySession`. */
+type CsatLookup =
+  | { readonly state: 'loading' }
+  | { readonly state: 'unknown' }
+  | { readonly state: 'unsupported' }
+  | { readonly state: 'unrated' }
+  | { readonly state: 'rated'; readonly rating: number; readonly comment: string | null };
+
+/**
+ * Whether `error` says the deployment has no CSAT READ route, as opposed to
+ * saying no about this particular session.
+ *
+ * The two are distinguishable and must be distinguished. chat-service answers
+ * an ownership failure with its own envelope, so `RestApiError.code` carries a
+ * structured code (`SESSION_NOT_FOUND`); a framework route-not-found carries
+ * no envelope at all, so `readErrorBody` finds nothing and the code falls back
+ * to the literal `HTTP_<status>`. A widget bundle outlives any one backend
+ * release — a staged rollout, a lagging tenant, a rollback — so treating "this
+ * service is older than this bundle" as "something failed" would silently take
+ * the survey away from every visitor on that deployment.
+ *
+ * Structural, not `instanceof RestApiError`: this file has no reason to import
+ * the REST package's error classes for one branch, and the two fields it reads
+ * are part of that class's documented public shape.
+ */
+function isMissingCsatRoute(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { code, status } = error as { code?: unknown; status?: unknown };
+  if (status !== 404 && status !== 405) return false;
+  return code === `HTTP_${String(status)}`;
+}
+
 /**
  * The surfaces a CUSTOMER opened, as opposed to the ones the widget raised on
  * its own from config or session state.
@@ -489,6 +522,45 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const config = resolveConfig(rawConfig);
   const { store, rest } = createWidgetStore(config);
   const localParticipantId = config.identity.userId;
+
+  /**
+   * Whether this visitor is a GUEST — i.e. nobody the host page has vouched
+   * for.
+   *
+   * A guest is "no host-asserted identity", NOT "no userId". Every visitor has
+   * a `userId` (a guest's is an anonymous handle the host minted), so the
+   * presence of one says nothing. The single discriminator in this SDK is
+   * `identity.profile`: supplying it is the host asserting, under its own
+   * publishable key, who this person is — and it is the same fact `client.ts`
+   * keys `identityProfile`/`identitySync` off, so `POST /identify` fires for
+   * exactly the visitors this is `false` for. Derived once, named, and passed
+   * around, rather than re-deriving `config.identity.profile === undefined` at
+   * each gate: two derivations of one fact is how the pre-chat form ended up
+   * shown on one path and not the other.
+   *
+   * What it gates: the merchant's `preChatFields`, on all THREE surfaces that
+   * render them — the standalone gate, the new-conversation form, and the
+   * out-of-hours offline form. Three, because two of them once carried the
+   * check and the third did not, and the one without it happened to be the
+   * branch that outranks the other two. A logged-in visitor's details already
+   * reach the contact record without being retyped — `POST /identify`
+   * (name/email/phone/city/country/device, create-or-update) over
+   * `createIdentitySync`, plus `captureContactInfo` below, which runs for
+   * EVERY visitor and carries the watermarked IP, the raw user agent and
+   * best-effort geolocation onto the session. Asking a signed-in customer to
+   * type their name again is asking for something the server already has.
+   *
+   * What it deliberately does NOT gate: the offline form's own two built-in
+   * fields (`ui/offline-form.ts`'s Name and "Email or phone"). Those are not
+   * the merchant's pre-chat questions — they are the reply channel for a
+   * message that will be answered hours later, by a human reading a flattened
+   * body, out of band from any live session. The identity a host asserted on
+   * this page view is not something that reply can be addressed to, and an
+   * out-of-hours message with nowhere to send the answer is worse than one
+   * redundant field. Narrowing that is a change to the offline path's own
+   * contract, not to this flag's.
+   */
+  const isGuest = config.identity.profile === undefined;
 
   const root = createWidgetRoot(`${STYLES}\n${themeCss(config)}`);
   const { host, shadow } = root;
@@ -582,6 +654,39 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * than genuinely resolved is not caught here. Nothing on the wire or in
    * `ChatSession` carries a close reason for a session not live-witnessed
    * closing, so no purely client-side check can close that gap.
+   *
+   * ── It is no longer the everyday case ─────────────────────────────────
+   *
+   * Under the current chat-service contract `startNewSession` leaves the
+   * previous conversation EXACTLY as it was — no close, no status change, no
+   * system message, no `session.closed` frame — and a session becomes CLOSED
+   * only when the customer or an agent ends it. So the routine source of a
+   * SWITCHED close is gone, and a customer may now hold more than one
+   * non-closed conversation at once.
+   *
+   * Nothing in this file may therefore assume that starting a conversation
+   * ended the last one. Concretely, and each verified against the code that
+   * reads it: this latch simply stays `null` (it only ever SUPPRESSES, so an
+   * unset one shows more, never less); `closedSessionId` and
+   * `messageList.setClosure` are driven by the event and stay silent with no
+   * event to drive them; the CSAT card and the ended footer both key off
+   * `endedSession`, which is `status`-driven and reads the still-open
+   * predecessor as live, which it is. What DID break is the conversation
+   * LIST — it was fetched once and never again, so the predecessor kept
+   * rendering the status it had when the panel first opened; see
+   * `refreshSessions`.
+   *
+   * ── Why it survives anyway ────────────────────────────────────────────
+   *
+   * Not dead state: `SWITCHED` is still a live close reason on the wire and
+   * still reaches this handler. chat-service's reactivation path (a customer
+   * typing into a terminal session reactivates it and SWITCHED-closes their
+   * other open one) emits it, and so does an older deployment of the service
+   * that has not taken the change above — a widget is embedded on pages that
+   * outlive any one backend release, so "the current server no longer sends
+   * this" is not something this file may assume. What it costs to keep is one
+   * comparison; what removing it would cost is the difference between rating
+   * a conversation and rating one nobody ended.
    */
   let parkedSessionId: string | null = null;
   /**
@@ -621,8 +726,41 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   let failedAttempts = 0;
 
-  /** Whether the list has been asked for yet. Asked once, on the first open. */
+  /**
+   * The customer has opened the panel at least once, so the conversation list
+   * is something this widget maintains.
+   *
+   * Not "has been fetched once" any more — see {@link refreshSessions}. It is
+   * the arming latch: before the first open a widget nobody looked at costs
+   * the host page nothing, and after it every fetch goes through the one
+   * serialised path below.
+   */
   let sessionsRequested = false;
+  /**
+   * A `listSessions` call is in flight.
+   *
+   * Every fetch of the list — the first one included — is serialised behind
+   * this. `listSessions` writes `ChatState.pastSessions` by WHOLESALE REPLACE
+   * (§9.4), so two overlapping GETs are two writers of one value with no
+   * ordering guarantee between them: let the first-open fetch and a
+   * close-driven refresh run concurrently and the older page can land last and
+   * reinstate exactly the stale statuses defect 4 is about. One at a time is
+   * the cheapest way to make "last write wins" mean "latest answer wins".
+   */
+  let sessionsInFlight = false;
+  /**
+   * Something asked for a refresh while one was in flight — re-issue once it
+   * lands.
+   *
+   * COALESCED, not dropped and not queued N-deep. Dropping was wrong: end a
+   * conversation and immediately start another and the second refresh was
+   * discarded, so the list settled on a page fetched before the new
+   * conversation existed and stayed that way. Queueing each caller would spend
+   * a round trip per event in a burst to display the same final page. One
+   * pending re-fetch answers every caller that arrived during the flight,
+   * because they all want the same thing: the list as it is once this settles.
+   */
+  let sessionsRefreshQueued = false;
   /**
    * The screen a fresh panel opens on, and the one `close()` resets back to.
    *
@@ -1520,8 +1658,43 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   } | null = null;
   /** The customer answered or skipped the pre-chat gate, for this widget's lifetime. */
   let preChatAnswered = false;
-  /** A rating has been submitted (or the survey dismissed) for the current session. */
+  /**
+   * The session THIS widget instance rated, in this page view — the
+   * same-session fast path in front of {@link csatBySession}.
+   *
+   * It is deliberately no longer the ONLY memory of "already rated". It lives
+   * in a closure, so a reload, a second tab or another device starts with it
+   * back at `null` — and because `POST /chat/sessions/{id}/csat` is an upsert
+   * server-side, the survey re-armed over every already-rated conversation and
+   * quietly overwrote the score the customer had given. That is defect 5. What
+   * it still earns its place for is the window this render loop actually owns:
+   * the answer is known synchronously the moment the POST resolves, so no
+   * repaint can flash the survey back while a round trip re-learns it.
+   */
   let ratedSessionId: string | null = null;
+  /**
+   * What the SERVER says about each session's rating, keyed by session id.
+   *
+   * Five states, and the three that are not answers matter as much as the two
+   * that are:
+   *   `loading` — the lookup is in flight. Show nothing; a survey that
+   *               appears and then locks itself is a survey the customer may
+   *               already have started answering.
+   *   `unrated` — a real answer (`200 {rated: false}`). Offer the survey.
+   *   `rated`   — a real answer. Show it filled and locked, never again
+   *               offering a control that would overwrite it.
+   *   `unknown` — the lookup FAILED. Also show nothing: see
+   *               {@link csatFor} for why that is the only safe direction.
+   *   `unsupported` — this chat-service has no CSAT read route at all. Offer
+   *               the survey on the pre-change terms (once per session per
+   *               page view, remembered by `ratedSessionId` alone) rather
+   *               than withholding it: see {@link csatFor}.
+   *
+   * Per widget instance, not persisted: `localStorage` would be a third
+   * memory to keep in step, and the server already holds the authoritative
+   * one. The map exists so one lookup per session serves every repaint.
+   */
+  const csatBySession = new Map<string, CsatLookup>();
   /**
    * The customer has actually OPENED a conversation, rather than merely
    * having one on the server.
@@ -1568,7 +1741,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // there means either an EXISTING conversation (focus the composer) or
       // a fresh surface (focus its own first field) — two different targets
       // this single callback cannot tell apart.
+      // Everything below is about a screen the customer can actually SEE, so
+      // it waits on the panel being open — `close()` calls `screens.reset`,
+      // which lands here too, and neither refetching a list nor moving focus
+      // is something a closing panel should do.
       if (!open) return;
+      // Home and Messages are the two screens that RENDER a conversation's
+      // status, and arriving on one is the moment that status has to be
+      // right. Not belt-and-braces over the `sessionClosed` handler: core
+      // emits that event only for the session currently in state, and a
+      // customer may now hold several open conversations, so an agent closing
+      // one they are not looking at reaches this widget through nothing else.
+      // Bounded by a customer action, and collapsed by `refreshSessions`'s own
+      // in-flight latch, so flipping between the two tabs cannot fan out.
+      if (name === 'home' || name === 'messages') refreshSessions();
       if (name === 'messages') messagesScreen.focus();
       else if (name === 'home') panel.focus({ preventScroll: true });
     },
@@ -1977,6 +2163,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // reacted at all — the transcript simply stopped accepting replies with
     // no explanation and no way forward.
     store.on('sessionClosed', ({ closeReason }) => {
+      // Whoever ended it, a row in both lists just changed status — see
+      // `refreshSessions`. Before the parked/ended split below, because a
+      // parked session's status moved on the server too.
+      refreshSessions();
       // §12.5: `SWITCHED` parks the session because the customer moved to a
       // different active one — it has not ended, and telling them their
       // conversation is over would be false. `isParkedCloseReason` is core's
@@ -2319,6 +2509,203 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
+   * The on-screen session that has genuinely ENDED, or `null`.
+   *
+   * One definition for the three readers that need it — the CSAT card, the
+   * ended footer, and `csatCard` between them. It used to be written out twice
+   * and kept "in lockstep" by comment alone, which is a promise a codebase
+   * cannot keep.
+   *
+   * `session.id !== parkedSessionId` is the non-obvious half: a session THIS
+   * TAB watched get SWITCHED-closed reads CLOSED/RESOLVED by status, but it
+   * was PARKED, not ended (§12.5) — see `parkedSessionId`'s own doc. Under the
+   * current chat-service contract starting a new conversation no longer closes
+   * the previous one AT ALL, so nothing routine produces a SWITCHED close any
+   * more and this guard is a compatibility path (an older service, or an
+   * agent-side switch) rather than the everyday case it was written for. It
+   * stays because it costs one comparison and it is the whole difference
+   * between rating a conversation and rating one that nobody ended.
+   */
+  function endedSession(state: ChatState): ChatState['session'] {
+    const session = state.session;
+    if (session === null) return null;
+    if (session.status !== 'CLOSED' && session.status !== 'RESOLVED') return null;
+    return session.id === parkedSessionId ? null : session;
+  }
+
+  /**
+   * What is known about `sessionId`'s rating — asked of the server once, then
+   * answered from {@link csatBySession}.
+   *
+   * ── Why a failed lookup HIDES the survey ──────────────────────────────
+   *
+   * `POST /chat/sessions/{id}/csat` is an upsert: a second rating does not
+   * fail, it replaces the first. So the two ways to be wrong are not
+   * symmetric. Showing the survey when the answer is unknown risks a customer
+   * silently overwriting a score they already gave — the exact defect — while
+   * hiding it risks losing one rating the customer might have offered. Only
+   * the first destroys data, so an unknown answer withholds the survey.
+   *
+   * Nobody is stranded by that: a session with no card falls through to
+   * `ui/ended-footer.ts`'s "Reopen" / "New conversation" pair, which is the
+   * whole point of that footer.
+   *
+   * A failure is remembered, not retried: `unknown` is written to the map, so
+   * this widget instance asks once per session and then stops. Retrying on
+   * every repaint would hammer a service that just failed, at a rate set by
+   * how often the customer scrolls; the retry that matters is the next page
+   * view, which starts with an empty map. The cost of getting this wrong is
+   * one uncollected rating, which is the cheap side of the asymmetry above.
+   *
+   * A `ChatClientConfigError` (an embed whose client was built without
+   * `sessionActions`) is not reported: that deployment has no `submitCsat`
+   * either, so it never had a working survey to lose — same reasoning
+   * `requestSessions` gives for swallowing exactly that error.
+   *
+   * ── The one failure that does NOT withhold it ─────────────────────────
+   *
+   * A service with no CSAT read route AT ALL is a different fact from a
+   * lookup that failed, and the asymmetry above does not apply to it: there
+   * is no rating to protect, because that deployment could never have shown
+   * this widget one. A widget bundle is embedded on pages that outlive any
+   * one backend release, so a staged rollout, a lagging tenant or a rollback
+   * would otherwise make every visitor on that deployment stop being offered
+   * the survey — silently, since the answer is cached — while reporting an
+   * error to the host on every ended conversation. So `unsupported` falls
+   * back to precisely the behaviour that shipped before this route existed:
+   * offer the survey, once per session per page view, remembered by
+   * `ratedSessionId` alone. See {@link isMissingCsatRoute} for why that case
+   * is distinguishable from "not your session", which still withholds.
+   */
+  function csatFor(sessionId: string): CsatLookup {
+    const known = csatBySession.get(sessionId);
+    // The same-session fast path — see `ratedSessionId`. This instance
+    // recorded the rating itself, so there is nothing to ask and, more to the
+    // point, nothing that may put the survey back while a round trip agrees.
+    if (sessionId === ratedSessionId) return known ?? { state: 'unknown' };
+    if (known !== undefined) return known;
+
+    csatBySession.set(sessionId, { state: 'loading' });
+    store.client
+      .getCsat(sessionId)
+      .then(
+        (status) => {
+          csatBySession.set(
+            sessionId,
+            status.rated
+              ? { state: 'rated', rating: status.rating, comment: status.comment }
+              : { state: 'unrated' },
+          );
+        },
+        (error: unknown) => {
+          // A service that does not serve this route is not a failure to
+          // report or to withhold the survey over — see the doc above.
+          if (isMissingCsatRoute(error)) {
+            csatBySession.set(sessionId, { state: 'unsupported' });
+            return;
+          }
+          csatBySession.set(sessionId, { state: 'unknown' });
+          if (error instanceof ChatClientConfigError) return;
+          report(error);
+        },
+      )
+      // The answer landing is a state change like any other: whatever the
+      // repaint decided while this was `loading` has to be decided again.
+      .then(() => {
+        if (!destroyed) syncProductSurfaces();
+      })
+      .catch(report);
+    return { state: 'loading' };
+  }
+
+  /**
+   * Re-asks the server, at the moment of submit, whether `sessionId` is still
+   * unrated — `false` means "somebody rated it already, do not write".
+   *
+   * ── Why the cached answer is not enough ───────────────────────────────
+   *
+   * {@link csatBySession} caches `unrated` for the widget's lifetime, and
+   * there is nothing on the wire that would ever invalidate it: no CSAT frame,
+   * no store event. So a second tab, or the same customer's phone, can rate
+   * this conversation while this card sits on screen holding an answer that
+   * was true when it was fetched. `POST …/csat` is an UPSERT, so submitting
+   * then does not fail — it replaces the score they already gave, which is
+   * defect 5 arriving by a different road. One GET on the button press cannot
+   * close the window entirely (nothing can, short of the server refusing the
+   * second write), but it narrows it from "however long this card has been
+   * open" to the width of one request.
+   *
+   * ── A re-check that FAILS lets the submit through ─────────────────────
+   *
+   * The opposite of {@link csatFor}'s rule, and deliberately: there, no
+   * evidence had been gathered and the safe direction was to withhold. Here a
+   * definite `unrated` is already on file — that is why this card is an ASK
+   * and not a locked read-out — and the customer has just chosen a score.
+   * Refusing to send it loses a rating for certain, on the strength of a
+   * transport blip that says nothing about whether a rating exists.
+   *
+   * Only meaningful for a session this instance believes is `unrated`.
+   * `unsupported` (no read route on this deployment) has nothing to re-ask,
+   * and re-asking would 404 again on every press.
+   */
+  async function confirmedUnrated(sessionId: string): Promise<boolean> {
+    if (csatBySession.get(sessionId)?.state !== 'unrated') return true;
+    let status: Awaited<ReturnType<typeof store.client.getCsat>>;
+    try {
+      status = await store.client.getCsat(sessionId);
+    } catch {
+      return true;
+    }
+    if (!status.rated) return true;
+
+    csatBySession.set(sessionId, {
+      state: 'rated',
+      rating: status.rating,
+      comment: status.comment,
+    });
+    // After this turn, not during it: the card's own `submitOnce` is still
+    // awaiting `onSubmit`, and tearing its node out from under it mid-flight
+    // is how a surface ends up half-destroyed. Repainting is what swaps the
+    // ASK for the locked card showing the rating that actually stands — the
+    // honest end state for a press that deliberately wrote nothing.
+    void Promise.resolve().then(() => {
+      if (!destroyed) syncProductSurfaces();
+    });
+    return false;
+  }
+
+  /**
+   * The rating card this conversation is owed, or `null` for none —
+   * `existing: null` means ASK, and a rating means show it filled and locked.
+   *
+   * Read by both `syncProductSurfaces` (which mounts it) and `syncScreens`
+   * (which needs to know the ended footer is outranked), so the two can never
+   * answer the question differently.
+   */
+  function csatCard(
+    state: ChatState,
+  ): { readonly sessionId: string; readonly existing: CsatExistingRating | null } | null {
+    const session = endedSession(state);
+    // An empty thread has nothing to rate — the same precedence note
+    // `syncProductSurfaces` states for the pre-chat gate, from the other side.
+    if (session === null || state.messages.length === 0) return null;
+
+    const lookup = csatFor(session.id);
+    // `unsupported` asks alongside `unrated`: a service with no read route
+    // has no stored rating this card could overwrite, and `ratedSessionId`
+    // (checked by `csatFor` before this is ever reached again) is what stops
+    // it being offered twice in one page view. See `csatFor`.
+    if (lookup.state === 'unrated' || lookup.state === 'unsupported') {
+      return { sessionId: session.id, existing: null };
+    }
+    if (lookup.state === 'rated') {
+      return { sessionId: session.id, existing: { rating: lookup.rating, comment: lookup.comment } };
+    }
+    // `loading` or `unknown` — no card either way, see `csatFor`.
+    return null;
+  }
+
+  /**
    * Puts the right surface — or none — in front of the conversation.
    *
    * Ordered by precedence, and the order is the product decision: being CLOSED
@@ -2335,7 +2722,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (shouldCollectOffline(remote)) {
       openSurface('offline', () =>
         createOfflineForm(
-          remote.preChatEnabled ? [...remote.preChatFields] : [],
+          // `isGuest` here too — this branch outranks BOTH gates below, so
+          // without it an out-of-hours visit was the one path on which a
+          // logged-in customer still met the merchant's pre-chat questions.
+          // The form's own two built-in fields are a different thing and
+          // stay; see `isGuest`'s doc for why.
+          remote.preChatEnabled && isGuest ? [...remote.preChatFields] : [],
           {
             onSubmit: (message) =>
               store.client.sendMessage(
@@ -2396,7 +2788,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // `openingLinesInFlight`: see that counter's own doc — between a new
     // session's ack and its first message landing, the transcript is empty
     // for a reason that is not "the customer has not spoken yet".
+    //
+    // `isGuest`: the pre-chat questions exist to learn who an ANONYMOUS
+    // visitor is. A logged-in one arrived with a host-asserted profile that
+    // `POST /identify` has already written to their contact record, so asking
+    // is at best redundant and at worst destructive — the answers are free
+    // text that would arrive at the same contact from a lower-trust channel.
+    // See `isGuest` for why that is the discriminator and not "has a userId".
     const gateOnPreChat =
+      isGuest &&
       remote.preChatEnabled &&
       remote.preChatFields.length > 0 &&
       !preChatAnswered &&
@@ -2434,35 +2834,60 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       return;
     }
 
-    const session = state.session;
-    // `session.id !== parkedSessionId`: a session THIS TAB watched get
-    // SWITCHED-closed is CLOSED/RESOLVED by status alone, but it was PARKED,
-    // not ended (§12.5) — see `parkedSessionId`'s own doc. Without this, a
-    // customer whose conversation was superseded (by another tab/device
-    // starting a new one) would be asked to rate a conversation nobody
-    // actually resolved.
-    const ended =
-      session !== null &&
-      (session.status === 'CLOSED' || session.status === 'RESOLVED') &&
-      session.id !== parkedSessionId;
-    if (ended && session.id !== ratedSessionId && state.messages.length > 0) {
-      const sessionId = session.id;
-      openSurface('csat', () =>
-        createCsatSurvey(remote.csatStyle, {
-          onSubmit: async (score, comment) => {
-            // `POST /chat/sessions/{id}/csat`, via core's `SessionActions` seam
-            // — the same REST-only pattern `reopenSession`/`closeSession`
-            // already use (see `ui/csat.ts`'s own header: chat-service now has
-            // a real endpoint, and the rating stops travelling disguised as a
-            // chat message). Records the rating against the SESSION itself
-            // (and, server-side, rolls it up onto the session's linked support
-            // ticket when it has one) rather than merely appending a line to
-            // the transcript that nothing structured ever reads back.
-            await store.client.submitCsat(sessionId, score, comment);
-            ratedSessionId = sessionId;
-          },
-          onError: report,
-        }),
+    // Server truth, not this instance's memory — see `csatFor`. `existing`
+    // null asks; a rating shows that rating, locked, and offers no way to
+    // send a second one.
+    const card = csatCard(state);
+    if (card !== null) {
+      const { sessionId, existing } = card;
+      openSurface(
+        'csat',
+        () =>
+          createCsatSurvey(
+            remote.csatStyle,
+            {
+              onSubmit: async (score, comment) => {
+                // Asked AGAIN, immediately before writing — the cached
+                // `unrated` that put this card on screen may be minutes or
+                // hours old, and nothing on the wire announces a rating. A
+                // second tab (or the customer's phone) can have rated this
+                // conversation in that window, and the POST is an UPSERT: it
+                // would replace their score with this one and say nothing.
+                // One extra round trip, on a button press, narrows that to
+                // the width of a single request. See `confirmedUnrated` for
+                // what a failed re-check does.
+                if (!(await confirmedUnrated(sessionId))) return;
+                // `POST /chat/sessions/{id}/csat`, via core's `SessionActions`
+                // seam — the same REST-only pattern
+                // `reopenSession`/`closeSession` already use (see
+                // `ui/csat.ts`'s own header: chat-service has a real endpoint,
+                // and the rating stops travelling disguised as a chat
+                // message). Records the rating against the SESSION itself
+                // (and, server-side, rolls it up onto the session's linked
+                // support ticket when it has one) rather than merely appending
+                // a line to the transcript that nothing structured ever reads
+                // back.
+                await store.client.submitCsat(sessionId, score, comment);
+                // BOTH memories, in that order: the latch this render loop
+                // reads synchronously, and the cache that answers every later
+                // repaint without another round trip. Writing only the first
+                // is what made a reload re-offer the survey.
+                ratedSessionId = sessionId;
+                csatBySession.set(sessionId, {
+                  state: 'rated',
+                  rating: score,
+                  comment: comment ?? null,
+                });
+              },
+              onError: report,
+            },
+            existing ?? undefined,
+          ),
+        // Keyed, like `confirmEnd`: the card for ONE session changes shape
+        // when the lookup lands or when the customer's own rating is recorded,
+        // and `openSurface`'s by-kind idempotence would otherwise keep the ASK
+        // on screen over a session that is now rated.
+        `${sessionId}:${existing === null ? 'ask' : 'rated'}`,
       );
       return;
     }
@@ -2513,41 +2938,98 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
-   * Asks for the customer's recent conversations, once.
+   * Arms the conversation list and fetches it — the customer opened the panel.
    *
-   * Once, not on every open: the answer only changes when this customer starts
-   * or switches a conversation, and both of those go through this file, which
-   * re-renders from `pastSessions` either way. Re-fetching on every open would
-   * spend a round trip to re-learn what the widget already knows.
+   * Asked here rather than at mount, so a widget nobody opens costs the host
+   * page nothing. It no longer fetches only ONCE, though: it sets
+   * {@link sessionsRequested} and then goes through the same serialised
+   * {@link refreshSessions} everything else uses, so a re-open gets a current
+   * page and can never race the fetch some other event started.
+   */
+  function requestSessions(): void {
+    if (destroyed) return;
+    sessionsRequested = true;
+    refreshSessions();
+  }
+
+  /**
+   * Fetches the customer's recent conversations — the ONE path to the list.
+   *
+   * ── Why it is not fetched once ────────────────────────────────────────
+   *
+   * The original latch was written when the list could only be wrong about
+   * which conversations EXIST, and the answer to that really was "this file
+   * starts them, so this file already knows". Status is different, and defect
+   * 4 is exactly that difference: every row now shows where its conversation
+   * stands, on both Home and Messages, and the list was fetched once — on the
+   * first panel open — and never again. A conversation ended two minutes ago
+   * went on reading "With an agent" until the visitor reloaded the page.
+   *
+   * ── Why the socket alone cannot keep it current ───────────────────────
+   *
+   * The obvious wiring — refresh on the `sessionClosed` event — is necessary
+   * and NOT sufficient. Core emits that event only for the session currently
+   * in state (a close naming any other session is a no-op there), and under
+   * the current chat-service contract a customer may hold several non-closed
+   * conversations at once, because starting one no longer closes the last. So
+   * an agent closing a conversation the customer is not looking at produces
+   * no client-side event at all, and no amount of listening will hear it.
+   *
+   * Hence the other callers: opening the panel, and arriving on either screen
+   * that RENDERS a status (Home and Messages). Those bound the cost to a
+   * customer action while covering the case no event can — the one where the
+   * only thing that changed happened to somebody else's conversation. It is
+   * still NOT wired to every store tick: the list is a page from a REST route,
+   * not a live projection, and re-fetching it on message traffic would spend a
+   * round trip per keystroke's worth of state changes.
+   *
+   * ── One at a time, and never a dropped refresh ────────────────────────
+   *
+   * See {@link sessionsInFlight} and {@link sessionsRefreshQueued}: a second
+   * caller during a flight sets one flag and returns, and the flight re-issues
+   * for it on the way out. That is what makes a burst (a close, its own
+   * `sessionClosed`, and the new conversation that follows) settle on the page
+   * fetched LAST rather than on whichever GET the network happened to finish
+   * last.
+   *
+   * A no-op before the first open — see {@link sessionsRequested}.
    *
    * The result is not read from this promise. `listSessions` writes the page
    * to `ChatState.pastSessions` (§9.4-style wholesale replace) and the
-   * subscription below renders from there, so the picker has one input rather
-   * than two that could disagree.
+   * `pastSessions` subscription below re-renders Home and Messages from there,
+   * so the lists have one input rather than two that could disagree.
    */
-  function requestSessions(): void {
-    if (sessionsRequested || destroyed) return;
-    sessionsRequested = true;
-
-    // The result is not read from this promise — `listSessions` writes the
-    // page to `ChatState.pastSessions` (§9.4-style wholesale replace), and
-    // the `pastSessions` subscription below re-renders Home and Messages
-    // from there, so this call has exactly one job: get the data into the
-    // store at all.
-    store.client.listSessions({ limit: SESSION_PICKER_LIMIT }).catch((error: unknown) => {
-      // An embed whose client has no `sessionSummarySource` is a
-      // CONFIGURATION fact, not a fault: core is telling us this deployment
-      // simply has no session list. Degrading to "no picker" is exactly
-      // right, and it is what keeps this change invisible to an existing
-      // embed built against an older client — so it is swallowed rather than
-      // pushed at the host's error tracker on every page load.
-      //
-      // Every other failure — a 5xx, a network drop, a malformed page — IS
-      // a fault and is reported. Distinguished by the error's type, not by
-      // its message.
-      if (error instanceof ChatClientConfigError) return;
-      report(error);
-    });
+  function refreshSessions(): void {
+    if (!sessionsRequested || destroyed) return;
+    if (sessionsInFlight) {
+      sessionsRefreshQueued = true;
+      return;
+    }
+    sessionsInFlight = true;
+    store.client
+      .listSessions({ limit: SESSION_PICKER_LIMIT })
+      .catch((error: unknown) => {
+        // An embed whose client has no `sessionSummarySource` is a
+        // CONFIGURATION fact, not a fault: core is telling us this deployment
+        // simply has no session list. Degrading to "no picker" is exactly
+        // right, and it is what keeps this change invisible to an existing
+        // embed built against an older client — so it is swallowed rather than
+        // pushed at the host's error tracker on every page load.
+        //
+        // Every other failure — a 5xx, a network drop, a malformed page — IS
+        // a fault and is reported. Distinguished by the error's type, not by
+        // its message.
+        if (error instanceof ChatClientConfigError) return;
+        report(error);
+      })
+      .finally(() => {
+        sessionsInFlight = false;
+        if (!sessionsRefreshQueued) return;
+        // Cleared BEFORE the re-issue, so this settles: the re-issued fetch
+        // sets it again only if somebody asks again during ITS flight.
+        sessionsRefreshQueued = false;
+        refreshSessions();
+      });
   }
 
   /**
@@ -3074,24 +3556,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // it for exactly that span; see that module's own header for why this is
     // a footer beside the composer rather than a fourth `ProductSurface`.
     //
-    // `session.id !== ratedSessionId && state.messages.length > 0` is
-    // `syncProductSurfaces`'s own CSAT-due condition, deliberately repeated
-    // rather than factored out: that survey still outranks this footer, and
-    // this footer is what is left once CSAT is done — one precedence step
-    // past the one `syncProductSurfaces`'s own comment already states for
-    // CSAT itself ("the rating is what is left once a session has ended").
-    const session = state.session;
-    // Kept in lockstep with `syncProductSurfaces`'s own `ended` — see that
-    // one's comment on `parkedSessionId` for why a SWITCHED-closed session
-    // must not read as ended here either: this footer's "Reopen" would
-    // otherwise offer to reopen a conversation that was not the one that
-    // actually ended, and its "Start new" is redundant with the one the
-    // customer already used to get here.
-    const ended =
-      session !== null &&
-      (session.status === 'CLOSED' || session.status === 'RESOLVED') &&
-      session.id !== parkedSessionId;
-    const csatDue = ended && session.id !== ratedSessionId && state.messages.length > 0;
+    // The rating card still outranks this footer, and this footer is what is
+    // left once there is no card — one precedence step past the one
+    // `syncProductSurfaces`'s own comment states for CSAT itself ("the rating
+    // is what is left once a session has ended"). Both questions are asked of
+    // the same two helpers rather than re-derived here, which is what stops
+    // the footer and the card from both deciding they are on.
+    const ended = endedSession(state) !== null;
+    const csatDue = csatCard(state) !== null;
     const showingEndedFooter = showingLog && ended && !csatDue;
 
     setPaneVisible(homeScreen.node, onHome);
@@ -3300,20 +3772,41 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
             if (endingConversation) return;
             endingConversation = true;
             try {
-              // Nothing to close when the session changed underneath (see
-              // `targetId` above) or an agent ended it while the question was
-              // on screen. chat-service's close is not idempotent (see
-              // @dhaam-ccrm/rest's adapter), so a second POST would re-run the
-              // close and file a second "closed" system message; the honest
-              // move is to skip the request and let the sync below show what
-              // actually happened.
+              // IDENTITY only. Nothing to close when the session changed
+              // underneath the question (see `targetId` above) — core's
+              // `closeSession` closes whatever is CURRENT, so firing then
+              // would end a conversation the customer never asked about.
+              //
+              // It deliberately does NOT also require a live status, and that
+              // is a fix rather than an oversight. Core now moves `status` to
+              // CLOSED off a `session.closed` frame (it used to stamp only
+              // `closedAt`), so a SWITCHED close landing while this question
+              // is on screen makes the session read terminal locally — and
+              // the old status half of this guard turned the customer's press
+              // into a silent no-op: no request, no message, dialog gone.
+              // That is one of the literal "End conversation does nothing"
+              // reports, and it also meant the row was never attributed as
+              // closed BY THE CUSTOMER. chat-service's close is idempotent
+              // for the session's owner (200 with the current state, no
+              // second system message), so asking again for a session that is
+              // already closed is the cheap, honest direction.
               const current = store.getState().session;
-              const stillTheOneAsked =
-                current !== null &&
-                current.id === targetId &&
-                current.status !== 'CLOSED' &&
-                current.status !== 'RESOLVED';
-              if (stillTheOneAsked) await store.client.closeSession();
+              if (current !== null && current.id === targetId) {
+                await store.client.closeSession();
+                // The customer ENDED this one. If it was also parked by a
+                // SWITCHED close (see `parkedSessionId`), that suppression no
+                // longer applies: parking says "nobody ended this", and
+                // somebody just did. Left set, the rating card and the ended
+                // footer would both stay hidden over a conversation the
+                // customer had explicitly closed.
+                if (parkedSessionId === targetId) parkedSessionId = null;
+                // This conversation's row now reads CLOSED, and so may the
+                // one the Home screen calls "Recent" — see
+                // `refreshSessions`. The `sessionClosed` event does not fire
+                // for a close the customer made from this tab, so this is the
+                // only place that can ask.
+                refreshSessions();
+              }
             } finally {
               endingConversation = false;
             }
@@ -3395,7 +3888,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // `syncProductSurfaces` uses, minus the "no messages yet" clause, which
     // is beside the point here: this form is about to START a session, so
     // the question is only whether the customer has already answered.
-    const askDetails = remote.preChatEnabled && remote.preChatFields.length > 0 && !preChatAnswered;
+    // `isGuest` first, for the same reason the gate in `syncProductSurfaces`
+    // carries it: these are the SAME questions on a different screen, and a
+    // logged-in visitor must not meet them on either. Both read the one named
+    // boolean rather than re-deriving "is this a guest", which is how the two
+    // asks came to disagree in the first place.
+    const askDetails =
+      isGuest && remote.preChatEnabled && remote.preChatFields.length > 0 && !preChatAnswered;
     const view = openSurface('composingNew', () =>
       createNewConversationScreen(
         [...remote.conversationTopics],
@@ -3452,6 +3951,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         ...(input.topic === undefined ? {} : { topic: input.topic }),
         subject: input.message,
       });
+      // A conversation the lists have never heard of now exists — and, under
+      // the current chat-service contract, the PREVIOUS one is still open
+      // beside it rather than having been closed to make room. Both facts are
+      // only visible once the page is re-fetched; see `refreshSessions`.
+      refreshSessions();
       // The mint is a full socket round trip, and the panel stays live across
       // it — Back is on screen, and so is the ⋯ menu. A customer who walks
       // away has abandoned THIS exchange, but core addresses every send to
@@ -3525,6 +4029,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     openingLinesInFlight += 1;
     try {
       await store.client.startNewSession({ subject: question.prompt });
+      // Same as `startNewConversation`: a new row, and an old one that is
+      // still open. See `refreshSessions`.
+      refreshSessions();
       // A gate armed on the PREVIOUS (empty) session — parked behind Home
       // when the customer walked off it — may still hold the slot. The new
       // session's ack normally tears it down through the id/status
@@ -3571,8 +4078,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     focusOnOpen();
 
     // Asked here rather than at mount: a widget nobody opens should cost the
-    // host page nothing beyond the socket it already opens. Fires once — see
-    // `requestSessions`.
+    // host page nothing beyond the socket it already opens. Every open, not
+    // only the first — a status can have moved while the panel was shut, and
+    // nothing else would tell us. See `refreshSessions`.
     requestSessions();
 
     try {

@@ -2166,6 +2166,7 @@ button {
   text-align: center;
 }
 .dh-offline-sent[hidden], .dh-csat-thanks[hidden], .dh-csat-comment[hidden] { display: none; }
+.dh-csat-your-comment[hidden] { display: none; }
 
 .dh-csat-card { padding: calc(var(--dh-space) * 2); }
 .dh-csat-scale { display: flex; justify-content: center; gap: var(--dh-space); }
@@ -2193,6 +2194,21 @@ button {
   color: var(--dh-text-muted);
 }
 .dh-csat-comment { display: flex; flex-direction: column; gap: calc(var(--dh-space) * 2); }
+/* The comment on an already-rated session, as text rather than in a field —
+   see ui/csat.ts's locked card. Quoted so it reads as something the customer
+   said, not as a prompt asking them to say it again. */
+.dh-csat-your-comment {
+  margin: 0;
+  padding: calc(var(--dh-space) * 2);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text-muted);
+  font-size: 12.5px;
+  font-style: italic;
+}
+/* Locked: the scale is a read-out, so nothing under the pointer should promise
+   it can be changed. */
+.dh-csat-card[data-locked] .dh-csat-option { cursor: default; }
 .dh-csat-thanks {
   margin: 0;
   padding: calc(var(--dh-space) * 4);

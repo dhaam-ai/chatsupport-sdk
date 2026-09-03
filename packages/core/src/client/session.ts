@@ -267,7 +267,8 @@ export function applyTicketLinked(session: ChatSession | null, payload: TicketLi
 }
 
 /**
- * Applies `session.closed`'s receipt time as a best-effort `closedAt`.
+ * Applies `session.closed` — the session is CLOSED, as of this client's own
+ * receipt time.
  *
  * `closedAt` is approximate (the moment this client learned of the closure,
  * not necessarily the server's own closing timestamp) because
@@ -275,6 +276,33 @@ export function applyTicketLinked(session: ChatSession | null, payload: TicketLi
  * header. Only applied when the closed session is the one currently in
  * state; a stale `session.closed` for a session already replaced by a newer
  * snapshot is a no-op.
+ *
+ * ── Why `status` moves too, and why it did not before ─────────────────────
+ *
+ * This used to set `closedAt` ALONE, on the reasoning that `closedAt` is the
+ * fact the frame actually carries. But it is not the fact anything reads: no
+ * binding in this repo tests `closedAt` to decide whether a conversation is
+ * over — they all test `status`, because that is what every OTHER route to
+ * the same state supplies (a REST `closeSession`'s read-back, a
+ * `session.updated` snapshot, a fresh `connection.ack`). The result was that
+ * a close arriving over the SOCKET — an agent ending the chat, or the
+ * customer ending it in another tab — left the client rendering a live
+ * conversation with a closing timestamp on it: no survey, no ended footer,
+ * composer still enabled, right up until something else happened to refresh
+ * the session.
+ *
+ * `session.closed` is not ambiguous about this — the server has closed the
+ * row — so the honest mapping is the terminal status, and a close over the
+ * socket now produces the same client state a REST close does. `CLOSED`
+ * rather than preserving an earlier `RESOLVED`: a resolved session that
+ * receives this frame has since been closed, and CLOSED is the later of the
+ * two facts. Both are terminal to every reader, so nothing keys off which.
+ *
+ * A `SWITCHED` close is included, deliberately. The server closed that row
+ * too, so the state is true; §12.5's "parked, not ended" distinction is about
+ * what a binding SHOWS, and it is carried by the `sessionClosed` event's
+ * `closeReason` (see `isParkedCloseReason`), not by pretending the session is
+ * still open.
  */
 export function applySessionClosed(
   session: ChatSession | null,
@@ -282,5 +310,5 @@ export function applySessionClosed(
   closedAt: string,
 ): ChatSession | null {
   if (session === null || session.id !== sessionId) return session;
-  return { ...session, closedAt };
+  return { ...session, status: 'CLOSED', closedAt };
 }

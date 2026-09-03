@@ -174,7 +174,10 @@ class _RecentConversationSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final String? pill = homeStatusPill[summary.status];
+    // ALWAYS a pill, for every status — see `homeStatusPill`. This used to be
+    // a nullable map lookup that rendered nothing for OPEN, ASSIGNED and
+    // ON_HOLD.
+    final String pill = homeStatusPill(summary.status);
     final String preview = summary.lastMessagePreview ?? '';
 
     return Column(
@@ -220,10 +223,8 @@ class _RecentConversationSection extends StatelessWidget {
                                 style: Theme.of(context).textTheme.titleSmall,
                               ),
                             ),
-                            if (pill != null) ...<Widget>[
-                              const SizedBox(width: 8),
-                              _StatusPill(pill),
-                            ],
+                            const SizedBox(width: 8),
+                            _StatusPill(pill),
                           ],
                         ),
                         if (preview.isNotEmpty)

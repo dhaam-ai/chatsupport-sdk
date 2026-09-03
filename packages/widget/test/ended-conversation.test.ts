@@ -107,6 +107,26 @@ class FakeWebSocket {
   }
 
   /**
+   * A `session.closed` push — the frame chat-service actually sends when an
+   * AGENT ends the conversation (or when the customer ends it in another
+   * tab). Distinct from `updateStatus` below and NOT interchangeable with it:
+   * this frame carries only an id and a close reason, so everything the
+   * client then believes about the session comes from core's
+   * `applySessionClosed`. That is exactly where the reported bug lived.
+   */
+  closeSession(sessionId: string, closeReason: 'RESOLVED' | 'MANUAL' | 'SWITCHED'): void {
+    this.onmessage?.({
+      data: JSON.stringify({
+        v: 1,
+        t: 'session.closed',
+        id: ulid(),
+        ts: Date.now(),
+        d: { sessionId, closeReason },
+      }),
+    });
+  }
+
+  /**
    * A `session.updated` push naming a new status for the SAME session — what
    * an agent closing it from their side produces. Applied wholesale by core,
    * so `state.session.status` genuinely changes under whatever is on screen.
@@ -306,6 +326,15 @@ beforeEach(() => {
       }
       if (url.includes('/full')) {
         return fullSessionResponse('sess_1', fullStatus);
+      }
+      // The CSAT lookup the widget runs before offering the survey. `rated:
+      // false` — nobody has rated these sessions — is what lets the survey
+      // appear at all; `csat-submit.test.ts` owns the already-rated case.
+      if (url.includes('/csat')) {
+        return new Response(JSON.stringify({ success: true, data: { rated: false } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
       }
       // The history page — empty by default, so CSAT never becomes due and
       // the footer is the only thing standing between the customer and the
@@ -567,12 +596,19 @@ function pressStartNew(): void {
 describe('"End conversation" when the conversation moved on under the question', () => {
   // The surface is not modal, unlike the `confirm()` it replaced: state keeps
   // flowing while it is up, and `syncProductSurfaces` deliberately leaves it
-  // alone (its non-preemption rule). So the button checks, at press time,
-  // that what it was asked about is still there to close — chat-service's
-  // close is not idempotent, and it closes the CURRENT session, whichever
-  // that has become.
+  // alone (its non-preemption rule). So the button checks, at press time, that
+  // what it was asked about is still THE SAME SESSION — core's `closeSession`
+  // closes whichever session is current, so firing at a different one would
+  // end a conversation the customer never asked about.
+  //
+  // It deliberately does NOT also require a live status. chat-service's close
+  // is idempotent for the session's owner (200 with the current state, no
+  // second system message), and requiring a live status is what turned a
+  // press into a silent no-op the moment anything else closed the session
+  // first — including a SWITCHED close, which is not an ending at all. See
+  // `endConversation` in widget.ts.
 
-  it('an agent ended it first: no second POST, and the footer follows', async () => {
+  it('an agent ended it first: the press is still honoured, and the footer follows', async () => {
     const socket = await connectedTo('ASSIGNED');
     pressEndConversation();
     await settle();
@@ -585,15 +621,17 @@ describe('"End conversation" when the conversation moved on under the question',
     query<HTMLButtonElement>('.dh-confirm-end .dh-form-submit').click();
     await settle();
 
-    // A POST here would re-run the close and file a second "closed" system
-    // message (see @dhaam-ccrm/rest's adapter).
-    expect(closeRequests()).toHaveLength(0);
+    // The POST goes out. It names the session the customer asked about, the
+    // route is idempotent for its owner, and the alternative — dismissing the
+    // dialog having sent nothing — is one of the literal "End conversation
+    // does nothing" reports.
+    expect(closeRequestsFor('sess_1')).toHaveLength(1);
     expect(tryQuery('.dh-confirm-end')).toBeNull();
     expect(query<HTMLElement>('.dh-ended-footer').hidden).toBe(false);
     expect(query<HTMLElement>('.dh-composer').hidden).toBe(true);
   });
 
-  it('an agent ended a thread with messages first: no POST, and the CSAT survey follows', async () => {
+  it('an agent ended a thread with messages first: the CSAT survey still follows', async () => {
     historyRows = [messageRow()];
     const socket = await connectedTo('ASSIGNED');
     pressEndConversation();
@@ -604,8 +642,35 @@ describe('"End conversation" when the conversation moved on under the question',
     query<HTMLButtonElement>('.dh-confirm-end .dh-form-submit').click();
     await settle();
 
-    expect(closeRequests()).toHaveLength(0);
+    expect(closeRequestsFor('sess_1')).toHaveLength(1);
     expect(tryQuery('.dh-confirm-end')).toBeNull();
+    expect(tryQuery('.dh-csat-card')).not.toBeNull();
+  });
+
+  it('a SWITCHED close landed under the question: the press still ends it, and unparks it', async () => {
+    // The regression this guard's status half actually caused. A SWITCHED
+    // close parks the session (§12.5) — "somebody moved you, nobody ended
+    // this" — and core now moves `status` to CLOSED off that frame, so the
+    // old `status !== 'CLOSED'` check silently swallowed the press: no
+    // request, no message, dialog gone, and a conversation still rendering as
+    // live with the composer on.
+    historyRows = [messageRow()];
+    const socket = await connectedTo('ASSIGNED');
+    pressEndConversation();
+    await settle();
+
+    socket.closeSession('sess_1', 'SWITCHED');
+    await settle();
+    expect(tryQuery('.dh-confirm-end')).not.toBeNull();
+
+    query<HTMLButtonElement>('.dh-confirm-end .dh-form-submit').click();
+    await settle();
+
+    expect(closeRequestsFor('sess_1')).toHaveLength(1);
+    // Parking is a statement that nobody ended this conversation. Somebody
+    // just did, so the suppression it buys — no survey, no ended footer — has
+    // to lift, or the customer is left looking at a chat they closed
+    // themselves that still reads as live.
     expect(tryQuery('.dh-csat-card')).not.toBeNull();
   });
 
@@ -703,5 +768,42 @@ describe('"End conversation" when the conversation moved on under the question',
     expect(query<HTMLElement>('.dh-composer').hidden).toBe(true);
     // The ended footer waits its turn behind the customer's form.
     expect(query<HTMLElement>('.dh-ended-footer').hidden).toBe(true);
+  });
+});
+
+
+// ── An agent ends the conversation, and the only evidence is the socket ────
+//
+// The reported symptom: a chat an agent closed went on rendering as live in
+// the widget — composer enabled, no ended footer, no survey — until something
+// else happened to refresh the session. Everything above reaches CLOSED
+// through a REST read-back or a `session.updated` snapshot, both of which
+// carry a `status`; a `session.closed` frame carries none, and core's
+// `applySessionClosed` used to stamp `closedAt` alone while every predicate
+// in widget.ts asks about `status`. So the one route a customer cannot
+// influence was the one route that did nothing.
+//
+// These are the tests that fail against that older core.
+describe('an agent closing the conversation over the socket', () => {
+  it('ends the empty thread on screen: footer in, composer out', async () => {
+    const socket = await connectedTo('ASSIGNED');
+    expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
+
+    socket.closeSession('sess_1', 'RESOLVED');
+    await settle();
+
+    expect(query<HTMLElement>('.dh-ended-footer').hidden).toBe(false);
+    expect(query<HTMLElement>('.dh-composer').hidden).toBe(true);
+  });
+
+  it('offers the survey for a thread with messages, exactly as a REST close does', async () => {
+    historyRows = [messageRow()];
+    const socket = await connectedTo('ASSIGNED');
+    expect(tryQuery('.dh-csat-card')).toBeNull();
+
+    socket.closeSession('sess_1', 'MANUAL');
+    await settle();
+
+    expect(tryQuery('.dh-csat-card')).not.toBeNull();
   });
 });
