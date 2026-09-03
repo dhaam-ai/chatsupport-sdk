@@ -89,10 +89,12 @@ import {
   threadTokens,
 } from './ui/styles.js';
 import { createCsatSurvey } from './ui/csat.js';
+import { createEndConversationConfirm } from './ui/end-conversation.js';
 import { createEndedFooter } from './ui/ended-footer.js';
 import { createOfflineBanner } from './ui/offline-banner.js';
 import { createOfflineForm } from './ui/offline-form.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
+import type { PreChatAnswers } from './ui/pre-chat-form.js';
 import { createCommonQuestions } from './ui/common-questions.js';
 import type { CommonQuestion } from './ui/common-questions.js';
 import {
@@ -452,8 +454,29 @@ function buildAgentAvatar(displayName: string): HTMLElement | null {
       });
 }
 
-/** Which of the three data-collecting surfaces is standing in for the chat. */
-type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report' | 'composingNew';
+/** Which surface is standing in for the chat. */
+type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report' | 'composingNew' | 'confirmEnd';
+
+/**
+ * The surfaces a CUSTOMER opened, as opposed to the ones the widget raised on
+ * its own from config or session state.
+ *
+ * The split is what `syncProductSurfaces`'s non-preemption rule runs on. The
+ * automatic surfaces (`preChat`, `offline`, `csat`) are re-derived from state
+ * on every store change and may replace each other freely — they are three
+ * readings of the same facts. A user-initiated one is a task the customer is
+ * in the middle of: a form half typed, a question half answered. Letting a
+ * state tick (a connection ack, the session list landing, a message arriving)
+ * swap it for the pre-chat gate or a rating is exactly the reported "New
+ * conversation does nothing" — the form was replaced under the customer's
+ * finger, and after Start the freshly minted, still-empty session re-armed
+ * the gate before the opening line could land.
+ */
+const USER_INITIATED_SURFACES: ReadonlySet<SurfaceKind> = new Set(['composingNew', 'report', 'confirmEnd']);
+
+function isUserInitiated(kind: SurfaceKind): boolean {
+  return USER_INITIATED_SURFACES.has(kind);
+}
 
 /** The shape all three surfaces share, so one slot can hold any of them. */
 interface ProductSurface {
@@ -636,6 +659,31 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   /** One close in flight at a time — the round trip is long enough to double-tap. */
   let endingConversation = false;
+  /**
+   * How many conversation-opening exchanges are on their way: `startNewSession`
+   * has been called and the first `sendMessage` into the new session has not
+   * landed yet.
+   *
+   * Exists for the pre-chat gate. `startNewSession` resolves on the new
+   * session's `connection.ack`, at which point `state.messages` is empty and
+   * the session id has changed — so the id/status subscription re-runs
+   * `syncProductSurfaces` in exactly the window where "pre-chat enabled, no
+   * answer yet, no messages" is momentarily true, and the gate flashed (a
+   * Common Questions tap) or took over outright (the new-conversation form).
+   * While this is above zero the gate is skipped: the opening line IS the
+   * first message, there is nothing to gate. Once it lands
+   * `messages.length > 0` holds and the gate cannot fire for that session
+   * anyway; on failure the `finally` releases it and the caller's own error
+   * path stands.
+   *
+   * A COUNT rather than a boolean because two of these can overlap: a
+   * customer who presses Back while `startNewSession` is still in flight and
+   * then taps a Common Question has two opening exchanges alive at once, and
+   * a shared boolean would let the second one's `finally` re-arm the gate on
+   * an empty session while the first was still mid-exchange — precisely the
+   * window the latch exists to cover.
+   */
+  let openingLinesInFlight = 0;
   let lastUnread = store.getState().unreadCount;
   const chime = createChime(config.onError);
 
@@ -1445,12 +1493,58 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // before those functions appear, and consults `activeSurface` — so a
   // declaration further down leaves it in the temporal dead zone and every
   // single mount throws.
-  /** The one surface currently standing in for the conversation, if any. */
-  let activeSurface: { readonly kind: SurfaceKind; readonly view: ProductSurface } | null = null;
+  /**
+   * The one surface currently standing in for the conversation, if any.
+   *
+   * `openedFrom` is the screen the customer was actually standing on when it
+   * took the slot. Recorded because `openSurface` NAVIGATES to the
+   * conversation screen on its way in, so by the time a Cancel arrives
+   * `screens.current()` says 'conversation' for every surface and can no
+   * longer tell "backed out of a form I opened from Home" apart from "backed
+   * out of a form I opened on top of my chat". See `cancelUserSurface`.
+   */
+  let activeSurface: {
+    readonly kind: SurfaceKind;
+    readonly view: ProductSurface;
+    readonly openedFrom: ScreenName;
+    /**
+     * What this surface was built FOR, when its kind alone does not say.
+     *
+     * `openSurface` is idempotent by kind so a store tick cannot rebuild a
+     * half-typed form; a surface whose `build()` closes over a SESSION —
+     * `confirmEnd` does, over the one it is asking about — needs that
+     * idempotence to notice when the session changed underneath it, or the
+     * second ask hands back the first ask's closure. See `openSurface`.
+     */
+    readonly key: string | undefined;
+  } | null = null;
   /** The customer answered or skipped the pre-chat gate, for this widget's lifetime. */
   let preChatAnswered = false;
   /** A rating has been submitted (or the survey dismissed) for the current session. */
   let ratedSessionId: string | null = null;
+  /**
+   * The customer has actually OPENED a conversation, rather than merely
+   * having one on the server.
+   *
+   * chat-service mints or resumes a session on `connection.hello` (its
+   * `handleHello` calls `createSession`, which reuses an active row or
+   * creates one), so `state.session` is a live, zero-message session for a
+   * brand-new visitor from the moment the socket acks — at mount, before the
+   * panel has ever been opened. "A session exists" is therefore NOT the same
+   * question as "this visitor is looking at a conversation", and the pre-chat
+   * gate needs the second one: asked the first, it went up at mount and
+   * `openSurface` navigated the panel off Home.
+   *
+   * Set only where the widget deliberately PUTS a conversation on screen —
+   * `showConversation`, the one funnel `selectSession`, `startCommonQuestion`
+   * and a closing surface all go through — plus at mount for a host that
+   * named a `sessionId` and has therefore already said which conversation it
+   * wants shown. A SURFACE taking the slot deliberately does not count even
+   * though `openSurface` navigates: a new-conversation form opened from Home
+   * is a detour, and a gate raised behind it once the customer backs out is
+   * the same yank off Home in a different coat.
+   */
+  let conversationOpened = initialScreenName === 'conversation';
 
   /**
    * The screen stack — home / messages / conversation. See `ui/screens.ts`'s
@@ -1460,6 +1554,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const screens = createScreens({
     initial: initialScreenName,
     onChange: (name) => {
+      // Leaving the conversation screen abandons whatever the customer had
+      // open in its surface slot — see `discardUserSurface` for why nothing
+      // else would ever clear it.
+      if (name !== 'conversation') discardUserSurface();
       syncScreens();
       // Focus follows navigation, same as any single-page app's route
       // change — but only while the panel is actually open and visible;
@@ -2005,15 +2103,114 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // long-lived form would keep rendering the field list it happened to be born
   // with.
 
-  function closeSurface(): void {
-    if (activeSurface === null) return;
+  /** Empties the slot. Answers whether there was anything in it to empty. */
+  function teardownSurface(): boolean {
+    if (activeSurface === null) return false;
     activeSurface.view.destroy();
     surfaceHost.replaceChildren();
     activeSurface = null;
+    return true;
+  }
+
+  function closeSurface(): void {
+    if (!teardownSurface()) return;
     // Restores the transcript and composer the surface was standing in for.
     // Safe to call unconditionally: `showConversation` is idempotent and
     // re-syncs every pane either way.
     showConversation();
+  }
+
+  /**
+   * Tears down a USER-INITIATED surface the customer has walked away from,
+   * WITHOUT putting the conversation back on screen.
+   *
+   * Why it exists: `syncProductSurfaces`'s non-preemption rule means no store
+   * tick will ever clear one of these — the slot is the customer's until they
+   * hand it back. Before that rule the next tick's fall-through `closeSurface`
+   * swept an abandoned form away; now the moments that mean "I am done with
+   * this" have to be recognised as the hand-back they are, or the next
+   * conversation the customer opens is rendered underneath a stale form (and
+   * a second Start on that form mints a conversation nobody asked for). Those
+   * moments are: leaving the conversation screen (`screens`' `onChange`), and
+   * asking for a different conversation (`selectSession`,
+   * `startCommonQuestion`).
+   *
+   * Not `closeSurface`, which ends in `showConversation`: every caller here is
+   * either on its way OFF the conversation screen or about to put a different
+   * conversation on it, and navigating straight back would undo the press
+   * that got here. The automatic surfaces are left alone — they are
+   * re-derived from state on the next sync, and a pre-chat gate parked behind
+   * Home is exactly what must still be there when the customer returns to
+   * that empty conversation.
+   */
+  function discardUserSurface(): void {
+    if (activeSurface === null || !isUserInitiated(activeSurface.kind)) return;
+    teardownSurface();
+    syncScreens();
+  }
+
+  /**
+   * Hands the slot back from `view`, a USER-INITIATED surface whose task is
+   * done, and re-runs the automatic surfaces.
+   *
+   * Checked against the slot rather than closed blindly: the two callers with
+   * a round trip in them (`endConversation`'s close, `startNewConversation`'s
+   * mint-and-send) reach here after an await, and the panel stays live across
+   * it — a customer who opened "Start new conversation" while "Ending…" was
+   * still in flight has REPLACED the confirm with a form they are typing
+   * into, and closing "whatever is active" would tear that form down with
+   * their text in it. So only the view that started the operation gets to
+   * close, and one already replaced or discarded (`discardUserSurface`) is
+   * skipped.
+   *
+   * The sync runs either way. While the surface was up `syncProductSurfaces`
+   * deliberately left it alone (its non-preemption rule), so a rating that
+   * became due behind it — the confirm-end surface's own `closeSession` is
+   * the obvious case — has not been raised yet, and would otherwise wait for
+   * the next unrelated state change. Re-running the sync right after the
+   * close is what puts it up at once. Harmless when nothing is due: the
+   * sync's own fall-through is a no-op close plus an idempotent `syncScreens`.
+   */
+  function releaseSurface(view: ProductSurface): void {
+    if (activeSurface?.view === view) closeSurface();
+    syncProductSurfaces();
+  }
+
+  /**
+   * Backs out of `view` — a user-initiated surface the customer CANCELLED —
+   * and puts them back on the screen they opened it from.
+   *
+   * Why this is not just `releaseSurface`: that one ends in
+   * `showConversation`, which is right for a surface whose task COMPLETED
+   * (the conversation is what the customer just started, ended or reported
+   * on) and wrong for one they abandoned. "Send us a message" on Home, or
+   * "New conversation" on Messages, is a detour; finishing that detour on
+   * the conversation screen strands the customer on an empty transcript with
+   * the tab bar gone, having pressed Cancel — the reported bug.
+   *
+   * A surface opened while ALREADY on the conversation screen (the ⋯ menu
+   * mid-chat, the ended footer, the inline "Report an issue") is the
+   * opposite case: there the conversation IS where they came from, so those
+   * keep the ordinary route — as does a view that no longer holds the slot,
+   * for the reason `releaseSurface` states about its own identity check.
+   *
+   * `discardUserSurface`, not `closeSurface`, for the detour: see that
+   * function's own doc. It empties the slot without navigating, and it
+   * deliberately does NOT re-run `syncProductSurfaces` — an automatic
+   * surface raised here would `screens.go('conversation')` and undo the very
+   * navigation this is performing.
+   */
+  function cancelUserSurface(view: ProductSurface): void {
+    const current = activeSurface;
+    if (current === null || current.view !== view || current.openedFrom === 'conversation') {
+      releaseSurface(view);
+      return;
+    }
+    discardUserSurface();
+    // `openSurface`'s own `screens.go('conversation')` pushed that origin, so
+    // Back is exactly the way to it. The swap covers a stack emptied
+    // underneath us (`screens.reset`, when the panel closes).
+    if (!screens.back()) screens.swap(current.openedFrom);
   }
 
   /**
@@ -2031,9 +2228,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    *
    * A SURFACE wins over the screen underneath it, and that is the case the
    * previous version missed entirely: `openSurface` focuses its view only
-   * when the panel is already open, but the pre-chat gate is raised at MOUNT,
-   * long before. Opening then hit `openSurface`'s idempotence guard, so
-   * nothing focused it and nothing focused the screen it was covering either.
+   * when the panel is already open, and a surface can be raised long before
+   * that — the pre-chat gate goes up on the connection's ack, which is
+   * ordinarily while the panel is still closed. Opening then hit
+   * `openSurface`'s idempotence guard, so nothing focused it and nothing
+   * focused the screen it was covering either.
    *
    * `preventScroll` throughout: the panel is fixed-position, so any scroll the
    * browser performs to "reveal" it is always wrong.
@@ -2065,14 +2264,45 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     panel.focus({ preventScroll: true });
   }
 
-  function openSurface(kind: SurfaceKind, build: () => ProductSurface): void {
+  /**
+   * Puts `kind` in the slot, building it only when it is not already there,
+   * and answers with the surface now holding the slot — the handle a
+   * user-initiated surface's own callbacks hand back to `releaseSurface`, so
+   * a release that lands after a round trip can tell whether the slot is
+   * still its to close.
+   */
+  function openSurface(kind: SurfaceKind, build: () => ProductSurface, key?: string): ProductSurface {
     // Idempotent by KIND, not by identity: `syncProductSurfaces` runs on every
     // message and every session change, and rebuilding the form under the
     // customer on each one would wipe what they were halfway through typing.
-    if (activeSurface?.kind === kind) return;
+    //
+    // `key` is the escape hatch for a surface whose `build()` closes over
+    // something that can change — `confirmEnd` closes over the session it is
+    // asking about — where answering the second ask with the first ask's view
+    // hands back a closure aimed at a conversation that is no longer the
+    // current one, and its destructive button then quietly closes nothing.
+    // Surfaces carrying no such identity pass none and keep the plain
+    // by-kind rule.
+    if (activeSurface?.kind === kind && activeSurface.key === key) return activeSurface.view;
+    // Read BEFORE anything below moves the screen — `closeSurface` and the
+    // `screens.go` further down both land on 'conversation', and this is the
+    // only moment the answer is still the screen the customer pressed from.
+    //
+    // …unless a USER-INITIATED surface is already in the slot, in which case
+    // `screens.current()` says 'conversation' because THAT surface's own
+    // `screens.go` put it there, not because the customer went. A second
+    // detour opened on top of the first (⋯ -> "Start new conversation", then
+    // ⋯ -> "Report an issue") is still a detour from wherever the first one
+    // started, so the origin is inherited rather than re-read. An AUTOMATIC
+    // surface is not inherited from: it is derived from state rather than
+    // pressed for, and `screens.current()` is already right for it — the
+    // screen it is showing on, or the one it is parked behind.
+    const replacing = activeSurface;
+    const openedFrom =
+      replacing !== null && isUserInitiated(replacing.kind) ? replacing.openedFrom : screens.current();
     closeSurface();
     const view = build();
-    activeSurface = { kind, view };
+    activeSurface = { kind, view, openedFrom, key };
     // The surface stands IN PLACE OF the conversation — same rule every
     // caller of this function already relied on before screens existed, just
     // expressed as a screen transition now: an auto-triggered surface (the
@@ -2085,15 +2315,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     syncScreens();
     surfaceHost.replaceChildren(view.node);
     if (open) view.focus?.();
+    return view;
   }
 
   /**
    * Puts the right surface — or none — in front of the conversation.
    *
    * Ordered by precedence, and the order is the product decision: being CLOSED
-   * outranks everything (there is no conversation to gate), a pre-chat gate
-   * outranks a rating (a thread with no messages cannot be rated), and the
-   * rating is what is left once a session has ended.
+   * outranks everything (there is no conversation to gate), a surface the
+   * customer opened outranks the automatic ones (see the non-preemption rule
+   * below), a pre-chat gate outranks a rating (a thread with no messages
+   * cannot be rated), and the rating is what is left once a session has
+   * ended.
    */
   function syncProductSurfaces(): void {
     if (destroyed) return;
@@ -2117,10 +2350,59 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       return;
     }
 
+    // ── Non-preemption ─────────────────────────────────────────────────
+    //
+    // Only the offline gate above may replace a surface the customer opened,
+    // because it means the conversation cannot happen at all. Everything
+    // below is a reading of state that the customer's own task outranks: a
+    // half-typed new-conversation form or issue report, or the "end this
+    // conversation?" question, must not be swapped for the pre-chat gate or
+    // a rating because a connection tick or a message happened to arrive.
+    // The customer's surface hands the slot back through `releaseSurface`,
+    // which re-runs this sync so anything that became due behind it shows
+    // then — or is swept away by `discardUserSurface` when they walk off to
+    // Home, Messages or a different conversation, since no tick here ever
+    // will. `syncScreens` still runs so the panes stay consistent with
+    // whatever the state change was, same as the fall-through at the end.
+    if (activeSurface !== null && isUserInitiated(activeSurface.kind)) {
+      syncScreens();
+      return;
+    }
+
+    // ── Only ever in front of a conversation the customer OPENED ────────
+    //
+    // `conversationOpened`, NOT `state.session !== null`: chat-service mints
+    // or resumes a session on `connection.hello`, so a brand-new visitor has
+    // a live, zero-message session as soon as the socket acks — at mount,
+    // before the panel has ever been opened. Gating on the session's mere
+    // existence therefore put the gate up at MOUNT, and `openSurface` took
+    // the panel straight to the conversation screen, so Home — "Send us a
+    // message", Common Questions, the recent conversation — was reachable
+    // only by pressing Back off a form nobody had asked for. See
+    // `conversationOpened`'s own doc for exactly what sets it.
+    //
+    // A fresh visitor's details are collected by the new-conversation form
+    // instead (`ui/new-conversation.ts`, folded in — see its own header),
+    // which is where a conversation now actually starts. A Common Questions
+    // tap deliberately skips them as well (`startCommonQuestion`): that is a
+    // customer asking one specific question, not filling in a form.
+    //
+    // Kept for a conversation the customer DID open whose transcript is
+    // empty — a recent row picked off Home, a host-supplied `sessionId`, a
+    // minted-but-empty thread they navigated back into. That is a
+    // conversation they are already looking at, and the merchant asked to be
+    // told who they are before it gets going.
+    //
+    // `openingLinesInFlight`: see that counter's own doc — between a new
+    // session's ack and its first message landing, the transcript is empty
+    // for a reason that is not "the customer has not spoken yet".
     const gateOnPreChat =
       remote.preChatEnabled &&
       remote.preChatFields.length > 0 &&
       !preChatAnswered &&
+      openingLinesInFlight === 0 &&
+      conversationOpened &&
+      state.session !== null &&
       state.messages.length === 0;
     if (gateOnPreChat) {
       openSurface('preChat', () =>
@@ -2128,23 +2410,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
           [...remote.preChatFields],
           {
             onSubmit: async (answers) => {
-              // Sent as a MESSAGE, not as an identity upsert. The answers are
-              // free text a customer typed on a storefront page, so nothing
-              // here may claim an identity — that is the hole §14's key split
-              // exists to close. The agent reads the lines; `metadata` is the
-              // structured copy, and chat-service consumes it server-side
-              // (pre-chat-contact.service.ts) into a CUSTOMER-ASSERTED contact
-              // on the session: fill-empty only, marked `source: 'pre_chat'`,
-              // and a typed email/phone already owned by another contact is
-              // dropped there rather than adopted, so typing an address still
-              // grants nothing.
-              const lines = remote.preChatFields
-                .filter((field) => answers[field.id] !== undefined)
-                .map((field) => `${field.label}: ${answers[field.id] ?? ''}`)
-                .join('\n');
-              await store.client.sendMessage(lines, {
-                metadata: { kind: 'pre_chat', answers },
-              });
+              await sendPreChatDetails(answers);
               preChatAnswered = true;
               syncProductSurfaces();
             },
@@ -2211,6 +2477,34 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // itself is idempotent, so calling it again on the ordinary path (where
     // `closeSurface` or `openSurface` above already called it) costs nothing.
     syncScreens();
+  }
+
+  /**
+   * Sends the customer's pre-chat answers into the current session — the ONE
+   * shape both askers (the gate in `syncProductSurfaces` and the fields folded
+   * into `ui/new-conversation.ts`) produce, so chat-service sees the same
+   * message whichever screen collected it.
+   *
+   * Sent as a MESSAGE, not as an identity upsert. The answers are free text a
+   * customer typed on a storefront page, so nothing here may claim an
+   * identity — that is the hole §14's key split exists to close. The agent
+   * reads the lines; `metadata` is the structured copy, and chat-service
+   * consumes it server-side (pre-chat-contact.service.ts) into a
+   * CUSTOMER-ASSERTED contact on the session: fill-empty only, marked
+   * `source: 'pre_chat'`, and a typed email/phone already owned by another
+   * contact is dropped there rather than adopted, so typing an address still
+   * grants nothing.
+   *
+   * Nothing answered, nothing sent: an all-optional form left blank has
+   * nothing to tell the agent, and a message with empty content is not a
+   * frame worth putting on the wire. The caller still records the gate as
+   * answered — the customer was asked and declined, which is what Skip means.
+   */
+  async function sendPreChatDetails(answers: PreChatAnswers): Promise<void> {
+    const answered = remote.preChatFields.filter((field) => answers[field.id] !== undefined);
+    if (answered.length === 0) return;
+    const lines = answered.map((field) => `${field.label}: ${answers[field.id] ?? ''}`).join('\n');
+    await store.client.sendMessage(lines, { metadata: { kind: 'pre_chat', answers } });
   }
 
   function setPaneVisible(node: HTMLElement, visible: boolean): void {
@@ -2287,6 +2581,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   /** Puts the conversation back on screen. Idempotent. */
   function showConversation(): void {
+    // Deliberately putting a conversation on screen is exactly what makes
+    // the pre-chat gate's precondition true — see `conversationOpened`.
+    conversationOpened = true;
     // `go` is a no-op when already on 'conversation' (see screens.ts), which
     // is exactly the common case here — a session switch, a surface closing
     // — so the repaint cannot be left to `onChange` alone: it fires only on
@@ -2325,6 +2622,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * second. Guarding here would instead ignore their second click.
    */
   async function selectSession(sessionId: string): Promise<void> {
+    // Asking for a different conversation ends whatever the customer had
+    // open in the slot — a form abandoned on the way here must not be what
+    // the picked conversation renders under.
+    discardUserSurface();
     showConversation();
     if (open) composer.input.focus({ preventScroll: true });
 
@@ -2907,10 +3208,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * of the pre-chat gate or the rating.
    */
   function openReportIssue(): void {
-    openSurface('report', () =>
+    const view = openSurface('report', () =>
       createReportIssueForm({
         onSubmit: (report) => fileIssueReport(report),
-        onCancel: () => closeSurface(),
+        // Same Cancel rule as the new-conversation form — this one is
+        // reachable from the ⋯ menu on Home too, and backing out of it must
+        // not deposit the customer on a conversation screen either.
+        onCancel: () => cancelUserSurface(view),
         onError: report,
       }),
     );
@@ -2952,24 +3256,82 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * customer has to notice the "Reopen" button and press it before they can
    * carry on, rather than never having lost the thread at all.
    *
-   * `confirm` rather than a bespoke sheet: it is the host page's own modal, it
-   * is unmissable, and building a second confirmation UI for the one place
-   * this widget needs one would be a surface to maintain for a single yes/no.
+   * Asked INSIDE the widget (`ui/end-conversation.ts`), in the surface slot
+   * every other form uses, not through the browser's `confirm()` — see that
+   * module's header for why the host page's modal was the wrong place. Being
+   * a user-initiated surface, `syncProductSurfaces` leaves it alone while it
+   * is up; `releaseSurface` on confirm is what then lets the same sync raise
+   * the CSAT survey (a thread with messages) or the ended footer (one
+   * without) — the identical path an agent-side close already takes, so the
+   * rating and comment reach the session and its linked ticket the way they
+   * always did.
+   *
+   * `endingConversation` still guards the close itself: the confirm button
+   * disables while busy, but the latch is what keeps a second `closeSession`
+   * from being issued by any route while one is in flight.
+   *
+   * The question is about ONE conversation and stays about it. Unlike the
+   * blocking `confirm()` it replaced, this surface is open-ended, so the
+   * session can change underneath it before the customer answers — another
+   * tab starting a conversation parks this one as SWITCHED, an agent-initiated
+   * session lands. Core's `closeSession` closes the CURRENT session, so the
+   * button fires only while that is still the one it asked about; otherwise
+   * it closes nothing and simply stands down.
+   *
+   * `targetId` is also the surface's `key`, and that is not decoration: the
+   * ⋯ menu stays reachable while this is up, so a customer whose session
+   * changed underneath the question can press "End conversation" again
+   * meaning the NEW one. Without the key, `openSurface`'s by-kind idempotence
+   * would hand back the confirm built for the OLD session, and the
+   * destructive button — pressed twice by then — would close nothing at all
+   * and say nothing about it.
    */
   function endConversation(): void {
     if (endingConversation) return;
     const live = store.getState().session;
     if (live === null) return;
-    // eslint-disable-next-line no-alert -- see the note above.
-    if (!globalThis.confirm?.('End this conversation? You can always start a new one.')) return;
+    const targetId = live.id;
 
-    endingConversation = true;
-    store.client
-      .closeSession()
-      .catch(report)
-      .finally(() => {
-        endingConversation = false;
-      });
+    const view = openSurface(
+      'confirmEnd',
+      () =>
+        createEndConversationConfirm({
+          onConfirm: async () => {
+            if (endingConversation) return;
+            endingConversation = true;
+            try {
+              // Nothing to close when the session changed underneath (see
+              // `targetId` above) or an agent ended it while the question was
+              // on screen. chat-service's close is not idempotent (see
+              // @dhaam-ccrm/rest's adapter), so a second POST would re-run the
+              // close and file a second "closed" system message; the honest
+              // move is to skip the request and let the sync below show what
+              // actually happened.
+              const current = store.getState().session;
+              const stillTheOneAsked =
+                current !== null &&
+                current.id === targetId &&
+                current.status !== 'CLOSED' &&
+                current.status !== 'RESOLVED';
+              if (stillTheOneAsked) await store.client.closeSession();
+            } finally {
+              endingConversation = false;
+            }
+            // Only reached on success — a rejection stays with the surface,
+            // whose own button shows the failure and re-arms (`submitOnce`).
+            releaseSurface(view);
+          },
+          // `cancelUserSurface`, not `releaseSurface`: the ⋯ menu lives in the
+          // always-visible header, so this question is reachable from Home and
+          // from Messages, and "Keep chatting" pressed there must put the
+          // customer back where they were rather than on a conversation screen
+          // with the tab bar gone — the same rule the other two user-initiated
+          // surfaces already follow.
+          onCancel: () => cancelUserSurface(view),
+          onError: report,
+        }),
+      targetId,
+    );
   }
 
   /**
@@ -3028,47 +3390,90 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * `ui/new-conversation.ts` collects — see that module's own header.
    */
   function openNewConversationFlow(): void {
-    openSurface('composingNew', () =>
-      createNewConversationScreen([...remote.conversationTopics], {
-        onStart: (input) => startNewConversation(input),
-        onCancel: () => closeSurface(),
-        onError: report,
-      }),
+    // "Ask for details before chatting" rides along on this form rather than
+    // gating it from a separate screen — the same condition the gate in
+    // `syncProductSurfaces` uses, minus the "no messages yet" clause, which
+    // is beside the point here: this form is about to START a session, so
+    // the question is only whether the customer has already answered.
+    const askDetails = remote.preChatEnabled && remote.preChatFields.length > 0 && !preChatAnswered;
+    const view = openSurface('composingNew', () =>
+      createNewConversationScreen(
+        [...remote.conversationTopics],
+        {
+          // Start goes on to the conversation it just made (`releaseSurface`,
+          // inside `startNewConversation`); Cancel goes back where the
+          // customer pressed from — see `cancelUserSurface`.
+          onStart: (input) => startNewConversation(input, view),
+          onCancel: () => cancelUserSurface(view),
+          onError: report,
+        },
+        askDetails ? [...remote.preChatFields] : [],
+      ),
     );
   }
 
   /**
    * Mints a session carrying `input`'s topic/subject, then sends the typed
    * message as its opening line — the two-jobs-one-field design
-   * `ui/new-conversation.ts`'s own header documents.
+   * `ui/new-conversation.ts`'s own header documents — with the pre-chat
+   * details, when the form collected any, sent FIRST in the exact shape the
+   * gate sends (`sendPreChatDetails`), so chat-service's pre-chat consumer
+   * sees no difference between the two routes.
    *
    * Rejects rather than catching: the surface this runs as `onStart` for
    * already disables its own button and shows its own message on failure
    * (`submitOnce`, ui/forms.ts), and a second recovery path here would be a
-   * second, possibly different, account of the same failure.
+   * second, possibly different, account of the same failure. That is also
+   * why the surface stays up until the opening line has landed rather than
+   * closing the moment the session is minted: a send that rejects needs the
+   * form still there to say so and keep the customer's typing. No state tick
+   * replaces it in the meantime — `syncProductSurfaces` does not preempt a
+   * user-initiated surface, and `openingLinesInFlight` keeps the pre-chat
+   * gate from arming on the new session's empty transcript. Only the
+   * CUSTOMER can (Back, or another item from the ⋯ menu), which is why the
+   * release at the end names `form`: whatever they put in the slot since is
+   * theirs, not this function's to close — and why the exchange abandons
+   * itself the moment the form stops holding the slot, rather than
+   * addressing its sends to whatever conversation took its place.
    */
-  async function startNewConversation(input: NewConversationInput): Promise<void> {
-    // `startNewSession`, never `switchSession`: a switch joins a session that
-    // already exists and deliberately mints nothing, so using it here would
-    // drop the customer into whichever conversation the server picked rather
-    // than the fresh one they asked for.
-    //
-    // `topic` spread conditionally, not passed as `undefined`:
-    // `exactOptionalPropertyTypes` treats an explicit `undefined` as a
-    // stated value, and core's own contract for this field is ABSENT means
-    // "no topic chosen" (see `ui/new-conversation.ts`'s header).
-    await store.client.startNewSession({
-      ...(input.topic === undefined ? {} : { topic: input.topic }),
-      subject: input.message,
-    });
-    await store.client.sendMessage(input.message);
-    // Only reached on success. `closeSurface` is idempotent — a config
-    // combination that also gates a pre-chat FORM on the new, still-empty
-    // session (`syncProductSurfaces`, reactive on the session-id change
-    // above) may already have replaced this surface with that one by the
-    // time execution gets here, and this call is then a no-op rather than a
-    // second transition fighting the first.
-    closeSurface();
+  async function startNewConversation(input: NewConversationInput, form: ProductSurface): Promise<void> {
+    openingLinesInFlight += 1;
+    try {
+      // `startNewSession`, never `switchSession`: a switch joins a session
+      // that already exists and deliberately mints nothing, so using it here
+      // would drop the customer into whichever conversation the server
+      // picked rather than the fresh one they asked for.
+      //
+      // `topic` spread conditionally, not passed as `undefined`:
+      // `exactOptionalPropertyTypes` treats an explicit `undefined` as a
+      // stated value, and core's own contract for this field is ABSENT means
+      // "no topic chosen" (see `ui/new-conversation.ts`'s header).
+      await store.client.startNewSession({
+        ...(input.topic === undefined ? {} : { topic: input.topic }),
+        subject: input.message,
+      });
+      // The mint is a full socket round trip, and the panel stays live across
+      // it — Back is on screen, and so is the ⋯ menu. A customer who walks
+      // away has abandoned THIS exchange, but core addresses every send to
+      // whichever session is current when it is CALLED, so carrying on would
+      // file this form's pre-chat answers and message against whatever
+      // conversation they opened next (a Common Question mints its own). So
+      // the flow stops here, with the session it minted left empty, rather
+      // than speaking into someone else's thread; the `finally` still
+      // releases the counter, and the form is already gone, so there is
+      // nothing left to report into either.
+      if (activeSurface?.view !== form) return;
+      if (input.preChatAnswers !== undefined) await sendPreChatDetails(input.preChatAnswers);
+      await store.client.sendMessage(input.message);
+    } finally {
+      openingLinesInFlight -= 1;
+    }
+    // Only reached on success. Recorded AFTER the whole opening exchange
+    // landed, not when the details message did: a customer whose message
+    // failed and who presses Start again mints a second session, and that
+    // one must carry the details too — `input.preChatAnswers` still does.
+    if (input.preChatAnswers !== undefined) preChatAnswered = true;
+    releaseSurface(form);
     if (open) composer.input.focus({ preventScroll: true });
   }
 
@@ -3092,21 +3497,49 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    *
    * The fix mints a session first, exactly like `startNewConversation`
    * above — no topic/subject pair here, because a tapped question already
-   * IS the subject — then sends the prompt as that session's opening line,
-   * then puts the resulting conversation on screen via `showConversation`
-   * (the same call `selectSession` uses), which is the second half of the
-   * report: even a send that HAD succeeded left the customer looking at
-   * whichever screen they tapped from, with no visible sign anything
-   * happened.
+   * IS the subject — puts the resulting conversation on screen via
+   * `showConversation` (the same call `selectSession` uses) the moment the
+   * session exists, and only then sends the prompt as its opening line. The
+   * navigation is the second half of the report: even a send that HAD
+   * succeeded left the customer looking at whichever screen they tapped
+   * from, with no visible sign anything happened. Navigating BEFORE the send
+   * rather than after is what removes the blink: the transcript is on screen
+   * for the send's round trip instead of Home, and `openingLinesInFlight`
+   * keeps the pre-chat gate from filling that empty transcript first.
+   *
+   * ── Deliberately no pre-chat fields on this route ─────────────────────
+   *
+   * A Common Question is the merchant offering a direct route into a chat —
+   * one tap, and the customer is talking. Putting the "ask for details
+   * first" form between the tap and the conversation would turn the shortcut
+   * back into the long way round, so this path skips the fields entirely
+   * (and leaves `preChatAnswered` alone: the customer was never asked, so a
+   * later new-conversation form still asks). The merchant who wants details
+   * from everyone still gets them from every other entry point.
    */
   async function startCommonQuestion(question: CommonQuestion): Promise<void> {
+    // Same rule as `selectSession`: a tapped question is a request for a
+    // different conversation, so whatever the customer had open in the slot
+    // is over before this one is minted.
+    discardUserSurface();
+    openingLinesInFlight += 1;
     try {
       await store.client.startNewSession({ subject: question.prompt });
-      await store.client.sendMessage(question.prompt);
+      // A gate armed on the PREVIOUS (empty) session — parked behind Home
+      // when the customer walked off it — may still hold the slot. The new
+      // session's ack normally tears it down through the id/status
+      // subscription, but that is a side effect of a store tick, not
+      // something this function holds a promise for; re-running the sync
+      // here, with the latch set, makes the release explicit. Idempotent
+      // when the tick already did it.
+      syncProductSurfaces();
       showConversation();
       if (open) composer.input.focus({ preventScroll: true });
+      await store.client.sendMessage(question.prompt);
     } catch (error) {
       report(error);
+    } finally {
+      openingLinesInFlight -= 1;
     }
   }
 

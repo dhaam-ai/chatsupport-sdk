@@ -26,6 +26,63 @@ class SilentSocket {
   removeEventListener = vi.fn();
 }
 
+/**
+ * A socket that finishes the handshake and answers with one live, EMPTY
+ * session — which is what chat-service's own `handleHello` does for EVERY
+ * visitor, first-timers included: it mints or resumes a row and acks with it.
+ *
+ * `SilentSocket` above is right for everything in this file that only cares
+ * what published config paints — but the pre-chat gate stands in front of a
+ * conversation the customer has OPENED (see `syncProductSurfaces`), and
+ * proving either half of that takes a real ack. Only the frames that
+ * precondition needs are modelled here; pre-chat-preemption.test.ts owns the
+ * full-fidelity fake for everything past it.
+ */
+class AckingSocket {
+  static instances: AckingSocket[] = [];
+  static readonly CONNECTING = 0;
+  readonly readyState = 1;
+  readonly sent: string[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: ((event: { code: number; reason: string; wasClean: boolean }) => void) | null = null;
+
+  constructor(readonly url: string) {
+    AckingSocket.instances.push(this);
+  }
+  send(data: string): void {
+    this.sent.push(data);
+  }
+  close(): void {
+    this.onclose?.({ code: 1000, reason: '', wasClean: true });
+  }
+
+  /** Opens, then answers the hello with a live session carrying no messages. */
+  ack(sessionId: string): void {
+    this.onopen?.();
+    this.onmessage?.({
+      data: JSON.stringify({
+        v: 1,
+        t: 'connection.ack',
+        id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        ts: Date.now(),
+        d: {
+          protocolVersion: 1,
+          seq: 0,
+          session: {
+            sessionId,
+            status: 'ASSIGNED',
+            mode: 'HUMAN',
+            participants: [{ participantId: 'cus_1', type: 'CUSTOMER' }],
+            createdAt: new Date().toISOString(),
+          },
+        },
+      }),
+    });
+  }
+}
+
 function config(overrides: Partial<WidgetConfig> = {}): WidgetConfig {
   return {
     auth: { publishableKey: PUBLISHABLE, tokenEndpoint: '/api/chat-token' },
@@ -79,12 +136,70 @@ function stubFetch(configBody: unknown, { failConfig = false } = {}): void {
           headers: { 'content-type': 'application/json' },
         });
       }
+      if (url.includes('/chat/sessions/customer')) {
+        return new Response(JSON.stringify({ success: true, data: { sessions: [] } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('/chat/sessions/')) {
+        // Every history page: empty, which is the gate's own precondition.
+        return new Response(JSON.stringify({ success: true, data: { messages: [], hasMore: false } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       return new Response(JSON.stringify({ accessToken: 'tok', expiresIn: 3600 }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
     }),
   );
+}
+
+/**
+ * Serves `configBody`, mounts a host that NAMED the conversation it wants on
+ * screen, and connects it live and empty — the state the pre-chat gate is
+ * defined against.
+ *
+ * The `sessionId` is load-bearing, not decoration. A live session on its own
+ * proves nothing about the gate any more: chat-service hands one to every
+ * visitor on the handshake, so "a session exists" is true at mount for a
+ * first-time visitor too. What the gate asks is whether the customer has
+ * OPENED a conversation, and a host passing `sessionId` has opened one on
+ * their behalf — `initialScreenName` puts the panel straight on it.
+ * {@link mountFresh} is the other half: the same ack, no `sessionId`.
+ */
+async function mountConnected(configBody: unknown): Promise<ReturnType<typeof mount>> {
+  stubFetch(configBody);
+  vi.stubGlobal('WebSocket', AckingSocket);
+  const widget = mount(config({ sessionId: 'sess_live' }));
+  await settle();
+  const socket = AckingSocket.instances[0];
+  if (socket === undefined) throw new Error('no socket was opened');
+  socket.ack('sess_live');
+  await settle();
+  return widget;
+}
+
+/**
+ * A FIRST-TIME visitor, all the way through the handshake: no `sessionId`
+ * from the host, and the live, zero-message session chat-service mints on
+ * `connection.hello` anyway. The panel is opened, because "what does a first
+ * visit land on" is the question this fixture exists to answer.
+ */
+async function mountFresh(configBody: unknown): Promise<ReturnType<typeof mount>> {
+  stubFetch(configBody);
+  vi.stubGlobal('WebSocket', AckingSocket);
+  const widget = mount(config());
+  await settle();
+  const socket = AckingSocket.instances[0];
+  if (socket === undefined) throw new Error('no socket was opened');
+  socket.ack('sess_live');
+  await settle();
+  widget.open();
+  await settle();
+  return widget;
 }
 
 function shadow(): ShadowRoot {
@@ -102,6 +217,7 @@ async function settle(): Promise<void> {
 
 beforeEach(() => {
   localStorage.clear();
+  AckingSocket.instances = [];
   vi.stubGlobal('WebSocket', SilentSocket);
   document.body.innerHTML = '';
 });
@@ -111,7 +227,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('the pre-chat gate is driven by published config', () => {
+describe('the pre-chat gate is driven by published config, in front of a session', () => {
   const preChatConfig = published({
     behaviour: {
       preChatEnabled: true,
@@ -123,10 +239,8 @@ describe('the pre-chat gate is driven by published config', () => {
     },
   });
 
-  it('renders the merchant’s fields in front of the conversation', async () => {
-    stubFetch(preChatConfig);
-    mount(config());
-    await settle();
+  it('renders the merchant’s fields in front of a connected conversation', async () => {
+    await mountConnected(preChatConfig);
 
     expect(find('.dh-prechat-form')).not.toBeNull();
     const labels = [...shadow().querySelectorAll('.dh-prechat-form .dh-field-label')].map(
@@ -142,12 +256,55 @@ describe('the pre-chat gate is driven by published config', () => {
   });
 
   it('stands IN PLACE OF the transcript and composer, not on top of them', async () => {
-    stubFetch(preChatConfig);
-    mount(config());
-    await settle();
+    await mountConnected(preChatConfig);
 
+    expect(find('.dh-prechat-form')).not.toBeNull();
     expect(find<HTMLElement>('.dh-log')?.hidden).toBe(true);
     expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(true);
+  });
+
+  // The reported bug, and the boot-time half of "in front of a conversation
+  // the customer opened".
+  //
+  // A first-time visitor is NOT sessionless, which is what made the first
+  // attempt at this fix ineffective: chat-service's `handleHello` mints or
+  // resumes a row and acks with it, so the store holds a live, zero-message
+  // session from the moment the socket completes — at mount, before the panel
+  // has ever been opened. Gating on `state.session !== null` therefore still
+  // raised the standalone form at MOUNT and `openSurface` navigated with it,
+  // so Home — its "Send us a message" card, its Common Questions, its recent
+  // conversation — was reachable only by pressing Back off a form nobody had
+  // asked for. A first visit's details are collected by the new-conversation
+  // form instead (see `ui/new-conversation.ts`).
+  //
+  // Driven over the ACKING socket on purpose: a socket that never completes
+  // would prove this with a state that does not occur in production.
+  it('does not gate a first visit, whose session chat-service minted on the handshake', async () => {
+    const widget = await mountFresh(preChatConfig);
+
+    // The precondition the old clause was reading, and it is true here.
+    expect(widget.store.getState().session).not.toBeNull();
+
+    expect(find('.dh-prechat-form')).toBeNull();
+    expect(find<HTMLElement>('.dh-home')?.hidden).toBe(false);
+    // The tab bar, which the conversation screen hides, is the other half of
+    // "this is Home": the customer can still get to Messages from here.
+    expect(find<HTMLElement>('.dh-nav')?.hidden).toBe(false);
+    // And there is no Back arrow, because there is nowhere to go back FROM —
+    // the panel never left Home.
+    expect(find<HTMLElement>('.dh-back')?.hidden).toBe(true);
+  });
+
+  // …but a conversation the customer actually opened, with an empty
+  // transcript, is still gated. A minted-but-empty thread — a host-supplied
+  // `sessionId`, a recent row picked off Home — is a conversation they are
+  // looking at, and the merchant asked to be told who they are before it gets
+  // going.
+  it('still gates a conversation the customer opened whose transcript is empty', async () => {
+    await mountConnected(preChatConfig);
+
+    expect(find('.dh-prechat-form')).not.toBeNull();
+    expect(find<HTMLElement>('.dh-home')?.hidden).toBe(true);
   });
 
   it('does not gate when the merchant left pre-chat off', async () => {
@@ -166,19 +323,19 @@ describe('the pre-chat gate is driven by published config', () => {
   // Enabled with an empty field list is a merchant misconfiguration, and the
   // honest reading is "nothing to ask" rather than an empty form with a button.
   it('does not gate on an empty field list even when enabled', async () => {
-    stubFetch(published({ behaviour: { preChatEnabled: true, preChatFields: [] } }));
-    mount(config());
-    await settle();
+    // Connected, so the absence proved here is the empty field list and not
+    // merely the missing session the test above covers.
+    await mountConnected(published({ behaviour: { preChatEnabled: true, preChatFields: [] } }));
 
     expect(find('.dh-prechat-form')).toBeNull();
   });
 
   // The gate lifts through `preChatAnswered`, and Skip is the path that
-  // reaches it without a working socket — this environment has none, so a
-  // submit genuinely cannot land here. The submit path's own success case is
-  // covered in product-surfaces.test.ts against a resolving callback.
+  // reaches it without sending anything at all. The submit path's own
+  // success case is covered in product-surfaces.test.ts against a resolving
+  // callback.
   it('hands the conversation back when the customer skips', async () => {
-    stubFetch(
+    await mountConnected(
       published({
         behaviour: {
           preChatEnabled: true,
@@ -187,8 +344,6 @@ describe('the pre-chat gate is driven by published config', () => {
         },
       }),
     );
-    mount(config());
-    await settle();
 
     expect(find('.dh-prechat-form')).not.toBeNull();
     find<HTMLButtonElement>('.dh-form-skip')!.click();
@@ -198,13 +353,40 @@ describe('the pre-chat gate is driven by published config', () => {
     expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
   });
 
+  // The gate's other way out: an all-optional form SUBMITTED blank. Nothing
+  // was answered, so nothing goes on the wire — an empty-content `pre_chat`
+  // message would tell the agent nothing — but it still counts as answered,
+  // exactly as Skip does. The spy is what proves the first half: with a
+  // connected session a send WOULD have been possible here, and none was
+  // attempted.
+  it('treats an all-optional gate submitted blank as a skip: nothing sent, gate lifted', async () => {
+    const widget = await mountConnected(
+      published({
+        behaviour: {
+          preChatEnabled: true,
+          preChatFields: [{ id: 'order', label: 'Order number', type: 'text', required: false }],
+        },
+      }),
+    );
+    const sendMessage = vi.spyOn(widget.store.client, 'sendMessage');
+
+    expect(find('.dh-prechat-form')).not.toBeNull();
+    find<HTMLFormElement>('.dh-prechat-form')!.requestSubmit();
+    await settle();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(find('.dh-prechat-form')).toBeNull();
+    expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
+  });
+
   // The inherited React defect, proved against the real widget: a send that
   // cannot land must leave the form usable rather than stuck on "Starting…"
   // with the customer's answers trapped behind a dead button.
   it('keeps the gate up and the button alive when the send cannot land', async () => {
-    stubFetch(preChatConfig);
-    mount(config());
-    await settle();
+    const widget = await mountConnected(preChatConfig);
+    // The failure is stated rather than arranged: the socket here completes
+    // its handshake, so "no network" is no longer what stops the send.
+    vi.spyOn(widget.store.client, 'sendMessage').mockRejectedValue(new Error('offline'));
 
     const inputs = [...shadow().querySelectorAll<HTMLInputElement>('.dh-prechat-form .dh-field-input')];
     inputs[0]!.value = 'Ada';
@@ -492,12 +674,12 @@ describe('appearance, and the host’s right to overrule it', () => {
       expect(find<HTMLElement>('.dh-hero')?.hidden).toBe(true);
     });
 
-    // The hero and the Common Questions chips are shown by ONE function
-    // against ONE condition (`syncPreConversationPanes`), so a surface that
-    // stands in for the conversation has to retire both. Proved through the
-    // pre-chat gate because it is the surface reachable without a socket.
+    // The hero and the Common Questions chips are both Home furniture, so a
+    // surface standing in for the conversation has to retire both. Proved
+    // through the pre-chat gate, which takes a connected session now — it
+    // only ever stands in front of a conversation that exists.
     it('stands down while a surface is standing in for the conversation', async () => {
-      stubFetch(
+      await mountConnected(
         published({
           appearance: { design: 'hero', header: { greeting: 'Hello there 👋' } },
           behaviour: {
@@ -507,8 +689,6 @@ describe('appearance, and the host’s right to overrule it', () => {
           },
         }),
       );
-      mount(config());
-      await settle();
 
       expect(find('.dh-prechat-form')).not.toBeNull();
       expect(find<HTMLElement>('.dh-hero')?.hidden).toBe(true);
@@ -791,14 +971,78 @@ describe('report an issue', () => {
     expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(true);
   });
 
-  it('gives the conversation back on cancel', async () => {
+  // Cancel goes back to where the customer OPENED the form, and this button
+  // lives beside the composer — so opening it means already being in a
+  // conversation, and that is where backing out lands. `sessionId` is what
+  // puts the panel on the conversation screen (see the pre-chat block above
+  // for the same note).
+  it('gives the conversation back on cancel when it was opened from the conversation', async () => {
     stubFetch(published({ behaviour: { reportIssue: true } }));
-    mount(config());
+    mount(config({ sessionId: 'sess_1' }));
     await settle();
 
     openButton()!.click();
     find<HTMLButtonElement>('.dh-report-form .dh-form-skip')!.click();
     expect(find('.dh-report-form')).toBeNull();
+    expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
+  });
+
+  // The ⋯ menu offers the same form from Home, and cancelling there must not
+  // deposit the customer on a conversation screen they never navigated to —
+  // the same defect the new-conversation form had (see
+  // pre-chat-preemption.test.ts's own cancel tests).
+  it('goes back to Home on cancel when it was opened from Home', async () => {
+    stubFetch(published({ behaviour: { reportIssue: true } }));
+    const widget = mount(config());
+    widget.open();
+    await settle();
+    expect(find<HTMLElement>('.dh-home')?.hidden).toBe(false);
+
+    find<HTMLButtonElement>('.dh-hmenu-toggle')!.click();
+    const item = [...shadow().querySelectorAll<HTMLButtonElement>('.dh-hmenu-item')].find((button) =>
+      button.textContent?.includes('Report an issue'),
+    );
+    item!.click();
+    expect(find('.dh-report-form')).not.toBeNull();
+
+    find<HTMLButtonElement>('.dh-report-form .dh-form-skip')!.click();
+    expect(find('.dh-report-form')).toBeNull();
+    expect(find<HTMLElement>('.dh-home')?.hidden).toBe(false);
+    expect(find<HTMLElement>('.dh-surface-host')?.hidden).toBe(true);
+  });
+
+  // A submitted report replaces the form with a confirmation, and that
+  // confirmation stands IN PLACE OF the transcript like every other surface
+  // in this slot. Nothing sweeps a user-initiated surface away on a store
+  // tick (`syncProductSurfaces` never preempts one), so a confirmation with
+  // no control of its own held the slot for good: transcript and composer
+  // hidden for the rest of the visit, and on a panel opened straight onto
+  // the conversation there is no Back arrow either — a page reload was the
+  // only way out, and any CSAT survey that fell due behind it never showed.
+  it('hands the conversation back when the customer is done with the confirmation', async () => {
+    await mountConnected(published({ behaviour: { reportIssue: true } }));
+    // The empty back stack is half the trap: `sessionId` opens the panel on
+    // the conversation, so Back is not an escape from this surface.
+    expect(find<HTMLElement>('.dh-back')?.hidden).toBe(true);
+
+    openButton()!.click();
+    find<HTMLInputElement>('#dh-report-subject')!.value = 'Checkout is broken';
+    find<HTMLTextAreaElement>('.dh-report-details')!.value = 'The pay button does nothing.';
+    find<HTMLButtonElement>('.dh-report-form .dh-form-submit')!.click();
+    await settle();
+
+    // Filed: the form is gone, the confirmation is up — and it carries a way out.
+    expect(find<HTMLElement>('.dh-report-form')?.hidden).toBe(true);
+    expect(find<HTMLElement>('.dh-form-done')?.hidden).toBe(false);
+    const dismiss = find<HTMLButtonElement>('.dh-report-done-dismiss')!;
+    expect(dismiss.textContent).toBe('Done');
+
+    dismiss.click();
+    await settle();
+
+    expect(find('.dh-report-form')).toBeNull();
+    expect(find<HTMLElement>('.dh-surface-host')?.hidden).toBe(true);
+    expect(find<HTMLElement>('.dh-log')?.hidden).toBe(false);
     expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
   });
 

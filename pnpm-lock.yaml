@@ -185,6 +185,9 @@ importers:
 
   packages/widget:
     dependencies:
+      '@dhaam-ccrm/browser':
+        specifier: workspace:^
+        version: link:../browser
       '@dhaam-ccrm/core':
         specifier: workspace:^
         version: link:../core

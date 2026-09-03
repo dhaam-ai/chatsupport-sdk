@@ -26,7 +26,9 @@
 // Closing is not reversible from this side: chat-service reopens a session on
 // the agent's say-so, not the customer's, so a mis-tap ends the conversation
 // they were in the middle of. It is the one item here with a consequence the
-// customer cannot undo, so it is coloured as such and asks once.
+// customer cannot undo, so it is coloured as such and asks once — inside the
+// widget, through ui/end-conversation.ts, in the same surface slot every
+// other form uses; never through the browser's own `confirm()`.
 
 import { ICONS, el, icon, safeLinkUrl } from './dom.js';
 
