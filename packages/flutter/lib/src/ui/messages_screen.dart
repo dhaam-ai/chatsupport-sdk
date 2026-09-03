@@ -209,7 +209,7 @@ class _ConversationRow extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                chatStatusLabel[summary.status] ?? '',
+                chatStatusLabel(summary.status),
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.primary),
               ),
               if (preview.isNotEmpty)

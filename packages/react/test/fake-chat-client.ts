@@ -26,6 +26,7 @@ import type {
   ChatSession,
   ChatSessionSummary,
   ChatState,
+  CsatStatus,
   CsatSubmission,
   RetryOutcome,
   SendAttachmentOptions,
@@ -133,6 +134,10 @@ export function createFakeChatClient(initial?: Partial<ChatState>): FakeChatClie
       comment: comment ?? null,
       submittedAt: '2026-01-01T00:00:00.000Z',
     })),
+    // Default: unrated — the ordinary state of a session nobody has rated, and
+    // the one that lets a survey appear. Override per test for the "already
+    // rated, show it locked" case.
+    getCsat: vi.fn(async (_sessionId: string): Promise<CsatStatus> => ({ rated: false })),
     // Default: no sessions — matches the guest-signal shape (§6.2's "200 with
     // []") described on `SessionSummarySource`, so a test that doesn't care
     // about the list gets the ordinary "nothing yet" outcome rather than

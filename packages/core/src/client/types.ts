@@ -150,7 +150,45 @@ export interface SessionActions {
    * mirroring `SendMessageOptions`'s own optional-field convention.
    */
   submitCsat(sessionId: string, rating: number, comment?: string): Promise<CsatSubmission>;
+
+  /**
+   * `GET /chat/sessions/{id}/csat` — has this conversation already been rated,
+   * and with what?
+   *
+   * The read half of `submitCsat`, and the reason it exists is that the POST
+   * is an UPSERT server-side: without a way to ask, a binding's only memory of
+   * "already rated" is its own in-process flag, which a page reload, a second
+   * tab or another device destroys — so the survey re-arms over a rated
+   * session and the next submit silently overwrites the score the customer
+   * already gave. That is a server fact, so it is answered by the server.
+   *
+   * Same non-mutating contract as `submitCsat`: this never touches
+   * `ChatState.session`, so it is outside the "reporting a change the server
+   * applied but could not confirm" rule above.
+   */
+  getCsat(sessionId: string): Promise<CsatStatus>;
 }
+
+/**
+ * Whether a session carries a rating — {@link SessionActions.getCsat}'s and
+ * {@link ChatClient.getCsat}'s result.
+ *
+ * A discriminated pair rather than `CsatSubmission | null`: the route answers
+ * an unrated session with a successful `{rated: false}` rather than a 404, so
+ * "not rated yet" is an ANSWER, not an absence, and a caller must be able to
+ * tell it apart from a lookup that failed (which rejects).
+ */
+export type CsatStatus =
+  | { readonly rated: false }
+  | {
+      readonly rated: true;
+      /** 1-5. */
+      readonly rating: number;
+      /** `null` when the customer left none. */
+      readonly comment: string | null;
+      /** ISO-8601. Absent only if the service omitted it. */
+      readonly submittedAt?: string;
+    };
 
 /**
  * The stored result of a customer's post-conversation rating —
@@ -645,6 +683,21 @@ export interface ChatClient {
    * its own retry state, not a side channel.
    */
   submitCsat(sessionId: string, rating: number, comment?: string): Promise<CsatSubmission>;
+  /**
+   * Whether `sessionId` has already been rated — the survey's own gate.
+   *
+   * REST-only, and non-mutating in exactly the way `submitCsat` is: it writes
+   * nothing to `ChatState`, because a rating is not part of a session's
+   * lifecycle state and a binding that wants it holds it itself.
+   *
+   * Throws {@link ChatClientConfigError} if `config.sessionActions` was not
+   * supplied. Otherwise rejects with whatever the adapter rejects with — a
+   * caller must be able to tell "this session is unrated" (a resolved
+   * `{rated: false}`) from "I could not find out", because those two answers
+   * lead to opposite decisions about showing a survey that would overwrite an
+   * existing score.
+   */
+  getCsat(sessionId: string): Promise<CsatStatus>;
   /**
    * The session-picker's data source (T10) — the customer's own recent
    * sessions, most recent first.

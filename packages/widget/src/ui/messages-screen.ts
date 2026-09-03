@@ -4,11 +4,12 @@
 // ── Why this is not a third copy of the row markup ───────────────────────
 //
 // `ui/session-picker.ts` already renders session rows twice (the pre-chat
-// screen and the in-chat switcher), both keyed off `STATUS_LABEL` and
+// screen and the in-chat switcher), both keyed off `statusLabel` and
 // `relativeTimeLabel`. This screen is a fourth place that needs to agree with
 // the first three about what "Waiting for an agent" or "3 hours ago" means,
-// so it imports both rather than re-deriving them — see `STATUS_LABEL`'s own
-// export note in session-picker.ts. It does NOT reuse that module's row
+// so it imports both rather than re-deriving them — the status vocabulary now
+// lives in `ui/session-status.ts`, which Home's pill reads off too. It does
+// NOT reuse that module's row
 // FACTORY, though: this row shows a different field set (no handler line,
 // see below) and is about to outlive session-picker's two screens, which the
 // three-screen navigation this belongs to is replacing.
@@ -37,7 +38,8 @@
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 
 import { ICONS, el, icon } from './dom.js';
-import { STATUS_LABEL, relativeTimeLabel } from './session-picker.js';
+import { relativeTimeLabel } from './session-picker.js';
+import { statusLabel } from './session-status.js';
 
 export interface MessagesScreenCallbacks {
   /** The customer picked a row — including a terminal one, which reactivates it server-side. */
@@ -62,7 +64,7 @@ const SEARCH_ICON = ['m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0
 /** Whether `session` should stay visible under `query` — `''` matches everything. */
 function matchesQuery(session: ChatSessionSummary, query: string): boolean {
   if (query === '') return true;
-  const haystack = `${STATUS_LABEL[session.status]} ${session.lastMessagePreview ?? ''}`.toLowerCase();
+  const haystack = `${statusLabel(session.status)} ${session.lastMessagePreview ?? ''}`.toLowerCase();
   return haystack.includes(query);
 }
 
@@ -101,7 +103,7 @@ function createMessageRow(onSelect: (sessionId: string) => void): MessageRow {
       if (isCurrent) button.setAttribute('aria-current', 'true');
       else button.removeAttribute('aria-current');
 
-      status.textContent = STATUS_LABEL[summary.status];
+      status.textContent = statusLabel(summary.status);
 
       const whenIso = summary.lastMessageAt ?? summary.createdAt;
       if (time.getAttribute('datetime') !== whenIso) time.setAttribute('datetime', whenIso);
@@ -121,7 +123,7 @@ function createMessageRow(onSelect: (sessionId: string) => void): MessageRow {
       // spans themselves, same split session-picker.ts's `describeRow` uses
       // and for the same reason: the wording can drift, the underlying facts
       // must not.
-      const parts = [STATUS_LABEL[summary.status]];
+      const parts = [statusLabel(summary.status)];
       if (isCurrent) parts.push('current conversation');
       const relative = relativeTimeLabel(whenIso);
       if (relative !== '') parts.push(relative);

@@ -238,10 +238,34 @@ interface RestCsatSubmission {
   submittedAt: string;
 }
 
+/**
+ * `GET /chat/sessions/{sessionId}/csat` — whether THIS session already carries
+ * a rating, and what it was.
+ *
+ * A discriminated pair rather than `RestCsatSubmission | null`, because the
+ * route answers `200 {rated: false}` for an unrated session rather than a 404:
+ * "no rating yet" is a successful answer about a session the customer owns,
+ * and folding it into the same 404 that means "not your session" would make
+ * the one case the caller must act on indistinguishable from the one it must
+ * report.
+ */
+type RestCsatStatus =
+  | { rated: false }
+  | {
+      rated: true;
+      /** 1-5. */
+      rating: number;
+      /** `null` when the customer left none. */
+      comment: string | null;
+      /** ISO-8601. Absent only if the service omitted it. */
+      submittedAt?: string;
+    };
+
 export function createSessionActions<TSession>(client: RestClient): {
   reopenSession(sessionId: string): Promise<TSession>;
   closeSession(sessionId: string): Promise<TSession>;
   submitCsat(sessionId: string, rating: number, comment?: string): Promise<RestCsatSubmission>;
+  getCsat(sessionId: string): Promise<RestCsatStatus>;
 } {
   /**
    * Reads back the session the mutation settled on.
@@ -342,6 +366,63 @@ export function createSessionActions<TSession>(client: RestClient): {
         { body: comment === undefined ? { rating } : { rating, comment } },
       );
       return unwrapEnvelope<RestCsatSubmission>(body, 'POST /chat/sessions/{sessionId}/csat');
+    },
+    // The read half of the same route, and the reason a customer can no longer
+    // rate one conversation twice: the widget's own memory of "already rated"
+    // is a variable in a closure that a page reload destroys, so before this
+    // existed the survey re-armed for every already-rated session and the
+    // POST — an upsert server-side — happily overwrote the score.
+    //
+    // Strict about `rated` on purpose. Anything that is not a literal boolean
+    // is rejected rather than read as `false`: a caller that treats a
+    // malformed body as "not rated yet" offers the survey again, which is the
+    // exact duplicate this call exists to prevent. A thrown
+    // `MALFORMED_RESPONSE` reaches the widget as a failed lookup, and its
+    // documented answer to a failed lookup is to withhold the survey.
+    async getCsat(sessionId) {
+      const body = await client.request<unknown>(
+        'GET',
+        `/chat/sessions/${encodeURIComponent(sessionId)}/csat`,
+      );
+      const context = 'GET /chat/sessions/{sessionId}/csat';
+      const data = unwrapEnvelope<{
+        rated?: unknown;
+        rating?: unknown;
+        comment?: unknown;
+        submittedAt?: unknown;
+      }>(body, context);
+
+      if (typeof data.rated !== 'boolean') {
+        throw new RestApiError({
+          code: 'MALFORMED_RESPONSE',
+          message: `${context} did not return a boolean \`rated\``,
+          status: 200,
+          retryable: false,
+        });
+      }
+      if (!data.rated) return { rated: false };
+
+      // `rated: true` without a usable score is the same contract drift: the
+      // widget would render a "locked" survey with nothing in it, which looks
+      // exactly like the bug where a rating is lost.
+      if (typeof data.rating !== 'number') {
+        throw new RestApiError({
+          code: 'MALFORMED_RESPONSE',
+          message: `${context} reported rated: true with no numeric rating`,
+          status: 200,
+          retryable: false,
+        });
+      }
+
+      return {
+        rated: true,
+        rating: data.rating,
+        // Normalised to `null` — the route documents `string | null`, and a
+        // caller distinguishing "absent" from "explicitly empty" here would be
+        // reading a difference the server does not make.
+        comment: typeof data.comment === 'string' ? data.comment : null,
+        ...(typeof data.submittedAt === 'string' ? { submittedAt: data.submittedAt } : {}),
+      };
     },
   };
 }

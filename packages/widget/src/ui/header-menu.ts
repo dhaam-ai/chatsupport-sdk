@@ -10,10 +10,13 @@
 // route existed; edit/delete, which have no protocol frame and were therefore
 // left out of the per-message menu).
 //
-//   Mute notifications  → silences the local chime (ui/chime.ts). Per BROWSER,
-//                         not per tenant: it is this visitor's preference
-//                         about noise on their own machine, and there is
-//                         nothing to sync it to.
+//   Mute / Unmute notifications → silences the local chime (ui/chime.ts), or
+//                         gives it back. Per BROWSER, not per tenant: it is
+//                         this visitor's preference about noise on their own
+//                         machine, and there is nothing to sync it to. The
+//                         label states the ACTION and therefore flips — see
+//                         `setMuted` for why that ruled out checkbox
+//                         semantics.
 //   Start new conversation → core's `startNewSession`.
 //   End conversation    → core's `closeSession`, over chat-service's own
 //                         `POST /chat/sessions/:id/close` (customer-owned).
@@ -93,8 +96,9 @@ export function createHeaderMenu(callbacks: HeaderMenuCallbacks): HeaderMenuView
 
   const muteLabel = el('span', { text: 'Mute notifications' });
   const muteGlyph = el('span', { attrs: { class: 'dh-hmenu-glyph' }, children: [icon(MENU_ICONS.unmute, 16)] });
+  // `role="menuitem"`, NOT `menuitemcheckbox` — see `setMuted`.
   const mute = el('button', {
-    attrs: { class: 'dh-hmenu-item', type: 'button', role: 'menuitemcheckbox', 'aria-checked': 'false' },
+    attrs: { class: 'dh-hmenu-item', type: 'button', role: 'menuitem' },
     children: [muteGlyph, muteLabel],
     on: {
       click: () => {
@@ -105,13 +109,30 @@ export function createHeaderMenu(callbacks: HeaderMenuCallbacks): HeaderMenuView
     },
   });
 
+  /**
+   * ── Why this item is a plain menuitem whose label flips ──────────────────
+   *
+   * The label states the ACTION: "Mute notifications" while sound is on,
+   * "Unmute notifications" once it is off. It used to be pinned to "Mute
+   * notifications" forever, with only the glyph changing, which left the one
+   * word that says what pressing it does permanently lying.
+   *
+   * A flipping action label cannot coexist with the `role="menuitemcheckbox"`
+   * + `aria-checked` this item used to carry: once muted, that combination
+   * announces "Unmute notifications, checked", which asserts the opposite of
+   * what the control will do. The escape — keeping the checkbox and pinning a
+   * stable `aria-label` — is worse, not better: the accessible name would then
+   * no longer contain the visible label, which is a WCAG 2.5.3 (Label in Name)
+   * failure and leaves a voice-control user saying "unmute notifications" at a
+   * control the browser knows only as "mute notifications".
+   *
+   * So the checkbox semantics go and the item becomes what it always behaved
+   * like: a command named after its effect. Its state is still legible — from
+   * the label itself, and from the struck-through bell beside it.
+   */
   function setMuted(next: boolean): void {
     muted = next;
-    mute.setAttribute('aria-checked', String(muted));
-    // The label states what IS, not what pressing it does — a checkbox item
-    // whose text flips between "Mute" and "Unmute" while `aria-checked` also
-    // flips tells a screen reader the state twice and contradicts itself once.
-    muteLabel.textContent = 'Mute notifications';
+    muteLabel.textContent = muted ? 'Unmute notifications' : 'Mute notifications';
     muteGlyph.replaceChildren(icon(muted ? MENU_ICONS.mute : MENU_ICONS.unmute, 16));
   }
 

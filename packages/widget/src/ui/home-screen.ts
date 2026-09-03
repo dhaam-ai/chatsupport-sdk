@@ -14,6 +14,7 @@
 
 import { el, icon, ICONS } from './dom.js';
 import { relativeTimeLabel } from './session-picker.js';
+import { statusPill } from './session-status.js';
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 
 export interface HomeScreenCallbacks {
@@ -35,20 +36,6 @@ export interface HomeScreenView {
    */
   update(recent: ChatSessionSummary | null, subtitle: string): void;
 }
-
-/**
- * The pill shown beside a conversation, or nothing.
- *
- * Only the states a customer can act on are named. "Assigned" and "On hold"
- * are internal routing facts — telling somebody their conversation is
- * ASSIGNED explains nothing they can use, and a pill they cannot interpret
- * reads as an error code.
- */
-const STATUS_PILL: Partial<Record<ChatSessionSummary['status'], string>> = {
-  RESOLVED: 'Resolved',
-  CLOSED: 'Closed',
-  WAITING_FOR_AGENT: 'Waiting',
-};
 
 export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreenView {
   // The primary action. A card rather than a button, because it carries a
@@ -153,8 +140,14 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreenView
       // below carries what it was about. A row with neither still identifies
       // itself by time.
       recentTitle.textContent = recent.handledBy?.displayName ?? 'Conversation';
-      recentStatus.textContent = STATUS_PILL[recent.status] ?? '';
-      recentStatus.hidden = (STATUS_PILL[recent.status] ?? '') === '';
+      // ALWAYS a pill, for every status. This used to carry a private
+      // three-status table (RESOLVED/CLOSED/WAITING_FOR_AGENT) and render
+      // nothing at all for OPEN, ASSIGNED and ON_HOLD — so the conversation a
+      // customer was most likely still in the middle of was the one row that
+      // refused to say where it stood, which is the half of defect 4 that is
+      // purely client-side. The words come from `ui/session-status.ts`, the
+      // same table the Messages list reads, so the two screens cannot drift.
+      recentStatus.textContent = statusPill(recent.status);
       recentStatus.setAttribute('data-status', recent.status);
       recentPreview.textContent = recent.lastMessagePreview ?? '';
       recentPreview.hidden = (recent.lastMessagePreview ?? '') === '';
