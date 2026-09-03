@@ -2682,4 +2682,119 @@ button {
   font-weight: 600;
 }
 .dh-newconvo-message { min-height: 84px; resize: vertical; font: inherit; }
+/* ── New conversation, pre-chat fields folded in (ui/new-conversation.ts) ──
+
+   The console's pre-chat fields render on this screen through the shared
+   .dh-field primitives above, so nothing new is needed for them. The one
+   addition is the row the two actions share: .dh-form-actions had no rule of
+   its own and stacked as a plain block, which put Cancel on its own line under
+   a full-width Start with nothing aligning the two. */
+.dh-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--dh-space) * 2);
+}
+.dh-form-actions .dh-form-submit { flex: 1; }
+
+/* ── End-conversation confirm (ui/end-conversation.ts) ──────────────────────
+
+   Mounted as a product surface inside .dh-surface-host like the forms above.
+   The destructive button keeps .dh-form-submit's size and busy treatment and
+   swaps only its colour for the same --dh-danger token .dh-hmenu-danger (the
+   menu item that opened this) already uses, so the tap that asked and the tap
+   that commits read as one act. "Keep chatting" borrows .dh-ended-secondary's
+   outline look rather than inventing a third secondary style — but in the
+   surface's own text colour, not the accent: beside a red button, an
+   accent-coloured outline reads as "the other thing you might want" when it
+   is in fact the way out. */
+.dh-confirm-end-actions {
+  display: flex;
+  gap: calc(var(--dh-space) * 2);
+}
+.dh-confirm-end-actions .dh-form-submit { flex: 1; }
+.dh-confirm-end-danger { background: var(--dh-danger); color: #fff; }
+.dh-confirm-end-danger:hover:not([disabled]) {
+  background: color-mix(in srgb, var(--dh-danger) 88%, #000);
+}
+.dh-confirm-end-keep {
+  flex: 1;
+  min-height: 44px;
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
+  border-radius: 10px;
+  border: 1px solid var(--dh-border);
+  background: transparent;
+  color: var(--dh-text);
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+}
+.dh-confirm-end-keep:hover { background: var(--dh-surface-sunken); }
+.dh-confirm-end-keep[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+/* ── Link popover (ui/composer.ts) ─────────────────────────────────────────
+
+   The in-widget replacement for the window.prompt the link button used to
+   open. Anchored to .dh-composer-box rather than to its trigger the way
+   .dh-emoji-popover is: a field plus two buttons is far wider than an icon
+   grid, and pinned to the fourth icon in the row it would run off one edge
+   or the other of a 384px panel. Spanning the box's own width keeps it inside
+   the widget at every size. Opens UPWARD for the same reason the emoji
+   popover does — the composer already sits at the bottom of the panel. The
+   box gets its positioning context here, beside the one rule that needs it. */
+.dh-composer-box { position: relative; }
+.dh-link-popover {
+  position: absolute;
+  bottom: calc(100% + var(--dh-space) * 2);
+  inset-inline: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 2);
+  margin: 0;
+  padding: calc(var(--dh-space) * 3);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  background: var(--dh-surface);
+  box-shadow: var(--dh-shadow);
+}
+.dh-link-popover[hidden] { display: none; }
+/* The field and its error line reuse .dh-field-input / .dh-form-error from
+   the data-collecting surfaces above; only the label wrapper and the two
+   actions are new. The field follows .dh-input's pointer-driven size so it
+   matches the textarea it floats over. */
+.dh-link-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dh-space);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dh-text-muted);
+}
+@media (pointer: fine) { .dh-link-input { font-size: 14px; } }
+.dh-link-input[aria-invalid="true"] { border-color: var(--dh-danger); }
+.dh-link-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: calc(var(--dh-space) * 2);
+}
+/* Two-up in a popover, so both actions drop from the form surfaces' 44px to
+   36px — the same height .dh-form-skip uses for a secondary action. */
+.dh-link-actions .dh-form-submit {
+  min-height: 36px;
+  padding: calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 3);
+  font-size: 13px;
+}
+.dh-link-cancel {
+  min-height: 36px;
+  padding: calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 3);
+  border-radius: 10px;
+  border: 1px solid var(--dh-border);
+  background: transparent;
+  color: var(--dh-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dh-link-cancel:hover { background: var(--dh-surface-sunken); }
 `;

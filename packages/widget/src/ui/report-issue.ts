@@ -102,6 +102,21 @@ export function createReportIssueForm(callbacks: ReportIssueCallbacks): ReportIs
 
   // A confirmation, not a toast: the form is replaced by it, so there is no
   // way to file the same report twice by pressing the button again.
+  //
+  // It carries its own way out, and that is not politeness. This surface
+  // stands IN PLACE OF the transcript, and `syncProductSurfaces` never
+  // preempts a surface the customer opened — so a confirmation with no
+  // button hands the slot back to nobody: the transcript and composer stay
+  // hidden, and with an empty back stack (a host-supplied `sessionId`, whose
+  // panel opens straight on the conversation) there is no Back either, and
+  // the only way out of the widget is a page reload. `onCancel` rather than
+  // a second callback, because the job it does is the same one Cancel does —
+  // hand the slot back and return to the screen this was opened from.
+  const dismiss = el('button', {
+    attrs: { class: 'dh-form-skip dh-report-done-dismiss', type: 'button' },
+    text: 'Done',
+    on: { click: () => callbacks.onCancel() },
+  });
   const done = el('div', {
     attrs: { class: 'dh-form-done', hidden: true, role: 'status' },
     children: [
@@ -113,6 +128,7 @@ export function createReportIssueForm(callbacks: ReportIssueCallbacks): ReportIs
         // guarantees is the kind of small dishonesty this package avoids.
         text: 'Our team has it and will follow up by email.',
       }),
+      el('div', { attrs: { class: 'dh-form-actions' }, children: [dismiss] }),
     ],
   });
 
@@ -168,6 +184,12 @@ export function createReportIssueForm(callbacks: ReportIssueCallbacks): ReportIs
       if (!ok) return;
       form.hidden = true;
       done.hidden = false;
+      // Focus follows the content that replaced what it was on: the submit
+      // button the customer just pressed is now inside a `hidden` subtree,
+      // and focus left on a hidden element falls back to the host page's
+      // body — which is how the panel's own Escape handler stops receiving
+      // keys. The same rule widget.ts's `focusOnOpen` states.
+      dismiss.focus({ preventScroll: true });
     });
   });
 

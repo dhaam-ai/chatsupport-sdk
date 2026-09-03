@@ -68,9 +68,11 @@ export interface ComposerView {
    * holds the composer shut. A chip that could send while consent was
    * outstanding would be a way around the gate.
    *
-   * A no-op when the composer is disabled, or when the box already holds a
-   * draft: overwriting something half-typed to send a suggestion instead would
-   * destroy the customer's own words.
+   * A no-op when the composer is disabled or an attachment is mid-upload, or
+   * when the box already holds a draft: overwriting something half-typed to
+   * send a suggestion instead would destroy the customer's own words. An
+   * EMPTY box is the normal case, not a refusal — a chip is tapped instead of
+   * typing, so the box is empty precisely when a suggestion should send.
    */
   submit(text: string): Promise<void>;
 
@@ -150,10 +152,64 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   });
 
   const linkButton = el('button', {
-    attrs: { class: 'dh-icon-button', type: 'button', 'aria-label': 'Insert a link' },
+    attrs: {
+      class: 'dh-icon-button',
+      type: 'button',
+      'aria-label': 'Insert a link',
+      'aria-expanded': 'false',
+      'aria-haspopup': 'true',
+    },
     children: [icon(LINK_ICON, 18)],
-    on: { click: () => insertLink() },
+    on: { click: () => toggleLinkPopover() },
   });
+
+  // ── link popover ──────────────────────────────────────────────────────
+  // See `toggleLinkPopover` below for why this is a popover and not the
+  // browser's prompt. A wrapping <label> rather than `for`/`id`: ids inside a
+  // shadow root are scoped to it, but the association is free this way and
+  // cannot collide with anything the host page names.
+  const linkInput = el('input', {
+    attrs: {
+      class: 'dh-field-input dh-link-input',
+      type: 'url',
+      inputmode: 'url',
+      placeholder: 'https://…',
+      autocomplete: 'off',
+      spellcheck: 'false',
+    },
+  });
+  const linkError = el('p', { attrs: { class: 'dh-form-error dh-link-error', role: 'alert', hidden: true } });
+  const linkCancel = el('button', {
+    attrs: { class: 'dh-link-cancel', type: 'button' },
+    text: 'Cancel',
+    on: { click: () => dismissLinkPopover() },
+  });
+  const linkInsert = el('button', {
+    attrs: { class: 'dh-form-submit dh-link-insert', type: 'submit' },
+    text: 'Insert',
+  });
+  const linkPopover = el('form', {
+    attrs: {
+      class: 'dh-link-popover',
+      'aria-label': 'Insert a link',
+      // `novalidate`: a `type="url"` field brings the browser's own constraint
+      // bubble with it, which is the host-page chrome this popover exists to
+      // avoid — and it would pass `javascript:` anyway. `safeLinkUrl` in
+      // `submitLink` is the one validator.
+      novalidate: true,
+      hidden: true,
+    },
+    children: [
+      el('label', {
+        attrs: { class: 'dh-link-label' },
+        children: [el('span', { text: 'Link URL' }), linkInput],
+      }),
+      linkError,
+      el('div', { attrs: { class: 'dh-link-actions' }, children: [linkCancel, linkInsert] }),
+    ],
+    on: { submit: (event) => submitLink(event) },
+  });
+  let linkOpen = false;
 
   // Declared before `input` only because the row below needs both; the picker
   // reaches the textarea through the closure, which is initialised by the time
@@ -249,6 +305,12 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
             attrs: { class: 'dh-composer-row' },
             children: [attachButton, emojiPicker.node, micButton, linkButton, sendButton, fileInput],
           }),
+          // A child of the box, not of the row beside its trigger the way the
+          // emoji popover is: it anchors to the box's full width (see
+          // .dh-link-popover in styles.ts for why), and being inside the box
+          // means the box's own :focus-within border lights while the URL
+          // field has focus — the two read as one control.
+          linkPopover,
         ],
       }),
     ],
@@ -278,33 +340,116 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     emojiPicker.setEnabled(enabled && !uploading);
     micButton.disabled = !enabled || uploading;
     linkButton.disabled = !enabled || uploading;
+    // Same rule the emoji picker applies to itself in `setEnabled`: a disabled
+    // trigger with an open popover would be unreachable and unclosable by
+    // pointer — shut it rather than stranding it.
+    if (linkButton.disabled) closeLinkPopover();
     input.disabled = !enabled;
   }
 
   /**
-   * Asks for a URL and inserts it at the caret.
+   * Opens (or closes) the URL popover the link button owns.
    *
-   * `window.prompt`, deliberately — one field, asked rarely, and a bespoke
-   * popover for a single text input would be a surface to maintain for
-   * something the host page's own dialog already does. Same call widget.ts's
-   * `endConversation` makes for the same reason; see its own `no-alert` note.
+   * This used to be `window.prompt`. That was the host page's dialog, not the
+   * widget's: it rendered in the browser's own chrome outside the shadow root,
+   * unthemed, and on embeds where the host had stubbed `prompt` out or the
+   * frame was sandboxed without `allow-modals` it never appeared at all — so
+   * "add link" looked like a button that did nothing. Same reason widget.ts's
+   * `endConversation` moved from `confirm()` to `ui/end-conversation.ts`: a
+   * question the widget asks belongs inside the widget.
+   *
+   * The open/close mechanics are the emoji picker's, deliberately (see
+   * `createEmojiPicker`): document-level listeners registered only while
+   * open, `composedPath()[0]` for the outside-press test because the listener
+   * sits outside the shadow tree, and a capture-phase Escape that stops
+   * propagation so the panel's own Escape does not close the conversation.
+   *
+   * Refused while the composer is disabled or uploading — the button is
+   * disabled in both states, so this guard only matters for a synthetic
+   * click, but it is the rule and it belongs here, not in the CSS.
+   */
+  function toggleLinkPopover(): void {
+    if (linkOpen) {
+      closeLinkPopover();
+      return;
+    }
+    if (!enabled || uploading) return;
+    linkOpen = true;
+    // A fresh field every time: a value the customer abandoned with Cancel
+    // is not one they asked to see again.
+    linkInput.value = '';
+    showLinkError(null);
+    linkPopover.hidden = false;
+    linkButton.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', onLinkDocumentPointerDown);
+    document.addEventListener('keydown', onLinkDocumentKeydown, true);
+    linkInput.focus({ preventScroll: true });
+  }
+
+  function closeLinkPopover(): void {
+    if (!linkOpen) return;
+    linkOpen = false;
+    linkPopover.hidden = true;
+    linkButton.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', onLinkDocumentPointerDown);
+    document.removeEventListener('keydown', onLinkDocumentKeydown, true);
+  }
+
+  /** Close without inserting — Cancel, Escape, outside press. Focus goes back where it came from. */
+  function dismissLinkPopover(): void {
+    if (!linkOpen) return;
+    closeLinkPopover();
+    linkButton.focus({ preventScroll: true });
+  }
+
+  function showLinkError(message: string | null): void {
+    linkError.textContent = message ?? '';
+    linkError.hidden = message === null;
+    linkInput.setAttribute('aria-invalid', String(message !== null));
+  }
+
+  function onLinkDocumentPointerDown(event: Event): void {
+    const pressed = (event.composedPath()[0] ?? event.target) as Node;
+    // The trigger counts as inside: a press on it is handled by its own click
+    // (which toggles), and closing here first would make that click reopen.
+    if (linkPopover.contains(pressed) || linkButton.contains(pressed)) return;
+    dismissLinkPopover();
+  }
+
+  function onLinkDocumentKeydown(event: Event): void {
+    const key = event as KeyboardEvent;
+    if (key.key !== 'Escape' || !linkOpen) return;
+    key.stopPropagation();
+    dismissLinkPopover();
+  }
+
+  /**
+   * The popover's submit: validates, inserts at the caret, closes.
    *
    * Validated with the same allowlist an `href` gets (`safeLinkUrl`), even
    * though this lands in plain text rather than an attribute: the point here
-   * is not escaping, it is refusing to insert something that is not
-   * actually a link into a box a customer is about to send.
+   * is not escaping, it is refusing to insert something that is not actually
+   * a link into a box a customer is about to send. A rejection stays INSIDE
+   * the popover, next to the field it is about, and leaves it open with the
+   * value intact so the customer can fix a typo rather than retype.
    */
-  function insertLink(): void {
-    // eslint-disable-next-line no-alert -- see the doc comment above.
-    const raw = globalThis.prompt?.('Link URL (https://…)');
-    if (raw === null || raw === undefined) return; // Cancelled.
+  function submitLink(event: Event): void {
+    // Always — a form inside a shadow root would otherwise try to navigate
+    // the host page.
+    event.preventDefault();
+    if (!linkOpen) return;
 
-    const url = safeLinkUrl(raw);
+    const url = safeLinkUrl(linkInput.value);
     if (url === null) {
-      showError('That does not look like a valid https:// link.');
+      showLinkError('That does not look like a valid https:// link.');
+      linkInput.focus({ preventScroll: true });
       return;
     }
 
+    closeLinkPopover();
+    // `insertAtCaret` uses the textarea's own selection, which the browser
+    // preserved while the URL field had focus, so the link lands where the
+    // customer left the caret. It also hands focus back to the textarea.
     insertAtCaret(input, url);
     // Same three effects a keystroke has — see the emoji picker's own
     // `onSelect` above for why skipping any one of them is a real bug.
@@ -446,11 +591,19 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       replyExcerpt.textContent = target?.excerpt ?? '';
     },
     async submit(text) {
-      // Both guards are refusals, not races. `disabled` is the consent gate
-      // and the closed-session rule; a non-empty box is the customer's own
-      // draft, which a suggestion must not overwrite.
-      if (sendButton.disabled || input.value.trim() !== '') return;
-      input.value = text;
+      // Both guards are refusals, not races. `enabled` is the consent gate and
+      // the closed-session rule, `uploading` the in-flight send; a non-empty
+      // box is the customer's own draft, which a suggestion must not
+      // overwrite. NOT `sendButton.disabled`: that also reflects "the box is
+      // empty", which is exactly the state a chip is tapped in, and gating on
+      // it refused every suggestion ever offered.
+      if (!enabled || uploading) return;
+      if (input.value.trim() !== '') return;
+      const suggestion = text.trim();
+      if (suggestion === '') return;
+      input.value = suggestion;
+      // Send is enabled by content, and the content just changed.
+      syncSendState();
       await submit();
     },
     setEnabled(next) {
@@ -466,9 +619,11 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       // before anything else can throw.
       recorder?.dispose();
       recorder = null;
-      // Holds document-level listeners while open — releasing it here is what
-      // keeps a destroyed widget from leaving them on the host's document.
+      // Both hold document-level listeners while open — releasing them here
+      // is what keeps a destroyed widget from leaving them on the host's
+      // document.
       emojiPicker.destroy();
+      closeLinkPopover();
       clearAttachment();
     },
   };
