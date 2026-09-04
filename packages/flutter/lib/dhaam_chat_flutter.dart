@@ -22,7 +22,10 @@ export 'src/session/session_display.dart';
 export 'src/state/chat_widget_cubit.dart';
 export 'src/state/chat_widget_state.dart';
 export 'src/state/widget_chat_client.dart';
-export 'src/surfaces/product_surface.dart';
+// `product_surface_slot.dart` re-exports `product_surface.dart` itself (the
+// union and the slot are one module split across two files — see the slot's
+// header), so this one line is the whole surface vocabulary.
+export 'src/surfaces/product_surface_slot.dart';
 export 'src/theme/chat_theme.dart';
 export 'src/theme/header_style.dart';
 export 'src/ui/chat_bottom_nav.dart';
