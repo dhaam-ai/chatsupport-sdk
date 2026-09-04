@@ -78,7 +78,8 @@ void main() {
     );
   });
 
-  test('omits the fragments it has no fact for, rather than speaking empties', () {
+  test('omits the fragments it has no fact for, rather than speaking empties',
+      () {
     final String label = describeSessionRow(
       _summary(preview: null),
       isCurrent: false,
@@ -115,7 +116,9 @@ void main() {
     );
   });
 
-  test('speaks session_display.dart\'s vocabulary for every status, not a second one', () {
+  test(
+      'speaks session_display.dart\'s vocabulary for every status, not a second one',
+      () {
     // The named regression `session-picker.test.ts` pins: an earlier version
     // treated anything that was not CLOSED as "live", so RESOLVED read as
     // active. Every status has its own word, and it is the one word the

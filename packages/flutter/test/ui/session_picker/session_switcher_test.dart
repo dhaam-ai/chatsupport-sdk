@@ -65,7 +65,8 @@ Widget _wrap({
 }
 
 Finder get _toggle => find.byIcon(Icons.list_rounded);
-bool get _panelIsOpen => find.byType(SessionStartNewButton).evaluate().isNotEmpty;
+bool get _panelIsOpen =>
+    find.byType(SessionStartNewButton).evaluate().isNotEmpty;
 
 /// Whether keyboard focus sits on something inside [finder] — see
 /// `session_picker_screen_test.dart` for why the focus manager has to be
@@ -301,7 +302,8 @@ void main() {
     });
   });
 
-  testWidgets('unmounting while open tears down cleanly, and a later press '
+  testWidgets(
+      'unmounting while open tears down cleanly, and a later press '
       'reaches nothing', (WidgetTester tester) async {
     await tester.pumpWidget(
       _wrap(sessions: <ChatSessionSummary>[_summary(id: 'a')]),

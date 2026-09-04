@@ -253,7 +253,8 @@ void main() {
       await tester.pumpWidget(_wrapList(
         sessions: <ChatSessionSummary>[_summary(id: 'a')],
       ));
-      final Element first = tester.element(find.byKey(const ValueKey<String>('a')));
+      final Element first =
+          tester.element(find.byKey(const ValueKey<String>('a')));
 
       await tester.pumpWidget(_wrapList(
         sessions: <ChatSessionSummary>[_summary(id: 'a', unreadCount: 1)],
