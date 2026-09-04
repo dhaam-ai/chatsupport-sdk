@@ -73,6 +73,10 @@ export 'package:dhaam_chat/dhaam_chat.dart'
         PublishableKey,
         TokenProvider,
         TokenUnavailableError;
+// `csatLookupOver` returns one of these and raises the other, so a consumer
+// wiring a `CsatMachine` up need not import `dhaam_chat` for two names.
+export 'package:dhaam_chat/dhaam_chat.dart'
+    show CsatLookupFn, CsatRated, CsatRouteMissing, CsatStatus, CsatUnrated;
 export 'src/bootstrap.dart'
     show
         RestIpWatermark,
@@ -88,6 +92,7 @@ export 'src/client.dart'
         kRestBasePath,
         kSessionSummaryLimitMax,
         kSessionSummaryLimitMin;
+export 'src/csat_lookup.dart' show csatLookupOver;
 export 'src/errors.dart'
     show
         RestApiException,
