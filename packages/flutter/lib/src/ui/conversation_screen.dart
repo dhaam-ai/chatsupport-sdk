@@ -149,6 +149,27 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   ),
                   // Through the composer, never round it — see [_composer].
                   onQuickReply: _composer.submit,
+                  // Fills the second seam T9 declared and left empty, which
+                  // until now removed the Reply item from every message menu
+                  // in the transcript.
+                  //
+                  // The sender name arrives from the transcript rather than
+                  // being resolved here: a ChatMessage carries no display
+                  // name, and only the message list holds the bot-name memory
+                  // and the participant snapshot that produce one. Resolving
+                  // it a second way here is exactly the duplication that
+                  // callback's own doc exists to prevent.
+                  //
+                  // Straight to the Cubit, and NOT into this widget's own
+                  // state: the send that consumes the target is the Cubit's,
+                  // so a copy held here would be a second answer it could not
+                  // see and could not clear in step with a send — and it
+                  // would die on the next rebuild, taking the customer's
+                  // reply with it.
+                  onReplyToMessage: (ChatMessage message, String senderName) =>
+                      cubit.replyTo(
+                    ReplyTarget.from(message, senderName: senderName),
+                  ),
                 ),
                 // Fills the seam T9 declared and deliberately left empty.
                 // Ungated by `fileUploads`: that flag governs whether the
@@ -186,6 +207,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
                         // typing indicator before this line — for typed
                         // characters as much as for an emoji insertion.
                         onTyping: cubit.startTyping,
+                        // Read from state on every build, so the chip
+                        // survives a rebuild that has nothing to do with it.
+                        // `sendMessage` is what clears it — see its own doc
+                        // on why that belongs there and not here.
+                        replyTo: state.replyingTo,
+                        onCancelReply: () => cubit.replyTo(null),
                       ),
               ),
             ),

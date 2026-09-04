@@ -587,8 +587,42 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// chosen topic's job was to accompany THIS compose, and once it has sent,
   /// carrying the selection forward would pre-select a chip for whatever the
   /// customer composes next.
+  ///
+  /// ── A reply's two halves, and why they cannot disagree ───────────────
+  ///
+  /// When [ChatWidgetState.replyingTo] is set, BOTH halves of a reply travel:
+  /// `replyToMessageId` is the protocol-native field the send frame has
+  /// always had, and `metadata` is the RENDERABLE half the reader draws its
+  /// quote from. The second is not decoration — the quoted message may not be
+  /// in the reader's loaded page at all, and an id alone would leave them a
+  /// reply to something they cannot see.
+  ///
+  /// Both are read off the ONE [ReplyTarget], which is what makes it
+  /// impossible for the id and the quote to name different messages. The
+  /// explicit [replyToMessageId] parameter is the raw wire field for a host
+  /// driving a reply itself, with no excerpt to quote and so no metadata; it
+  /// is consulted only when the customer has no reply of their own on screen,
+  /// so the two can never be combined into a mismatched pair.
+  ///
+  /// ── Cleared BEFORE the send, never after ─────────────────────────────
+  ///
+  /// A send that takes a moment must not leave the chip on screen looking as
+  /// though it still applies to whatever the customer types next, and the
+  /// next message must not silently be a reply too. Clearing here rather than
+  /// at the call site is what makes that true of EVERY send — a typed one, a
+  /// suggestion chip, a quick reply — instead of the ones somebody remembered
+  /// to clear.
   void sendMessage(String content, {String? replyToMessageId}) {
-    _client.sendMessage(content, replyToMessageId: replyToMessageId);
+    final ReplyTarget? addressedTo = state.replyingTo;
+    if (addressedTo != null) {
+      emit(state.copyWith(clearReplyingTo: true));
+    }
+
+    _client.sendMessage(
+      content,
+      replyToMessageId: addressedTo?.messageId ?? replyToMessageId,
+      metadata: addressedTo?.metadata,
+    );
     final SurfaceTicket? ticket = _composingTicket;
     if (ticket != null) {
       // The form's task COMPLETED, so the slot goes back through `release`
