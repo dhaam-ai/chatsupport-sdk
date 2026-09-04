@@ -33,6 +33,11 @@ import '../ui/composer_affordances/reply_target.dart';
 import '../ui/consent/consent.dart';
 import '../ui/offline_form/offline_form.dart';
 import '../ui/csat/session_actions.dart';
+// For `IssueReporter` — the seam the "Report an issue" form submits through,
+// and `RestIssueReport`, which that file re-exports. Same shape as the CSAT
+// import above: a function type declared where its widget lives, consumed
+// here, so this class still constructs no network client of its own.
+import '../ui/header/transcript_email.dart';
 import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
 import 'widget_chat_client.dart';
@@ -79,9 +84,11 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     Duration reconnectInterval = kReconnectInterval,
     ChatSessionActions? sessionActions,
     ConsentGate? consent,
+    IssueReporter? issueReporter,
   })  : _client = client,
         _consent = consent ?? ConsentGate.unremembered(),
         _sessionActions = sessionActions,
+        _issueReporter = issueReporter,
         _screens = ChatScreens(
           initial: initialScreen ??
               (sessionId == null
@@ -149,6 +156,37 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// card whose submit silently discarded the answer would be worse.
   final ChatSessionActions? _sessionActions;
 
+  /// The raw `POST /chat/sessions/{id}/report-issue` route, or null when the
+  /// host wired none up — in which case the ⋯ menu does not offer the row at
+  /// all. Off, not broken, exactly as [_sessionActions] is: `header_menu.dart`
+  /// states the rule ("an unbacked item is absent from `headerMenuEntries`
+  /// entirely"), because a disabled row still reads as a feature the customer
+  /// is somehow not allowed to use.
+  ///
+  /// ── Why the host closes the session id over, rather than this passing it ──
+  ///
+  /// [IssueReporter] takes only the report; the session comes from the
+  /// [SessionIdSource] the host handed [restIssueReporter], and that source is
+  /// a FUNCTION precisely so it is read at the moment of the action rather
+  /// than captured when the widget was built. A host therefore wires it
+  /// against this Cubit's own state and no second memory of "which session"
+  /// exists:
+  ///
+  /// ```dart
+  /// late final ChatWidgetCubit cubit;
+  /// cubit = ChatWidgetCubit(
+  ///   client: client,
+  ///   issueReporter: restIssueReporter(
+  ///     client: restClient,
+  ///     sessionId: () => cubit.state.session?.sessionId ?? cubit.endedSessionId,
+  ///   ),
+  /// );
+  /// ```
+  ///
+  /// The `late` is safe because the closure is not invoked during
+  /// construction — only when a report is actually filed.
+  final IssueReporter? _issueReporter;
+
   /// The server-truth memory of who has rated what. Null alongside
   /// [_sessionActions], since it has nothing to ask.
   CsatMachine? _csat;
@@ -185,6 +223,15 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   /// The claim on the slot held by the "End this conversation?" question.
   SurfaceTicket? _confirmEndTicket;
+
+  /// The claim on the slot held by the "Report an issue" form.
+  ///
+  /// Not cleared by [_syncScreen] the way [_composingTicket] is, and that is
+  /// the same choice [_confirmEndTicket] makes: a ticket carries the
+  /// GENERATION it was issued for, so one left behind by a customer who
+  /// walked off to Home no longer holds the slot and cannot close whatever
+  /// took it. Clearing it would be tidier and would change nothing.
+  SurfaceTicket? _reportTicket;
 
   /// The ONE slot a product surface can occupy.
   ///
@@ -1019,6 +1066,104 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     final SurfaceTicket? ticket = _confirmEndTicket;
     if (ticket == null) return;
     _confirmEndTicket = null;
+    final SurfaceCancelOutcome outcome =
+        _surfaces.cancel(ticket, surfaceInputs());
+    if (outcome case SurfaceReturnedToOrigin(:final ScreenName origin)) {
+      if (!_screens.back()) _screens.swap(origin);
+    }
+    _syncScreen();
+  }
+
+  /// Whether an issue report can actually be filed.
+  ///
+  /// False when the host wired up no [IssueReporter]. The ⋯ menu drops the
+  /// row on this rather than offering one that quietly does nothing — the
+  /// same shape [canReopen] and [canEndConversation] have, and the rule
+  /// `header_menu.dart` states for itself: an unbacked item is absent from
+  /// `headerMenuEntries` entirely.
+  bool get canReportIssue => _issueReporter != null;
+
+  /// Raises the "Report an issue" form in place of the conversation.
+  ///
+  /// ── Unkeyed, unlike [ConfirmEndSurface] ──────────────────────────────
+  ///
+  /// The end-conversation question is ABOUT one session and carries its id,
+  /// because asking again after a switch must mean the NEW one. This form is
+  /// not about a session at all: it files against whichever conversation is
+  /// current at the moment Send is pressed — the reference reads
+  /// `store.getState().session?.id ?? closedSessionId` right there in
+  /// `fileIssueReport` (widget.ts:3707), and [restIssueReporter]'s
+  /// [SessionIdSource] is the port of exactly that late read. So there is no
+  /// id for this value to carry, and by-kind idempotence is the whole of what
+  /// identity means here: pressing the row twice must not rebuild the form
+  /// over what the customer has already typed into it.
+  ///
+  /// ── Deliberately NOT guarded on there being a session ────────────────
+  ///
+  /// The reference offers this from Home, with no conversation open, and
+  /// raises 'No conversation to report against' from the SUBMIT — which
+  /// `FormSubmitController` renders as the form's own failure line while
+  /// keeping every word the customer typed. Refusing to OPEN would convert
+  /// that recoverable, explained failure into a menu row that appears to do
+  /// nothing at all.
+  void openReportIssue() {
+    if (_issueReporter == null) return;
+    _reportTicket = _surfaces.open(
+      const ReportSurface(),
+      from: _screens.current,
+    );
+    _screens.go(ScreenName.conversation);
+    emit(
+      state.copyWith(
+        screen: _screens.current,
+        canGoBack: _screens.canGoBack,
+      ),
+    );
+  }
+
+  /// Files the report.
+  ///
+  /// Rethrows, so the form's own `submitOnce` shows its failure line, keeps
+  /// what the customer typed and re-enables the button — the contract
+  /// [IssueReporter] is declared around.
+  ///
+  /// Hands the slot back to NOBODY on success, deliberately. A filed report
+  /// is answered by the form's own confirmation, which replaces it inside
+  /// this same surface and carries the Done that releases it — see
+  /// [cancelReportIssue]. Releasing here would tear the confirmation down
+  /// before it was read.
+  ///
+  /// Throws rather than returning quietly when no [IssueReporter] is wired,
+  /// which is the one place this diverges from [confirmEndConversation]'s
+  /// silent return — and it diverges because the consequence does. A silent
+  /// success here would advance the form to "Report sent" for a report that
+  /// was never sent, which is the exact failure `transcript_email.dart` names
+  /// when it explains why [IssueReporter] rejects instead of reporting.
+  /// Unreachable in practice: the surface cannot be opened without one.
+  Future<void> fileIssueReport(RestIssueReport report) async {
+    final IssueReporter? reporter = _issueReporter;
+    if (reporter == null) {
+      throw StateError('No issue reporter is wired up');
+    }
+    await reporter(report);
+  }
+
+  /// The customer backed out of the form, or pressed Done on the confirmation
+  /// that replaced it.
+  ///
+  /// One method for both, because the job is the same one — hand the slot
+  /// back and return to the screen this was opened from — which is why
+  /// [ReportIssueForm] has a single `onCancel` rather than two callbacks.
+  ///
+  /// Opened from Home or Messages, [ProductSurfaceSlot.cancel] answers
+  /// [SurfaceReturnedToOrigin] and the customer lands back there rather than
+  /// on a conversation screen they never navigated to. Opened mid-chat it
+  /// answers [SurfaceReleased] and the conversation comes back, along with
+  /// anything the re-sync finds has fallen due behind it.
+  void cancelReportIssue() {
+    final SurfaceTicket? ticket = _reportTicket;
+    if (ticket == null) return;
+    _reportTicket = null;
     final SurfaceCancelOutcome outcome =
         _surfaces.cancel(ticket, surfaceInputs());
     if (outcome case SurfaceReturnedToOrigin(:final ScreenName origin)) {

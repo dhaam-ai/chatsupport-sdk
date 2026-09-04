@@ -28,6 +28,7 @@ import '../surfaces/product_surface_slot.dart';
 import 'attachments/attachments.dart';
 import 'consent/consent.dart';
 import 'csat/csat.dart';
+import 'header/header.dart';
 import 'message_list/message_list.dart';
 import 'pre_chat/pre_chat.dart';
 import 'new_conversation_view.dart';
@@ -76,11 +77,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
         // composer held shut behind a notice that renders nothing.
         final bool consentIsGating = consentGating(state.config);
 
-        // The surfaces that have landed are dispatched here. The rest
-        // (offline, report) arrive with the nodes that build them and add
-        // their own arm; an unhandled surface falls through to the
-        // conversation rather than to a blank pane, which is the safe reading
-        // while one is still to come.
+        // All six surfaces are dispatched here. `case _` is now unreachable
+        // in practice — it is kept because `ProductSurface` is sealed and a
+        // SEVENTH surface added later should fall through to the conversation
+        // rather than to a blank pane, which stays the safe reading for a
+        // surface whose arm has not been written yet.
         switch (state.activeSurface) {
           case ComposingNewSurface():
             return const NewConversationView();
@@ -158,6 +159,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
             return EndConversationConfirm(
               onConfirm: () => cubit.confirmEndConversation(sessionId),
               onCancel: cubit.cancelEndConversation,
+              onError: _report,
+            );
+          case ReportSurface():
+            return ReportIssueForm(
+              onSubmit: cubit.fileIssueReport,
+              // The same callback for Cancel and for the confirmation's Done,
+              // because the job is the same one — see `ReportIssueForm`'s own
+              // `onCancel`, which is deliberately one callback and not two.
+              onCancel: cubit.cancelReportIssue,
               onError: _report,
             );
           case _:

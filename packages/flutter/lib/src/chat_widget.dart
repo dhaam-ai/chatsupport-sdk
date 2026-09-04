@@ -255,27 +255,23 @@ class _ConversationAppBar extends StatelessWidget implements PreferredSizeWidget
         HeaderMenu(
           canEnd: cubit.canEndConversation,
           privacyUrl: state.config.privacyUrl,
-          // FALSE, deliberately, and NOT `state.config.reportIssue`.
+          // The merchant's published flag AND a reporter to carry it out.
           //
-          // `report_issue_form.dart` is built and unit-tested but has no
-          // host: no surface, no Cubit method that opens one, and no
-          // `IssueReporter` wired to the raw `report-issue` route. Offering
-          // the row would put an item in front of the customer that does
-          // nothing when pressed — the precise trap header_menu.dart's own
-          // header documents, whose rule for an unbacked item is to HIDE it
-          // rather than disable it. Flipping this to the config flag is the
-          // one line that lights the row up once the form has somewhere to
-          // open.
-          reportIssue: false,
+          // Both halves, for the one reason header_menu.dart states: an
+          // unbacked item is absent from `headerMenuEntries` entirely,
+          // because a row that looks like a feature and does nothing is a
+          // promise broken in front of the customer. `config.reportIssue` is
+          // the merchant's half — the reference gates on it alone, since a
+          // DOM widget always has its own `fetch`. `cubit.canReportIssue` is
+          // the half Flutter adds: [IssueReporter] is a seam the HOST wires,
+          // exactly as `ChatSessionActions` is, and a host that wired none
+          // gets the row hidden rather than a form whose Send always fails.
+          // The same pairing `canEnd` above already makes.
+          reportIssue: state.config.reportIssue && cubit.canReportIssue,
           muted: state.muted,
           onStartNew: cubit.startNewConversation,
           onEndConversation: cubit.openEndConversation,
-          // Unreachable while `reportIssue` is false — `headerMenuEntries`
-          // omits the row entirely, so nothing can select it. A no-op rather
-          // than a throw: this is a menu, and crashing the panel if that
-          // flag were ever flipped without the rest of the wiring would be a
-          // worse failure than a silent one.
-          onReportIssue: () {},
+          onReportIssue: cubit.openReportIssue,
           onMuteChange: cubit.setMuted,
           onOpenPrivacy: openPrivacyUrl,
         ),
