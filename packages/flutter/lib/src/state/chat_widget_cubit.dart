@@ -596,6 +596,33 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   void markRead({String? upToMessageId}) => _client.markRead(upToMessageId: upToMessageId);
 
+  /// The session picker's entry point — "take me back to that conversation".
+  ///
+  /// ── A forwarder, deliberately, and not a second implementation ──────
+  ///
+  /// [openConversation]'s own doc already promised this: the picker is the
+  /// same funnel as a Home or Messages row and must set
+  /// [ChatWidgetState.conversationOpened] the same way. The reference makes
+  /// the same call — `widget.ts` wires BOTH `onOpenConversation` sites
+  /// (`:1767` and `:1789`) into one `selectSession`, which is the only
+  /// implementation there is.
+  ///
+  /// So this exists to give the picker the name the reference uses, not to
+  /// give it behaviour of its own. It must stay a one-line delegation, for
+  /// the reason [ChatWidgetState.isGuest] states about its own: the moment
+  /// it grows a condition there are two answers to "what happens when a
+  /// customer picks a conversation", and the two surfaces that ask start
+  /// diverging.
+  ///
+  /// ── No busy guard, and nothing to await ─────────────────────────────
+  ///
+  /// The reference documents why it takes no busy guard: a customer clicking
+  /// two rows quickly should land on the second, and guarding would ignore
+  /// their second click. Here there is not even a promise to guard — Dart's
+  /// `joinSession` writes a frame and returns, so there is no rejection to
+  /// leak onto a host's error tracker either.
+  void selectSession(String sessionId) => openConversation(sessionId);
+
   // ── Inbound ───────────────────────────────────────────────────────────
 
   void _onConnectionState(ConnectionState connectionState) {
