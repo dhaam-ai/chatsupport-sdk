@@ -21,7 +21,7 @@ env:
   # then comparing against --reporter compact final count (+N).
   DART_TEST_FLOOR: '262'
   DART_REST_TEST_FLOOR: '442'
-  FLUTTER_TEST_FLOOR: '365'
+  FLUTTER_TEST_FLOOR: '516'
 
 jobs:
   # ---------------------------------------------------------------------------
