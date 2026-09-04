@@ -161,8 +161,7 @@ void main() {
       await harness.client.dispose();
     });
 
-    test('every one of them goes out on connect, in the order typed',
-        () async {
+    test('every one of them goes out on connect, in the order typed', () async {
       final Harness harness = Harness();
 
       harness.client.sendMessage('one');
@@ -313,8 +312,8 @@ void main() {
 
       await harness.socket.drop();
       await flush();
-      expect(harness.client.connectionState,
-          equals(ConnectionState.reconnecting));
+      expect(
+          harness.client.connectionState, equals(ConnectionState.reconnecting));
 
       final int before = harness.sockets.length;
       expect(harness.client.retryNow(), isTrue);
@@ -322,7 +321,8 @@ void main() {
 
       // A socket opened without the clock moving at all.
       expect(harness.sockets.length, equals(before + 1));
-      expect(harness.client.connectionState, isNot(ConnectionState.reconnecting));
+      expect(
+          harness.client.connectionState, isNot(ConnectionState.reconnecting));
 
       await harness.client.dispose();
     });
