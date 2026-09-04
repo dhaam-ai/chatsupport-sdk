@@ -110,3 +110,4 @@ export 'src/models/message_page.dart' show RestMessagePage;
 export 'src/models/session.dart'
     show RestChatParticipantProfile, RestChatSession, RestChatTicket;
 export 'src/models/session_summary.dart' show RestChatSessionSummary;
+export 'src/sessions.dart' show SessionApi;
