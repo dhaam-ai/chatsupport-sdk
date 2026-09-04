@@ -81,5 +81,6 @@
 /// there would document a permission nothing in the build actually needs.
 library;
 
+export 'voice_button.dart';
 export 'voice_error.dart';
 export 'voice_recorder.dart';

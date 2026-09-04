@@ -273,6 +273,11 @@ class VoiceRecorder {
       return null;
     }
 
+    // Before the first await, not after it. `_release` below also cancels
+    // the timer, but it sits behind `_device.stop()` — and a tick firing in
+    // that window would advance the clock and move the meter for a recording
+    // the customer has already ended.
+    _stopTicker();
     final Duration duration = _elapsed;
     final String mimeType = _device.mimeType;
 
@@ -301,6 +306,7 @@ class VoiceRecorder {
   /// prompt — that is the window guarantee 3 exists for.
   Future<void> cancel() async {
     _cancelled = true;
+    _stopTicker();
     if (_stage == _Stage.recording) {
       try {
         await _device.stop();
@@ -320,6 +326,7 @@ class VoiceRecorder {
   /// nothing, so a caller holding a stale recorder finds out.
   Future<void> dispose() async {
     _cancelled = true;
+    _stopTicker();
     if (_stage == _Stage.recording) {
       try {
         await _device.stop();
@@ -333,8 +340,7 @@ class VoiceRecorder {
 
   /// The one funnel. See guarantee 1.
   Future<void> _release() async {
-    _timer?.cancel();
-    _timer = null;
+    _stopTicker();
     if (_stage != _Stage.disposed) _stage = _Stage.idle;
     try {
       await _device.release();
@@ -344,6 +350,16 @@ class VoiceRecorder {
       // what this module is forbidden to produce. `voice.ts` swallows the
       // matching `AudioContext.close()` rejection for the same reason.
     }
+  }
+
+  /// Silences the meter and the clock, synchronously.
+  ///
+  /// Separate from [_release] because every path that releases the device
+  /// first has to `await` it, and the ticker must not survive that await —
+  /// see [stop].
+  void _stopTicker() {
+    _timer?.cancel();
+    _timer = null;
   }
 
   Future<void> _tick() async {
