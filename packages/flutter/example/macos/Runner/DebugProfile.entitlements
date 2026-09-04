@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- Outbound network. Without this a sandboxed macOS app cannot open the
+	     chat WebSocket or make a single REST call, and fails with
+	     "SocketException: Connection failed (OS Error: Operation not
+	     permitted, errno = 1)". `flutter create` scaffolds only
+	     `network.server` (which is for the debug VM service), so this is an
+	     entry every host of this SDK has to add.
+	     https://docs.flutter.dev/platform-integration/macos/building -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- The "User Selected File Read" entitlement `file_picker` requires for
+	     the attachment picker. Its own `pickFiles` doc states it verbatim:
+	     "Note: This requires the User Selected File Read entitlement on
+	     macOS." (file_picker 11.0.3, lib/src/file_picker.dart:54).
+
+	     READ-ONLY, not read-write. The plugin's own example app asks for
+	     read-write because it also demonstrates `saveFile`, whose doc names
+	     the wider entitlement separately (:181). This SDK only ever reads a
+	     file the customer chose in order to upload it, and never writes one
+	     back, so the narrower entitlement is the one that matches what the
+	     code does. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+</dict>
+</plist>

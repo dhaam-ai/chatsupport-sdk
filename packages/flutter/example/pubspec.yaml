@@ -1,0 +1,56 @@
+name: dhaam_chat_flutter_example
+description: >-
+  A runnable host app for `dhaam_chat_flutter` — the smallest complete thing
+  that mounts `ChatWidget` and wires the seams the package deliberately leaves
+  injectable. Not published; it exists so the SDK can be opened and used by a
+  person rather than only unit-tested.
+publish_to: none
+version: 1.0.0+1
+
+# `^3.5.4`, not the `>=3.0.0 <4.0.0` the three library packages declare.
+#
+# That asymmetry is deliberate and is the sibling pubspecs' own rule read the
+# other way round: `dhaam_chat_flutter` says "an app can afford to be
+# conservative about what it requires; a library sitting in the middle should
+# not be more demanding than the package right below it." This IS the app. It
+# is not in anybody's dependency graph, so pinning it to the exact toolchain
+# the port was built and verified against costs nobody anything and documents
+# that toolchain in the one file a newcomer runs `pub get` against.
+#
+# Dart 3.5.4 / Flutter 3.24.4 — `flutter --version` in this checkout, not
+# assumed.
+environment:
+  sdk: ^3.5.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # The three packages of the SDK, in the order a host meets them. All three
+  # are path dependencies rather than versioned ones for the same reason
+  # `dhaam_chat_flutter` gives for its own two: they are versioned and released
+  # together out of this repo, so a constraint between them would describe a
+  # compatibility question that cannot arise.
+  #
+  # The pure-Dart WebSocket protocol client. `ChatClient` and `PublishableKey`
+  # come from here.
+  dhaam_chat:
+    path: ../../dart
+  # The REST surface `dhaam_chat` deliberately does not speak. `RestClient` and
+  # `captureContactInfo` come from here.
+  dhaam_chat_rest:
+    path: ../../dart_rest
+  # The Flutter UI — `ChatWidget`, `ChatWidgetCubit`, `ChatClientAdapter`.
+  dhaam_chat_flutter:
+    path: ..
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # ^5.0.0 to match `dhaam_chat_flutter`'s own dev dependency rather than the
+  # ^4.0.0 `flutter create` scaffolds, so the example is linted by the same
+  # rules as the package it demonstrates. A stricter example than package would
+  # be as misleading as a laxer one.
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
