@@ -1,0 +1,17 @@
+# Standard Dart package ignores, matching packages/flutter/.gitignore — the
+# root .gitignore is Node/pnpm-only. Carried here from the start rather than
+# added later: `packages/dart` has no .gitignore of its own, which is how a
+# `test.dart-3.5.4.snapshot` — a build artifact pinned to one SDK patch —
+# ended up tracked in git there.
+#
+# No `build/` or `.flutter-plugins*` entries: this package is pure Dart and
+# depends on no Flutter plugin, so neither is ever written here.
+
+.dart_tool/
+.packages
+
+# A library commits no lockfile — only an application should, per Dart's own
+# guidance (dart.dev/guides/libraries/private-files#pubspeclock). Pinning
+# exact transitive versions here would fight every app that depends on this
+# package rather than helping it.
+pubspec.lock

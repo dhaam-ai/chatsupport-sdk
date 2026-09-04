@@ -1,0 +1,58 @@
+name: dhaam_chat_rest
+description: >-
+  Dart client for chat-service's REST surface — the Dart mirror of
+  @dhaam-ccrm/rest. Implements the seams dhaam_chat's WebSocket protocol
+  deliberately does not: message history pagination, attachment upload,
+  session close/reopen/CSAT, the session picker, and identify. No Flutter
+  dependency: this package is pure Dart, and its HTTP calls are mockable the
+  same way packages/flutter/lib/src/config/remote_config_client.dart's are.
+version: 0.1.0
+publish_to: none
+
+# Matches dhaam_chat's own constraint exactly — see that package's pubspec for
+# why a library sitting between an app and dhaam_chat should not be more
+# demanding than the package right below it.
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  # PublishableKey and TokenProvider are reused from here, not reimplemented —
+  # a RestClient and a ChatClient share ONE token source in any host that
+  # builds both, and that is only possible if both accept the identical
+  # callback type. This is dart_rest's one REAL dependency, in the sense that
+  # dhaam_chat is a sibling package in this workspace, not a third party.
+  #
+  # The dependency runs in THIS direction only. dhaam_chat must never import
+  # dhaam_chat_rest: its zero-HTTP boundary is the reason this package exists
+  # rather than living inside it. test/no_core_import_test.dart is the
+  # regression guard for that direction.
+  dhaam_chat:
+    path: ../dart
+  # For every HTTP call this package makes. dhaam_chat deliberately carries no
+  # HTTP dependency at all (see its own pubspec) — that boundary is why this
+  # package exists rather than living inside dhaam_chat. package:http is the
+  # Dart team's own client and ships package:http/testing.dart's MockClient,
+  # which is what lets every call here be tested without a real network.
+  # https://pub.dev/packages/http
+  http: ^1.6.0
+  # NOT a second dependency in the sense the "one dependency, deliberately"
+  # rule is protecting against. http_parser is package:http's OWN direct
+  # dependency — declaring it here formalizes a package already resolved into
+  # every consumer's lockfile the moment `http` is added; it adds no new
+  # maintainer, no new transport, no new attack surface. It is needed for
+  # exactly one call: RestClient.uploadAttachment must set the multipart
+  # file part's Content-Type to the caller's declared mimeType (http.
+  # MultipartFile.fromBytes's contentType parameter is typed MediaType, from
+  # this package, with no String-based overload) — without it, every upload
+  # from a Dart client would report as application/octet-stream server-side
+  # and silently degrade to a generic FILE attachment, which is the exact bug
+  # media-type.ts's normalizeMediaType exists to prevent on the OTHER side of
+  # this same upload. See the contract doc §5.4 for the full reasoning; this
+  # is a deliberate, considered exception to the letter of "only dependency:
+  # http", not an oversight.
+  # https://pub.dev/packages/http_parser
+  http_parser: ^4.0.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^4.0.0
