@@ -192,7 +192,19 @@ void main() {
       }));
       await flush();
 
-      expect(seen.last.delivery, equals(MessageDelivery.failed));
+      // The server's own two facts, carried rather than dropped: a host can
+      // now state WHY and decide whether to offer Retry without calling
+      // `retry()` to find out.
+      expect(
+        seen.last.delivery,
+        equals(
+          const MessageFailed(
+            reason: SendFailureReason.rejected,
+            retryable: true,
+            code: ErrorCode.rateLimited,
+          ),
+        ),
+      );
       expect(seen.last.id, equals(echo.id));
 
       await harness.client.dispose();
@@ -630,9 +642,16 @@ void main() {
       // not become the opening line of a brand-new ticket.
       expect(harness.client.queuedCount, equals(0));
       expect(sendsOn(harness, 1), isEmpty);
+      // `sessionClosed`, not `rejected`: no server ever saw this send, so
+      // there is no §7.4 code and the verdict is `kDefaultRetryable`.
       expect(
         seen.where((ChatMessage m) => m.id == held.id).last.delivery,
-        equals(MessageDelivery.failed),
+        equals(
+          const MessageFailed(
+            reason: SendFailureReason.sessionClosed,
+            retryable: kDefaultRetryable,
+          ),
+        ),
       );
 
       await harness.client.dispose();
@@ -663,7 +682,12 @@ void main() {
       expect(sendsOn(harness, 1), isEmpty);
       expect(
         seen.where((ChatMessage m) => m.id == inFlight.id).last.delivery,
-        equals(MessageDelivery.failed),
+        equals(
+          const MessageFailed(
+            reason: SendFailureReason.sessionClosed,
+            retryable: kDefaultRetryable,
+          ),
+        ),
       );
 
       await harness.client.dispose();

@@ -131,12 +131,15 @@ void main() {
       tester,
       MessageListInputs(
         messages: <ChatMessage>[
-          _msg(id: 'a', delivery: MessageDelivery.failed),
+          _msg(
+            id: 'a',
+            delivery: const MessageFailed(
+              reason: SendFailureReason.rejected,
+              retryable: true,
+            ),
+          ),
         ],
         localParticipantId: _me,
-        failures: const <String, SendFailure>{
-          'a': SendFailure(reason: SendFailureReason.rejected, retryable: true),
-        },
       ),
     );
 
@@ -158,15 +161,15 @@ void main() {
       tester,
       MessageListInputs(
         messages: <ChatMessage>[
-          _msg(id: 'a', delivery: MessageDelivery.failed),
+          _msg(
+            id: 'a',
+            delivery: const MessageFailed(
+              reason: SendFailureReason.sessionClosed,
+              retryable: false,
+            ),
+          ),
         ],
         localParticipantId: _me,
-        failures: const <String, SendFailure>{
-          'a': SendFailure(
-            reason: SendFailureReason.sessionClosed,
-            retryable: false,
-          ),
-        },
       ),
     );
 
@@ -189,7 +192,10 @@ void main() {
           _msg(
             id: 'att-1',
             content: url,
-            delivery: MessageDelivery.failed,
+            delivery: const MessageFailed(
+              reason: SendFailureReason.rejected,
+              retryable: true,
+            ),
             attachment: const AttachmentMetadata(
               url: url,
               fileName: 'receipt.png',
@@ -200,10 +206,6 @@ void main() {
           ),
         ],
         localParticipantId: _me,
-        failures: const <String, SendFailure>{
-          'att-1':
-              SendFailure(reason: SendFailureReason.rejected, retryable: true),
-        },
       ),
     );
 
@@ -367,15 +369,15 @@ void main() {
             child: MessageListView(
               inputs: MessageListInputs(
                 messages: <ChatMessage>[
-                  _msg(id: 'a', delivery: MessageDelivery.failed),
+                  _msg(
+                    id: 'a',
+                    delivery: const MessageFailed(
+                      reason: SendFailureReason.rejected,
+                      retryable: true,
+                    ),
+                  ),
                 ],
                 localParticipantId: _me,
-                failures: const <String, SendFailure>{
-                  'a': SendFailure(
-                    reason: SendFailureReason.rejected,
-                    retryable: true,
-                  ),
-                },
               ),
               callbacks: MessageListCallbacks(
                 onCopyMessage: (ChatMessage _) async {},

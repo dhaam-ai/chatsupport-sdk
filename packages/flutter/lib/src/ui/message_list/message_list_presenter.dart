@@ -25,9 +25,9 @@
 /// the array but a retry-then-succeed does reorder it.
 library;
 
-import 'package:dhaam_chat/dhaam_chat.dart' show ChatMessage, SessionSnapshot;
+import 'package:dhaam_chat/dhaam_chat.dart'
+    show ChatMessage, MessageFailed, SessionSnapshot;
 
-import 'delivery_failure.dart';
 import 'message_content.dart';
 import 'message_row.dart';
 import 'quick_reply_options.dart';
@@ -48,7 +48,6 @@ class MessageListInputs {
     this.localParticipantId,
     this.deliveredWatermarks = const <String, int>{},
     this.readWatermarks = const <String, DateTime>{},
-    this.failures = const <String, SendFailure>{},
     this.handoffKeywords = const <String>[],
     this.sessionClosed = false,
     this.isTyping = false,
@@ -65,14 +64,6 @@ class MessageListInputs {
 
   final Map<String, int> deliveredWatermarks;
   final Map<String, DateTime> readWatermarks;
-
-  /// message id → why its send failed, as core reported it.
-  ///
-  /// A lookup rather than a field on the message because `dhaam_chat`'s
-  /// `MessageDelivery` is a bare enum: it records THAT a send failed and not
-  /// why, nor whether retrying is worth attempting. Supplying it from
-  /// outside is also what makes [SendFailure.retryable] unre-derivable here.
-  final Map<String, SendFailure> failures;
 
   /// The tenant's `RemoteConfig.handoffKeywords`, for the chip filter.
   final List<String> handoffKeywords;
@@ -161,7 +152,20 @@ class MessageListPresenter {
               readWatermarks: inputs.readWatermarks,
             ),
           ),
-          failure: inputs.failures[message.id],
+          // Read off the message, not out of a map beside it.
+          //
+          // This WAS `inputs.failures[message.id]`, a lookup the caller had
+          // to fill — and no caller could, because the reason and the
+          // `retryable` verdict were computed inside `ChatClient` and never
+          // escaped a private map. The Retry affordance and every failure
+          // sentence in this module therefore rendered nothing at all. The
+          // union closed that: a failure is now a property of the message,
+          // so a row cannot disagree with its own delivery state and there
+          // is no second source to keep in step.
+          failure: switch (message.delivery) {
+            final MessageFailed failed => failed,
+            _ => null,
+          },
           quote: readReplyQuote(message.metadata),
         ),
       );

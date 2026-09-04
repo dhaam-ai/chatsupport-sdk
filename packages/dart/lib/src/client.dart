@@ -27,12 +27,17 @@ class TypingEvent {
 /// Whether a send whose failure carried no server verdict may be retried.
 ///
 /// Mirrors the TypeScript core's `DEFAULT_RETRYABLE_FALLBACK`. It applies only
-/// where there is nothing to mirror — a send this client could not hand to the
-/// transport at all never produced a wire [ErrorPayload] to read `retryable`
-/// off. Defaulting to `true` rather than `false` is deliberate: the flag gates
-/// a UI affordance, so guessing `false` silently removes a Retry button that
-/// would have worked, while guessing `true` costs one refused round trip that
-/// the server answers with a real verdict.
+/// where there is nothing to mirror — a send this client abandoned without
+/// ever handing it to a server never produced a wire [ErrorPayload] to read
+/// `retryable` off. Defaulting to `true` rather than `false` is deliberate:
+/// the flag gates a UI affordance, so guessing `false` silently removes a
+/// Retry button that would have worked, while guessing `true` costs one
+/// refused round trip that the server answers with a real verdict.
+///
+/// Applied at the ONE site that has no server to ask
+/// ([_abandonUndeliveredSends]) and stored on [MessageFailed.retryable] from
+/// there, so nothing downstream reads a nullable verdict and re-resolves it.
+/// A second resolution is a second chance to resolve it differently.
 const bool kDefaultRetryable = true;
 
 /// How [ChatClient.retry] resolved.
@@ -70,6 +75,13 @@ enum RetryRefusalReason {
 
   /// The server said retrying is futile — its own `retryable` flag, not a
   /// second copy of §7.4's code table maintained here.
+  ///
+  /// A refusal a well-built host should never actually receive. The same
+  /// flag rides on [MessageFailed.retryable] on the message this client
+  /// pushed onto [ChatClient.messages], so the affordance can be withheld
+  /// BEFORE the customer presses it rather than explained after. This
+  /// remains as the backstop for a host that asks anyway, and for the window
+  /// between a render and a press.
   notRetryable,
 
   /// The transport could not take the frame, so there is nowhere for it to go
@@ -84,6 +96,12 @@ enum RetryRefusalReason {
   /// with nothing behind it. The failure record survives the refusal, so the
   /// identical call succeeds once the connection is back. When the durable
   /// queue lands, this value goes away rather than changing meaning.
+  ///
+  /// Unlike [notRetryable], this one CANNOT be predicted from the message: a
+  /// connection can drop between the moment a Retry button is drawn and the
+  /// moment it is pressed. A host that surfaces retry outcomes needs a path
+  /// for this reason specifically, and "it failed again" is the wrong
+  /// sentence for it — nothing was attempted.
   disconnected,
 }
 
@@ -101,14 +119,20 @@ class _InFlightSend {
 
 /// A send that failed and that a host may offer a Retry affordance for.
 class _FailedSend {
-  const _FailedSend(this.frame, this.message, this.retryable);
+  const _FailedSend(this.frame, this.message);
 
+  /// The frame AS SENT, for [ChatClient.retry] to replay unchanged.
   final ClientFrame frame;
-  final ChatMessage message;
 
-  /// The server's verdict, or null when the failure never reached a server to
-  /// produce one. Null resolves through [kDefaultRetryable].
-  final bool? retryable;
+  /// The FAILED echo — the same object pushed onto [ChatClient.messages],
+  /// carrying its reason and the server's `retryable` verdict on
+  /// [MessageFailed].
+  ///
+  /// There is no separate `retryable` field beside it, and that is the point:
+  /// the verdict a host renders and the verdict [ChatClient.retry] gates on
+  /// are then necessarily the same boolean rather than two copies that can
+  /// drift. [ChatMessage.retrying] produces the pending echo a retry emits.
+  final ChatMessage message;
 }
 
 /// The chat client.
@@ -190,13 +214,19 @@ class ChatClient {
   /// v1 needed (§12.9) does not exist here.
   final Map<String, _InFlightSend> _pending = <String, _InFlightSend>{};
 
-  /// Sends the server REFUSED, keyed by the same permanent id, each holding
-  /// the frame as sent so [retry] can replay it rather than rebuild it.
+  /// Sends that will not go out by themselves, keyed by the same permanent
+  /// id, each holding the frame as sent so [retry] can replay it rather than
+  /// rebuild it.
+  ///
+  /// Two ways in, and [SendFailureReason] tells them apart on the message
+  /// itself: the server refused it ([SendFailureReason.rejected]), or this
+  /// client abandoned it when the conversation it was addressed to was
+  /// closed under it ([SendFailureReason.sessionClosed]).
   ///
   /// Deliberately not the same thing as [_outbox]. A send the server rejected
   /// will be rejected again, so it must not be replayed on a timer — the
   /// customer would spend their battery collecting the same verdict. These
-  /// need [retry], gated on the server's own `retryable` flag.
+  /// need [retry], gated on [MessageFailed.retryable].
   final Map<String, _FailedSend> _failed = <String, _FailedSend>{};
 
   /// Sends waiting for a connection, oldest first — the offline queue (§9.1).
@@ -524,7 +554,12 @@ class ChatClient {
       return const RetryRefused(RetryRefusalReason.notFound);
     }
 
-    if (!(failure.retryable ?? kDefaultRetryable)) {
+    // The verdict is read off the failure this method was handed, which is
+    // the same object the host rendered its Retry button from — so a button
+    // that was offered is a call that gets through, and one that was withheld
+    // is a call that is refused, by construction rather than by two sites
+    // agreeing. A delivery that is not [MessageFailed] cannot be in [_failed].
+    if (failure.message.delivery case MessageFailed(retryable: false)) {
       // Left in place: the host is still rendering this message as failed and
       // is entitled to ask again and get the same answer.
       return const RetryRefused(RetryRefusalReason.notRetryable);
@@ -538,9 +573,13 @@ class ChatClient {
     // Claimed only once the frame is actually on the wire, so a refusal never
     // loses the record.
     _failed.remove(id);
-    _pending[id] = _InFlightSend(failure.frame, failure.message);
-    _emit(_messages, failure.message);
-    return RetryRetried(failure.message);
+    // Back to pending under the SAME id. The failure does not survive
+    // alongside the retry — a transcript showing both would be describing one
+    // message in two contradictory states.
+    final ChatMessage retried = failure.message.retrying();
+    _pending[id] = _InFlightSend(failure.frame, retried);
+    _emit(_messages, retried);
+    return RetryRetried(retried);
   }
 
   /// Joins a session (§6.2).
@@ -748,11 +787,16 @@ class ChatClient {
     _outbox.clear();
 
     for (final _InFlightSend entry in abandoned) {
-      // The PENDING echo goes into the record and the FAILED one onto the
-      // stream — the same split the `AckFailureFrame` path uses, so a retry
-      // re-emits a pending message rather than a permanently failed one.
-      _failed[entry.frame.id] = _FailedSend(entry.frame, entry.message, null);
-      _emit(_messages, entry.message.failed());
+      // No server saw these, so there is no verdict to carry and
+      // [kDefaultRetryable] decides — resolved here, once, and stored.
+      // `code` is absent for the same reason: a §7.4 code is a thing a server
+      // said, and none did.
+      final ChatMessage failed = entry.message.failed(
+        reason: SendFailureReason.sessionClosed,
+        retryable: kDefaultRetryable,
+      );
+      _failed[entry.frame.id] = _FailedSend(entry.frame, failed);
+      _emit(_messages, failed);
     }
   }
 
@@ -882,11 +926,17 @@ class ChatClient {
       case AckFailureFrame(:final String ref, :final ErrorPayload error):
         final _InFlightSend? inFlight = _pending.remove(ref);
         if (inFlight != null) {
-          // The server's own verdict is carried into the failure record so
-          // [retry] gates on it rather than on a second copy of §7.4's table.
-          _failed[ref] =
-              _FailedSend(inFlight.frame, inFlight.message, error.retryable);
-          _emit(_messages, inFlight.message.failed());
+          // The server's own verdict AND its §7.4 code ride on the failed
+          // echo, so [retry] gates on the server's answer rather than on a
+          // second copy of that table — and a host can state the reason it
+          // shows the customer without calling [retry] to find it out.
+          final ChatMessage failed = inFlight.message.failed(
+            reason: SendFailureReason.rejected,
+            retryable: error.retryable,
+            code: error.code,
+          );
+          _failed[ref] = _FailedSend(inFlight.frame, failed);
+          _emit(_messages, failed);
         }
         break;
       case PushFrame(:final String type, :final Map<String, Object?> d):

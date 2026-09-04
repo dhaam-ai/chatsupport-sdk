@@ -649,8 +649,8 @@ class ChatMessage {
         delivery: MessageDelivery.confirmed,
       );
 
-  /// A copy marked [MessageDelivery.queued] — held for the connection to come
-  /// back, not lost.
+  /// A copy marked [MessageQueued] — held for the connection to come back,
+  /// not lost.
   ///
   /// The id is not a parameter here either, and that is the load-bearing part
   /// of the whole queue: a queued send is replayed under the envelope id it
@@ -672,8 +672,23 @@ class ChatMessage {
         delivery: MessageDelivery.queued,
       );
 
-  /// A copy marked failed.
-  ChatMessage failed() => ChatMessage(
+  /// A copy marked failed, WITH the reason and the verdict.
+  ///
+  /// Every parameter is required except [code], which only a server-rejected
+  /// send has. That is the whole of the §6.4 amendment enforced at the one
+  /// place a failure can be minted: there is no way to reach
+  /// [MessageDelivery] `failed` without saying why and whether a retry is
+  /// worth offering.
+  ///
+  /// [retryable] is the server's own flag where one exists, and
+  /// [kDefaultRetryable] where none does. It is resolved HERE and stored, so
+  /// no reader downstream has to know a fallback existed.
+  ChatMessage failed({
+    required SendFailureReason reason,
+    required bool retryable,
+    ErrorCode? code,
+  }) =>
+      ChatMessage(
         id: id,
         sessionId: sessionId,
         senderId: senderId,
@@ -685,44 +700,218 @@ class ChatMessage {
         replyToMessageId: replyToMessageId,
         attachment: attachment,
         metadata: metadata,
-        delivery: MessageDelivery.failed,
+        delivery: MessageFailed(
+          reason: reason,
+          retryable: retryable,
+          code: code,
+        ),
+      );
+
+  /// A copy back to [MessageDelivery.pending] — the retry path.
+  ///
+  /// The id is not a parameter here either, and for the reason [queued]
+  /// spells out: a retry replays the envelope it was minted with, and the
+  /// server dedupes on that id. A retry that could re-mint one would turn
+  /// every press of a Retry button into another dead message in the thread.
+  ///
+  /// Drops the reason and the verdict, which is the point — the message is
+  /// in flight again, and a failure that is no longer true must not survive
+  /// alongside it.
+  ChatMessage retrying() => ChatMessage(
+        id: id,
+        sessionId: sessionId,
+        senderId: senderId,
+        senderType: senderType,
+        type: type,
+        content: content,
+        seq: seq,
+        createdAt: createdAt,
+        replyToMessageId: replyToMessageId,
+        attachment: attachment,
+        metadata: metadata,
+        delivery: MessageDelivery.pending,
       );
 }
 
 /// Whether a message has reached the server.
 ///
-/// §6.4's amendment made this a union so "a reason cannot exist without a
-/// failure". This pass has one failure reason — the socket was not connected —
-/// because the durable offline queue that would produce the others is out of
-/// scope. When that queue lands, [failed] gains a reason and this becomes the
-/// union the PRD describes.
-enum MessageDelivery {
-  /// Sent optimistically; no `ack` yet. [ChatMessage.seq] is null.
-  pending,
+/// ── A union, not an enum, and that is §6.4's own requirement ──────────────
+///
+/// The amendment's words are "a reason cannot exist without a failure". An
+/// enum plus a sibling `reason` field satisfies that by discipline; this
+/// satisfies it by construction, because the fields live on [MessageFailed]
+/// and there is nowhere else to put them. A confirmed message cannot carry a
+/// failure reason here, in the same way a `null` cannot carry one.
+///
+/// ── Naming the three payload-free states ─────────────────────────────────
+///
+/// [pending], [confirmed] and [queued] are canonical const instances, so a
+/// caller still writes `MessageDelivery.confirmed` exactly as it did when
+/// this was an enum, and `==` on them behaves as an enum's did.
+///
+/// There is deliberately NO `MessageDelivery.failed` beside them. The
+/// missing constant is the point: every site that marks a send failed has to
+/// say why and say whether retrying is worth attempting, and the compiler
+/// asks. That is the whole of what this type change buys.
+///
+/// MATCH with the subclasses — `case MessageFailed(:final reason)` — and not
+/// with the constants. A constant pattern compares with `==` and gives the
+/// switch no exhaustiveness, so a fifth state added later would compile into
+/// a silent fallthrough rather than the compile error a sealed match gives.
+sealed class MessageDelivery {
+  const MessageDelivery();
 
-  /// Acknowledged by the server, or received from it. [ChatMessage.seq] is set.
-  confirmed,
+  /// Sent optimistically; no `ack` yet. [ChatMessage.seq] is null.
+  static const MessageDelivery pending = MessagePending();
+
+  /// Acknowledged by the server, or received from it. [ChatMessage.seq] is
+  /// set.
+  static const MessageDelivery confirmed = MessageConfirmed();
 
   /// Composed while there was no wire to write to, and HELD.
-  ///
-  /// The client replays these in FIFO order the moment the connection is back
-  /// (§8.4), under their original envelope ids, without the host doing
-  /// anything. This is the state a message spends a tunnel in, and the reason
-  /// a composer must stay usable while offline: what is typed is not lost.
-  ///
-  /// Distinct from [failed] on exactly one axis — whether anything will
-  /// happen by itself. A queued send needs no affordance; a failed one needs
-  /// [ChatClient.retry].
-  queued,
+  static const MessageDelivery queued = MessageQueued();
+}
 
-  /// The server refused this send, or it was abandoned.
+/// Sent optimistically; no `ack` yet. [ChatMessage.seq] is null.
+final class MessagePending extends MessageDelivery {
+  const MessagePending();
+
+  @override
+  bool operator ==(Object other) => other is MessagePending;
+
+  @override
+  int get hashCode => (MessagePending).hashCode;
+
+  @override
+  String toString() => 'MessagePending()';
+}
+
+/// Acknowledged by the server, or received from it. [ChatMessage.seq] is set.
+final class MessageConfirmed extends MessageDelivery {
+  const MessageConfirmed();
+
+  @override
+  bool operator ==(Object other) => other is MessageConfirmed;
+
+  @override
+  int get hashCode => (MessageConfirmed).hashCode;
+
+  @override
+  String toString() => 'MessageConfirmed()';
+}
+
+/// Composed while there was no wire to write to, and HELD.
+///
+/// The client replays these in FIFO order the moment the connection is back
+/// (§8.4), under their original envelope ids, without the host doing
+/// anything. This is the state a message spends a tunnel in, and the reason
+/// a composer must stay usable while offline: what is typed is not lost.
+///
+/// Distinct from [MessageFailed] on exactly one axis — whether anything will
+/// happen by itself. A queued send needs no affordance; a failed one needs
+/// [ChatClient.retry].
+final class MessageQueued extends MessageDelivery {
+  const MessageQueued();
+
+  @override
+  bool operator ==(Object other) => other is MessageQueued;
+
+  @override
+  int get hashCode => (MessageQueued).hashCode;
+
+  @override
+  String toString() => 'MessageQueued()';
+}
+
+/// The server refused this send, or it was abandoned.
+///
+/// NOT retried automatically. The queue exists (see [MessageQueued]) and
+/// deliberately does not swallow this case: a send the server REJECTED will
+/// be rejected again, so replaying it on a timer would spend the customer's
+/// battery producing the same verdict. [ChatClient.retry] is the manual
+/// drain, gated on [retryable] — which is the server's own flag, carried
+/// here, never a second copy of §7.4's code table.
+final class MessageFailed extends MessageDelivery {
+  const MessageFailed({
+    required this.reason,
+    required this.retryable,
+    this.code,
+  });
+
+  /// Why. A distinct value per cause, because the sentence a transcript
+  /// shows for each of them is different — see this package's README on the
+  /// two values that exist and the three that do not.
+  final SendFailureReason reason;
+
+  /// Whether retrying this exact send is worth attempting.
   ///
-  /// NOT retried automatically. The queue exists (see [queued]) and
-  /// deliberately does not swallow this case: a send the server REJECTED will
-  /// be rejected again, so replaying it on a timer would spend the customer's
-  /// battery producing the same verdict. [ChatClient.retry] is the manual
-  /// drain, gated on the server's own `retryable` flag.
-  failed,
+  /// Mirrors [ErrorPayload.retryable] one for one when a server produced a
+  /// verdict, and resolves through [kDefaultRetryable] when none did. Always
+  /// a concrete boolean, never null, precisely so a renderer never has to
+  /// ask "was this reported, or defaulted?" — the fallback is applied once,
+  /// at the one site that has no server to ask, rather than at every read.
+  final bool retryable;
+
+  /// The server's §7.4 code, present only when this failure came from a
+  /// rejected `message.send`. Never read to decide anything — [retryable] is
+  /// the decision, and this is here so a host's error sink can log something
+  /// diagnosable.
+  final ErrorCode? code;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MessageFailed &&
+      other.reason == reason &&
+      other.retryable == retryable &&
+      other.code == code;
+
+  @override
+  int get hashCode => Object.hash(MessageFailed, reason, retryable, code);
+
+  @override
+  String toString() =>
+      'MessageFailed(${reason.name}, retryable: $retryable, code: ${code?.wire})';
+}
+
+/// Why a send failed, for the sentence a transcript owes the customer.
+///
+/// ── Two values, where the TypeScript state layer has five ────────────────
+///
+/// `state/types.ts`'s `SendFailureReason` also lists `expired`, `evicted` and
+/// `storage`. They are absent here because **this client cannot produce
+/// them**, and shipping a value nothing can construct ships a renderer
+/// branch nothing can reach — a sentence written, translated and reviewed
+/// for a state that never arrives.
+///
+/// Each names the exact thing that would make it reachable:
+///
+///  * `expired` — §9.6's max-age retention on the offline queue.
+///  * `evicted` — §9.6's max-entries cap on the same queue.
+///  * `storage` — §9.1 persistence, i.e. a durable write that did not land.
+///
+/// `ChatClient`'s outbox is a plain in-memory `List` with no max age, no cap
+/// and no storage (see its own out-of-scope list), so all three preconditions
+/// are absent. Add the durable queue and add the value with it, in the same
+/// change that can first construct it.
+enum SendFailureReason {
+  /// The server refused it, with a §7.4 code on [MessageFailed.code].
+  ///
+  /// Whether a retry is futile is the server's call and rides on
+  /// [MessageFailed.retryable]; this value does not decide it.
+  rejected,
+
+  /// The session it was addressed to ended before it reached the wire.
+  ///
+  /// Produced by `ChatClient.startNewSession`, which closes the outgoing
+  /// conversation (SWITCHED) and therefore cannot let sends addressed to it
+  /// ride along into the new one — see that method on why.
+  ///
+  /// Distinct from [rejected] because no server ever saw this send: it was
+  /// refused by US, locally, so there is no verdict to read and
+  /// [kDefaultRetryable] decides. A retry replays the original envelope at
+  /// its original address, so the server answers for the closed session
+  /// itself rather than quietly delivering into the new conversation.
+  sessionClosed,
 }
 
 /// A presence entry (`presence.update.d`).

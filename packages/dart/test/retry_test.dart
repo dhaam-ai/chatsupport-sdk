@@ -164,7 +164,13 @@ void main() {
         seen.map((ChatMessage m) => m.delivery).toList(),
         equals(<MessageDelivery>[
           MessageDelivery.pending,
-          MessageDelivery.failed,
+          const MessageFailed(
+            reason: SendFailureReason.rejected,
+            retryable: true,
+            code: ErrorCode.internal,
+          ),
+          // Back to pending, and the reason does NOT ride along: one message
+          // cannot be in flight and permanently failed at the same time.
           MessageDelivery.pending,
         ]),
       );
@@ -408,6 +414,114 @@ void main() {
       expect(harness.sends, hasLength(1));
 
       await harness.client.dispose();
+    });
+  });
+
+  group('the failure the host renders is the failure retry gates on', () {
+    test('a rejection carries the server code and verdict onto the message',
+        () async {
+      // The two facts the AckFailureFrame arm used to hold and drop. Without
+      // them a host could only discover retryability by CALLING retry() —
+      // after the customer had already pressed a button that should never
+      // have been drawn.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<ChatMessage> seen = <ChatMessage>[];
+      harness.client.messages.listen(seen.add);
+
+      final ChatMessage echo = harness.client.sendMessage('hello');
+      harness.socket.deliver(rejectFor(echo.id, retryable: false));
+      await flush();
+
+      expect(
+        seen.last.delivery,
+        equals(
+          const MessageFailed(
+            reason: SendFailureReason.rejected,
+            retryable: false,
+            code: ErrorCode.validationFailed,
+          ),
+        ),
+      );
+
+      await harness.client.dispose();
+    });
+
+    test('a host that reads retryable off the message predicts the refusal',
+        () async {
+      // The whole point of the union. These two assertions must agree for
+      // every failure: what the transcript decided to draw, and what retry()
+      // decides to do. Reading them from one boolean is what makes agreeing
+      // structural rather than a coincidence two files maintain.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<ChatMessage> seen = <ChatMessage>[];
+      harness.client.messages.listen(seen.add);
+
+      final ChatMessage echo = harness.client.sendMessage('hello');
+      harness.socket.deliver(rejectFor(echo.id, retryable: false));
+      await flush();
+
+      final MessageDelivery delivery = seen.last.delivery;
+      expect(delivery, isA<MessageFailed>());
+      expect((delivery as MessageFailed).retryable, isFalse);
+
+      expect(
+        harness.client.retry(echo.id),
+        isA<RetryRefused>().having(
+          (RetryRefused r) => r.reason,
+          'reason',
+          equals(RetryRefusalReason.notRetryable),
+        ),
+      );
+      // Nothing went out, and the record survives so the host may ask again
+      // and get the same answer.
+      expect(harness.sends, hasLength(1));
+
+      await harness.client.dispose();
+    });
+
+    test('a retried message drops the reason it no longer has', () async {
+      // A transcript that kept the failure alongside the retry would be
+      // describing one message in two contradictory states at once.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<ChatMessage> seen = <ChatMessage>[];
+      harness.client.messages.listen(seen.add);
+
+      final ChatMessage echo = harness.client.sendMessage('hello');
+      harness.socket.deliver(rejectFor(echo.id, retryable: true));
+      await flush();
+      final RetryOutcome outcome = harness.client.retry(echo.id);
+      await flush();
+
+      expect(seen.last.delivery, isNot(isA<MessageFailed>()));
+      expect(seen.last.delivery, equals(MessageDelivery.pending));
+      expect(
+        (outcome as RetryRetried).message.delivery,
+        equals(MessageDelivery.pending),
+        reason: 'RetryRetried.message must be the pending echo it documents',
+      );
+
+      await harness.client.dispose();
+    });
+
+    test('ships only the reasons this client can actually produce', () {
+      // Guards the D17 call. Every value here needs a producer, and every
+      // producer needs a sentence in the transcript; a value with neither is
+      // a renderer branch nothing can reach. `expired`, `evicted` and
+      // `storage` are absent until the durable offline queue (§9.1, §9.6)
+      // gives them a way to happen — see SendFailureReason's own doc.
+      expect(
+        SendFailureReason.values,
+        equals(<SendFailureReason>[
+          SendFailureReason.rejected,
+          SendFailureReason.sessionClosed,
+        ]),
+      );
     });
   });
 }
