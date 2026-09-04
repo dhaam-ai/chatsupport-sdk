@@ -45,3 +45,4 @@ export 'src/ui/pre_chat/pre_chat.dart';
 export 'src/ui/quick_replies.dart';
 export 'src/ui/topic_chips.dart';
 export 'src/ui/unavailable_view.dart';
+export 'src/ui/message_list/message_list.dart';
