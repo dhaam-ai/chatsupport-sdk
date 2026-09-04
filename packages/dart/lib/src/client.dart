@@ -179,6 +179,8 @@ class ChatClient {
       StreamController<PresenceEntry>.broadcast();
   final StreamController<MessageDelivered> _messageDelivered =
       StreamController<MessageDelivered>.broadcast();
+  final StreamController<TicketLinked> _ticketLinked =
+      StreamController<TicketLinked>.broadcast();
 
   /// Optimistic sends awaiting an `ack`, keyed by envelope id.
   ///
@@ -330,6 +332,16 @@ class ChatClient {
   /// frame (D2) can otherwise walk the mark backwards and un-tick a message
   /// the customer already saw delivered.
   Stream<MessageDelivered> get messageDelivered => _messageDelivered.stream;
+
+  /// A CRM ticket was attached to this conversation (§7.3).
+  ///
+  /// A discrete occurrence rather than current state — and here, also the
+  /// only surface it could have had. [SessionSnapshot] carries a `ticketId`
+  /// and no url at all, and this client never patches a snapshot: §9.4 makes
+  /// the server's copy authoritative and [sessions] re-emits it wholesale.
+  /// Without this stream a host learns of a link only at the next
+  /// `session.updated`, and learns [TicketLinked.ticketUrl] never.
+  Stream<TicketLinked> get ticketLinked => _ticketLinked.stream;
 
   /// `seq` spans that were never delivered and must be refetched over REST.
   Stream<ResumeGap> get gaps => _connection.gaps;
@@ -575,6 +587,7 @@ class ChatClient {
     await _agentJoined.close();
     await _presence.close();
     await _messageDelivered.close();
+    await _ticketLinked.close();
   }
 
   // ── Routing ─────────────────────────────────────────────────────────────
@@ -722,11 +735,21 @@ class ChatClient {
       case 'message.delivered':
         _emit(_messageDelivered, MessageDelivered.fromJson(d));
         break;
+      case 'ticket.linked':
+        _emit(_ticketLinked, TicketLinked.fromJson(d));
+        break;
       default:
-        // message.read, ticket.linked, system.pong.
-        // Decoded and ignored: read watermarks and ticket linking are out of
-        // scope for this pass, and a frame this client does not act on is not
-        // an error.
+        // `message.read`, plus any frame type a later protocol version adds.
+        // A frame this client does not act on is not an error.
+        //
+        // `message.read` is not a gap. §9.5 puts the read watermark on
+        // `ParticipantSnapshot.lastReadAt`, which rides every session
+        // snapshot, so a read tick is already derivable with no stream of its
+        // own — which is exactly what delivery had no equivalent of, and why
+        // `message.delivered` needed one.
+        //
+        // `system.pong` does NOT arrive here. ConnectionController answers it
+        // and returns without forwarding, so it never enters this router.
         break;
     }
   }

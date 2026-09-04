@@ -315,6 +315,43 @@ void main() {
       );
     });
 
+    test('ticket.linked carries the id, and a url that may be absent', () {
+      final TicketLinked linked = TicketLinked.fromJson(<String, Object?>{
+        'ticketId': 'tk_1',
+      });
+      expect(linked.ticketId, equals('tk_1'));
+      expect(linked.ticketUrl, isNull);
+    });
+
+    test('ticket.linked reads an explicit null ticketUrl as absent', () {
+      // openapi/chat-api.yaml's `Ticket` schema — which names the
+      // `ticket.linked` frame directly — declares `url` as
+      // `type: [string, "null"]`, so null is a value the contract sanctions.
+      // Refusing it would drop the whole frame and lose the ticket id too.
+      final TicketLinked linked = TicketLinked.fromJson(<String, Object?>{
+        'ticketId': 'tk_1',
+        'ticketUrl': null,
+      });
+      expect(linked.ticketUrl, isNull);
+    });
+
+    test('ticket.linked requires a non-empty ticketId', () {
+      expect(
+        () => TicketLinked.fromJson(<String, Object?>{'ticketId': ''}),
+        throwsA(isA<FrameDecodeException>()),
+      );
+    });
+
+    test('ticket.linked refuses a non-string ticketUrl', () {
+      expect(
+        () => TicketLinked.fromJson(<String, Object?>{
+          'ticketId': 'tk_1',
+          'ticketUrl': 42,
+        }),
+        throwsA(isA<FrameDecodeException>()),
+      );
+    });
+
     test('presence.update leaves lastSeen absent while online', () {
       final PresenceEntry entry = PresenceEntry.fromJson(
         <String, Object?>{'participantId': 'p1', 'status': 'ONLINE'},

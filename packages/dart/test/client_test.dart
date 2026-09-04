@@ -379,6 +379,52 @@ void main() {
       await harness.client.dispose();
     });
 
+    test('ticket.linked reaches ticketLinked with its url', () async {
+      // `TicketLinked` was exported from the barrel with no producer at all —
+      // a host could name the type and never receive one.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<TicketLinked> seen = <TicketLinked>[];
+      harness.client.ticketLinked.listen(seen.add);
+
+      harness.socket.deliver(
+        jsonEncode(<String, Object?>{
+          'v': 1,
+          't': 'ticket.linked',
+          'id': _serverUlid,
+          'ts': 1700000000000,
+          'd': <String, Object?>{
+            'ticketId': 'tk_1',
+            'ticketUrl': 'https://crm.example.test/t/1',
+          },
+        }),
+      );
+      await flush();
+
+      expect(seen, hasLength(1));
+      expect(seen.single.ticketId, equals('tk_1'));
+      expect(
+        seen.single.ticketUrl,
+        equals('https://crm.example.test/t/1'),
+      );
+
+      await harness.client.dispose();
+    });
+
+    test('dispose closes ticketLinked', () async {
+      final Harness harness = Harness();
+      await harness.connected();
+
+      bool done = false;
+      harness.client.ticketLinked.listen(null, onDone: () => done = true);
+
+      await harness.client.dispose();
+      await flush();
+
+      expect(done, isTrue);
+    });
+
     test('dispose closes messageDelivered', () async {
       final Harness harness = Harness();
       await harness.connected();
