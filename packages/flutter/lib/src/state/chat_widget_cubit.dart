@@ -1006,6 +1006,32 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     if (state.muted == muted) return;
     emit(state.copyWith(muted: muted));
   }
+
+  /// Whether there is a live conversation for the header menu to offer to end.
+  ///
+  /// The precondition for `HeaderMenu`'s one destructive row. Three facts,
+  /// and each removes a way the row could be a lie:
+  ///
+  ///  * a session exists at all — [openEndConversation] no-ops without one,
+  ///    and a row that does nothing is the thing that module's header
+  ///    forbids;
+  ///  * [ChatSessionActions] is wired — with no REST slice there is nothing
+  ///    to close it WITH, and the same no-op applies;
+  ///  * the session is not already terminal — "End conversation" on a
+  ///    conversation the server has already closed would close nothing and
+  ///    look broken.
+  ///
+  /// Read off `status` directly rather than through [endedSessionId], which
+  /// answers a deliberately different question: it returns null for a PARKED
+  /// session so the ended-footer stays down, and a parked session is closed
+  /// server-side and equally cannot be ended again. Reusing it here would
+  /// offer the row for exactly that case.
+  bool get canEndConversation {
+    final SessionSnapshot? session = state.session;
+    if (session == null || _sessionActions == null) return false;
+    return session.status != ChatStatus.closed &&
+        session.status != ChatStatus.resolved;
+  }
   // ── Inbound ───────────────────────────────────────────────────────────
 
   void _onConnectionState(ConnectionState connectionState) {

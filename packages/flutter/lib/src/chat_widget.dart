@@ -46,6 +46,7 @@ import 'state/chat_widget_state.dart';
 import 'theme/chat_theme.dart';
 import 'ui/chat_bottom_nav.dart';
 import 'ui/conversation_screen.dart';
+import 'ui/header/header.dart';
 import 'ui/home_screen.dart';
 import 'ui/messages_screen.dart';
 import 'ui/offline_banner.dart';
@@ -66,18 +67,44 @@ const Set<ConnectionState> kTerminalConnectionStates = <ConnectionState>{
 };
 
 class ChatWidget extends StatefulWidget {
-  const ChatWidget({super.key, required this.cubit});
+  const ChatWidget({super.key, required this.cubit, this.chime});
 
   final ChatWidgetCubit cubit;
+
+  /// The reply chime, or null to build the default one.
+  ///
+  /// Injectable for the reason every other platform-touching thing in this
+  /// package is (`AttachmentPicker`, `ChimePlayer`, `GeolocationProbe`): a
+  /// widget that reaches a platform channel directly is a widget whose tests
+  /// cannot run in CI. See `chime.dart` on why the default player is
+  /// [SystemSound] rather than an audio plugin, and how a host replaces it.
+  final Chime? chime;
 
   @override
   State<ChatWidget> createState() => _ChatWidgetState();
 }
 
 class _ChatWidgetState extends State<ChatWidget> {
+  late final Chime _chime = widget.chime ?? Chime();
+
   @override
   void initState() {
     super.initState();
+    // Seeds the chime's watermark WITHOUT playing — the counterpart of the
+    // reference's `{ immediate: true }` on its own `unreadCount`
+    // subscription (widget.ts:2088). Without this first observation the
+    // listener below would mistake the first real reply for the initial
+    // reading and stay silent for it.
+    //
+    // `playOnUnreadRise` enforces "strictly on the way up, never on the
+    // first observation": `unreadCount` also FALLS (to zero, when the panel
+    // is read), and a restored session's backlog must not greet a returning
+    // visitor with a noise about messages they have already read.
+    _chime.playOnUnreadRise(
+      unread: widget.cubit.state.unreadCount,
+      sound: widget.cubit.state.config.sound,
+      muted: widget.cubit.state.muted,
+    );
     // Not in the Cubit's own constructor — see ChatWidgetCubit.connect's
     // doc: network I/O as a side effect of construction is untestable by
     // construction, and this widget (which owns nothing about the Cubit's
@@ -90,7 +117,29 @@ class _ChatWidgetState extends State<ChatWidget> {
   Widget build(BuildContext context) {
     return BlocProvider<ChatWidgetCubit>.value(
       value: widget.cubit,
-      child: BlocBuilder<ChatWidgetCubit, ChatWidgetState>(
+      // A Consumer, not a Listener wrapped around a Builder: it carries both
+      // halves at one nesting level, so mounting the chime does not re-indent
+      // the whole panel.
+      // https://pub.dev/documentation/flutter_bloc/latest/flutter_bloc/BlocConsumer-class.html
+      child: BlocConsumer<ChatWidgetCubit, ChatWidgetState>(
+        // The reply chime — the Flutter counterpart of the reference's
+        // `store.select((state) => state.unreadCount, ...)`. A listener
+        // rather than anything in `build`, because a chime is an effect of a
+        // CHANGE and a rebuild happens for a hundred reasons that are not
+        // one. `listenWhen` is the selector; the initial reading is taken in
+        // `initState` instead.
+        listenWhen: (ChatWidgetState previous, ChatWidgetState current) =>
+            previous.unreadCount != current.unreadCount,
+        listener: (BuildContext context, ChatWidgetState state) =>
+            _chime.playOnUnreadRise(
+          unread: state.unreadCount,
+          // BOTH have to agree: `config.sound` is the merchant enabling a
+          // chime at all, `muted` is this visitor silencing it. `Chime` is
+          // the one place the two are combined, so no caller can satisfy one
+          // and forget the other.
+          sound: state.config.sound,
+          muted: state.muted,
+        ),
         builder: (BuildContext context, ChatWidgetState state) {
           final ThemeData theme = chatThemeData(state.config, MediaQuery.platformBrightnessOf(context));
 
@@ -181,15 +230,56 @@ class _ConversationAppBar extends StatelessWidget implements PreferredSizeWidget
 
   @override
   Widget build(BuildContext context) {
-    // Mirrors home_screen.dart's own recent-row title rule: WHO handled it
-    // is real; nothing here invents a subject line the customer never
-    // wrote (chat_session_summary.dart's own rule, applied to the one
-    // session this Cubit tracks rather than a list of summaries).
-    final String title = state.composingNew ? 'New conversation' : (state.session?.handledBy?.displayName ?? 'Conversation');
-
     return AppBar(
-      title: Text(title),
+      // T14's IdentityHeader, not a second hand-built title.
+      //
+      // What this replaced re-derived identity as a bare
+      // `handledBy?.displayName` with NO `isHandledByCurrent` gate, which is
+      // the exact stale-agent bug that component exists to close: a session
+      // reactivated to WAITING_FOR_AGENT keeps its previous agent
+      // server-side, so a departed agent's name stayed in the header. It
+      // also fell back to the literal 'Conversation' rather than the
+      // merchant's own configured title.
+      title: IdentityHeader(
+        session: state.session,
+        // `config.title` is the merchant's; 'Conversation' stays the last
+        // resort for a tenant that published none. Composing a new
+        // conversation outranks both — there is nobody to name yet.
+        fallbackTitle: state.composingNew ? 'New conversation' : (state.config.title ?? 'Conversation'),
+      ),
       leading: BackButton(onPressed: cubit.back),
+      actions: <Widget>[
+        // Reads the SAME `isHandledByCurrent` gate the title does, which is
+        // what stops a face of Ada sitting beside "Acme Support".
+        HeaderAvatar(session: state.session, config: state.config),
+        HeaderMenu(
+          canEnd: cubit.canEndConversation,
+          privacyUrl: state.config.privacyUrl,
+          // FALSE, deliberately, and NOT `state.config.reportIssue`.
+          //
+          // `report_issue_form.dart` is built and unit-tested but has no
+          // host: no surface, no Cubit method that opens one, and no
+          // `IssueReporter` wired to the raw `report-issue` route. Offering
+          // the row would put an item in front of the customer that does
+          // nothing when pressed — the precise trap header_menu.dart's own
+          // header documents, whose rule for an unbacked item is to HIDE it
+          // rather than disable it. Flipping this to the config flag is the
+          // one line that lights the row up once the form has somewhere to
+          // open.
+          reportIssue: false,
+          muted: state.muted,
+          onStartNew: cubit.startNewConversation,
+          onEndConversation: cubit.openEndConversation,
+          // Unreachable while `reportIssue` is false — `headerMenuEntries`
+          // omits the row entirely, so nothing can select it. A no-op rather
+          // than a throw: this is a menu, and crashing the panel if that
+          // flag were ever flipped without the rest of the wiring would be a
+          // worse failure than a silent one.
+          onReportIssue: () {},
+          onMuteChange: cubit.setMuted,
+          onOpenPrivacy: openPrivacyUrl,
+        ),
+      ],
     );
   }
 }
