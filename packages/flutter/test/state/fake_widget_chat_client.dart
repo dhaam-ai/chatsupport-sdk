@@ -32,7 +32,22 @@ class FakeWidgetChatClient implements WidgetChatClient {
   int queued = 0;
   final List<String> joinedSessionIds = <String>[];
   final List<String> sentContent = <String>[];
+
+  /// The `metadata` each send carried, index-aligned with [sentContent] —
+  /// null where a send carried none, which is a different fact from `{}`.
+  final List<Map<String, Object?>?> sentMetadata = <Map<String, Object?>?>[];
+
+  /// Every `session.closed` a test pushed, oldest first.
+  final StreamController<SessionClosed> _sessionClosed =
+      StreamController<SessionClosed>.broadcast();
   final List<String?> markReadCalls = <String?>[];
+
+  /// How many outbound typing signals went out.
+  int startTypingCalls = 0;
+
+  /// Set to make `startTyping()` throw — the race a connected-state check
+  /// cannot close. A keystroke must survive it.
+  Object? startTypingThrows;
 
   @override
   ConnectionState get connectionState => _state;
@@ -65,8 +80,16 @@ class FakeWidgetChatClient implements WidgetChatClient {
   }
 
   @override
-  ChatMessage sendMessage(String content, {String? replyToMessageId}) {
+  Stream<SessionClosed> get sessionClosed => _sessionClosed.stream;
+
+  @override
+  ChatMessage sendMessage(
+    String content, {
+    String? replyToMessageId,
+    Map<String, Object?>? metadata,
+  }) {
     sentContent.add(content);
+    sentMetadata.add(metadata);
     final ChatMessage message = ChatMessage(
       id: 'sent-${sentContent.length}',
       sessionId: 's1',
@@ -77,6 +100,7 @@ class FakeWidgetChatClient implements WidgetChatClient {
       seq: null,
       createdAt: DateTime.utc(2026, 1, 1),
       replyToMessageId: replyToMessageId,
+      metadata: metadata,
       delivery: MessageDelivery.pending,
     );
     _messages.add(message);
@@ -88,6 +112,12 @@ class FakeWidgetChatClient implements WidgetChatClient {
 
   @override
   void markRead({String? upToMessageId}) => markReadCalls.add(upToMessageId);
+
+  @override
+  void startTyping() {
+    if (startTypingThrows != null) throw startTypingThrows!;
+    startTypingCalls += 1;
+  }
 
   // ── Test-only inbound simulation ─────────────────────────────────────
 
@@ -106,7 +136,14 @@ class FakeWidgetChatClient implements WidgetChatClient {
   void emitReconnecting({int attempt = 0, Duration delay = const Duration(milliseconds: 500)}) =>
       _reconnecting.add(ReconnectingEvent(attempt: attempt, delay: delay));
 
+  /// One `session.closed` push, as `ChatClient.sessionClosed` emits.
+  void emitSessionClosed(String sessionId, CloseReason closeReason) =>
+      _sessionClosed.add(
+        SessionClosed(sessionId: sessionId, closeReason: closeReason),
+      );
+
   Future<void> dispose() async {
+    await _sessionClosed.close();
     await _reconnecting.close();
     await _connectionStates.close();
     await _messages.close();

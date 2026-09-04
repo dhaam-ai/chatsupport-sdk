@@ -36,6 +36,11 @@ export 'src/ui/chat_bottom_nav.dart';
 export 'src/ui/common_questions_list.dart';
 export 'src/ui/composer.dart';
 export 'src/ui/composer_affordances/composer_affordances.dart';
+// `csat.dart` is itself a barrel over the end-of-conversation module — the
+// rating card, the end-conversation dialog and the ended footer (see its
+// header on why the three are one module) — so this one line is the whole
+// surface.
+export 'src/ui/csat/csat.dart';
 export 'src/ui/conversation_screen.dart';
 export 'src/ui/hero_header.dart';
 export 'src/ui/home_screen.dart';

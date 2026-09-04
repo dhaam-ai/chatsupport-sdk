@@ -19,12 +19,14 @@ library;
 import 'dart:async';
 
 import 'package:dhaam_chat/dhaam_chat.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../config/remote_config.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
+import '../ui/csat/session_actions.dart';
 import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
 import 'widget_chat_client.dart';
@@ -69,7 +71,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     ChatIdentity identity = ChatIdentity.guest,
     Scheduler scheduler = const SystemScheduler(),
     Duration reconnectInterval = kReconnectInterval,
+    ChatSessionActions? sessionActions,
   })  : _client = client,
+        _sessionActions = sessionActions,
         _screens = ChatScreens(
           initial: initialScreen ??
               (sessionId == null
@@ -99,10 +103,64 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     _sessionsSub = _client.sessions.listen(_onSession);
     _typingSub = _client.typing.listen(_onTyping);
     _reconnectingSub = _client.reconnecting.listen(_onReconnecting);
+    _sessionClosedSub = _client.sessionClosed.listen(_onSessionClosed);
+    final ChatSessionActions? actions = sessionActions;
+    if (actions != null) {
+      final CsatMachine machine = CsatMachine(
+        lookup: actions.readCsat,
+        // A route-missing verdict is deliberately NOT reported — an older
+        // service is not a fault, and the machine already withholds it. What
+        // reaches here is a genuine lookup failure, and it goes where every
+        // other error in this package goes: the host's channel, never the
+        // customer's screen.
+        onError: (Object error, StackTrace stackTrace) =>
+            FlutterError.reportError(
+          FlutterErrorDetails(exception: error, stack: stackTrace),
+        ),
+      );
+      _csat = machine;
+      // The answer landing is a state change like any other: whatever was
+      // decided while the lookup was `CsatLoading` has to be decided again.
+      _csatSub = machine.changes.listen(_onCsatVerdict);
+    }
   }
 
   final WidgetChatClient _client;
   final ChatScreens _screens;
+
+  /// The REST slice the end-of-conversation surfaces need, or null when the
+  /// host wired none up — in which case there is no rating card, no ended
+  /// footer and no way to end a conversation from here. Off, not broken; a
+  /// card whose submit silently discarded the answer would be worse.
+  final ChatSessionActions? _sessionActions;
+
+  /// The server-truth memory of who has rated what. Null alongside
+  /// [_sessionActions], since it has nothing to ask.
+  CsatMachine? _csat;
+
+  /// [_csat]'s verdicts, mirrored for [ChatWidgetState.csatBySession]. The
+  /// `emit` override below is the only writer of the state half.
+  final Map<String, CsatLookup> _csatBySession = <String, CsatLookup>{};
+
+  /// The session this client watched get PARKED — closed with
+  /// `CloseReason.switched` because the customer moved to another active
+  /// conversation (§12.5).
+  ///
+  /// ── Why a parked session needs recording rather than ignoring ───────
+  ///
+  /// `session.status` still moves to CLOSED on the server for a SWITCHED
+  /// close, so by status alone a parked session is indistinguishable from a
+  /// resolved one — and would be offered a satisfaction survey, and an
+  /// "This conversation has ended" footer, for a conversation nobody ended
+  /// and that telling the customer is over would be a lie about.
+  ///
+  /// Compared by EXACT id ([endedSessionId]), so the guard cannot leak onto a
+  /// different session's genuine resolution. Cleared by a snapshot naming a
+  /// different, real session — see [_onSession].
+  String? _parkedSessionId;
+
+  /// The claim on the slot held by the "End this conversation?" question.
+  SurfaceTicket? _confirmEndTicket;
 
   /// The ONE slot a product surface can occupy.
   ///
@@ -159,6 +217,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   late final StreamSubscription<SessionSnapshot> _sessionsSub;
   late final StreamSubscription<TypingEvent> _typingSub;
   late final StreamSubscription<ReconnectingEvent> _reconnectingSub;
+  late final StreamSubscription<SessionClosed> _sessionClosedSub;
+  StreamSubscription<String>? _csatSub;
 
   /// For a screen that needs to call something this Cubit does not wrap
   /// (none does yet) — kept `WidgetChatClient`-typed, not `ChatClient`, so a
@@ -189,6 +249,11 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       state.copyWith(
         activeSurface: _surfaces.active,
         clearActiveSurface: _surfaces.active == null,
+        // The same discipline, for the same reason: a mirror that can drift
+        // is the bug both of these exist to end. `super.emit` still compares
+        // the transformed value, and Equatable compares this map by content,
+        // so an unchanged verdict emits nothing.
+        csatBySession: Map<String, CsatLookup>.unmodifiable(_csatBySession),
       ),
     );
   }
@@ -217,6 +282,11 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         conversationOpened: state.conversationOpened,
         hasSession: state.session != null,
         hasMessages: state.messages.isNotEmpty,
+        // A DECISION, not the inputs to one — see the field's own doc. It is
+        // reached through [dueCsatCard] so that this and the ended footer ask
+        // one question of one answerer, which is what stops the two of them
+        // both deciding they are on.
+        csatCard: dueCsatCard(),
       );
 
   /// Re-derives what belongs in the slot and repaints.
@@ -510,6 +580,23 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   // ── Pre-chat ──────────────────────────────────────────────────────────
 
+  /// The STRUCTURED half of a pre-chat send — `{kind, answers}`, exactly the
+  /// shape `widget.ts`'s `sendPreChatDetails` puts on the wire.
+  ///
+  /// It rides on the SAME frame as the prose lines rather than going as a
+  /// second message, and that is the whole design: chat-service folds this
+  /// into a customer-asserted contact on the session (fill-empty only,
+  /// `source: 'pre_chat'`), while the agent reads the lines. One frame means
+  /// the two can never describe different answers.
+  ///
+  /// The full [answers] map, not just the answered subset — the prose is
+  /// already the human-readable filter, and the structured copy is the raw
+  /// record. Built at both call sites through here so the `kind` string is
+  /// written once: a typo in it is not a compile error, it is a contact that
+  /// silently never gets created.
+  static Map<String, Object?> _preChatMetadata(Map<String, String> answers) =>
+      <String, Object?>{'kind': 'pre_chat', 'answers': answers};
+
   /// The customer answered the standalone gate.
   ///
   /// Relays the answers as the opening MESSAGE — they are content, not
@@ -529,7 +616,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       ),
       answers: answers,
     );
-    if (details != null) _client.sendMessage(details);
+    if (details != null) {
+      _client.sendMessage(details, metadata: _preChatMetadata(answers));
+    }
     emit(state.copyWith(preChatAnswered: true, preChatAnswers: answers));
     _syncSurfaces();
   }
@@ -571,7 +660,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
           ),
           answers: answers,
         );
-        if (details != null) _client.sendMessage(details);
+        if (details != null) {
+          _client.sendMessage(details, metadata: _preChatMetadata(answers));
+        }
       }
       _client.sendMessage(message);
       emit(
@@ -595,6 +686,229 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   }
 
   void markRead({String? upToMessageId}) => _client.markRead(upToMessageId: upToMessageId);
+
+  /// Tells the other participants the customer is typing (§6.3).
+  ///
+  /// Wire this to `Composer.onTyping`. Without it the agent's typing
+  /// indicator never lights at all — for typed characters as much as for an
+  /// emoji insertion, which is why the composer fires all three effects per
+  /// insertion rather than two.
+  ///
+  /// ── Why the try/catch, when `send` is documented not to throw ────────
+  ///
+  /// `ConnectionController.send` drops silently when the socket is not
+  /// connected, so the ordinary offline case is already safe. The guard is
+  /// for the race the state check cannot close — a socket that goes away
+  /// between the `connected` read and the write — and it is here for the
+  /// reason the reference gives at its own call site: a typing INTENT that
+  /// fails must never block the keystroke that triggered it. This runs on
+  /// every character; an exception escaping into `onChanged` would take the
+  /// composer down with it.
+  ///
+  /// There is no `stopTyping` counterpart. See [WidgetChatClient.startTyping].
+  void startTyping() {
+    try {
+      _client.startTyping();
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(exception: error, stack: stackTrace),
+      );
+    }
+  }
+
+  // ── End of conversation: the rating card, the footer, the confirm ─────
+
+  /// The on-screen session that has genuinely ENDED, or null.
+  ///
+  /// ── ONE definition for the three readers that need it ───────────────
+  ///
+  /// The rating card, the ended footer, and [dueCsatCard] between them. The
+  /// reference wrote this out twice and kept the two "in lockstep" by comment
+  /// alone, which is a promise a codebase cannot keep — and the two halves
+  /// disagreeing is exactly how a survey and a footer both appear, or neither
+  /// does.
+  ///
+  /// `sessionId == _parkedSessionId` is the non-obvious half: a session this
+  /// client watched get SWITCHED-closed reads CLOSED by status but was PARKED
+  /// rather than ended. See [_parkedSessionId].
+  String? get endedSessionId {
+    final SessionSnapshot? session = state.session;
+    if (session == null) return null;
+    if (session.status != ChatStatus.closed &&
+        session.status != ChatStatus.resolved) {
+      return null;
+    }
+    return session.sessionId == _parkedSessionId ? null : session.sessionId;
+  }
+
+  /// The rating card this conversation is owed, or null for none.
+  ///
+  /// Read by [surfaceInputs] (which raises it) and by [endedFooterDue] (which
+  /// needs to know the footer is outranked), so the two can never answer the
+  /// question differently.
+  ///
+  /// An empty transcript has nothing to rate — the same precedence note the
+  /// pre-chat gate states from the other side. The rest of the answer is
+  /// `CsatMachine`'s: `unrated` and `unsupported` ASK, `rated` shows the
+  /// rating locked, and `loading`/`unknown` show nothing at all, for opposite
+  /// reasons. None of that is re-derived here.
+  CsatSurface? dueCsatCard() {
+    final CsatMachine? machine = _csat;
+    final String? sessionId = endedSessionId;
+    if (machine == null || sessionId == null || state.messages.isEmpty) {
+      return null;
+    }
+    // Asks the server AT MOST ONCE per session: the first call starts the
+    // request and answers `loading`, every later one is answered from the
+    // cache. So repainting fifty times costs one lookup.
+    final CsatLookup lookup = machine.lookupFor(sessionId);
+    _csatBySession[sessionId] = lookup;
+    final CsatCard? card = machine.cardFor(sessionId);
+    if (card == null) return null;
+    return CsatSurface(sessionId: sessionId, alreadyRated: !card.isAsk);
+  }
+
+  /// Whether the ended-conversation footer should stand in for the composer.
+  ///
+  /// A terminal, unparked session with nothing already standing in for the
+  /// conversation. The reference spells this `showingLog && ended && !csatDue`
+  /// — and `!csatDue` is subsumed here, because a rating that is due IS the
+  /// slot's occupant, and a user-initiated surface that outranks it occupies
+  /// the slot too. One condition, one answer, no third place for the footer
+  /// and the card to disagree.
+  bool get endedFooterDue =>
+      endedSessionId != null && state.activeSurface == null;
+
+  /// Records the customer's rating for [sessionId].
+  ///
+  /// ── Re-asked immediately before writing ─────────────────────────────
+  ///
+  /// The cached `unrated` that put this card on screen may be minutes old and
+  /// nothing on the wire invalidates it — there is no CSAT frame and no
+  /// event. A second tab, or the same customer's phone, can rate the
+  /// conversation while the card sits there, and `POST …/csat` is an UPSERT:
+  /// submitting then does not fail, it replaces the score they already gave.
+  /// One request on the button press narrows that window from "however long
+  /// this card has been open" to the width of one round trip.
+  ///
+  /// A re-check that FAILS lets the submit through — the opposite of the
+  /// unknown-lookup rule, and deliberately: a definite `unrated` is already on
+  /// file (it is WHY this card is an ask) and the customer has just chosen a
+  /// score. See `CsatMachine.confirmedUnrated`.
+  ///
+  /// Rethrows, so the card's own `submitOnce` shows the failure line and
+  /// hands the raw error to the host.
+  Future<void> rateSession(
+    String sessionId, {
+    required int rating,
+    String? comment,
+  }) async {
+    final CsatMachine? machine = _csat;
+    final ChatSessionActions? actions = _sessionActions;
+    if (machine == null || actions == null) return;
+
+    // Somebody rated it already. Nothing is written, and the machine's own
+    // `changes` event repaints this card as the locked read-out of the rating
+    // that actually stands — the honest end state for a press that
+    // deliberately wrote nothing.
+    if (!await machine.confirmedUnrated(sessionId)) return;
+
+    await actions.submitCsat(sessionId, rating: rating, comment: comment);
+    // AFTER the write lands, never before: this is the memory every later
+    // repaint reads, and writing it optimistically would lock a card over a
+    // rating the server refused.
+    machine.recordSubmitted(sessionId, rating: rating, comment: comment);
+  }
+
+  /// Raises the "End this conversation?" question over the transcript.
+  ///
+  /// Keyed by the session it is asking ABOUT: the menu stays reachable while
+  /// this is up, so a customer whose session changed underneath the question
+  /// can ask again meaning the NEW one. Without the key, by-kind idempotence
+  /// would answer the second ask with the question built for the old session
+  /// and the destructive button would close nothing at all.
+  ///
+  /// A no-op with no session, and with no [ChatSessionActions] to close it
+  /// with — a question whose only answer cannot be carried out is worse than
+  /// no question.
+  void openEndConversation() {
+    final String? sessionId = state.session?.sessionId;
+    if (sessionId == null || _sessionActions == null) return;
+    _confirmEndTicket = _surfaces.open(
+      ConfirmEndSurface(sessionId: sessionId),
+      from: _screens.current,
+    );
+    _screens.go(ScreenName.conversation);
+    emit(
+      state.copyWith(
+        screen: _screens.current,
+        canGoBack: _screens.canGoBack,
+      ),
+    );
+  }
+
+  /// The customer confirmed. Closes [sessionId] and hands the slot back.
+  ///
+  /// The terminal status arrives on the SOCKET (`session.closed` /
+  /// `session.updated`), not from here — see [ChatSessionActions.closeSession]
+  /// on why this applies nothing itself. Releasing re-runs the sync, so the
+  /// rating card that became due behind this question is raised straight
+  /// away rather than waiting for an unrelated tick.
+  ///
+  /// Rethrows so the confirm's own `submitOnce` shows the failure line, keeps
+  /// the question up, and re-enables both buttons.
+  Future<void> confirmEndConversation(String sessionId) async {
+    final ChatSessionActions? actions = _sessionActions;
+    if (actions == null) return;
+    await actions.closeSession(sessionId);
+    final SurfaceTicket? ticket = _confirmEndTicket;
+    if (ticket != null) {
+      _confirmEndTicket = null;
+      _surfaces.release(ticket, surfaceInputs());
+    }
+    _syncSurfaces();
+  }
+
+  /// The customer changed their mind.
+  void cancelEndConversation() {
+    final SurfaceTicket? ticket = _confirmEndTicket;
+    if (ticket == null) return;
+    _confirmEndTicket = null;
+    final SurfaceCancelOutcome outcome =
+        _surfaces.cancel(ticket, surfaceInputs());
+    if (outcome case SurfaceReturnedToOrigin(:final ScreenName origin)) {
+      if (!_screens.back()) _screens.swap(origin);
+    }
+    _syncScreen();
+  }
+
+  /// Whether a reopen can actually be carried out.
+  ///
+  /// False when the host wired up no [ChatSessionActions]. The ended footer
+  /// hides its Reopen button on this rather than offering one that quietly
+  /// does nothing — see [EndedFooter.onReopen].
+  bool get canReopen => _sessionActions != null;
+
+  /// Reopens the ended conversation — the footer's primary action.
+  ///
+  /// Calls the real `POST …/reopen`, never a client-side re-enable, and then
+  /// FOLLOWS THE ID IT ANSWERS WITH. Reopen may converge onto a different,
+  /// already-active session (another tab got there first); joining the
+  /// requested id instead would put the customer back in a session the server
+  /// did not reopen. A converged id is an ordinary outcome, not an error.
+  ///
+  /// The join is what refreshes the on-screen session: this package does not
+  /// write `state.session` from a REST result — see
+  /// [ChatSessionActions.closeSession].
+  ///
+  /// Rethrows so the footer shows its own failure line.
+  Future<void> reopenEndedSession() async {
+    final ChatSessionActions? actions = _sessionActions;
+    final String? sessionId = endedSessionId;
+    if (actions == null || sessionId == null) return;
+    final String settled = await actions.reopenSession(sessionId);
+    _client.joinSession(settled);
+  }
 
   // ── Inbound ───────────────────────────────────────────────────────────
 
@@ -668,7 +982,35 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   }
 
   void _onSession(SessionSnapshot session) {
+    // Only a DIFFERENT, real session clears the park. A later snapshot for
+    // the parked session itself — the server moving it CLOSED, then
+    // RESOLVED — says the same thing again and must not be read as a
+    // recovery, or the survey and the footer both arrive for a conversation
+    // nobody ended.
+    if (session.sessionId != _parkedSessionId) _parkedSessionId = null;
     emit(state.copyWith(session: session));
+    _syncSurfaces();
+  }
+
+  /// A `session.closed` push (§12.5).
+  ///
+  /// The one frame that distinguishes a session that ENDED from one that was
+  /// PARKED. Both reach [_onSession] as `ChatStatus.closed`; only the reason
+  /// rides here, and only on this frame.
+  void _onSessionClosed(SessionClosed event) {
+    if (event.closeReason != CloseReason.switched) return;
+    _parkedSessionId = event.sessionId;
+    _syncSurfaces();
+  }
+
+  /// One session's CSAT verdict has landed or changed.
+  void _onCsatVerdict(String sessionId) {
+    final CsatMachine? machine = _csat;
+    if (machine == null) return;
+    // Read back rather than carried on the event: `lookupFor` is answered
+    // from the machine's cache once the first call has started the request,
+    // so this costs nothing and keeps the machine the single memory.
+    _csatBySession[sessionId] = machine.lookupFor(sessionId);
     _syncSurfaces();
   }
 
@@ -678,6 +1020,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   Future<void> close() async {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    await _csatSub?.cancel();
+    await _csat?.dispose();
+    await _sessionClosedSub.cancel();
     await _reconnectingSub.cancel();
     await _connectionSub.cancel();
     await _messagesSub.cancel();

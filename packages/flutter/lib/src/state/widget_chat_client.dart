@@ -3,7 +3,7 @@
 /// ── Why this exists instead of depending on ChatClient directly ─────────
 ///
 /// `ChatClient`'s real surface is wider than any one screen needs — presence,
-/// retry, `leaveSession`, `dispose`, outbound typing signals — and
+/// retry, `leaveSession`, `dispose`, `stopTyping` — and
 /// constructing a real one for a test means driving a full §7/§8 handshake
 /// through a fake socket. `dhaam_chat`'s OWN test suite does exactly that
 /// (`test/fakes.dart`'s `FakeSocket` + `FakeScheduler`), and that is the
@@ -57,7 +57,23 @@ abstract interface class WidgetChatClient {
 
   /// Sends [content] and returns the optimistic local echo immediately —
   /// see `ChatClient.sendMessage` for why there is no `Future` here.
-  ChatMessage sendMessage(String content, {String? replyToMessageId});
+  ///
+  /// [metadata] is the STRUCTURED copy of whatever the message says in
+  /// prose, and it is not decoration: chat-service reads
+  /// `{kind: 'pre_chat', answers}` server-side and folds the answers into a
+  /// CUSTOMER-ASSERTED contact on the session (fill-empty only, marked
+  /// `source: 'pre_chat'`). Without it the pre-chat answers reach the agent
+  /// as text and nothing else — the lines are read, the contact is never
+  /// created. The reference sends both halves in one frame
+  /// (`widget.ts`'s `sendPreChatDetails`) and so does this.
+  ///
+  /// Absent, never `{}`: an empty map asserts a structured claim was made
+  /// and was empty, which is a different statement from making none.
+  ChatMessage sendMessage(
+    String content, {
+    String? replyToMessageId,
+    Map<String, Object?>? metadata,
+  });
 
   /// Joins an existing session — the Messages/Home "open this past
   /// conversation" path. See `ChatClient.joinSession` on why this does not
@@ -65,6 +81,42 @@ abstract interface class WidgetChatClient {
   void joinSession(String sessionId);
 
   void markRead({String? upToMessageId});
+
+  /// Signals that the local user started typing (§6.3).
+  ///
+  /// ── Why there is no `stopTyping` beside it ──────────────────────────────
+  ///
+  /// Not an oversight and not asymmetry for its own sake. `ChatClient` pairs
+  /// nothing with `stopTyping`: both methods are unmediated single-frame
+  /// sends, with no debounce, no auto-stop timer and no coordinator holding
+  /// state that a missing stop would leave unbalanced — unlike the TypeScript
+  /// core, where both go through `presenceCoordinator.typing`. And the
+  /// reference widget, which is what this layer ports, **never calls
+  /// `stopTyping` at all** (`grep -rn stopTyping packages/widget/src` is
+  /// empty): the remote indicator clears on the receiver's own timeout, not
+  /// on a frame from here.
+  ///
+  /// So exposing it would add a member with no producer and no consumer —
+  /// the same emptiness `TicketLinked` wore before T17, and the same reason
+  /// `onRetry` stays unwired while `MessageDelivery` cannot answer for it.
+  /// This interface's whole purpose is to be what this layer actually calls.
+  /// When a caller for a stop appears, it is one line here and one in the
+  /// adapter.
+  void startTyping();
+
+  /// One event per `session.closed` push (§12.5).
+  ///
+  /// The one fact no session snapshot can carry: a snapshot says a session is
+  /// CLOSED, and `CloseReason.switched` says it was PARKED rather than ended
+  /// — the customer moved to another active conversation, and nobody
+  /// resolved this one. Both readings arrive as the same `ChatStatus.closed`,
+  /// so a widget with only the snapshot has to guess, and guessing wrong
+  /// puts a satisfaction survey and an "This conversation has ended" footer
+  /// over a conversation that is merely on hold.
+  ///
+  /// Not derivable from [sessions] at all: the reason rides on this frame and
+  /// on nothing else.
+  Stream<SessionClosed> get sessionClosed;
 }
 
 /// Wraps a real [ChatClient] to satisfy [WidgetChatClient] by delegation.
@@ -105,8 +157,16 @@ class ChatClientAdapter implements WidgetChatClient {
   bool retryNow() => _client.retryNow();
 
   @override
-  ChatMessage sendMessage(String content, {String? replyToMessageId}) =>
-      _client.sendMessage(content, replyToMessageId: replyToMessageId);
+  ChatMessage sendMessage(
+    String content, {
+    String? replyToMessageId,
+    Map<String, Object?>? metadata,
+  }) =>
+      _client.sendMessage(
+        content,
+        replyToMessageId: replyToMessageId,
+        metadata: metadata,
+      );
 
   @override
   void joinSession(String sessionId) => _client.joinSession(sessionId);
@@ -114,4 +174,10 @@ class ChatClientAdapter implements WidgetChatClient {
   @override
   void markRead({String? upToMessageId}) =>
       _client.markRead(upToMessageId: upToMessageId);
+
+  @override
+  void startTyping() => _client.startTyping();
+
+  @override
+  Stream<SessionClosed> get sessionClosed => _client.sessionClosed;
 }
