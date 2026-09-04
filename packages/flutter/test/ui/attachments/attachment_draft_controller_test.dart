@@ -602,6 +602,150 @@ void main() {
     });
   });
 
+  // A voice note reaches the wire by becoming the draft, so this path is the
+  // whole of the microphone's usefulness. It is also the path with no picker
+  // in front of it, which is exactly why every one of `pick`'s refusals has
+  // to be shown to travel: a cap enforced on one path and not the other is
+  // not a cap.
+  group('setDraft — a draft this controller did not pick', () {
+    test('makes an acceptable file the draft', () {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+
+      controller.setDraft(_file(fileName: 'voice-message.webm'));
+
+      expect(controller.hasDraft, isTrue);
+      expect(controller.draft?.fileName, 'voice-message.webm');
+      expect(controller.statusMessage, isNull);
+    });
+
+    test('notifies its listeners so the composer can redraw', () {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+      int notifications = 0;
+      controller.addListener(() => notifications++);
+
+      controller.setDraft(_file());
+
+      expect(notifications, 1);
+    });
+
+    test('reaches the uploader like any other draft', () async {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+
+      controller.setDraft(_file(fileName: 'voice-message.webm'));
+      await controller.uploadDraft();
+
+      expect(uploaded.single.fileName, 'voice-message.webm');
+    });
+
+    test('refuses an oversized note with the SAME words a picked file gets',
+        () {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+
+      // A long recording on a lossless codec really does clear 25 MiB. A cap
+      // enforced only on the picked-file path would let it through to be
+      // refused by the server after the customer watched it upload.
+      controller.setDraft(_file(size: kMaxAttachmentBytes + 1));
+
+      expect(controller.statusMessage, kAttachmentTooLargeMessage);
+      expect(controller.hasDraft, isFalse);
+    });
+
+    test('a note exactly at the cap is accepted', () {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+
+      controller.setDraft(_file(size: kMaxAttachmentBytes));
+
+      expect(controller.hasDraft, isTrue);
+      expect(controller.statusMessage, isNull);
+    });
+
+    test('refuses a nameless one with words', () {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+
+      controller.setDraft(_file(fileName: '   '));
+
+      expect(controller.statusMessage, kAttachmentUnnamedMessage);
+      expect(controller.hasDraft, isFalse);
+    });
+
+    test('checks the name BEFORE the size, exactly as pick does', () {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+
+      // Both wrong. The words have to name the problem that cannot be fixed
+      // by shrinking, or the customer is sent to do work that cannot help.
+      controller.setDraft(_file(fileName: '', size: kMaxAttachmentBytes + 1));
+
+      expect(controller.statusMessage, kAttachmentUnnamedMessage);
+    });
+
+    test('never reaches the uploader with a refused note', () async {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+
+      controller.setDraft(_file(size: kMaxAttachmentBytes + 1));
+      final AttachmentMetadata? sent = await controller.uploadDraft();
+
+      expect(sent, isNull);
+      expect(uploaded, isEmpty);
+    });
+
+    test('an accepted note clears a previous refusal message', () {
+      final AttachmentDraftController controller =
+          controllerFor(<PickedAttachment?>[]);
+      addTearDown(controller.dispose);
+
+      controller.setDraft(_file(size: kMaxAttachmentBytes + 1));
+      controller.setDraft(_file());
+
+      expect(controller.statusMessage, isNull);
+      expect(controller.hasDraft, isTrue);
+    });
+
+    test('cannot swap the file out from under an in-flight upload', () async {
+      final Completer<AttachmentMetadata> gate =
+          Completer<AttachmentMetadata>();
+      final AttachmentDraftController controller = controllerFor(
+        <PickedAttachment?>[_file(fileName: 'receipt.pdf')],
+        uploader: (PickedAttachment file) {
+          uploaded.add(file);
+          return gate.future;
+        },
+      );
+      addTearDown(controller.dispose);
+
+      await controller.pick();
+      final Future<AttachmentMetadata?> flight = controller.uploadDraft();
+      await pumpEventQueue();
+
+      controller.setDraft(_file(fileName: 'voice-message.webm'));
+
+      // The bytes going up are still the receipt's, so the draft must still
+      // be the receipt — otherwise the upload announces the file the
+      // customer just replaced. Silent, because an upload in flight is not a
+      // failure to report.
+      expect(controller.draft?.fileName, 'receipt.pdf');
+      expect(controller.statusMessage, isNull);
+
+      gate.complete(_uploaded);
+      await flight;
+    });
+  });
+
   group('disposal during a flight', () {
     test('the finally does not throw after the composer is gone', () async {
       final Completer<AttachmentMetadata> gate =

@@ -164,6 +164,52 @@ class AttachmentDraftController extends ChangeNotifier {
 
     if (file == null) return;
 
+    _accept(file);
+  }
+
+  /// Makes [file] the draft without going through [_picker], subject to
+  /// exactly the same refusals a picked file faces.
+  ///
+  /// ── Why this exists ──────────────────────────────────────────────────
+  ///
+  /// A voice note becomes a message the same way a photo does: by becoming
+  /// the pending attachment. `VoiceRecorder` produces bytes, a mime type and
+  /// a file name and has no picker to hand them through, so without this the
+  /// microphone is a control that records into nothing. `composer.ts` makes
+  /// the same hop — its `toggleRecording` builds a `File` from the recorded
+  /// blob and calls the very `setAttachment` its file input calls.
+  ///
+  /// ── The refusals are the SAME refusals, deliberately ─────────────────
+  ///
+  /// [pick] and this method both funnel through one private `_accept`, so
+  /// there is one derivation of "may this file be the draft" rather than
+  /// two. That is not tidiness. A four-minute voice note on a lossless
+  /// codec really does clear 25 MiB, and a second copy of the cap here — or
+  /// worse, no cap at all on this path — would let it past a limit the
+  /// picked-file path enforces, to be refused by the server after the
+  /// customer watched it upload. The name check travels for the same reason
+  /// (`AttachmentMetadata.fromJson` refuses an empty `fileName`, so a
+  /// blank-named note is dropped from the transcript on the next history
+  /// load), and it is checked FIRST for the reason `pick` gives: telling
+  /// someone to shrink a file that would still be refused for its name
+  /// sends them to do work that cannot help.
+  ///
+  /// ── In-flight is refused here too ────────────────────────────────────
+  ///
+  /// Same guard [pick] opens with. Replacing the file whose bytes are
+  /// already going up would leave the upload announcing the one the
+  /// customer just discarded.
+  ///
+  /// Silent when refused for that reason and never otherwise: an upload in
+  /// flight is not a failure, and every refusal that IS one leaves a
+  /// sentence in [statusMessage].
+  void setDraft(PickedAttachment file) {
+    if (_uploading) return;
+    _accept(file);
+  }
+
+  /// The one place a file becomes the draft, or is refused in words.
+  void _accept(PickedAttachment file) {
     // Name before size: a nameless file is unsendable at any size, and
     // telling someone their file is too large when the real problem is its
     // name sends them to shrink a file that would still be refused.
