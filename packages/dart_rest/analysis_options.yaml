@@ -1,0 +1,21 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # Same reasoning as packages/dart's own analysis_options: this package
+    # parses untrusted input off the network. An unawaited future or an
+    # unhandled case in a decoder is a contract bug, not style.
+    unawaited_futures: error
+    missing_required_param: error
+    missing_return: error
+
+linter:
+  rules:
+    - avoid_dynamic_calls
+    - prefer_final_locals
+    - unnecessary_lambdas
+    - always_declare_return_types
