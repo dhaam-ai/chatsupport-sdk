@@ -185,6 +185,18 @@ class ConnectionController {
   int _authFailures = 0;
   bool _disposed = false;
 
+  /// See [requestNewSession]. Cleared by `connection.ack`, not by sending.
+  bool _pendingNewSession = false;
+
+  /// The subject/topic [requestNewSession] was called with, if any.
+  ///
+  /// Same latching rule as [_pendingNewSession] — survives a failed attempt
+  /// and every backoff retry, and is cleared only by `connection.ack`, because
+  /// a retry that dropped the topic would half-fulfil the request: a fresh
+  /// session with no subject, which the customer never chose to omit.
+  String? _pendingNewSessionSubject;
+  String? _pendingNewSessionTopic;
+
   /// Current state.
   ConnectionState get state => _state;
 
@@ -215,6 +227,53 @@ class ConnectionController {
 
   /// The `seq` this client would resume from (§8.3, D2).
   int? get resumeFrom => _resume.anchor;
+
+  /// Drops the resume anchor, so the next `connection.hello` omits
+  /// `resumeFrom` and reads to the server as a first connection.
+  ///
+  /// For the session-replacement transition only (`ChatClient.startNewSession`
+  /// in `client.dart`, which sequences this) and never for a reconnect — see
+  /// [ResumeTracker]'s own doc for why the two axes must not be confused. Without it the next hello carries an anchor
+  /// from a history this client no longer holds, and the v2 endpoint answers
+  /// that with a NON-RETRYABLE `VALIDATION_FAILED` ("resumeFrom is ahead of
+  /// this session"), stranding the client in [ConnectionState.suspended]
+  /// instead of the new session it asked for. That is the single reason
+  /// [disconnect] + [connect] is not already a working "start over".
+  ///
+  /// Touches no socket: the caller sequences the disconnect/connect around it.
+  void forgetResumeAnchor() => _resume.reset();
+
+  /// Ask the SERVER for a brand-new session on the next handshake.
+  ///
+  /// The companion to [forgetResumeAnchor], and the half that is easy to miss.
+  /// Forgetting the anchor makes the hello look like a first connection, but
+  /// chat-service resolves a customer to their one active session either way —
+  /// so a reconnect without this says nothing and lands back in the
+  /// conversation it was just told to leave. This states the intent explicitly
+  /// (`connection.hello.d.newSession`) rather than hoping the server infers it.
+  ///
+  /// ── Latched, not one-shot-per-socket ──────────────────────────────────
+  ///
+  /// The flag survives failed attempts and every §8.2 backoff retry, and is
+  /// cleared only by `connection.ack` — see [_onAck]. Clearing it when the
+  /// hello is SENT would be the bug one layer down: a first attempt that dies
+  /// on a flaky network before the ack (the ordinary case on a phone) would
+  /// hand the retry a hello with no `newSession`, and the retry would resume
+  /// the old session silently. The customer's request is not satisfied until a
+  /// new session actually comes back, so neither is the flag.
+  ///
+  /// [topic] and [subject] ride on the same hello and are latched the same way
+  /// and for the same reason: a retry that dropped them would silently
+  /// downgrade the customer's chosen topic to none.
+  ///
+  /// Last call wins, including for the topic/subject — two presses of "Start a
+  /// new conversation" before either handshake completes is one request, and
+  /// the second one is the one the customer is looking at.
+  void requestNewSession({String? topic, String? subject}) {
+    _pendingNewSession = true;
+    _pendingNewSessionSubject = subject;
+    _pendingNewSessionTopic = topic;
+  }
 
   /// Opens the connection and drives it to [ConnectionState.connected].
   ///
@@ -432,6 +491,12 @@ class ConnectionController {
           // Omitted, not null, when this client has never applied a seq. The
           // server reads absent as "fresh" and 0 as "replay everything".
           resumeFrom: _resume.anchor,
+          // Latched — see [requestNewSession]. Read here rather than consumed:
+          // this runs on every attempt, and the retry after a failed one must
+          // carry the same request or it silently resumes the old session.
+          newSession: _pendingNewSession,
+          subject: _pendingNewSessionSubject,
+          topic: _pendingNewSessionTopic,
         ),
       ).encode(),
     );
@@ -536,6 +601,17 @@ class ConnectionController {
 
     _transportAttempt = 0;
     _authFailures = 0;
+    // The server has answered the "start a new conversation" request — with a
+    // new session, or (on a deployment predating the field) with the old one.
+    // Either way the request is spent, and carrying it into the NEXT reconnect
+    // would close the customer's live conversation behind them.
+    //
+    // Here and not earlier in this method: the two guards above return without
+    // reaching a `connected` state, so an ack this client rejected has not
+    // fulfilled anything and the request must survive it.
+    _pendingNewSession = false;
+    _pendingNewSessionSubject = null;
+    _pendingNewSessionTopic = null;
     _setState(ConnectionState.connected);
     _startHeartbeat();
 

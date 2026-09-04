@@ -65,6 +65,17 @@ Map<String, Object?> messageFrame(int seq) => <String, Object?>{
       },
     };
 
+/// A `connection.ack` this client REJECTS: no `d.session`, which
+/// `ConnectionAck.fromJson` requires. Used to prove the new-session latch
+/// survives an ack that never established a connection.
+String malformedAckJson() => jsonEncode(<String, Object?>{
+      'v': 1,
+      't': 'connection.ack',
+      'id': _serverUlid,
+      'ts': 1700000000000,
+      'd': <String, Object?>{'protocolVersion': 1, 'seq': 5},
+    });
+
 String errorJson(String code, {bool retryable = false}) =>
     jsonEncode(<String, Object?>{
       'v': 1,
@@ -590,6 +601,234 @@ void main() {
       // so this reports the drop rather than pretending it went.
       expect(harness.controller.send(frame), isFalse);
 
+      await harness.controller.dispose();
+    });
+  });
+
+  group('new session latch', () {
+    /// The `d` of the hello on socket [index].
+    Map<String, Object?> helloOf(Harness harness, int index) =>
+        (jsonDecode(harness.sockets[index].sent[0])
+            as Map<String, Object?>)['d']! as Map<String, Object?>;
+
+    test('an ordinary connect asks for no new session', () async {
+      // The control. Every assertion below is only worth anything if the
+      // fields are genuinely absent when nobody asked for them.
+      final Harness harness = Harness();
+      unawaited(harness.controller.connect());
+      await flush();
+
+      final Map<String, Object?> hello = helloOf(harness, 0);
+      expect(hello.containsKey('newSession'), isFalse);
+      expect(hello.containsKey('subject'), isFalse);
+      expect(hello.containsKey('topic'), isFalse);
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.controller.dispose();
+    });
+
+    test('requestNewSession puts newSession, subject and topic on the hello',
+        () async {
+      final Harness harness = Harness();
+      harness.controller
+          .requestNewSession(topic: 'Billing', subject: 'Refund for order 41');
+      unawaited(harness.controller.connect());
+      await flush();
+
+      final Map<String, Object?> hello = helloOf(harness, 0);
+      expect(hello['newSession'], isTrue);
+      expect(hello['topic'], equals('Billing'));
+      expect(hello['subject'], equals('Refund for order 41'));
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.controller.dispose();
+    });
+
+    test('a failed first attempt still carries the request on the retry',
+        () async {
+      // THE reason this is a latch and not a parameter. A first connect that
+      // dies before the ack is the ordinary case on a phone — a tunnel, a
+      // handover, a backgrounded app. If the request were spent when the hello
+      // was SENT, the retry would carry a plain hello, the server would
+      // resolve the customer straight back into the session they asked to
+      // leave, and nothing anywhere would report a failure. The customer
+      // pressed "Start a new conversation" and kept talking in the old one.
+      final Harness harness = Harness();
+      harness.controller
+          .requestNewSession(topic: 'Billing', subject: 'Refund for order 41');
+      unawaited(harness.controller.connect().catchError((Object _) {}));
+      await flush();
+      expect(helloOf(harness, 0)['newSession'], isTrue);
+
+      // Dies before any ack.
+      await harness.socket.drop();
+      await flush();
+      expect(harness.controller.state, equals(ConnectionState.reconnecting));
+
+      // Exactly the retry — see the note in the reconnect group.
+      await harness.scheduler.advanceToNextTimer();
+      await flush();
+      expect(harness.sockets.length, equals(2));
+
+      final Map<String, Object?> retryHello = helloOf(harness, 1);
+      expect(retryHello['newSession'], isTrue);
+      // The topic too. A retry that kept `newSession` but dropped these would
+      // half-fulfil the request: a fresh session with no subject, which the
+      // customer never chose to omit.
+      expect(retryHello['topic'], equals('Billing'));
+      expect(retryHello['subject'], equals('Refund for order 41'));
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.controller.dispose();
+    });
+
+    test('the request survives several failed attempts, not just one',
+        () async {
+      final Harness harness = Harness();
+      harness.controller.requestNewSession(topic: 'Billing');
+      unawaited(harness.controller.connect().catchError((Object _) {}));
+      await flush();
+
+      for (int i = 0; i < 4; i++) {
+        expect(helloOf(harness, i)['newSession'], isTrue,
+            reason: 'attempt $i must still ask for a new session');
+        await harness.socket.drop();
+        await flush();
+        await harness.scheduler.advanceToNextTimer();
+        await flush();
+      }
+
+      expect(helloOf(harness, 4)['newSession'], isTrue);
+      expect(helloOf(harness, 4)['topic'], equals('Billing'));
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.controller.dispose();
+    });
+
+    test('connection.ack clears it, so a later reconnect asks for nothing',
+        () async {
+      // The other half. A latch that never cleared would close the customer's
+      // live conversation behind them on the next tunnel — the same bug in the
+      // opposite direction, and a worse one, because it destroys a session
+      // that was working.
+      final Harness harness = Harness();
+      harness.controller
+          .requestNewSession(topic: 'Billing', subject: 'Refund for order 41');
+      unawaited(harness.controller.connect());
+      await flush();
+      expect(helloOf(harness, 0)['newSession'], isTrue);
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      expect(harness.controller.state, equals(ConnectionState.connected));
+
+      // An ordinary drop, long after the new session was established.
+      await harness.socket.drop();
+      await flush();
+      await harness.scheduler.advanceToNextTimer();
+      await flush();
+
+      final Map<String, Object?> reconnectHello = helloOf(harness, 1);
+      expect(reconnectHello.containsKey('newSession'), isFalse);
+      expect(reconnectHello.containsKey('topic'), isFalse);
+      expect(reconnectHello.containsKey('subject'), isFalse);
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.controller.dispose();
+    });
+
+    test('an ack this client rejects does not clear it', () async {
+      // "Cleared by connection.ack" means an ack that actually established the
+      // connection, not any frame of that type. An ack whose payload does not
+      // decode is surfaced and the attempt is retried — it has fulfilled
+      // nothing, so the request must outlive it.
+      final Harness harness = Harness();
+      harness.controller.requestNewSession(topic: 'Billing');
+      unawaited(harness.controller.connect().catchError((Object _) {}));
+      await flush();
+
+      harness.socket.deliver(malformedAckJson());
+      await flush();
+      expect(harness.controller.state, equals(ConnectionState.reconnecting));
+
+      await harness.scheduler.advanceToNextTimer();
+      await flush();
+
+      expect(helloOf(harness, 1)['newSession'], isTrue);
+      expect(helloOf(harness, 1)['topic'], equals('Billing'));
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.controller.dispose();
+    });
+
+    test('forgetResumeAnchor drops the anchor so the next hello omits it',
+        () async {
+      // Without this the next hello carries a resumeFrom from a history this
+      // client no longer holds, and the v2 endpoint answers that with a
+      // NON-RETRYABLE VALIDATION_FAILED — suspended, rather than the new
+      // session that was asked for.
+      final Harness harness = Harness();
+      unawaited(harness.controller.connect());
+      await flush();
+      harness.socket.deliver(ackJson(seq: 12));
+      await flush();
+      expect(harness.controller.resumeFrom, equals(12));
+
+      harness.controller.forgetResumeAnchor();
+      expect(harness.controller.resumeFrom, isNull);
+
+      await harness.socket.drop();
+      await flush();
+      await harness.scheduler.advanceToNextTimer();
+      await flush();
+
+      // Absent, not 0 — 0 means "replay everything" (D2).
+      expect(helloOf(harness, 1).containsKey('resumeFrom'), isFalse);
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.controller.dispose();
+    });
+
+    test('the last request wins, topic included', () async {
+      // Two presses of "Start a new conversation" before either handshake
+      // completes is one request, and the second is the one on screen.
+      final Harness harness = Harness();
+      harness.controller.requestNewSession(topic: 'Billing');
+      harness.controller.requestNewSession(topic: 'Delivery');
+      unawaited(harness.controller.connect());
+      await flush();
+
+      expect(helloOf(harness, 0)['topic'], equals('Delivery'));
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.controller.dispose();
+    });
+
+    test('a request with no topic or subject still asks for a new session',
+        () async {
+      // The ordinary case: the customer wants a fresh conversation and picked
+      // no topic. The absence of a topic must not read as the absence of a
+      // request.
+      final Harness harness = Harness();
+      harness.controller.requestNewSession();
+      unawaited(harness.controller.connect());
+      await flush();
+
+      final Map<String, Object?> hello = helloOf(harness, 0);
+      expect(hello['newSession'], isTrue);
+      expect(hello.containsKey('topic'), isFalse);
+      expect(hello.containsKey('subject'), isFalse);
+
+      harness.socket.deliver(ackJson());
+      await flush();
       await harness.controller.dispose();
     });
   });
