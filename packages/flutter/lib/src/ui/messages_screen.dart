@@ -54,9 +54,26 @@ class _MessagesScreenState extends State<MessagesScreen> {
     super.dispose();
   }
 
+  /// Whether [summary] survives the current query — `''` matches everything.
+  ///
+  /// ── Nothing is searchable that is not on screen ─────────────────────
+  ///
+  /// Every field below is one this screen's own row renders, which is the
+  /// rule `messages-screen.ts` states for its own filter: a match is always
+  /// explainable by looking at the row that produced it. The status is in
+  /// here for exactly that reason — it is the most prominent thing on a row
+  /// after the heading, and a customer who can read "Resolved" and types it
+  /// getting an empty screen is the filter contradicting the list.
+  ///
+  /// Matched through [chatStatusLabel], never the enum's own name: the
+  /// customer types what they can SEE, and "waitingForAgent" is not on any
+  /// screen. The generic heading fallback is deliberately NOT searchable —
+  /// it is a placeholder nobody wrote, so matching it would answer
+  /// "conversation" with every untitled row.
   bool _matches(ChatSessionSummary summary) {
     if (_query.isEmpty) return true;
     final Iterable<String> haystack = <String?>[
+      chatStatusLabel(summary.status),
       summary.subject,
       summary.topic,
       summary.lastMessagePreview,

@@ -141,6 +141,43 @@ void main() {
       expect(find.text('Refund request'), findsNothing);
     });
 
+    testWidgets('matches on the status label as well as the preview text', (tester) async {
+      // The rule `messages-screen.ts` states for its own filter: nothing is
+      // searchable that is not on screen, so a match is always explainable
+      // by looking at the row that produced it. The status is the most
+      // prominent thing on a row after the heading — a customer who reads
+      // "Resolved" and types it getting nothing is the filter contradicting
+      // the list.
+      cubit.updateSessionSummaries([
+        _summary(id: 'a', subject: 'x', status: ChatStatus.resolved),
+        _summary(id: 'b', subject: 'y', status: ChatStatus.open),
+      ]);
+      await tester.pumpWidget(_wrap(cubit));
+
+      await tester.enterText(find.byType(TextField), 'resolved');
+      await tester.pumpAndSettle();
+
+      expect(find.text('x'), findsOneWidget);
+      expect(find.text('y'), findsNothing);
+    });
+
+    testWidgets('matches the words on screen, never the enum name', (tester) async {
+      // "With an agent" is what ASSIGNED renders as; "assigned" is a queue
+      // fact the customer never sees, so it is not what they can type.
+      cubit.updateSessionSummaries([
+        _summary(id: 'a', subject: 'x', status: ChatStatus.assigned),
+      ]);
+      await tester.pumpWidget(_wrap(cubit));
+
+      await tester.enterText(find.byType(TextField), 'with an agent');
+      await tester.pumpAndSettle();
+      expect(find.text('x'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'assigned');
+      await tester.pumpAndSettle();
+      expect(find.text('No conversations match your search.'), findsOneWidget);
+    });
+
     testWidgets('an unmatched query shows the search-specific empty state', (tester) async {
       await tester.pumpWidget(_wrap(cubit));
 
