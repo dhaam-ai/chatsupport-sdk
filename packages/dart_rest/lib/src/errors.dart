@@ -238,10 +238,23 @@ final class RestSessionReadBackException extends RestException {
   /// what gets read back (`chat.routes.ts:297-308`).
   final String sessionId;
 
-  /// The read-back's own last failure — a [RestException] the retry loop gave
-  /// up on. Held rather than interpolated: it may itself carry a
-  /// [RestApiException.serverMessage].
-  final RestException cause;
+  /// The read-back's own last failure, whatever it was.
+  ///
+  /// Typed `Object`, not [RestException], deliberately. The distinction a
+  /// narrower type would draw — this package's own verdict versus somebody
+  /// else's — is not the distinction that matters to whoever catches this.
+  /// The question they have is "did my mutation apply", and the answer is yes
+  /// no matter what broke the read afterwards: a 500 from the read-back route,
+  /// a `TokenUnavailableError` from a token that expired in the window between
+  /// the two calls, or an outright bug.
+  ///
+  /// Getting that wrong is not cosmetic. `closeSession` is NOT idempotent — a
+  /// second POST re-emits a "chat closed" SYSTEM message and a Kafka event —
+  /// so a caller who sees a bare auth failure, concludes the close never
+  /// happened and retries does real damage. Holding the original rather than
+  /// interpolating it keeps whatever detail it carries (a
+  /// [RestApiException.serverMessage], a stack) available for logging.
+  final Object cause;
 
   @override
   bool get retryable => false;

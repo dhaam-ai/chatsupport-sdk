@@ -555,17 +555,17 @@ void main() {
     });
 
     test(
-        'lets a token failure through unwrapped, rather than claiming to know '
-        'the mutation applied', () async {
-      // A deliberate, documented cost of typing `RestSessionReadBackException
-      // .cause` to this package's own taxonomy: a token that expires in the
-      // window between the POST and the GET reaches the caller as an ordinary
-      // auth failure, with no signal that a close already happened. Narrow —
-      // the provider answered milliseconds earlier for the POST — but real,
-      // and pinned here so it stays a decision on record rather than a
-      // surprise. Laundering it into a read-back failure would claim this
-      // package knows the mutation's fate when what it knows is that it has no
-      // credential.
+        'reports a token failure during the read-back as a read-back failure, '
+        'so the caller still learns the mutation applied', () async {
+      // The window is narrow — the provider answered milliseconds earlier for
+      // the POST — but a token expiring exactly there is ordinary, not exotic.
+      // What the caller needs from this case is the ONE fact the bare auth
+      // error cannot carry: the close already happened. `closeSession` is not
+      // idempotent, so a caller who reads a bare `TokenUnavailableError` as
+      // "it never happened" and retries re-emits a "chat closed" SYSTEM
+      // message and a Kafka event.
+      //
+      // The auth failure is not lost — it is `cause`, asserted below.
       final _Recorder recorder = _Recorder();
       int tokenCalls = 0;
       final RestClient client = RestClient(
@@ -581,7 +581,13 @@ void main() {
 
       await expectLater(
         client.closeSession('s1'),
-        throwsA(isA<TokenUnavailableError>()),
+        throwsA(
+          isA<RestSessionReadBackException>()
+              .having((RestSessionReadBackException e) => e.sessionId,
+                  'sessionId', 's1')
+              .having((RestSessionReadBackException e) => e.cause, 'cause',
+                  isA<TokenUnavailableError>()),
+        ),
       );
       // The POST went out; the GET never did.
       expect(recorder.trace, <String>[

@@ -309,29 +309,34 @@ Future<RestChatSession> _readBackAfterMutation(
   RestClient client,
   String sessionId,
 ) async {
-  RestException? failure;
+  Object? failure;
 
   for (int attempt = 1; attempt <= kReadBackAttempts; attempt += 1) {
     try {
       return await _readFullSession(client, sessionId);
-    } on RestException catch (error) {
-      // ── ONLY this package's own verdicts are caught ────────────────────
+    } catch (error) {
+      // ── EVERY read-back failure is caught, not only ours ────────────────
       //
-      // A `TokenUnavailableError` from the token provider, or an `ArgumentError`
-      // from a caller bug, propagates unwrapped. The first is deliberate:
-      // `RestSessionReadBackException.cause` is typed to this package's own
-      // taxonomy, and laundering an auth failure into it would claim this
-      // package knows the mutation's fate when what it actually knows is that
-      // it has no credential. The COST is real and worth stating — a token
-      // that expires in the window between the POST and the GET reaches the
-      // caller as an ordinary auth failure, with no signal that a close
-      // already happened. Narrow, but not zero.
+      // By the time control reaches here the mutation has already been
+      // acknowledged by the server, and that fact outranks every question
+      // about what went wrong afterwards. A `TokenUnavailableError` from a
+      // token that expired in the window between the POST and the GET is the
+      // ordinary case, not an exotic one, and letting it past unwrapped hands
+      // the caller a bare auth failure with no hint that a close already
+      // happened. `closeSession` is not idempotent, so a caller who reads that
+      // as "it never happened" and retries re-emits a "chat closed" SYSTEM
+      // message and a Kafka event.
+      //
+      // The original is preserved in `cause` rather than flattened, so nothing
+      // is lost by wrapping it — only the misreading is prevented.
       failure = error;
 
-      // A malformed body is contract drift, not a blip: no retry can reshape
-      // a response. `retryable` is the sealed base's own answer, so this stays
-      // one line where TS maintains a four-branch `isWorthRetrying` chain.
-      if (!error.retryable) break;
+      // Retry only what a retry could plausibly fix. A malformed body is
+      // contract drift, not a blip: no second attempt reshapes a response.
+      // Anything that is not one of our own verdicts (an auth failure, a bug)
+      // is not retried either — `retryable` is the sealed base's own answer,
+      // and a non-RestException has no claim to make.
+      if (error is! RestException || !error.retryable) break;
     }
   }
 
