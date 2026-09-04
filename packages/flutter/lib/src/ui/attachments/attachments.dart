@@ -31,3 +31,4 @@
 library;
 
 export 'attachment_draft.dart';
+export 'attachment_draft_controller.dart';
