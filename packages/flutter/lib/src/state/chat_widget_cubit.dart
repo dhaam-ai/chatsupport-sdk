@@ -26,6 +26,7 @@ import '../config/remote_config.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
+import '../ui/composer_affordances/reply_target.dart';
 import '../ui/csat/session_actions.dart';
 import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
@@ -556,6 +557,27 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   }
 
   // ── Outbound ──────────────────────────────────────────────────────────
+
+  /// Addresses the next send to [target], or clears it with `null`.
+  ///
+  /// One method for both directions, mirroring `composer.ts`'s
+  /// `setReplyTo(target | null)` — the customer pressing Reply and the
+  /// customer dismissing the chip are the same fact being set to two
+  /// different values, and a separate `cancelReply()` would be a second
+  /// place able to write it.
+  ///
+  /// The target is built by the caller from the message AND the sender name
+  /// the transcript resolved (see [ReplyTarget.from]); this only stores it.
+  /// Nothing here re-derives anything, and nothing else in this class writes
+  /// [ChatWidgetState.replyingTo] except the send that consumes it.
+  void replyTo(ReplyTarget? target) {
+    emit(
+      state.copyWith(
+        replyingTo: target,
+        clearReplyingTo: target == null,
+      ),
+    );
+  }
 
   /// Sends [content]. The optimistic echo arrives through [_onMessage] like
   /// any other — see `ChatClient.sendMessage` on why there is no `Future`
