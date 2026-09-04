@@ -171,6 +171,10 @@ void main() {
   });
 
   testWidgets('a failed send states its reason end to end', (tester) async {
+    // The fake refuses by default, and `onRetry` reports a refusal through
+    // `FlutterError.reportError` — which a widget test counts as a failure.
+    // That is the wiring working: a refusal is not allowed to be silent.
+    client.retryOutcome = RetryRetried(testMessage(id: 'm1', senderType: SenderType.customer));
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
 
@@ -187,11 +191,32 @@ void main() {
     // Was `findsNothing`. The reason now rides on the message itself, so the
     // sentence reaches the transcript with nothing in between to populate.
     expect(find.text('This message could not be sent.'), findsOneWidget);
-    // Retry is still absent HERE, and that is the honest state of this
-    // screen rather than a property of the affordance: `MessageListCallbacks`
-    // hides the button when `onRetry` is null, and this screen has not been
-    // given one yet. `message_list_view_test.dart` and
-    // `message_retry_test.dart` cover the button against a host that has.
+    // And the button, on the real screen: `onRetry` reaches
+    // `ChatWidgetCubit.retryMessage`, which replays the ORIGINAL envelope.
+    expect(find.text('Retry'), findsOneWidget);
+
+    await tester.tap(find.text('Retry'));
+    await tester.pump();
+    expect(client.retriedIds, <String>['m1']);
+  });
+
+  testWidgets('a non-retryable failure gets its reason and no button', (tester) async {
+    cubit.openConversation('past-session-1');
+    await tester.pumpWidget(_wrap(cubit));
+
+    client.emitMessage(
+      testMessage(
+        id: 'm1',
+        senderType: SenderType.customer,
+        delivery: const MessageFailed(reason: SendFailureReason.sessionClosed, retryable: false),
+      ),
+    );
+    await flush(tester);
+    await tester.pump();
+
+    expect(find.text('This conversation ended before this message could send.'), findsOneWidget);
+    // Absent from the tree, not merely styled away: retrying a send the
+    // server already refused is refused identically every time.
     expect(find.text('Retry'), findsNothing);
   });
 

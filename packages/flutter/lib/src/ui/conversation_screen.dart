@@ -19,7 +19,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import 'package:dhaam_chat/dhaam_chat.dart' show ChatMessage, CsatRated;
+import 'package:dhaam_chat/dhaam_chat.dart'
+    show ChatMessage, CsatRated, RetryOutcome, RetryRefused;
 import 'package:flutter/services.dart';
 
 import '../state/chat_widget_cubit.dart';
@@ -217,6 +218,27 @@ class _ConversationScreenState extends State<ConversationScreen> {
                       cubit.replyTo(
                     ReplyTarget.from(message, senderName: senderName),
                   ),
+                  // Fills the LAST seam T9 declared and left empty. Until the
+                  // `MessageDelivery` union, `null` here was the honest state:
+                  // no truthful per-message replay existed, and wiring the
+                  // button to the connection's `retryNow` would have been a
+                  // control that cannot do what its label says (D27).
+                  //
+                  // The button is already gated on `MessageFailed.retryable`
+                  // by the projection, so `notRetryable` should never come
+                  // back. `disconnected` still can — a connection can drop
+                  // between drawing the button and the press — and a refusal
+                  // that changed nothing on screen would read as a success,
+                  // so it goes to the same reporter every form here uses.
+                  onRetry: (ChatMessage message) {
+                    final RetryOutcome outcome = cubit.retryMessage(message.id);
+                    if (outcome is RetryRefused) {
+                      _report(
+                        StateError('retry refused: ${outcome.reason.name}'),
+                        StackTrace.current,
+                      );
+                    }
+                  },
                 ),
                 // Fills the seam T9 declared and deliberately left empty.
                 // Ungated by `fileUploads`: that flag governs whether the
