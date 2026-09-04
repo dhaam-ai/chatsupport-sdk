@@ -40,6 +40,7 @@ class ChatWidgetState extends Equatable {
     this.preChatAnswers,
     this.startedTopicLabel,
     this.localParticipantId,
+    this.csatBySession = const <String, CsatLookup>{},
   });
 
   /// Starting point for a fresh [ChatWidgetCubit] — disconnected, the
@@ -219,6 +220,29 @@ class ChatWidgetState extends Equatable {
   /// reference's own tick derivation makes, and for the same reason.
   final String? localParticipantId;
 
+  /// What the server has said about each session's rating, keyed by session
+  /// id.
+  ///
+  /// ── A mirror of `CsatMachine`, never a second memory ────────────────
+  ///
+  /// Exactly the shape [ChatWidgetState.activeSurface] has: [ChatWidgetCubit]
+  /// overrides `emit` to stamp the live machine's verdicts onto every state it
+  /// emits, so there is no path by which this and the machine can disagree,
+  /// and nothing outside that override may set it. It exists because a
+  /// verdict landing is a state change like any other — whatever a widget
+  /// decided while the lookup was [CsatLoading] has to be decided again — and
+  /// a `Cubit` repaints on state, not on someone else's stream.
+  ///
+  /// Five states, and the three that are NOT answers matter as much as the
+  /// two that are: `unrated` is a fact the server stated, while `unknown`
+  /// WITHHOLDS the survey, because `POST …/csat` is an upsert and only one of
+  /// the two ways to be wrong loses data. See `CsatLookup` for the whole
+  /// rule; none of it is re-derived here.
+  ///
+  /// Empty when the host wired up no `ChatSessionActions` — the feature is
+  /// off, not broken.
+  final Map<String, CsatLookup> csatBySession;
+
   /// The session this client is currently in, or `null` before the first
   /// `connection.ack`/`session.updated` snapshot lands.
   final SessionSnapshot? session;
@@ -304,6 +328,7 @@ class ChatWidgetState extends Equatable {
     Map<String, String>? preChatAnswers,
     String? startedTopicLabel,
     String? localParticipantId,
+    Map<String, CsatLookup>? csatBySession,
   }) {
     return ChatWidgetState(
       connectionState: connectionState ?? this.connectionState,
@@ -332,6 +357,9 @@ class ChatWidgetState extends Equatable {
       preChatAnswers: preChatAnswers ?? this.preChatAnswers,
       startedTopicLabel: startedTopicLabel ?? this.startedTopicLabel,
       localParticipantId: localParticipantId ?? this.localParticipantId,
+      // No "clear" sentinel: the machine's verdicts only ever accumulate
+      // within one widget lifetime, so `??` says everything it needs to.
+      csatBySession: csatBySession ?? this.csatBySession,
     );
   }
 
@@ -360,5 +388,6 @@ class ChatWidgetState extends Equatable {
         preChatAnswers,
         startedTopicLabel,
         localParticipantId,
+        csatBySession,
       ];
 }

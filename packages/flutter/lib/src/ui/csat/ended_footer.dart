@@ -53,7 +53,14 @@ class EndedFooter extends StatefulWidget {
 
   /// "Reopen conversation" was pressed. Expected to call the real
   /// `reopenSession` route — see the library header.
-  final Future<void> Function() onReopen;
+  ///
+  /// **Null hides the button entirely**, leaving "New conversation" as the
+  /// only (and primary) action. A host that wired up no `ChatSessionActions`
+  /// has nothing to reopen WITH, and offering a control that quietly does
+  /// nothing is the survey-that-discards-the-answer bug wearing a second
+  /// face. The footer itself still stands, because the problem it exists to
+  /// fix — a live composer over a dead thread — is unchanged either way.
+  final Future<void> Function()? onReopen;
 
   /// "New conversation" was pressed. Never built here: this fires the ONE
   /// new-conversation flow every other entry point already funnels through.
@@ -85,12 +92,16 @@ class _EndedFooterState extends State<EndedFooter> {
     super.dispose();
   }
 
-  Future<void> _run() => _submit.submitOnce(
-        run: widget.onReopen,
-        failureMessage:
-            'We could not reopen this conversation. Please try again.',
-        onError: widget.onError,
-      );
+  Future<void> _run() {
+    final Future<void> Function()? reopen = widget.onReopen;
+    if (reopen == null) return Future<void>.value();
+    return _submit.submitOnce(
+      run: reopen,
+      failureMessage:
+          'We could not reopen this conversation. Please try again.',
+      onError: widget.onError,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -103,17 +114,33 @@ class _EndedFooterState extends State<EndedFooter> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            FormStatusLine(controller: _submit),
-            const SizedBox(height: 8),
-            FormSubmitButton(
-              controller: _submit,
-              // `submitOnce` owns every outcome and never rethrows.
-              onPressed: () => unawaited(_run()),
-            ),
-            const SizedBox(height: 8),
+            if (widget.onReopen != null) ...<Widget>[
+              FormStatusLine(controller: _submit),
+              const SizedBox(height: 8),
+              FormSubmitButton(
+                controller: _submit,
+                // `submitOnce` owns every outcome and never rethrows.
+                onPressed: () => unawaited(_run()),
+              ),
+              const SizedBox(height: 8),
+            ],
             ListenableBuilder(
               listenable: _submit,
               builder: (BuildContext context, Widget? child) {
+                // The one action left when there is nothing to reopen with is
+                // the primary one, rather than a lone secondary control with
+                // no primary above it.
+                final VoidCallback? onPressed =
+                    _submit.isBusy ? null : widget.onStartNew;
+                const Widget label = Text('New conversation');
+                const Size size = Size.fromHeight(44);
+                if (widget.onReopen == null) {
+                  return FilledButton(
+                    onPressed: onPressed,
+                    style: FilledButton.styleFrom(minimumSize: size),
+                    child: label,
+                  );
+                }
                 return TextButton(
                   // The secondary action is disabled for the span of the
                   // request too: a press that starts a brand new conversation
@@ -121,11 +148,9 @@ class _EndedFooterState extends State<EndedFooter> {
                   // the in-flight reopen's outcome — success, or a status
                   // line — landing on a footer the customer has already moved
                   // away from.
-                  onPressed: _submit.isBusy ? null : widget.onStartNew,
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size.fromHeight(44),
-                  ),
-                  child: const Text('New conversation'),
+                  onPressed: onPressed,
+                  style: TextButton.styleFrom(minimumSize: size),
+                  child: label,
                 );
               },
             ),

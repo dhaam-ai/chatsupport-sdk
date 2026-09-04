@@ -20,7 +20,7 @@ bool _enabled<T extends ButtonStyleButton>(WidgetTester tester, Finder f) =>
 
 Future<void> _pump(
   WidgetTester tester, {
-  required Future<void> Function() onReopen,
+  required Future<void> Function()? onReopen,
   VoidCallback? onStartNew,
   List<Object>? errors,
 }) {
@@ -120,6 +120,26 @@ void main() {
     // The raw error goes to the host's own channel, never onto the screen.
     expect(errors, <Object>[failure]);
     expect(find.textContaining('network down'), findsNothing);
+  });
+
+  // A host that wired up no `ChatSessionActions` has nothing to reopen WITH.
+  // Offering a control that quietly does nothing is the
+  // survey-that-discards-the-answer bug wearing a second face.
+  testWidgets('hides Reopen entirely when there is nothing to reopen with',
+      (tester) async {
+    int starts = 0;
+    await _pump(tester, onReopen: null, onStartNew: () => starts += 1);
+
+    expect(_reopen, findsNothing);
+    expect(find.byType(FormSubmitButton), findsNothing);
+    // The footer still stands — it is what replaces a composer that has
+    // nowhere to send — and its one remaining action becomes the primary one.
+    expect(
+        find.widgetWithText(FilledButton, 'New conversation'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'New conversation'));
+    await tester.pump();
+    expect(starts, 1);
   });
 
   testWidgets('clears a previous error on the next attempt', (tester) async {

@@ -3,7 +3,7 @@
 /// ── Why this exists instead of depending on ChatClient directly ─────────
 ///
 /// `ChatClient`'s real surface is wider than any one screen needs — presence,
-/// retry, `leaveSession`, `dispose`, outbound typing signals — and
+/// retry, `leaveSession`, `dispose`, `stopTyping` — and
 /// constructing a real one for a test means driving a full §7/§8 handshake
 /// through a fake socket. `dhaam_chat`'s OWN test suite does exactly that
 /// (`test/fakes.dart`'s `FakeSocket` + `FakeScheduler`), and that is the
@@ -82,6 +82,28 @@ abstract interface class WidgetChatClient {
 
   void markRead({String? upToMessageId});
 
+  /// Signals that the local user started typing (§6.3).
+  ///
+  /// ── Why there is no `stopTyping` beside it ──────────────────────────────
+  ///
+  /// Not an oversight and not asymmetry for its own sake. `ChatClient` pairs
+  /// nothing with `stopTyping`: both methods are unmediated single-frame
+  /// sends, with no debounce, no auto-stop timer and no coordinator holding
+  /// state that a missing stop would leave unbalanced — unlike the TypeScript
+  /// core, where both go through `presenceCoordinator.typing`. And the
+  /// reference widget, which is what this layer ports, **never calls
+  /// `stopTyping` at all** (`grep -rn stopTyping packages/widget/src` is
+  /// empty): the remote indicator clears on the receiver's own timeout, not
+  /// on a frame from here.
+  ///
+  /// So exposing it would add a member with no producer and no consumer —
+  /// the same emptiness `TicketLinked` wore before T17, and the same reason
+  /// `onRetry` stays unwired while `MessageDelivery` cannot answer for it.
+  /// This interface's whole purpose is to be what this layer actually calls.
+  /// When a caller for a stop appears, it is one line here and one in the
+  /// adapter.
+  void startTyping();
+
   /// One event per `session.closed` push (§12.5).
   ///
   /// The one fact no session snapshot can carry: a snapshot says a session is
@@ -152,6 +174,9 @@ class ChatClientAdapter implements WidgetChatClient {
   @override
   void markRead({String? upToMessageId}) =>
       _client.markRead(upToMessageId: upToMessageId);
+
+  @override
+  void startTyping() => _client.startTyping();
 
   @override
   Stream<SessionClosed> get sessionClosed => _client.sessionClosed;

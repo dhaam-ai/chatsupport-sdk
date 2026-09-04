@@ -42,6 +42,13 @@ class FakeWidgetChatClient implements WidgetChatClient {
       StreamController<SessionClosed>.broadcast();
   final List<String?> markReadCalls = <String?>[];
 
+  /// How many outbound typing signals went out.
+  int startTypingCalls = 0;
+
+  /// Set to make `startTyping()` throw — the race a connected-state check
+  /// cannot close. A keystroke must survive it.
+  Object? startTypingThrows;
+
   @override
   ConnectionState get connectionState => _state;
   @override
@@ -105,6 +112,12 @@ class FakeWidgetChatClient implements WidgetChatClient {
 
   @override
   void markRead({String? upToMessageId}) => markReadCalls.add(upToMessageId);
+
+  @override
+  void startTyping() {
+    if (startTypingThrows != null) throw startTypingThrows!;
+    startTypingCalls += 1;
+  }
 
   // ── Test-only inbound simulation ─────────────────────────────────────
 
