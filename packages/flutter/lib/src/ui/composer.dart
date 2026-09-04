@@ -36,6 +36,19 @@
 /// file owns emoji, link, and the suggestion path. [uploading] is the one
 /// fact this widget needs FROM the attachment side, and it is a plain
 /// parameter rather than state owned here.
+///
+/// ── The reply chip renders a target it does not own ──────────────────────
+///
+/// [Composer.replyTo] is the same shape as [Composer.uploading]: a fact this
+/// widget DRAWS and never stores. Which message a send is addressed to lives
+/// on `ChatWidgetState.replyingTo`, because it is the Cubit that calls
+/// `sendMessage` and a copy here would be a second owner of one fact.
+///
+/// `onSend` stays a `ValueChanged<String>` for exactly that reason — it
+/// carries text and nothing else, so a reply cannot travel back out of this
+/// widget even by accident. That is also what keeps a reply on the SAME
+/// `_submit` path a typed message and a suggestion chip take, and therefore
+/// subject to the same consent gate.
 library;
 
 import 'package:flutter/material.dart';
@@ -51,6 +64,8 @@ class Composer extends StatefulWidget {
     this.uploading = false,
     this.onTyping,
     this.controller,
+    this.replyTo,
+    this.onCancelReply,
   });
 
   /// The customer submitted [text] — already trimmed, always non-blank.
@@ -73,6 +88,20 @@ class Composer extends StatefulWidget {
 
   /// The seam a suggestion chip sends through. See [ComposerController].
   final ComposerController? controller;
+
+  /// The message being replied to, drawn as a chip above the box — or `null`
+  /// for no reply in progress. The port of `composer.ts`'s
+  /// `setReplyTo(target | null)`.
+  ///
+  /// Rendered here, owned elsewhere; see this library's own header.
+  final ReplyTarget? replyTo;
+
+  /// The customer dismissing the quoted message they were replying to.
+  ///
+  /// `null` draws the chip WITHOUT a dismiss control, which is a state no
+  /// caller should reach: a reply target the customer cannot back out of
+  /// traps a mistaken tap. A caller that supplies [replyTo] supplies this.
+  final VoidCallback? onCancelReply;
 
   @override
   State<Composer> createState() => _ComposerState();
@@ -120,6 +149,21 @@ class _ComposerState extends State<Composer> {
     // unclosable by pointer. Same rule `composer.ts`'s syncSendState applies.
     if (!_affordancesEnabled && _popover != _Popover.none) {
       _popover = _Popover.none;
+    }
+    // The port of `startReply`'s `composer.input.focus()`. The customer
+    // pressed Reply in a menu halfway up the transcript; landing them on the
+    // box is the difference between one gesture and two.
+    //
+    // Guarded on the target having actually CHANGED, not merely being
+    // present: [ReplyTarget] compares by value, so an unrelated rebuild
+    // carrying the same target re-focuses nothing and cannot steal the caret
+    // back from wherever the customer put it. Guarded on `enabled` because a
+    // disabled field cannot take focus and asking it to is a no-op worth not
+    // performing.
+    if (widget.replyTo != null &&
+        widget.replyTo != oldWidget.replyTo &&
+        widget.enabled) {
+      _focusNode.requestFocus();
     }
   }
 
@@ -227,6 +271,14 @@ class _ComposerState extends State<Composer> {
             },
             onCancel: () => _closePopover(_linkButtonFocus),
           ),
+        // Directly above the box and below the popovers: the chip describes
+        // what the NEXT send answers, so it belongs against the thing being
+        // typed into, while a palette is transient and stacks over it.
+        if (widget.replyTo != null)
+          _ReplyChip(
+            target: widget.replyTo!,
+            onCancel: widget.onCancelReply,
+          ),
         TextField(
           // Named because the link popover above brings a second field into
           // the same subtree while it is open, and "the message box" must
@@ -279,6 +331,109 @@ class _ComposerState extends State<Composer> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The quoted message shown above the input while a reply is being composed.
+///
+/// ── Two stacked lines, and why not one ───────────────────────────────────
+///
+/// WHO on top, their words below. The reference's chip used to show a bare
+/// excerpt behind the words "Replying to", which on a transcript with two
+/// other parties — an agent and a bot — left the customer to guess whose
+/// words they were about to quote. The name is the half that disambiguates,
+/// so it gets its own line rather than a prefix.
+///
+/// Both strings are another participant's data and are rendered as TEXT,
+/// never interpreted — the Flutter counterpart of the reference's
+/// deliberate `textContent` on both nodes.
+class _ReplyChip extends StatelessWidget {
+  const _ReplyChip({required this.target, required this.onCancel});
+
+  final ReplyTarget target;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+
+    return Padding(
+      key: const Key('composer.replyChip'),
+      padding: const EdgeInsets.only(bottom: 4),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: <Widget>[
+            // The quote bar every chat client draws down the left of a
+            // quotation. Purely decorative, so it says nothing to a screen
+            // reader.
+            Container(
+              width: 3,
+              height: 34,
+              margin: const EdgeInsets.only(left: 8, right: 8),
+              decoration: BoxDecoration(
+                color: scheme.primary,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                // One node, one sentence. Read as two unlabelled strings the
+                // chip would announce a name and some words with no stated
+                // relationship between them or to the box below.
+                child: Semantics(
+                  container: true,
+                  excludeSemantics: true,
+                  label: 'Replying to ${target.senderName}: ${target.excerpt}',
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        target.senderName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        target.excerpt,
+                        // The excerpt is already collapsed to one line and
+                        // capped by [ReplyTarget]; this is the visual
+                        // backstop for a narrow screen, not a second cap.
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            IconButton(
+              // Deliberately NOT gated on the composer being enabled: backing
+              // out of a reply is how a customer undoes a mistaken tap, and a
+              // gate that holds the box shut must not also trap them in a
+              // reply they did not mean to start.
+              tooltip: 'Cancel reply',
+              iconSize: 18,
+              visualDensity: VisualDensity.compact,
+              onPressed: onCancel,
+              icon: const Icon(Icons.close),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
