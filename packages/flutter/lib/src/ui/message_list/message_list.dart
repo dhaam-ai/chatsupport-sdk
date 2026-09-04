@@ -26,5 +26,7 @@
 /// parse a single declaration.
 library;
 
+export 'delivery_failure.dart';
 export 'message_content.dart';
 export 'reply_quote.dart';
+export 'tick_state.dart';
