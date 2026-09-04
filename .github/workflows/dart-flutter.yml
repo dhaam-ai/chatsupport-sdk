@@ -20,7 +20,7 @@ env:
   # synthetic "loading <file>" testStart entries from --reporter json output,
   # then comparing against --reporter compact final count (+N).
   DART_TEST_FLOOR: '262'
-  DART_REST_TEST_FLOOR: '303'
+  DART_REST_TEST_FLOOR: '442'
   FLUTTER_TEST_FLOOR: '365'
 
 jobs:
