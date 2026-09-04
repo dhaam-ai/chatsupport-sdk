@@ -344,9 +344,8 @@ class HeaderMenu extends StatelessWidget {
         // here: the row only exists because `safeLinkUrl` already accepted
         // it, and a second validation is a second place for the two answers
         // to differ.
-        final String? href = entries
-            .firstWhere((HeaderMenuEntry e) => e.action == action)
-            .href;
+        final String? href =
+            entries.firstWhere((HeaderMenuEntry e) => e.action == action).href;
         if (href != null) onOpenPrivacy(href);
     }
   }

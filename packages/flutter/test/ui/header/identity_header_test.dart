@@ -161,7 +161,8 @@ void main() {
       expect(find.text(kFallback), findsOneWidget);
     });
 
-    testWidgets('does not narrate a stale agent on a session that went back '
+    testWidgets(
+        'does not narrate a stale agent on a session that went back '
         'to waiting', (WidgetTester tester) async {
       await pump(
         tester,
@@ -169,8 +170,7 @@ void main() {
       );
       await pump(
         tester,
-        session:
-            session(status: ChatStatus.waitingForAgent, handledBy: agent),
+        session: session(status: ChatStatus.waitingForAgent, handledBy: agent),
       );
       expect(find.text(kFallback), findsOneWidget);
       expect(find.text('Ada'), findsNothing);
@@ -206,7 +206,8 @@ void main() {
           ),
         );
 
-    testWidgets('never announces on the very first build — that describes '
+    testWidgets(
+        'never announces on the very first build — that describes '
         'what was already true, not a live change',
         (WidgetTester tester) async {
       await pump(
@@ -237,7 +238,8 @@ void main() {
       expect(announcement(tester), "You're now chatting with $kFallback.");
     });
 
-    testWidgets('does not re-announce when a rebuild carries no actual label '
+    testWidgets(
+        'does not re-announce when a rebuild carries no actual label '
         'change', (WidgetTester tester) async {
       // A cubit can emit for reasons unrelated to identity — a new session
       // object with the same handledBy. Repeating the announcement every time
@@ -265,7 +267,8 @@ void main() {
       expect(announcement(tester), "You're now chatting with Ada.");
     });
 
-    testWidgets('does not announce a stale handledBy as though it were a real '
+    testWidgets(
+        'does not announce a stale handledBy as though it were a real '
         'hand-off', (WidgetTester tester) async {
       await pump(tester, session: session(status: ChatStatus.waitingForAgent));
       await pump(
@@ -279,8 +282,7 @@ void main() {
       // text, never Ada's name.
       await pump(
         tester,
-        session:
-            session(status: ChatStatus.waitingForAgent, handledBy: agent),
+        session: session(status: ChatStatus.waitingForAgent, handledBy: agent),
       );
       expect(announcement(tester), "You're now chatting with $kFallback.");
       expect(announcement(tester), isNot(contains('Ada')));
@@ -342,7 +344,8 @@ void main() {
       expect(announcement(tester), isNull);
     });
 
-    testWidgets('and it clears a previous announcement rather than leaving it '
+    testWidgets(
+        'and it clears a previous announcement rather than leaving it '
         'to be re-read', (WidgetTester tester) async {
       await pump(tester, fallbackTitle: kFallback);
       await pump(
@@ -361,7 +364,8 @@ void main() {
       expect(find.text('Ada'), findsOneWidget);
     });
 
-    testWidgets('the watermark still moves, so a later hand-off is measured '
+    testWidgets(
+        'the watermark still moves, so a later hand-off is measured '
         'against what is displayed', (WidgetTester tester) async {
       await pump(tester, fallbackTitle: 'Chat');
       await pump(tester, fallbackTitle: kFallback);

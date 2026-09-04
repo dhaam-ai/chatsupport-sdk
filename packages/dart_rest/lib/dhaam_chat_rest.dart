@@ -121,3 +121,4 @@ export 'src/models/session.dart'
     show RestChatParticipantProfile, RestChatSession, RestChatTicket;
 export 'src/models/session_summary.dart' show RestChatSessionSummary;
 export 'src/sessions.dart' show SessionApi;
+export 'src/support.dart' show SupportApi;

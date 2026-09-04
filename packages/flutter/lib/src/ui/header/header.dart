@@ -22,3 +22,5 @@ export 'chime.dart';
 export 'header_avatar.dart';
 export 'header_menu.dart';
 export 'identity_header.dart';
+export 'report_issue_form.dart';
+export 'transcript_email.dart';

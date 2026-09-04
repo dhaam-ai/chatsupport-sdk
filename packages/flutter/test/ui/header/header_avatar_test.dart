@@ -109,7 +109,8 @@ void main() {
     test('caps the brand initials at two — a merchant may type a whole word',
         () {
       expect(
-        resolveHeaderAvatar(session: null, config: brand(avatarInitials: 'Acme Co')),
+        resolveHeaderAvatar(
+            session: null, config: brand(avatarInitials: 'Acme Co')),
         const HeaderAvatarLetters('Ac', isAgent: false),
       );
     });
@@ -158,7 +159,8 @@ void main() {
       expect(identityLabel(s, kFallback), kFallback);
     });
 
-    test('letters a bot the same way, because the title names one the same '
+    test(
+        'letters a bot the same way, because the title names one the same '
         'way', () {
       final SessionSnapshot s =
           session(status: ChatStatus.open, handledBy: bot);
@@ -270,7 +272,8 @@ void main() {
       expect(tester.getSize(find.byType(HeaderAvatar)), Size.zero);
     });
 
-    testWidgets('is hidden from assistive tech — the title beside it already '
+    testWidgets(
+        'is hidden from assistive tech — the title beside it already '
         'names this person', (WidgetTester tester) async {
       final SemanticsHandle handle = tester.ensureSemantics();
       await pump(

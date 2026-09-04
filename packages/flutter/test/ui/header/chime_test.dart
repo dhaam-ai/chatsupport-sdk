@@ -41,7 +41,8 @@ void main() {
       expect(built.plays, isEmpty);
     });
 
-    test('silent when this visitor muted it, however the merchant configured '
+    test(
+        'silent when this visitor muted it, however the merchant configured '
         'it', () {
       final built = build();
       built.chime.play(sound: true, muted: true);
@@ -65,7 +66,8 @@ void main() {
       expect(built.builds, isEmpty);
     });
 
-    test('builds nothing for a refused chime — a muted visitor on a '
+    test(
+        'builds nothing for a refused chime — a muted visitor on a '
         'sound-enabled tenant allocates no player at all', () {
       final built = build();
       built.chime.play(sound: true, muted: true);
@@ -99,7 +101,8 @@ void main() {
       // reach the host app's zone as an error, which is the loudest possible
       // outcome for the quietest possible feature.
       final built = build(playerRejects: true);
-      expect(() => built.chime.play(sound: true, muted: false), returnsNormally);
+      expect(
+          () => built.chime.play(sound: true, muted: false), returnsNormally);
       await Future<void>.delayed(Duration.zero);
       expect(built.plays, hasLength(1));
     });
@@ -113,8 +116,7 @@ void main() {
         throw MissingPluginException('SystemSound.play');
       });
       addTearDown(
-        () => TestDefaultBinaryMessengerBinding
-            .instance.defaultBinaryMessenger
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(SystemChannels.platform, null),
       );
 
@@ -125,7 +127,8 @@ void main() {
   });
 
   group('playOnUnreadRise', () {
-    test('never on the first observation — that is a restored backlog, not a '
+    test(
+        'never on the first observation — that is a restored backlog, not a '
         'new reply', () {
       final built = build();
       built.chime.playOnUnreadRise(unread: 7, sound: true, muted: false);
@@ -139,7 +142,8 @@ void main() {
       expect(built.plays, hasLength(1));
     });
 
-    test('silent on a fall — opening the panel zeroes the count and that is '
+    test(
+        'silent on a fall — opening the panel zeroes the count and that is '
         'the customer reading, not a reply arriving', () {
       final built = build();
       built.chime.playOnUnreadRise(unread: 3, sound: true, muted: false);
@@ -154,7 +158,8 @@ void main() {
       expect(built.plays, isEmpty);
     });
 
-    test('records the count even while muted, so un-muting does not chime for '
+    test(
+        'records the count even while muted, so un-muting does not chime for '
         'a backlog', () {
       final built = build();
       built.chime.playOnUnreadRise(unread: 0, sound: true, muted: true);

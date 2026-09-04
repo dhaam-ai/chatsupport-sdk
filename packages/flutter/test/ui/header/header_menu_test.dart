@@ -61,8 +61,7 @@ void main() {
       )
       .map(
         (PopupMenuItem<HeaderMenuAction> item) =>
-            (((item.child! as Row).children.last as Expanded).child
-                    as Text)
+            (((item.child! as Row).children.last as Expanded).child as Text)
                 .data!,
       )
       .toList();
@@ -99,8 +98,7 @@ void main() {
                       onStartNew: () {},
                       onEndConversation: () {},
                       onReportIssue: () {},
-                      onMuteChange: (bool next) =>
-                          setState(() => muted = next),
+                      onMuteChange: (bool next) => setState(() => muted = next),
                       onOpenPrivacy: (_) {},
                     ),
                   ],
@@ -128,7 +126,8 @@ void main() {
       },
     );
 
-    testWidgets('paints the muted label from a build that arrives already '
+    testWidgets(
+        'paints the muted label from a build that arrives already '
         'muted', (WidgetTester tester) async {
       // The persisted-preference path: a stored mute flag pushed straight in,
       // which must paint the same label a tap would have. Here it is not a
@@ -177,7 +176,8 @@ void main() {
         SemanticsNode row(String label) =>
             tester.getSemantics(find.text(label));
 
-        final SemanticsData unmutedRow = row('Mute notifications').getSemanticsData();
+        final SemanticsData unmutedRow =
+            row('Mute notifications').getSemanticsData();
         expect(unmutedRow.hasFlag(SemanticsFlag.hasCheckedState), isFalse);
         expect(unmutedRow.hasFlag(SemanticsFlag.isChecked), isFalse);
         expect(unmutedRow.hasFlag(SemanticsFlag.isButton), isTrue);
@@ -351,7 +351,8 @@ void main() {
       expect(find.byType(PopupMenuItem<HeaderMenuAction>), findsNothing);
     });
 
-    testWidgets('the toggle carries the reference name, not the framework '
+    testWidgets(
+        'the toggle carries the reference name, not the framework '
         'default', (WidgetTester tester) async {
       await mount(tester);
       expect(
@@ -381,7 +382,8 @@ void main() {
       expect(muteCalls, isEmpty);
     });
 
-    testWidgets('a press on a row still lands — it is not swallowed by the '
+    testWidgets(
+        'a press on a row still lands — it is not swallowed by the '
         'dismiss', (WidgetTester tester) async {
       final List<bool> muteCalls = <bool>[];
       await mount(tester, onMuteChange: muteCalls.add);
