@@ -209,6 +209,39 @@ void main() {
     expect(client.sentContent, <String>['Track my order']);
   });
 
+  // Proves the WIRING, not just the guard: a chip that called
+  // `cubit.sendMessage` directly would send here, because the client has no
+  // idea a draft exists. Only a chip routed through the composer's own
+  // submit can see it — which is the same reason a chip cannot get past the
+  // consent gate that lives on the composer's `enabled`.
+  testWidgets('a quick reply goes through the composer, so it will not '
+      'overwrite a draft the customer is typing', (tester) async {
+    cubit.openConversation('past-session-1');
+    await tester.pumpWidget(_wrap(cubit));
+
+    client.emitMessage(
+      testMessage(
+        id: 'm1',
+        content: 'Want to track your order?',
+        metadata: {'options': <Object?>['Track my order']},
+      ),
+    );
+    await flush(tester);
+    await tester.pump();
+
+    await tester.enterText(find.byKey(const Key('composer.message')), 'my order was ');
+    await tester.pump();
+
+    await tester.tap(find.text('Track my order'));
+    await tester.pump();
+
+    expect(client.sentContent, isEmpty);
+    expect(
+      tester.widget<TextField>(find.byKey(const Key('composer.message'))).controller!.text,
+      'my order was ',
+    );
+  });
+
   testWidgets('quick replies disappear once the customer sends their own message', (tester) async {
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));

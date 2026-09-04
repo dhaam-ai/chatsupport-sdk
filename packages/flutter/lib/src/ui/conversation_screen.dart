@@ -29,9 +29,27 @@ import 'message_list/message_list.dart';
 import 'pre_chat/pre_chat.dart';
 import 'new_conversation_view.dart';
 import 'composer.dart';
+import 'composer_affordances/composer_affordances.dart';
 
-class ConversationScreen extends StatelessWidget {
+class ConversationScreen extends StatefulWidget {
   const ConversationScreen({super.key});
+
+  @override
+  State<ConversationScreen> createState() => _ConversationScreenState();
+}
+
+class _ConversationScreenState extends State<ConversationScreen> {
+  /// A quick-reply chip is a message the customer sends, so it goes through
+  /// the composer's own [ComposerController.submit] rather than straight to
+  /// the client.
+  ///
+  /// Calling `cubit.sendMessage` from the chip would be shorter and would
+  /// give a suggestion its own path — the one thing `composer.ts` says never
+  /// to do. `enabled` on the composer is where the consent gate lives, so a
+  /// chip with a private route is a way around consent: a visitor who has not
+  /// agreed taps a suggestion and a record is created anyway. It is also what
+  /// keeps a chip from overwriting a half-typed draft.
+  final ComposerController _composer = ComposerController();
 
   @override
   Widget build(BuildContext context) {
@@ -87,7 +105,8 @@ class ConversationScreen extends StatelessWidget {
                   onCopyMessage: (ChatMessage message) => Clipboard.setData(
                     ClipboardData(text: visibleContent(message)),
                   ),
-                  onQuickReply: cubit.sendMessage,
+                  // Through the composer, never round it — see [_composer].
+                  onQuickReply: _composer.submit,
                 ),
               ),
             ),
@@ -95,7 +114,10 @@ class ConversationScreen extends StatelessWidget {
               top: false,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                child: Composer(onSend: cubit.sendMessage),
+                child: Composer(
+                  onSend: cubit.sendMessage,
+                  controller: _composer,
+                ),
               ),
             ),
           ],
