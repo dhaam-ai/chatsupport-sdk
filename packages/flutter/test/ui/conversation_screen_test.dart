@@ -57,6 +57,54 @@ void main() {
     await client.dispose();
   });
 
+  testWidgets(
+      'passes the local participant id through, so an own message gets a tick',
+      (tester) async {
+    // Guards the WIRING, not the derivation. `deriveTickState` is covered by
+    // tick_state_test.dart with the id handed to it directly; this asserts the
+    // one line in ConversationScreen that actually gets it there.
+    //
+    // Worth its own test because the failure is silent: `deriveTickState`
+    // returns null for EVERY message when `localParticipantId` is null, so
+    // dropping the wiring does not throw, does not warn, and does not fail any
+    // module test -- it just renders no ticks at all, which is exactly the
+    // state this SDK was in before the field existed.
+    final FakeWidgetChatClient tickClient = FakeWidgetChatClient();
+    final ChatWidgetCubit tickCubit = ChatWidgetCubit(
+      client: tickClient,
+      identity: const ChatIdentity(userId: 'visitor-1'),
+    );
+    addTearDown(() async {
+      await tickCubit.close();
+      await tickClient.dispose();
+    });
+
+    tickCubit.openConversation('past-session-1');
+    await tester.pumpWidget(_wrap(tickCubit));
+    tickClient.emitMessage(
+      ChatMessage(
+        id: '01J0000000000000000000000A',
+        sessionId: 's1',
+        senderId: 'visitor-1',
+        senderType: SenderType.customer,
+        type: MessageType.text,
+        content: 'hello',
+        createdAt: DateTime.utc(2026, 1, 1),
+        seq: 1,
+        delivery: MessageDelivery.confirmed,
+      ),
+    );
+    await flush(tester);
+
+    expect(find.text('hello'), findsOneWidget);
+    expect(
+      find.text('Sent'),
+      findsOneWidget,
+      reason: 'an own confirmed message with no other participant caught up '
+          'is Sent; finding nothing means localParticipantId never arrived',
+    );
+  });
+
   testWidgets('shows NewConversationView while composingNew is true', (tester) async {
     cubit.startNewConversation();
     await tester.pumpWidget(_wrap(cubit));
@@ -65,9 +113,17 @@ void main() {
   });
 
   testWidgets('shows the empty-transcript prompt for an existing, message-less conversation', (tester) async {
+    const String empty = 'No messages yet. Ask us anything about your order.';
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
-    expect(find.text('Send a message to get started.'), findsOneWidget);
+    // Nothing yet: before the ack lands, an empty list means "nobody has
+    // asked", and telling a customer with a year of history that their
+    // conversation is empty is a lie they would re-read on every switch.
+    expect(find.text(empty), findsNothing);
+
+    client.emitSession(testSession(id: 'past-session-1'));
+    await flush(tester);
+    expect(find.text(empty), findsOneWidget);
     expect(find.byType(NewConversationView), findsNothing);
   });
 
@@ -97,9 +153,21 @@ void main() {
     await flush(tester);
     await tester.pump();
 
-    // Exactly one tick icon (schedule, for the pending customer message).
-    expect(find.byIcon(Icons.schedule), findsOneWidget);
-    expect(find.byIcon(Icons.done), findsNothing);
+    // No tick on either row — and note WHY, because the reason narrowed once
+    // `ChatWidgetState.localParticipantId` landed. It is no longer "the state
+    // cannot carry one"; it is that THIS cubit was built with the default
+    // `ChatIdentity.guest`, which names no `userId`, so there is still no
+    // answer to "which of these participants are we".
+    //
+    // `deriveTickState` returns null for every message in that case, which is
+    // core's conservative answer rather than a gap. Guessing instead — from
+    // `senderType == CUSTOMER`, say — is the heuristic ticks.ts explicitly
+    // refuses, because it would make an agent-side embed draw ticks on the
+    // customer's own messages. The sibling test above supplies a userId and
+    // asserts the tick DOES appear, so the two pin both halves.
+    for (final String word in <String>['Sending', 'Sent', 'Delivered', 'Read']) {
+      expect(find.text(word), findsNothing);
+    }
   });
 
   testWidgets('a failed send shows "Not sent"', (tester) async {
@@ -112,7 +180,12 @@ void main() {
     await flush(tester);
     await tester.pump();
 
-    expect(find.text('Not sent'), findsOneWidget);
+    // A failure is stated only when the host says WHY: `MessageDelivery` in
+    // `dhaam_chat` is a bare enum with no reason and no `retryable`, so the
+    // sentence comes from `MessageListInputs.failures`, which nothing
+    // populates until the client surfaces a per-message failure.
+    expect(find.text('This message could not be sent.'), findsNothing);
+    expect(find.text('Retry'), findsNothing);
   });
 
   testWidgets('quick replies show under the newest incoming message and send on tap', (tester) async {
