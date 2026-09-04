@@ -233,12 +233,14 @@ class ConnectionController {
   ///
   /// For the session-replacement transition only (`ChatClient.startNewSession`
   /// in `client.dart`, which sequences this) and never for a reconnect — see
-  /// [ResumeTracker]'s own doc for why the two axes must not be confused. Without it the next hello carries an anchor
-  /// from a history this client no longer holds, and the v2 endpoint answers
-  /// that with a NON-RETRYABLE `VALIDATION_FAILED` ("resumeFrom is ahead of
-  /// this session"), stranding the client in [ConnectionState.suspended]
-  /// instead of the new session it asked for. That is the single reason
-  /// [disconnect] + [connect] is not already a working "start over".
+  /// [ResumeTracker]'s own doc for why the two axes must not be confused.
+  ///
+  /// Without it the next hello carries an anchor from a history this client no
+  /// longer holds, and the v2 endpoint answers that with a NON-RETRYABLE
+  /// `VALIDATION_FAILED` ("resumeFrom is ahead of this session"), stranding
+  /// the client in [ConnectionState.suspended] instead of the new session it
+  /// asked for. That is the single reason [disconnect] + [connect] is not
+  /// already a working "start over".
   ///
   /// Touches no socket: the caller sequences the disconnect/connect around it.
   void forgetResumeAnchor() => _resume.reset();
