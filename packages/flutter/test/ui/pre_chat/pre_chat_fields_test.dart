@@ -8,6 +8,7 @@ import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../state/fake_widget_chat_client.dart';
 import '../../support/remote_config_fixtures.dart';
 
 RemoteConfig _config({
@@ -66,6 +67,44 @@ void main() {
         ).isGuest,
         isFalse,
       );
+    });
+  });
+
+  group('localParticipantId comes from the identity, not from the ack', () {
+    // The port of `widget.ts:524`: `config.identity.userId`. A participant
+    // row in the ack has participantId/type/lastReadAt/displayName and no
+    // "this one is you" marker, so the handshake cannot answer this.
+    test('is the host-supplied user id', () {
+      final ChatWidgetCubit cubit = ChatWidgetCubit(
+        client: FakeWidgetChatClient(),
+        identity: const ChatIdentity(
+          userId: 'usr_1',
+          profile: ChatParticipantProfile(name: 'Ada'),
+        ),
+      );
+      addTearDown(cubit.close);
+      expect(cubit.state.localParticipantId, 'usr_1');
+    });
+
+    // Not known, and deliberately not guessed: falling back to
+    // `senderType == customer` draws ticks on somebody else's messages in an
+    // agent-side embed.
+    test('is null when the host named nobody', () {
+      final ChatWidgetCubit cubit =
+          ChatWidgetCubit(client: FakeWidgetChatClient());
+      addTearDown(cubit.close);
+      expect(cubit.state.localParticipantId, isNull);
+    });
+
+    // A guest still has an id — that is exactly why isGuest cannot key on it.
+    test('a guest with a user id still reports it', () {
+      final ChatWidgetCubit cubit = ChatWidgetCubit(
+        client: FakeWidgetChatClient(),
+        identity: const ChatIdentity(userId: 'anon_9'),
+      );
+      addTearDown(cubit.close);
+      expect(cubit.state.localParticipantId, 'anon_9');
+      expect(cubit.state.isGuest, isTrue);
     });
   });
 

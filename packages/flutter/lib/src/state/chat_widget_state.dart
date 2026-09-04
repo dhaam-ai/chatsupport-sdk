@@ -38,6 +38,8 @@ class ChatWidgetState extends Equatable {
     this.conversationOpened = false,
     this.preChatAnswered = false,
     this.preChatAnswers,
+    this.startedTopicLabel,
+    this.localParticipantId,
   });
 
   /// Starting point for a fresh [ChatWidgetCubit] — disconnected, the
@@ -54,6 +56,9 @@ class ChatWidgetState extends Equatable {
         config: config,
         screen: screen,
         identity: identity,
+        // The port of `widget.ts:524` — the identity's own user id, not a
+        // guess read off the ack's participant rows. See the field's doc.
+        localParticipantId: identity.userId,
         // A host that mounted this straight into a conversation put one in
         // front of the customer — see [conversationOpened].
         conversationOpened: conversationOpened,
@@ -168,6 +173,52 @@ class ChatWidgetState extends Equatable {
   /// `preChatAnswersFor`, which is where the distinction is produced.
   final Map<String, String>? preChatAnswers;
 
+  /// The topic chip carried by the conversation the customer most recently
+  /// started, as its LABEL — or null when they picked none.
+  ///
+  /// ── The label, never the id ─────────────────────────────────────────
+  ///
+  /// The id is a console key that means nothing outside the merchant's own
+  /// configuration; the label is what the customer saw themselves press, and
+  /// what an agent reads. Resolved once, at the form, from the chip that was
+  /// actually selected — so there is no second lookup that could resolve a
+  /// stale id against a republished topic list.
+  ///
+  /// Distinct from [selectedTopic], which is the LIVE selection on a form the
+  /// customer is still filling in and is cleared the moment they start: this
+  /// records what the start actually carried.
+  ///
+  /// Held here rather than sent, because the wire hop for it is
+  /// `startNewSession({topic, subject})` and [WidgetChatClient] does not
+  /// expose that yet. The value is resolved correctly and waiting; the node
+  /// that widens that interface passes this straight through.
+  final String? startedTopicLabel;
+
+  /// Which participant WE are, for deciding whose messages are our own.
+  ///
+  /// ── Where this comes from, and where it cannot ──────────────────────
+  ///
+  /// From the host-supplied identity — the port of `widget.ts:524`:
+  ///
+  /// ```ts
+  /// const localParticipantId = config.identity.userId;
+  /// ```
+  ///
+  /// NOT from the connection handshake, and that is not a shortcut.
+  /// `ConnectionAck` carries a [SessionSnapshot] whose `participants` are
+  /// [ParticipantSnapshot]s, and a participant row has `participantId`,
+  /// `type`, `lastReadAt` and `displayName` — no "this one is you" marker.
+  /// The ack tells you who is IN the session; it cannot tell you which of
+  /// them you are. Picking the sole `CUSTOMER` row would be a guess, and
+  /// wrong in exactly the case that matters: an agent-side embed, where the
+  /// customer row is somebody else.
+  ///
+  /// Null when the host named nobody. A consumer must treat that as "not
+  /// known" and render no ownership-dependent affordance, rather than
+  /// falling back to `senderType == customer` — the same refusal the
+  /// reference's own tick derivation makes, and for the same reason.
+  final String? localParticipantId;
+
   /// The session this client is currently in, or `null` before the first
   /// `connection.ack`/`session.updated` snapshot lands.
   final SessionSnapshot? session;
@@ -251,6 +302,8 @@ class ChatWidgetState extends Equatable {
     bool? conversationOpened,
     bool? preChatAnswered,
     Map<String, String>? preChatAnswers,
+    String? startedTopicLabel,
+    String? localParticipantId,
   }) {
     return ChatWidgetState(
       connectionState: connectionState ?? this.connectionState,
@@ -277,6 +330,8 @@ class ChatWidgetState extends Equatable {
       // No "clear" sentinel: nothing resets this to "never asked" once the
       // customer has been asked, so `??` says everything it needs to.
       preChatAnswers: preChatAnswers ?? this.preChatAnswers,
+      startedTopicLabel: startedTopicLabel ?? this.startedTopicLabel,
+      localParticipantId: localParticipantId ?? this.localParticipantId,
     );
   }
 
@@ -303,5 +358,7 @@ class ChatWidgetState extends Equatable {
         conversationOpened,
         preChatAnswered,
         preChatAnswers,
+        startedTopicLabel,
+        localParticipantId,
       ];
 }

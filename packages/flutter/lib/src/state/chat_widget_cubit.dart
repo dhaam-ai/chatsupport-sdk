@@ -580,6 +580,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
           // asked by the next form.
           preChatAnswered: answers != null ? true : null,
           preChatAnswers: answers,
+          startedTopicLabel: topic,
         ),
       );
       final SurfaceTicket? ticket = _composingTicket;
