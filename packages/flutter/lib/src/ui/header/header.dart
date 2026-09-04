@@ -18,4 +18,5 @@
 /// of both routes.
 library;
 
+export 'chime.dart';
 export 'header_menu.dart';
