@@ -10,6 +10,21 @@
          own (its manifest carries a <queries> block and nothing else), and
          neither does any other dependency here. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The composer's voice note button. Unlike file_picker, `record` 6.2.1
+         DOES declare this in record_android's own manifest, so it would be
+         merged in whether or not this line existed — it is written out here
+         anyway because a permission a host's users are asked for at runtime
+         should be visible in the host's own manifest rather than arriving
+         invisibly through a transitive dependency, and because this is the
+         file a reviewer looks at when asking why the app wants a microphone.
+
+         Android 6+ also asks at runtime, which `record`'s
+         `hasPermission(request: true)` is what triggers — see
+         `RecordVoiceDevice.requestPermission`, and note that the platform
+         answers a bare boolean, so a dismissed prompt and a permanent
+         refusal are reported the same way and this SDK deliberately takes
+         the safer reading. https://pub.dev/packages/record#android -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <application
         android:label="dhaam_chat_flutter_example"
         android:name="${applicationName}"

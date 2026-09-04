@@ -24,7 +24,23 @@ android {
         applicationId = "ai.dhaam.dhaam_chat_flutter_example"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // 23, not `flutter.minSdkVersion`, which is 21 on the Flutter 3.24.4
+        // this repo pins (flutter_tools/gradle/src/main/groovy/flutter.groovy
+        // :48 — read, not assumed).
+        //
+        // `record_android` 1.5.2 declares `minSdk = 23`, so leaving the
+        // Flutter default here fails the manifest merge outright:
+        // "uses-sdk:minSdkVersion 21 cannot be smaller than version 23
+        // declared in library [record_android]". That is a build error rather
+        // than a runtime one, which is the good kind — but it is a real cost
+        // the voice dependency imposes on every Android host, so it is
+        // written down here and in packages/flutter/README.md rather than
+        // discovered by whoever runs the first Android build.
+        //
+        // API 23 is Android 6.0. It is also where runtime permissions were
+        // introduced, which is the model `record`'s `hasPermission(request:
+        // true)` relies on — so the floor and the feature arrived together.
+        minSdk = 23
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

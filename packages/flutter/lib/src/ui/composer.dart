@@ -158,13 +158,23 @@ class Composer extends StatefulWidget {
   /// control is the honest one when no [VoiceDevice] has been supplied.
   final VoiceCaptureController? voice;
 
-  /// A finished voice note.
+  /// Told about a finished voice note, after it has become the draft.
   ///
-  /// Deliberately NOT wired into [attachments] here: a note becomes a message
-  /// by becoming a draft, and `AttachmentDraftController` accepts drafts only
-  /// from its own picker. Until it can take one from outside, the host is the
-  /// only party that can complete that hop — so this widget hands the note
-  /// out rather than pretending to deliver it.
+  /// ── This is now a notification, not the delivery ─────────────────────
+  ///
+  /// It used to be the delivery, and its own doc said why: a note becomes a
+  /// message by becoming a draft, `AttachmentDraftController` accepted
+  /// drafts only from its own picker, and "until it can take one from
+  /// outside, the host is the only party that can complete that hop". It can
+  /// take one from outside now (`setDraft`), so this widget makes the hop
+  /// itself and a host is told rather than conscripted.
+  ///
+  /// Optional, and nothing in this package supplies it — a voice note takes
+  /// the ordinary attachment path from here, so there is nothing left for a
+  /// caller to do. It stays because a host may reasonably want to know one
+  /// was recorded (an analytics ping, its own undo affordance), and because
+  /// a widget that made the hop AND refused to say so would be the harder of
+  /// the two to work with.
   final ValueChanged<VoiceRecording>? onVoiceRecorded;
 
   @override
@@ -340,6 +350,26 @@ class _ComposerState extends State<Composer> {
     if (text.isNotEmpty) widget.onSend(text);
   }
 
+  /// A finished voice note becomes the pending attachment.
+  ///
+  /// ── The last hop, and why it goes through the SAME door as a photo ────
+  ///
+  /// `composer.ts` does exactly this: its `toggleRecording` builds a `File`
+  /// from the recorded blob and hands it to the very `setAttachment` its
+  /// file input calls. Routing a note through the draft rather than straight
+  /// to a send is what subjects it to every rule a picked file is subject to
+  /// — the 25 MiB cap, the upload-on-send order, the draft surviving a
+  /// failed upload, the send button's in-flight guard — instead of giving
+  /// the microphone a private path where each of those has to be remembered
+  /// again.
+  ///
+  /// Refusals need no handling here: `setDraft` puts its sentence on the
+  /// controller, and `AttachmentDraftBar` is already listening.
+  void _onVoiceRecorded(VoiceRecording note) {
+    widget.attachments?.setDraft(pickedFromVoice(note));
+    widget.onVoiceRecorded?.call(note);
+  }
+
   /// The suggestion path, and the one rule that makes it safe.
   ///
   /// Note what is NOT consulted: the send button's own disabled state. That
@@ -458,9 +488,15 @@ class _ComposerState extends State<Composer> {
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
                 VoiceRecordButton(
-                  controller: widget.voice,
+                  // Null when there is no draft controller, which draws no
+                  // mic at all — the same "off, not broken" rule the
+                  // paperclip follows. A voice note can only become a
+                  // message by becoming a draft (see [_onVoiceRecorded]), so
+                  // a microphone offered without one is a control that
+                  // records into nothing.
+                  controller: attachments == null ? null : widget.voice,
                   enabled: affordances,
-                  onRecorded: widget.onVoiceRecorded,
+                  onRecorded: _onVoiceRecorded,
                 ),
                 IconButton(
                   focusNode: _linkButtonFocus,

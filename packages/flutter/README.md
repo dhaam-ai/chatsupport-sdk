@@ -143,6 +143,8 @@ The package cannot add these for you; they belong to the app that ships it.
 <true/>
 <key>com.apple.security.files.user-selected.read-only</key>
 <true/>
+<key>com.apple.security.device.audio-input</key>
+<true/>
 ```
 
 * **`com.apple.security.network.client`** — required for *any* outbound
@@ -157,22 +159,67 @@ The package cannot add these for you; they belong to the app that ships it.
   Selected File Read entitlement on macOS."* Read-**only**, not read-write:
   the plugin's own example asks for the wider one because it also demonstrates
   `saveFile`, and this SDK never writes a file back.
+* **`com.apple.security.device.audio-input`** — *Audio Input*, which a
+  sandboxed app needs before it can open a capture device at all. `record`'s
+  own setup notes say to activate it "in debug AND release schemes, or
+  directly in `*.entitlements` files", which is why it belongs in **both**
+  `DebugProfile.entitlements` and `Release.entitlements` rather than one of
+  them. macOS also needs `NSMicrophoneUsageDescription` in
+  `macos/Runner/Info.plist` — the entitlement lets the app open the device,
+  the plist string explains the prompt, and missing either one fails
+  differently.
 
 ### Android — `android/app/src/main/AndroidManifest.xml`
 
 ```xml
 <uses-permission android:name="android.permission.INTERNET"/>
+<uses-permission android:name="android.permission.RECORD_AUDIO"/>
 ```
 
 `flutter create` puts `INTERNET` in `src/debug` and `src/profile` only, where
 the Flutter tool needs it for hot reload — **not** in `main`. A host that never
 adds this line debugs perfectly and then cannot connect at all once shipped.
 
-### iOS — nothing
+`RECORD_AUDIO` is declared by `record_android` 1.5.2's own manifest and would
+merge in regardless; it is written out because a permission users are asked
+for at runtime should be visible in the host's own manifest rather than
+arriving invisibly through a transitive dependency.
 
-`file_picker` 11.0.3 declares no `uses-permission` on Android and no
-`NSUsageDescription` keys on iOS (its Android manifest carries a `<queries>`
-block and nothing else). No other dependency of this package needs one either.
+**Android also needs `minSdk 23`**, in `android/app/build.gradle`:
+
+```gradle
+defaultConfig {
+    minSdk = 23  // not flutter.minSdkVersion, which is 21
+}
+```
+
+`record_android` declares `minSdk = 23`, so the Flutter 3.24.4 default of 21
+fails the manifest merge outright — `uses-sdk:minSdkVersion 21 cannot be
+smaller than version 23 declared in library [record_android]`. A build error
+rather than a runtime one, which is the good kind, but a real cost this
+dependency imposes.
+
+### iOS — `ios/Runner/Info.plist`
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>Record a voice message to send to the support team.</string>
+```
+
+`record_ios` links AVFoundation, so this is required of any host that
+**builds** against this SDK, not only one that shows the voice button — App
+Store review rejects a binary that links the framework without it. Write it
+for the person reading the prompt; Apple rejects boilerplate.
+
+`NSSpeechRecognitionUsageDescription` is deliberately **not** required. It
+belongs to speech recognition, which this SDK does not do: the voice button
+records audio and uploads it for an agent to listen to, and nothing here
+transcribes anything. Declaring it would ask a host to justify a capability
+to Apple that their binary does not have.
+
+`file_picker` 11.0.3 itself needs no `NSUsageDescription` key on iOS and no
+`uses-permission` on Android (its Android manifest carries a `<queries>`
+block and nothing else).
 
 ### Microphone — not yet
 
@@ -190,56 +237,57 @@ The parity port is not finished, and the honest list matters more than the
 green test count. Everything below is a real gap between this package and
 `packages/widget/src/**`, not a rough edge.
 
-**A customer cannot attach a file.** `AttachmentDraftController`,
-`AttachmentAttachButton` and `AttachmentDraftBar` exist, are tested, and are
-referenced by nothing outside their own module — `conversation_screen.dart`
-builds its `Composer` with no attach controls. The seam
-(`AttachmentPicker`/`AttachmentUploader`) and the real `file_picker`
-implementation are both there; only the composer hop is missing.
+**Nothing plays a merchant-supplied chime sound.** `Chime` is mounted and
+message arrivals do chime, on `SystemSound.alert`. What has no path is
+*replacing* that sound with an asset: the `ChimePlayer` seam exists and
+`ChatWidget` takes one, but this package bundles no audio plugin, so a
+merchant who wants their own tone needs the host to supply the player.
 
-**No Retry button renders on a failed message.** `dhaam_chat`'s
-`MessageDelivery` is a bare enum carrying neither a failure reason nor
-`retryable`, so no per-message failure can be surfaced at all. The message list
-was built to render nothing rather than to guess, which is why the absence looks
-like a missing feature rather than a broken one.
+**`captureContactInfo` still has nowhere to deliver.** `dhaam_chat_rest`
+captures user agent, IP, watermark and geolocation through a
+`ContactInfoSink`, and the hello frame carries no field for any of it. The
+example displays what it captured because displaying it is the only consumer
+that exists.
 
-**The Reply action does not render.** Message actions ship Copy and Reply;
-Reply's affordance is absent because there is no reply *target* that survives a
-rebuild (no `ChatWidgetState.replyingTo`) and no reply chip above the composer.
-Copy works. The wire hop exists — `sendMessage` already takes
-`replyToMessageId`.
+**The consent gate, the offline form, and the hero-header
+collapse-oscillation guard are only partly landed.** `lib/src/ui/consent/`
+and `lib/src/ui/offline_form/` exist and are mounted; the hero header carries
+`kHeroCollapseSlackPx` but the second guard — the layout check read *at
+collapse time* — has not been verified end to end. `mergeRemoteConfig`
+host-precedence is deliberately not ported (see above). ADR
+`docs/adr/0005-flutter-parity-scope.md`, which is to record the full
+deliberately-N/A table, is not written yet.
 
-**"Start a new conversation" cannot start one.** `dhaam_chat`'s `ChatClient` has
-no `startNewSession`, and `connectionHelloPayload` has no `newSession`,
-`subject` or `topic` field. The topic chip resolves its label correctly and
-there is nowhere to send it.
+**The session switcher is mounted nowhere** — and neither is
+`createSessionSwitcher` in the reference (`session-picker.ts:288` has no call
+site in `packages/widget/src`), so this is a faithful port of an unmounted
+module rather than a gap. `SessionPickerScreen` looks like superseded code:
+Home and Messages read `state.sessionSummaries` directly, expressing the same
+`sessions.length > 0` gate as rows rather than as a surface.
 
-**The conversation app bar shows a stale agent.** `IdentityHeader`,
-`HeaderAvatar` and `HeaderMenu` are built and tested, and
-`chat_widget.dart`'s `_ConversationAppBar` does not use any of them: it
-re-derives the title as `session?.handledBy?.displayName ?? 'Conversation'`,
-with no `isHandledByCurrent` gate, so a session reactivated to
-`WAITING_FOR_AGENT` keeps its previous agent's name — and the fallback is the
-literal `'Conversation'` rather than the merchant's configured title.
-`agent.joined`/`agent.left` also never reach `ChatWidgetState.session`, so the
-header cannot update mid-conversation.
+**The inline report-issue entry point is not ported.** `widget.ts` opens the
+report form from two places — the header menu (`:858`, ported) and an inline
+button on the seam between the transcript and the composer (`:1401`). Only
+the first exists here.
 
-**Nothing plays the chime.** `Chime` and `playSystemChime` exist; no code in
-this package constructs a `Chime`, so no message arrival reaches a player.
-`HeaderMenu`, which owns the mute state its `play` needs, is not mounted either.
+**Voice notes are WAV, where the web widget records WebM or MP4.** `record`'s
+stream mode is the only capture path that works on all six platforms without
+`dart:io`, and its only universally-available encoder there is `pcm16bits`,
+which this package wraps in a WAVE header. The result is uncompressed: about
+32 KB per second at 16 kHz mono, so the 25 MiB attachment cap lands at
+roughly thirteen minutes rather than the hour a compressed codec would give.
+Refused in words at the cap, like any other oversized file.
 
-**`captureContactInfo` has nowhere to deliver.** `dhaam_chat_rest` captures
-user agent, IP, watermark and geolocation through a `ContactInfoSink`, and
-`connectionHelloPayload` has no field for any of it — `token`,
-`publishableKey`, `protocolVersion`, `resumeFrom` and nothing else. The example
-displays what it captured because displaying it is the only consumer that
-exists.
-
-**Consent gate, offline form, and the hero-header collapse-oscillation guard**
-are not ported (`lib/src/ui/consent_offline/` does not exist). Voice input is
-not ported. `mergeRemoteConfig` host-precedence is deliberately not ported (see
-above). ADR `docs/adr/0005-flutter-parity-scope.md`, which is to record the
-full deliberately-N/A table, is not written yet.
+**Taking `record` imposes three things on every host**, whether or not it
+shows the microphone, because the plugin's native code is linked at build
+time: `NSMicrophoneUsageDescription` in `ios/Runner/Info.plist`; the same key
+plus the `com.apple.security.device.audio-input` entitlement in **both**
+`macos/Runner/*.entitlements`; and `RECORD_AUDIO` with **`minSdk 23`** on
+Android — the Flutter 3.24.4 default of 21 fails the manifest merge outright.
+`packages/flutter/example/` carries exactly these entries and no invented
+ones. `NSSpeechRecognitionUsageDescription` is deliberately **not** among
+them: this SDK records audio and never transcribes it, so declaring it would
+ask a host to justify a capability their binary does not have.
 
 ### Deliberately not ported, and not coming
 

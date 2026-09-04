@@ -30,6 +30,7 @@ import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
 import '../ui/attachments/attachments.dart';
+import '../ui/voice/voice.dart';
 import '../ui/composer_affordances/reply_target.dart';
 import '../ui/consent/consent.dart';
 import '../ui/offline_form/offline_form.dart';
@@ -89,7 +90,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     IssueReporter? issueReporter,
     AttachmentUploader? attachmentUploader,
     AttachmentPicker attachmentPicker = filePickerAttachmentPicker,
+    VoiceDeviceFactory createVoiceDevice = RecordVoiceDevice.new,
   })  : _client = client,
+        _createVoiceDevice = createVoiceDevice,
         _consent = consent ?? ConsentGate.unremembered(),
         _sessionActions = sessionActions,
         _issueReporter = issueReporter,
@@ -235,6 +238,19 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// touches no `MethodChannel` — without obliging every host to supply
   /// something the package already has.
   final AttachmentPicker _attachmentPicker;
+
+  /// Builds the microphone. Defaults to the real one, on `record`.
+  ///
+  /// Defaulted for the same reason [_attachmentPicker] is: capture is
+  /// something this package CAN supply, and once the plugin is a dependency
+  /// its native code is linked into every host's build whether or not the
+  /// button is ever shown — so making hosts wire a factory would buy them
+  /// nothing they have not already paid for.
+  ///
+  /// A factory rather than a device, so nothing opens an audio device until
+  /// the first press. Overridden in tests with a fake, which is how the
+  /// whole voice module is exercised without a microphone.
+  final VoiceDeviceFactory _createVoiceDevice;
 
   /// The server-truth memory of who has rated what. Null alongside
   /// [_sessionActions], since it has nothing to ask.
@@ -799,6 +815,21 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       onError: onError,
     );
   }
+
+  /// Voice capture for one composer.
+  ///
+  /// Always non-null — the seam it wraps is defaulted, and a mic that cannot
+  /// record raises [VoiceErrorCode.unsupported] through the taxonomy rather
+  /// than by being absent. Whether the button is DRAWN is `Composer`'s call,
+  /// and it draws none without a draft controller: a note reaches the wire
+  /// by becoming an attachment, so a microphone beside no uploader would
+  /// record into nothing.
+  ///
+  /// Owned by the caller, like [createAttachmentDraft]'s answer — and
+  /// disposing it is what hands the microphone back if the screen is torn
+  /// down mid-recording.
+  VoiceCaptureController createVoiceCapture() =>
+      VoiceCaptureController(createDevice: _createVoiceDevice);
 
   /// Announces an already-uploaded [file] as its own message (§12.10).
   ///

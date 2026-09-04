@@ -36,6 +36,7 @@ import 'new_conversation_view.dart';
 import 'offline_form/offline_form.dart';
 import 'composer.dart';
 import 'composer_affordances/composer_affordances.dart';
+import 'voice/voice.dart';
 
 /// Where a surface's rejected submit goes.
 ///
@@ -85,23 +86,41 @@ class _ConversationScreenState extends State<ConversationScreen> {
   /// between picking it and pressing Send.
   AttachmentDraftController? _attachments;
 
+  /// This composer's microphone.
+  ///
+  /// Built alongside [_attachments] and disposed with it, because a note
+  /// reaches the wire by becoming a draft: `Composer` draws no mic without
+  /// one, so a capture controller outliving the draft would be a device
+  /// nothing could send from.
+  late final VoiceCaptureController _voice;
+
   @override
   void initState() {
     super.initState();
-    // `read`, not `watch`: this needs the Cubit once, to build a controller,
-    // and nothing about the seams it carries can change afterwards.
-    _attachments = context
-        .read<ChatWidgetCubit>()
-        .createAttachmentDraft(onError: _report);
+    // `read`, not `watch`: this needs the Cubit once, to build the two
+    // controllers, and nothing about the seams they carry can change
+    // afterwards.
+    final ChatWidgetCubit cubit = context.read<ChatWidgetCubit>();
+    _attachments = cubit.createAttachmentDraft(onError: _report);
+    // Cheap and lazy — `VoiceCaptureController` builds no device until the
+    // first press, so this opens no microphone.
+    _voice = cubit.createVoiceCapture();
   }
 
   @override
   void dispose() {
-    // Owns a lifetime — `AttachmentDraftController`'s own rule. This is also
-    // what makes its `_disposed` guard load-bearing rather than defensive: an
-    // upload can still be in flight when the customer navigates away, and its
-    // `finally` runs regardless.
+    // Both own a lifetime — their own rule, in both files. For the draft
+    // controller this is also what makes its `_disposed` guard load-bearing
+    // rather than defensive: an upload can still be in flight when the
+    // customer navigates away, and its `finally` runs regardless.
+    //
+    // For the capture controller it is stronger than that: disposal is what
+    // hands the microphone back if the screen is torn down mid-recording,
+    // and a track left open keeps the operating system's recording indicator
+    // lit after the widget is gone — which a person looking at their status
+    // bar quite reasonably reads as still being listened to.
     _attachments?.dispose();
+    _voice.dispose();
     super.dispose();
   }
 
@@ -366,6 +385,13 @@ class _ConversationScreenState extends State<ConversationScreen> {
                         // composer is on screen turns the paperclip on
                         // without a remount.
                         fileUploads: state.config.fileUploads,
+                        // The last of the three seams T15 left open. The
+                        // note it produces takes the ordinary attachment
+                        // path from here — `Composer` hands it to
+                        // `attachments.setDraft`, which applies exactly the
+                        // refusals a picked photo faces — so there is no
+                        // `onVoiceRecorded` for this screen to supply.
+                        voice: _voice,
                       ),
               ),
             ),

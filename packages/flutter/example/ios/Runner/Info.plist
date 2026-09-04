@@ -45,5 +45,25 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- The microphone string `record` requires for the composer's voice
+	     note button. `record_ios` links AVFoundation, so this is needed by
+	     any host that BUILDS against this SDK — not only one that shows the
+	     button — and App Store review rejects a binary that links the
+	     framework without it. The SDK cannot add it for its host, which is
+	     why it is here and named in packages/flutter/README.md.
+
+	     Written for the person reading the prompt, not for us: it says what
+	     the recording is for. Apple rejects boilerplate like "This app needs
+	     microphone access".
+	     https://pub.dev/packages/record#ios -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record a voice message to send to the support team.</string>
+	<!-- NSSpeechRecognitionUsageDescription is deliberately ABSENT. It
+	     belongs to speech recognition, which this SDK does not do: the voice
+	     button records audio and uploads it for an agent to listen to, and
+	     nothing here transcribes anything. Declaring it would ask this host
+	     to justify a capability to Apple that its binary does not have. See
+	     packages/flutter/lib/src/ui/voice/voice.dart on why `speech_to_text`
+	     was rejected rather than deferred. -->
 </dict>
 </plist>

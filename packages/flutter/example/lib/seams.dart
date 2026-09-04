@@ -16,13 +16,29 @@
 /// which is the whole reason to write the recipe as code rather than as a
 /// paragraph in the README.
 ///
-/// ── Two of these have nowhere to be passed ───────────────────────────────
+/// ── Everything here is now passed to something ───────────────────────────
 ///
-/// [exampleAttachmentDraft] and [exampleChime] are correct, compile against
-/// the real APIs, and cannot currently be handed to the widget tree: neither
-/// `ChatWidget` nor `ChatWidgetCubit` accepts them, and the only widgets that
-/// would consume them are not mounted. See [seamReports], which says so on
-/// screen rather than leaving a reader to discover it.
+/// This header used to say that two of these had nowhere to go. Both
+/// statements are now out of date, and in different ways.
+///
+/// [exampleChime] was described as unreachable because "nothing inside the
+/// package constructs one". That was wrong when it was written and stayed
+/// wrong: `ChatWidget` has always taken an optional `chime`
+/// (`chat_widget.dart:71`, `widget.chime ?? Chime()`), so the seam was open
+/// the whole time and this app simply did not use it. It does now — which is
+/// the entire argument for keeping this panel honest, since a "not wired"
+/// row nobody rechecks reads as a missing feature rather than as a missing
+/// line in an example.
+///
+/// [exampleAttachmentDraft] was in that list for a real reason and no longer
+/// is — not
+/// because it is now passed, but because the shape it demonstrated was
+/// wrong. `ChatWidgetCubit` takes the two SEAMS (`attachmentUploader`,
+/// `attachmentPicker`) and builds the draft controller per composer itself,
+/// because a draft is one composer's pending file and must die with it. So
+/// `main.dart` passes [exampleAttachmentUploader] directly and the assembled
+/// controller below exists only as compile-time proof that the picker and the
+/// uploader fit each other.
 library;
 
 import 'package:dhaam_chat/dhaam_chat.dart' show TokenProvider;
@@ -133,10 +149,12 @@ AttachmentUploader exampleAttachmentUploader(
 /// The picker and the uploader, assembled into the controller that owns the
 /// draft, the 25 MiB refusal and the in-flight flag.
 ///
-/// **Nothing mounts this today** — see this library's header and
-/// [seamReports]. It is built anyway because building it is what proves the
-/// three pieces fit: the controller's constructor is what type-checks the
-/// picker and the uploader against each other.
+/// **The app does not pass THIS** — it passes the two seams to
+/// `ChatWidgetCubit`, which builds one of these per composer. See this
+/// library's header. It is built anyway because building it is what proves
+/// the pieces fit: the controller's constructor is what type-checks the
+/// picker and the uploader against each other, so a change to either shape
+/// stops this file compiling rather than failing at the first tap.
 AttachmentDraftController exampleAttachmentDraft({
   required RestClient rest,
   required String Function() sessionId,
@@ -211,18 +229,38 @@ const List<SeamReport> seamReports = <SeamReport>[
   ),
   SeamReport(
     name: 'AttachmentPicker / AttachmentUploader',
-    wiring: SeamWiring.unreachable,
-    detail: 'Built in seams.dart and type-checked, but ChatWidget takes only a '
-        'Cubit, ChatWidgetCubit takes no AttachmentDraftController, and '
-        'conversation_screen.dart builds its Composer with no attach controls. '
-        'There is no parameter to pass it to.',
+    wiring: SeamWiring.wired,
+    detail:
+        'file_picker plus RestClient POST /upload, passed to ChatWidgetCubit. '
+        'The composer grows a paperclip when the merchant has fileUploads on; '
+        'ConversationScreen builds one AttachmentDraftController per composer '
+        'from these two seams.',
+  ),
+  SeamReport(
+    name: 'VoiceDevice',
+    wiring: SeamWiring.wired,
+    detail:
+        'The package default, RecordVoiceDevice, on record 6.2.1 — no seam for '
+        'this app to fill. The mic records PCM through startStream, wraps it '
+        'in a WAVE header and hands it to the same draft a picked file goes '
+        'through. Needs the microphone entries in ios/, macos/ and android/, '
+        'and Android minSdk 23.',
+  ),
+  SeamReport(
+    name: 'IssueReporter',
+    wiring: SeamWiring.wired,
+    detail:
+        'restIssueReporter over POST /chat/sessions/{id}/report-issue, passed '
+        'to ChatWidgetCubit(issueReporter:). Without it the header menu drops '
+        'the Report row entirely rather than offering a dead one.',
   ),
   SeamReport(
     name: 'ChimePlayer',
-    wiring: SeamWiring.unreachable,
+    wiring: SeamWiring.wired,
     detail:
-        'Chime() is built here, but nothing inside the package constructs one, '
-        'so no message arrival reaches a player. Its play() also needs the '
-        'header menu mute state, which is not mounted either.',
+        'Chime() with the package default (SystemSound.alert — no audio '
+        'plugin, no asset), passed to ChatWidget(chime:). ChatWidget builds '
+        'its own when a host passes none, so arrivals chime either way; what '
+        'this seam buys is replacing the sound.',
   ),
 ];

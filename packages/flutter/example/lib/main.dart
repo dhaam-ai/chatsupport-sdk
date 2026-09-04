@@ -38,7 +38,9 @@ import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart'
         ChatWidgetCubit,
         RemoteConfig,
         defaultRemoteConfig,
-        fetchRemoteConfig;
+        Chime,
+        fetchRemoteConfig,
+        restIssueReporter;
 import 'package:dhaam_chat_rest/dhaam_chat_rest.dart'
     show RestClient, RestContactInfo, captureContactInfo;
 import 'package:flutter/material.dart';
@@ -296,6 +298,13 @@ class _HostHomePageState extends State<_HostHomePage> {
           config: widget.config,
           initialConfig: _config ?? defaultRemoteConfig,
           sessionActions: _sessionActions,
+          // The same client the session actions were built from, threaded
+          // down the same way and for the same reason: three more seams — the
+          // issue reporter, the attachment uploader, and the transcript
+          // emailer behind them — are `RestClient` calls the panel wires, and
+          // a second client here would open a second connection pool to talk
+          // to the one endpoint.
+          rest: _rest,
         ),
       ),
     );
@@ -404,11 +413,17 @@ class _ChatPanelPage extends StatefulWidget {
     required this.config,
     required this.initialConfig,
     required this.sessionActions,
+    required this.rest,
   });
 
   final ExampleConfigReady config;
   final RemoteConfig initialConfig;
   final RestSessionActions sessionActions;
+
+  /// Owned by `_HostHomePageState`, borrowed here. This route does not close
+  /// it — the state that created it does, which is the same ownership rule
+  /// `ChatWidget` follows by not closing the Cubit it was handed.
+  final RestClient rest;
 
   @override
   State<_ChatPanelPage> createState() => _ChatPanelPageState();
@@ -416,7 +431,17 @@ class _ChatPanelPage extends StatefulWidget {
 
 class _ChatPanelPageState extends State<_ChatPanelPage> {
   late final ChatClient _client;
+
+  /// `late final` rather than plain `late`: the issue reporter and the
+  /// attachment uploader below both close over this very field, which is
+  /// only expressible if the closure can name it before it is assigned. Safe
+  /// because neither closure runs during construction.
   late final ChatWidgetCubit _cubit;
+
+  /// Built once and held, not rebuilt in `build`: `Chime` remembers the last
+  /// unread count it saw, and a fresh one on every rebuild would either
+  /// re-announce or go silent depending on which way the count moved.
+  final Chime _chime = exampleChime();
 
   @override
   void initState() {
@@ -446,6 +471,29 @@ class _ChatPanelPageState extends State<_ChatPanelPage> {
       // conversation — which is the correct outcome for a host that wired no
       // REST, and the wrong one for this app, which has one.
       sessionActions: widget.sessionActions,
+      // The raw `POST /chat/sessions/{id}/report-issue` route. Absent means
+      // the ⋯ menu drops the row entirely rather than offering one that
+      // quietly does nothing — so without this line the report form T14
+      // built and T23 mounted is unreachable for a user.
+      //
+      // `sessionId` is a CLOSURE over this Cubit's own state, read at the
+      // moment Send is pressed rather than captured when the panel was
+      // built. `late final _cubit` is what lets it refer to the very Cubit
+      // it is being passed to, and it is safe because the closure is not
+      // invoked during construction.
+      issueReporter: restIssueReporter(
+        client: widget.rest,
+        sessionId: () => _cubit.state.session?.sessionId,
+      ),
+      // `POST /upload`. Absent means no paperclip at all — the same "off,
+      // not broken" rule. The session id is read at upload time for the
+      // reason the reporter's is: a file must be posted against the
+      // conversation it is being sent to, not the one that was open when
+      // the composer was built.
+      attachmentUploader: exampleAttachmentUploader(
+        widget.rest,
+        () => _cubit.state.session?.sessionId ?? '',
+      ),
     );
   }
 
@@ -467,7 +515,13 @@ class _ChatPanelPageState extends State<_ChatPanelPage> {
     // No Scaffold and no AppBar around it: `ChatWidget` builds its own, and
     // wrapping it in a second one would put two app bars on the screen the
     // moment it drills into a conversation.
-    return ChatWidget(cubit: _cubit);
+    return ChatWidget(
+      // The package builds its own when a host passes none, so this changes
+      // no behaviour — it is here because the seam exists and a host is the
+      // party that would replace the sound. See seams.dart.
+      chime: _chime,
+      cubit: _cubit,
+    );
   }
 }
 

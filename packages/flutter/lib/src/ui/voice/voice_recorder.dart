@@ -31,6 +31,7 @@ library;
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../attachments/attachment_draft.dart' show PickedAttachment;
 import 'voice_error.dart';
 
 /// How often the level meter and the elapsed clock update while recording.
@@ -127,18 +128,37 @@ class VoiceRecording {
   /// What to call the file when this becomes an attachment.
   ///
   /// `composer.ts`'s own rule — `mimeType.includes('mp4') ? 'm4a' : 'webm'` —
-  /// kept rather than generalised.
+  /// kept, and widened once, deliberately.
   ///
   /// `package:mime`'s `extensionFromMime` was the obvious generalisation and
   /// was checked rather than assumed: it maps `audio/webm` to **`weba`**, not
   /// `webm`. That is defensible as a spec answer and wrong as a product one —
   /// the agent at the other end downloads the result, and `.weba` is the
-  /// extension their player is least likely to open. So the reference's
-  /// two-case rule stands, and an adapter that emits neither webm nor mp4
-  /// should widen this deliberately rather than inherit `webm` by default.
+  /// extension their player is least likely to open. So the mapping stays a
+  /// short explicit table rather than becoming a library call.
+  ///
+  /// ── The `wav` case, and why it is not an inherited default ────────────
+  ///
+  /// This method's earlier form said that "an adapter that emits neither
+  /// webm nor mp4 should widen this deliberately rather than inherit `webm`
+  /// by default", and [RecordVoiceDevice] is that adapter: `record`'s only
+  /// encoder available on all six platforms in stream mode is `pcm16bits`,
+  /// which this package wraps in a WAVE header (see `wav.dart`). Letting
+  /// `audio/wav` fall through to `.webm` would name the file after a
+  /// container it is not in — the agent's player would refuse it, or worse,
+  /// open it and produce noise.
+  ///
+  /// An unrecognised type still falls through to `webm`, which is the
+  /// reference's own answer and the right one for the browser adapter the
+  /// rule was written for.
   String get fileName {
     final String type = mimeType.split(';').first.trim().toLowerCase();
-    return 'voice-message.${type.contains('mp4') ? 'm4a' : 'webm'}';
+    final String extension = switch (type) {
+      _ when type.contains('mp4') => 'm4a',
+      _ when type.contains('wav') => 'wav',
+      _ => 'webm',
+    };
+    return 'voice-message.$extension';
   }
 }
 
@@ -392,3 +412,27 @@ class VoiceRecorder {
     return level.clamp(0.0, 1.0).toDouble();
   }
 }
+
+/// A finished [VoiceRecording], as the pending attachment that carries it.
+///
+/// ── The whole of the hop, in one function ────────────────────────────────
+///
+/// A voice note becomes a message by becoming a draft — the same draft a
+/// picked photo becomes — and this is the only place the two vocabularies
+/// meet. `AttachmentDraftController.setDraft` then applies exactly the
+/// refusals a picked file faces, so a note that is nameless or over 25 MiB
+/// is refused in the same words, by the same code, as a photo.
+///
+/// [VoiceRecording.fileName] is never blank, so the name check cannot fire
+/// from this path today. It is still the one that runs, because the check
+/// belongs to the controller and duplicating "is this sendable" here is the
+/// second derivation this package keeps getting bitten by.
+///
+/// No `size` is passed: unlike a picked file, whose platform declares a size
+/// before anything is read, these bytes are already in memory and
+/// `bytes.length` IS the truth.
+PickedAttachment pickedFromVoice(VoiceRecording note) => PickedAttachment(
+      fileName: note.fileName,
+      mimeType: note.mimeType,
+      bytes: note.bytes,
+    );

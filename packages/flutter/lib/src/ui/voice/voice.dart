@@ -83,4 +83,6 @@ library;
 
 export 'voice_button.dart';
 export 'voice_error.dart';
+export 'record_voice_device.dart';
 export 'voice_recorder.dart';
+export 'wav.dart';

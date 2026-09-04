@@ -28,5 +28,15 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Same string, same reason, as ios/Runner/Info.plist: `record_macos`
+	     links AVFoundation for the composer's voice note button. macOS needs
+	     BOTH this and the `com.apple.security.device.audio-input`
+	     entitlement in the two *.entitlements files — the plist explains the
+	     prompt, the entitlement lets a sandboxed app open the device at all,
+	     and missing either one fails differently (no prompt vs. a prompt the
+	     recording then cannot use).
+	     https://pub.dev/packages/record#macos -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record a voice message to send to the support team.</string>
 </dict>
 </plist>

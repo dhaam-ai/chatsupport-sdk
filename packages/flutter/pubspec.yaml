@@ -121,6 +121,47 @@ dependencies:
   # wrong thing to put in front of a per-publishable-key namespace.
   # https://pub.dev/packages/shared_preferences
   shared_preferences: ^2.5.3
+  # The microphone behind `VoiceDevice` (`lib/src/ui/voice/`). Chosen over
+  # `speech_to_text` — the other candidate — because it is a different
+  # feature, not a wider one: `speech_to_text` transcribes and discards the
+  # audio, while `ui/voice.ts`, the surface this ports, records a blob and
+  # sends it down the attachment path for the agent to listen to. It would
+  # also oblige every host to declare `NSSpeechRecognitionUsageDescription`
+  # for a capability this port does not have, which is the same argument that
+  # declined `image_picker` above and applies more strongly here.
+  #
+  # ^6.2.1, not the newer ^7: `flutter pub add --dry-run record` here resolves
+  # 6.2.1 and reports 7.1.1 as available-but-incompatible — verified by
+  # running it, the same way the url_launcher, file_picker and
+  # shared_preferences pins above were. It brings seven packages: `record`
+  # plus one federated implementation per platform plus the platform
+  # interface.
+  #
+  # Deferred once, deliberately, and taken now for a reason that changed: T15
+  # shipped the whole portable half behind the `VoiceDevice` seam and took no
+  # plugin, because a recording had nowhere to go —
+  # `AttachmentDraftController` accepted drafts only from its own picker, so
+  # native capture code on six platforms would have produced bytes no
+  # customer could send. `setDraft` closed that, so the output now reaches
+  # the wire.
+  #
+  # What this costs a host, stated rather than buried: `record_ios` and
+  # `record_macos` link AVFoundation, so every host must add
+  # `NSMicrophoneUsageDescription` to `Info.plist` (and the
+  # `com.apple.security.device.audio-input` entitlement on macOS), and
+  # Android needs `RECORD_AUDIO` — see this package's README and
+  # `example/`, which carries exactly those entries and no invented ones.
+  #
+  # Capture goes through `startStream`, not `start(path:)`, and the choice is
+  # forced: the file path is documented as "Required on all IO platforms", so
+  # reading the bytes back would need `dart:io` and this package would stop
+  # compiling for web (nothing in `lib/` imports it today). Stream mode's only
+  # encoder available on all six platforms is `pcm16bits` — checked against
+  # the package's own parity matrix, where `aacLc` is absent for web, Windows
+  # and linux — so `lib/src/ui/voice/wav.dart` writes the 44-byte WAVE header
+  # that turns those samples into a file an agent can actually open.
+  # https://pub.dev/packages/record
+  record: ^6.2.1
 
 dev_dependencies:
   flutter_test:
