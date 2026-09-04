@@ -26,6 +26,7 @@ import '../config/remote_config.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
+import '../ui/composer_affordances/reply_target.dart';
 import '../ui/csat/session_actions.dart';
 import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
@@ -557,6 +558,27 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   // ── Outbound ──────────────────────────────────────────────────────────
 
+  /// Addresses the next send to [target], or clears it with `null`.
+  ///
+  /// One method for both directions, mirroring `composer.ts`'s
+  /// `setReplyTo(target | null)` — the customer pressing Reply and the
+  /// customer dismissing the chip are the same fact being set to two
+  /// different values, and a separate `cancelReply()` would be a second
+  /// place able to write it.
+  ///
+  /// The target is built by the caller from the message AND the sender name
+  /// the transcript resolved (see [ReplyTarget.from]); this only stores it.
+  /// Nothing here re-derives anything, and nothing else in this class writes
+  /// [ChatWidgetState.replyingTo] except the send that consumes it.
+  void replyTo(ReplyTarget? target) {
+    emit(
+      state.copyWith(
+        replyingTo: target,
+        clearReplyingTo: target == null,
+      ),
+    );
+  }
+
   /// Sends [content]. The optimistic echo arrives through [_onMessage] like
   /// any other — see `ChatClient.sendMessage` on why there is no `Future`
   /// here to await instead.
@@ -565,8 +587,42 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// chosen topic's job was to accompany THIS compose, and once it has sent,
   /// carrying the selection forward would pre-select a chip for whatever the
   /// customer composes next.
+  ///
+  /// ── A reply's two halves, and why they cannot disagree ───────────────
+  ///
+  /// When [ChatWidgetState.replyingTo] is set, BOTH halves of a reply travel:
+  /// `replyToMessageId` is the protocol-native field the send frame has
+  /// always had, and `metadata` is the RENDERABLE half the reader draws its
+  /// quote from. The second is not decoration — the quoted message may not be
+  /// in the reader's loaded page at all, and an id alone would leave them a
+  /// reply to something they cannot see.
+  ///
+  /// Both are read off the ONE [ReplyTarget], which is what makes it
+  /// impossible for the id and the quote to name different messages. The
+  /// explicit [replyToMessageId] parameter is the raw wire field for a host
+  /// driving a reply itself, with no excerpt to quote and so no metadata; it
+  /// is consulted only when the customer has no reply of their own on screen,
+  /// so the two can never be combined into a mismatched pair.
+  ///
+  /// ── Cleared BEFORE the send, never after ─────────────────────────────
+  ///
+  /// A send that takes a moment must not leave the chip on screen looking as
+  /// though it still applies to whatever the customer types next, and the
+  /// next message must not silently be a reply too. Clearing here rather than
+  /// at the call site is what makes that true of EVERY send — a typed one, a
+  /// suggestion chip, a quick reply — instead of the ones somebody remembered
+  /// to clear.
   void sendMessage(String content, {String? replyToMessageId}) {
-    _client.sendMessage(content, replyToMessageId: replyToMessageId);
+    final ReplyTarget? addressedTo = state.replyingTo;
+    if (addressedTo != null) {
+      emit(state.copyWith(clearReplyingTo: true));
+    }
+
+    _client.sendMessage(
+      content,
+      replyToMessageId: addressedTo?.messageId ?? replyToMessageId,
+      metadata: addressedTo?.metadata,
+    );
     final SurfaceTicket? ticket = _composingTicket;
     if (ticket != null) {
       // The form's task COMPLETED, so the slot goes back through `release`

@@ -37,6 +37,10 @@ class FakeWidgetChatClient implements WidgetChatClient {
   /// null where a send carried none, which is a different fact from `{}`.
   final List<Map<String, Object?>?> sentMetadata = <Map<String, Object?>?>[];
 
+  /// The `replyToMessageId` each send carried, index-aligned with
+  /// [sentContent] — null where the send addressed no message.
+  final List<String?> sentReplyToMessageId = <String?>[];
+
   /// Every `session.closed` a test pushed, oldest first.
   final StreamController<SessionClosed> _sessionClosed =
       StreamController<SessionClosed>.broadcast();
@@ -95,6 +99,7 @@ class FakeWidgetChatClient implements WidgetChatClient {
   }) {
     sentContent.add(content);
     sentMetadata.add(metadata);
+    sentReplyToMessageId.add(replyToMessageId);
     final ChatMessage message = ChatMessage(
       id: 'sent-${sentContent.length}',
       sessionId: 's1',

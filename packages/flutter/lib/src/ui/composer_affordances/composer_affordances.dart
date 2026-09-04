@@ -24,3 +24,4 @@ export 'caret_insertion.dart';
 export 'chip_submit_guard.dart';
 export 'emoji_popover.dart';
 export 'link_popover.dart';
+export 'reply_target.dart';

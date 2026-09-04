@@ -9,6 +9,7 @@ import '../config/remote_config.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
+import '../ui/composer_affordances/reply_target.dart';
 import '../ui/pre_chat/chat_identity.dart';
 
 class ChatWidgetState extends Equatable {
@@ -42,6 +43,7 @@ class ChatWidgetState extends Equatable {
     this.localParticipantId,
     this.csatBySession = const <String, CsatLookup>{},
     this.muted = false,
+    this.replyingTo,
   });
 
   /// Starting point for a fresh [ChatWidgetCubit] — disconnected, the
@@ -271,6 +273,29 @@ class ChatWidgetState extends Equatable {
   /// behaviour.
   final bool muted;
 
+  /// The message the customer is composing a reply TO, or null for none.
+  ///
+  /// ── One owner, and why it is this one ───────────────────────────────
+  ///
+  /// "Which message is being replied to" is a fact with exactly one home,
+  /// and it is here. It deliberately does NOT also live in
+  /// `ConversationScreen`'s local state, which is where it would be easiest
+  /// to put: the send that consumes it is [ChatWidgetCubit.sendMessage]'s,
+  /// so a copy held beside the screen would be a second answer that the
+  /// Cubit could not see and the screen could not clear in step with a send.
+  /// The same shape [composingNew] was collapsed into the surface slot to
+  /// end.
+  ///
+  /// It also has to survive a rebuild that has nothing to do with it — a
+  /// theme change, the keyboard opening, a parent repainting — and screen
+  /// state does not: a customer who pressed Reply and then rotated the
+  /// device would find the chip gone and their next message quietly not a
+  /// reply.
+  ///
+  /// Cleared by the send that consumes it and by the chip's own dismiss, and
+  /// by nothing else — see [copyWith]'s `clearReplyingTo`.
+  final ReplyTarget? replyingTo;
+
   /// The session this client is currently in, or `null` before the first
   /// `connection.ack`/`session.updated` snapshot lands.
   final SessionSnapshot? session;
@@ -358,6 +383,14 @@ class ChatWidgetState extends Equatable {
     String? localParticipantId,
     Map<String, CsatLookup>? csatBySession,
     bool? muted,
+    ReplyTarget? replyingTo,
+    // A third sentinel, for the same reason as the two above and a more
+    // frequent one: this field goes back to null on EVERY send and on every
+    // dismiss, which is the ordinary course of a conversation rather than an
+    // edge case. `??` cannot say "no longer replying to anything", and a
+    // reply target that cannot be cleared would make every message after the
+    // first one silently a reply too.
+    bool clearReplyingTo = false,
   }) {
     return ChatWidgetState(
       connectionState: connectionState ?? this.connectionState,
@@ -390,6 +423,7 @@ class ChatWidgetState extends Equatable {
       // within one widget lifetime, so `??` says everything it needs to.
       csatBySession: csatBySession ?? this.csatBySession,
       muted: muted ?? this.muted,
+      replyingTo: clearReplyingTo ? null : (replyingTo ?? this.replyingTo),
     );
   }
 
@@ -420,5 +454,6 @@ class ChatWidgetState extends Equatable {
         localParticipantId,
         csatBySession,
         muted,
+        replyingTo,
       ];
 }
