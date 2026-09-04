@@ -57,7 +57,23 @@ abstract interface class WidgetChatClient {
 
   /// Sends [content] and returns the optimistic local echo immediately —
   /// see `ChatClient.sendMessage` for why there is no `Future` here.
-  ChatMessage sendMessage(String content, {String? replyToMessageId});
+  ///
+  /// [metadata] is the STRUCTURED copy of whatever the message says in
+  /// prose, and it is not decoration: chat-service reads
+  /// `{kind: 'pre_chat', answers}` server-side and folds the answers into a
+  /// CUSTOMER-ASSERTED contact on the session (fill-empty only, marked
+  /// `source: 'pre_chat'`). Without it the pre-chat answers reach the agent
+  /// as text and nothing else — the lines are read, the contact is never
+  /// created. The reference sends both halves in one frame
+  /// (`widget.ts`'s `sendPreChatDetails`) and so does this.
+  ///
+  /// Absent, never `{}`: an empty map asserts a structured claim was made
+  /// and was empty, which is a different statement from making none.
+  ChatMessage sendMessage(
+    String content, {
+    String? replyToMessageId,
+    Map<String, Object?>? metadata,
+  });
 
   /// Joins an existing session — the Messages/Home "open this past
   /// conversation" path. See `ChatClient.joinSession` on why this does not
@@ -65,6 +81,20 @@ abstract interface class WidgetChatClient {
   void joinSession(String sessionId);
 
   void markRead({String? upToMessageId});
+
+  /// One event per `session.closed` push (§12.5).
+  ///
+  /// The one fact no session snapshot can carry: a snapshot says a session is
+  /// CLOSED, and `CloseReason.switched` says it was PARKED rather than ended
+  /// — the customer moved to another active conversation, and nobody
+  /// resolved this one. Both readings arrive as the same `ChatStatus.closed`,
+  /// so a widget with only the snapshot has to guess, and guessing wrong
+  /// puts a satisfaction survey and an "This conversation has ended" footer
+  /// over a conversation that is merely on hold.
+  ///
+  /// Not derivable from [sessions] at all: the reason rides on this frame and
+  /// on nothing else.
+  Stream<SessionClosed> get sessionClosed;
 }
 
 /// Wraps a real [ChatClient] to satisfy [WidgetChatClient] by delegation.
@@ -105,8 +135,16 @@ class ChatClientAdapter implements WidgetChatClient {
   bool retryNow() => _client.retryNow();
 
   @override
-  ChatMessage sendMessage(String content, {String? replyToMessageId}) =>
-      _client.sendMessage(content, replyToMessageId: replyToMessageId);
+  ChatMessage sendMessage(
+    String content, {
+    String? replyToMessageId,
+    Map<String, Object?>? metadata,
+  }) =>
+      _client.sendMessage(
+        content,
+        replyToMessageId: replyToMessageId,
+        metadata: metadata,
+      );
 
   @override
   void joinSession(String sessionId) => _client.joinSession(sessionId);
@@ -114,4 +152,7 @@ class ChatClientAdapter implements WidgetChatClient {
   @override
   void markRead({String? upToMessageId}) =>
       _client.markRead(upToMessageId: upToMessageId);
+
+  @override
+  Stream<SessionClosed> get sessionClosed => _client.sessionClosed;
 }

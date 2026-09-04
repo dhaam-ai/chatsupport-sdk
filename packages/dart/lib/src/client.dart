@@ -389,11 +389,29 @@ class ChatClient {
   /// older server or an older client is unaffected. Present, the server runs
   /// the same ownership check `session.join` runs and refuses outright on
   /// failure rather than falling back.
+  /// ── [metadata] — the structured copy of what the prose already says ──
+  ///
+  /// A free-form map the server reads alongside `content`. `messageSendPayload`
+  /// has always accepted it (D4 puts `attachment` at the top level precisely so
+  /// that `metadata` stays free for this); it simply had no way through from
+  /// here until a caller needed one.
+  ///
+  /// The caller that needs it is the pre-chat form: chat-service folds
+  /// `{kind: 'pre_chat', answers}` into a CUSTOMER-ASSERTED contact on the
+  /// session, fill-empty only. Sent as one frame with the prose rather than as
+  /// a second message, so the agent's transcript and the server's structured
+  /// read can never describe different answers.
+  ///
+  /// Null omits the key entirely. `{}` is NOT the same thing and is sent as
+  /// written — an empty structured claim is still a claim that one was made.
+  ///
+  /// It rides on the FRAME, so a held send replays it unchanged (see below).
   ChatMessage sendMessage(
     String content, {
     MessageType type = MessageType.text,
     String? replyToMessageId,
     AttachmentMetadata? attachment,
+    Map<String, Object?>? metadata,
   }) {
     // The envelope id IS the permanent message id (D1), so it is minted by
     // the same generator every other frame uses and then read back off the
@@ -410,6 +428,7 @@ class ChatClient {
         sessionId: _sessionId,
         replyToMessageId: replyToMessageId,
         attachment: attachment,
+        metadata: metadata,
       ),
     );
     final String id = frame.id;
@@ -428,6 +447,10 @@ class ChatClient {
       createdAt: _scheduler.now(),
       replyToMessageId: replyToMessageId,
       attachment: attachment,
+      // The echo describes the FRAME that went out, metadata included. An
+      // echo that silently dropped it would disagree with the confirmed
+      // message the server sends back, for no reason a caller could see.
+      metadata: metadata,
       delivery: MessageDelivery.pending,
     );
 

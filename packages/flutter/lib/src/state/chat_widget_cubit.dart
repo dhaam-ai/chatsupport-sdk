@@ -510,6 +510,23 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   // ── Pre-chat ──────────────────────────────────────────────────────────
 
+  /// The STRUCTURED half of a pre-chat send — `{kind, answers}`, exactly the
+  /// shape `widget.ts`'s `sendPreChatDetails` puts on the wire.
+  ///
+  /// It rides on the SAME frame as the prose lines rather than going as a
+  /// second message, and that is the whole design: chat-service folds this
+  /// into a customer-asserted contact on the session (fill-empty only,
+  /// `source: 'pre_chat'`), while the agent reads the lines. One frame means
+  /// the two can never describe different answers.
+  ///
+  /// The full [answers] map, not just the answered subset — the prose is
+  /// already the human-readable filter, and the structured copy is the raw
+  /// record. Built at both call sites through here so the `kind` string is
+  /// written once: a typo in it is not a compile error, it is a contact that
+  /// silently never gets created.
+  static Map<String, Object?> _preChatMetadata(Map<String, String> answers) =>
+      <String, Object?>{'kind': 'pre_chat', 'answers': answers};
+
   /// The customer answered the standalone gate.
   ///
   /// Relays the answers as the opening MESSAGE — they are content, not
@@ -529,7 +546,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       ),
       answers: answers,
     );
-    if (details != null) _client.sendMessage(details);
+    if (details != null) {
+      _client.sendMessage(details, metadata: _preChatMetadata(answers));
+    }
     emit(state.copyWith(preChatAnswered: true, preChatAnswers: answers));
     _syncSurfaces();
   }
@@ -571,7 +590,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
           ),
           answers: answers,
         );
-        if (details != null) _client.sendMessage(details);
+        if (details != null) {
+          _client.sendMessage(details, metadata: _preChatMetadata(answers));
+        }
       }
       _client.sendMessage(message);
       emit(
