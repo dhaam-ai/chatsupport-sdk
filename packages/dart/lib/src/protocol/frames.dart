@@ -795,6 +795,74 @@ class MessageRead {
   final DateTime readAt;
 }
 
+/// `message.delivered.d` (§7.3, §9.5) — the other half of the receipt pair.
+///
+/// Mirrors [MessageRead] frame-for-frame, and diverges on exactly one axis,
+/// which is the whole reason it is a separate type rather than a nullable
+/// field on that one: **`read` is watermarked on a timestamp, `delivered` is
+/// watermarked on `seq`.** Anything that advances or compares a delivery
+/// watermark reads [deliveredUpToSeq] and nothing else — [deliveredAt] is
+/// display data. Two participants' clocks are not comparable, and D2 already
+/// named `seq` the ordering key.
+///
+/// ── Not [MessageDelivery], one letter away ────────────────────────────────
+///
+/// [MessageDelivery] is the state of a message THIS client sent, as it walks
+/// pending → confirmed. This is a claim ANOTHER participant made about how far
+/// they have received. Nothing converts between them, and the direction of
+/// travel is opposite: one is outbound bookkeeping, one is inbound fact.
+class MessageDelivered {
+  const MessageDelivered({
+    required this.participantId,
+    required this.deliveredUpToSeq,
+    required this.deliveredAt,
+  });
+
+  factory MessageDelivered.fromJson(Map<String, Object?> d) => MessageDelivered(
+        participantId: requireNonEmptyString(
+          d,
+          'participantId',
+          'd',
+          frameType: 'message.delivered',
+        ),
+        // [requireSeq], not [requireInt]. The TypeScript validator
+        // (`validateMessageDelivered`) checks only `isInteger` here, which
+        // lets a negative through to `maxDeliveredWatermark` and lets it be
+        // adopted as a watermark when the participant has none yet. The
+        // server allocates `seq` from 1, so a negative is not a value an
+        // honest peer can hold, and refusing it at the edge is the same
+        // decision this package already made for `connection.ack.d.seq` and
+        // `message.new.d.seq`. Deliberately stricter than the reference.
+        deliveredUpToSeq: requireSeq(
+          d,
+          'deliveredUpToSeq',
+          'd',
+          frameType: 'message.delivered',
+        ),
+        deliveredAt: requireIsoTimestamp(
+          d,
+          'deliveredAt',
+          'd',
+          frameType: 'message.delivered',
+        ),
+      );
+
+  final String participantId;
+
+  /// The highest `seq` this participant holds — the ordering key, and the
+  /// only field a watermark may be advanced or compared on.
+  ///
+  /// A frame replayed after `resumeFrom` (D2), or one overtaken by a newer
+  /// push, therefore cannot un-deliver anything: the consumer keeps the max
+  /// and discards the lower value. This class does not do that itself —
+  /// monotonicity is the holder's job, because only the holder knows which
+  /// participant's watermark it is keeping.
+  final int deliveredUpToSeq;
+
+  /// Display only ("Delivered 12:04"), ISO-8601. Never an ordering input.
+  final DateTime deliveredAt;
+}
+
 /// `ticket.linked.d` (§7.3).
 class TicketLinked {
   const TicketLinked({required this.ticketId, this.ticketUrl});

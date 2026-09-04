@@ -37,6 +37,19 @@ String ackFor(String ref, {int seq = 6}) => jsonEncode(<String, Object?>{
       'd': <String, Object?>{'ok': true, 'seq': seq},
     });
 
+String deliveredJson({int deliveredUpToSeq = 7}) =>
+    jsonEncode(<String, Object?>{
+      'v': 1,
+      't': 'message.delivered',
+      'id': _serverUlid,
+      'ts': 1700000000000,
+      'd': <String, Object?>{
+        'participantId': 'agent-1',
+        'deliveredUpToSeq': deliveredUpToSeq,
+        'deliveredAt': '2026-08-19T12:00:00Z',
+      },
+    });
+
 class Harness {
   Harness() {
     scheduler = FakeScheduler();
@@ -317,6 +330,66 @@ void main() {
       expect(sent['t'], equals('message.markRead'));
 
       await harness.client.dispose();
+    });
+  });
+
+  group('receipts', () {
+    test('message.delivered reaches messageDelivered as a seq watermark',
+        () async {
+      // The frame was decoded and dropped for one release, which made the
+      // delivered tick unreachable: nothing else on this wire carries another
+      // participant's delivery position, so a host had no value to render.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<MessageDelivered> seen = <MessageDelivered>[];
+      harness.client.messageDelivered.listen(seen.add);
+
+      harness.socket.deliver(deliveredJson(deliveredUpToSeq: 7));
+      await flush();
+
+      expect(seen, hasLength(1));
+      expect(seen.single.participantId, equals('agent-1'));
+      expect(seen.single.deliveredUpToSeq, equals(7));
+      expect(seen.single.deliveredAt.isUtc, isTrue);
+
+      await harness.client.dispose();
+    });
+
+    test('a lower watermark is still delivered — this client does not dedupe',
+        () async {
+      // Monotonicity belongs to whoever keeps the per-participant map, not
+      // here. Swallowing the regression at this layer would hide a replayed
+      // frame (D2) from a host that legitimately wants to see every push.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<MessageDelivered> seen = <MessageDelivered>[];
+      harness.client.messageDelivered.listen(seen.add);
+
+      harness.socket.deliver(deliveredJson(deliveredUpToSeq: 9));
+      harness.socket.deliver(deliveredJson(deliveredUpToSeq: 4));
+      await flush();
+
+      expect(
+        seen.map((MessageDelivered d) => d.deliveredUpToSeq),
+        equals(<int>[9, 4]),
+      );
+
+      await harness.client.dispose();
+    });
+
+    test('dispose closes messageDelivered', () async {
+      final Harness harness = Harness();
+      await harness.connected();
+
+      bool done = false;
+      harness.client.messageDelivered.listen(null, onDone: () => done = true);
+
+      await harness.client.dispose();
+      await flush();
+
+      expect(done, isTrue);
     });
   });
 

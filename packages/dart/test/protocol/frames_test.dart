@@ -244,6 +244,77 @@ void main() {
       expect(read.readAt.isUtc, isTrue);
     });
 
+    test('message.delivered watermarks on seq, and carries a display time', () {
+      final MessageDelivered delivered =
+          MessageDelivered.fromJson(<String, Object?>{
+        'participantId': 'p1',
+        'deliveredUpToSeq': 7,
+        'deliveredAt': '2026-08-19T12:00:00Z',
+      });
+      expect(delivered.participantId, equals('p1'));
+      expect(delivered.deliveredUpToSeq, equals(7));
+      expect(delivered.deliveredAt.isUtc, isTrue);
+    });
+
+    test('message.delivered accepts an integral double for deliveredUpToSeq',
+        () {
+      // On Flutter Web every Dart number is a double, so `"deliveredUpToSeq":
+      // 7` arrives as 7.0 on exactly one of the three target platforms.
+      final MessageDelivered delivered =
+          MessageDelivered.fromJson(<String, Object?>{
+        'participantId': 'p1',
+        'deliveredUpToSeq': 7.0,
+        'deliveredAt': '2026-08-19T12:00:00Z',
+      });
+      expect(delivered.deliveredUpToSeq, equals(7));
+    });
+
+    test('message.delivered requires deliveredUpToSeq — the ordering key', () {
+      expect(
+        () => MessageDelivered.fromJson(<String, Object?>{
+          'participantId': 'p1',
+          'deliveredAt': '2026-08-19T12:00:00Z',
+        }),
+        throwsA(isA<FrameDecodeException>()),
+      );
+    });
+
+    test('message.delivered refuses a negative watermark', () {
+      // Stricter than the TypeScript validator, which checks only isInteger.
+      // The server allocates seq from 1; a negative is not a position any
+      // honest peer holds, and adopting one would tick nothing forever.
+      expect(
+        () => MessageDelivered.fromJson(<String, Object?>{
+          'participantId': 'p1',
+          'deliveredUpToSeq': -1,
+          'deliveredAt': '2026-08-19T12:00:00Z',
+        }),
+        throwsA(isA<FrameDecodeException>()),
+      );
+    });
+
+    test('message.delivered rejects a deliveredAt with no timezone', () {
+      expect(
+        () => MessageDelivered.fromJson(<String, Object?>{
+          'participantId': 'p1',
+          'deliveredUpToSeq': 7,
+          'deliveredAt': '2026-08-19T12:00:00',
+        }),
+        throwsA(isA<FrameDecodeException>()),
+      );
+    });
+
+    test('message.delivered rejects an empty participantId', () {
+      expect(
+        () => MessageDelivered.fromJson(<String, Object?>{
+          'participantId': '',
+          'deliveredUpToSeq': 7,
+          'deliveredAt': '2026-08-19T12:00:00Z',
+        }),
+        throwsA(isA<FrameDecodeException>()),
+      );
+    });
+
     test('presence.update leaves lastSeen absent while online', () {
       final PresenceEntry entry = PresenceEntry.fromJson(
         <String, Object?>{'participantId': 'p1', 'status': 'ONLINE'},

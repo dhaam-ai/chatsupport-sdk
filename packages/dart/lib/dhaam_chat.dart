@@ -89,6 +89,7 @@ export 'src/protocol/frames.dart'
         ChatMessage,
         ConnectionAck,
         HandledBy,
+        MessageDelivered,
         MessageDelivery,
         ParticipantSnapshot,
         PresenceEntry,

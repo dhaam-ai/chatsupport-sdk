@@ -177,6 +177,8 @@ class ChatClient {
       StreamController<AgentEvent>.broadcast();
   final StreamController<PresenceEntry> _presence =
       StreamController<PresenceEntry>.broadcast();
+  final StreamController<MessageDelivered> _messageDelivered =
+      StreamController<MessageDelivered>.broadcast();
 
   /// Optimistic sends awaiting an `ack`, keyed by envelope id.
   ///
@@ -313,6 +315,21 @@ class ChatClient {
 
   /// Presence updates.
   Stream<PresenceEntry> get presence => _presence.stream;
+
+  /// How far another participant has RECEIVED, as a `seq` watermark (§9.5).
+  ///
+  /// The delivered tick's only source. Read ticks need no stream — they come
+  /// off `ParticipantSnapshot.lastReadAt` on the session snapshot, which is
+  /// itself the §9.5 read watermark — but nothing on a snapshot carries a
+  /// delivery position, so a host that does not listen here can never learn
+  /// one and can never draw the tick.
+  ///
+  /// Emitted raw and NOT accumulated: this client holds no per-participant
+  /// watermark map. A host that renders ticks keeps `max` per
+  /// [MessageDelivered.participantId] itself, because a replayed or overtaken
+  /// frame (D2) can otherwise walk the mark backwards and un-tick a message
+  /// the customer already saw delivered.
+  Stream<MessageDelivered> get messageDelivered => _messageDelivered.stream;
 
   /// `seq` spans that were never delivered and must be refetched over REST.
   Stream<ResumeGap> get gaps => _connection.gaps;
@@ -557,6 +574,7 @@ class ChatClient {
     await _sessionClosed.close();
     await _agentJoined.close();
     await _presence.close();
+    await _messageDelivered.close();
   }
 
   // ── Routing ─────────────────────────────────────────────────────────────
@@ -701,11 +719,14 @@ class ChatClient {
       case 'presence.update':
         _emit(_presence, PresenceEntry.fromJson(d, 'd', frameType: type));
         break;
+      case 'message.delivered':
+        _emit(_messageDelivered, MessageDelivered.fromJson(d));
+        break;
       default:
-        // message.read, message.delivered, ticket.linked, system.pong.
-        // Decoded and ignored: read watermarks, delivery ticks and ticket
-        // linking are out of scope for this pass, and a frame this client
-        // does not act on is not an error.
+        // message.read, ticket.linked, system.pong.
+        // Decoded and ignored: read watermarks and ticket linking are out of
+        // scope for this pass, and a frame this client does not act on is not
+        // an error.
         break;
     }
   }
