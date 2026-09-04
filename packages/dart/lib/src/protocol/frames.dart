@@ -459,6 +459,35 @@ class SessionSnapshot {
   /// particular, absence here is a presentation signal ("render your own
   /// title"), never evidence that the session is unhandled.
   final HandledBy? handledBy;
+
+  /// This snapshot with [handledBy] replaced, for the agent-presence fold.
+  ///
+  /// ── Why only this one field, and why a sentinel for it ──────────────────
+  ///
+  /// `agent.joined`/`agent.left` are the only frames that revise a session
+  /// snapshot in place rather than replacing it wholesale, and [handledBy] is
+  /// the only field they revise — see `applyAgentJoined`/`applyAgentLeft`,
+  /// which are this method's only callers. A general copyWith over all seven
+  /// fields would be six parameters nothing calls, and each one is a way for
+  /// a future caller to fabricate a snapshot the server never sent.
+  ///
+  /// [clearHandledBy] exists because `??` cannot say "nobody is handling this
+  /// any more", which is precisely what a departure means. Same sentinel
+  /// shape `ChatWidgetState.copyWith` uses for its own three clearable
+  /// fields. Passing both is the caller contradicting itself, and the clear
+  /// wins — the safe direction, since a stale name is the bug this whole
+  /// path exists to close.
+  SessionSnapshot copyWith(
+          {HandledBy? handledBy, bool clearHandledBy = false}) =>
+      SessionSnapshot(
+        sessionId: sessionId,
+        status: status,
+        mode: mode,
+        participants: participants,
+        createdAt: createdAt,
+        ticketId: ticketId,
+        handledBy: clearHandledBy ? null : (handledBy ?? this.handledBy),
+      );
 }
 
 /// A message (`message.new.d`, and every entry of a replay array).

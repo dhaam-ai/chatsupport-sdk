@@ -8,6 +8,7 @@ import 'auth/token.dart';
 import 'connection/backoff.dart';
 import 'connection/connection.dart';
 import 'connection/socket.dart';
+import 'logic/agent_presence.dart';
 import 'protocol/enums.dart';
 import 'protocol/envelope.dart';
 import 'protocol/errors.dart';
@@ -234,6 +235,21 @@ class ChatClient {
   /// send composed after it is unaddressed rather than addressed to a
   /// conversation the host has left.
   String? _sessionId;
+
+  /// The last snapshot published on [sessions], or null before the first one.
+  ///
+  /// Held for exactly one reason: `agent.joined`/`agent.left` REVISE a session
+  /// rather than replacing it, so folding one needs the snapshot it is
+  /// revising — see `agent_presence.dart`. Nothing else reads it, and it is
+  /// deliberately not exposed: [sessions] is the one way a consumer learns
+  /// about a session, so a getter here would be a second answer that a
+  /// listener mid-delivery could find disagreeing with the event it is
+  /// holding.
+  ///
+  /// Cleared wherever [_sessionId] is, and for the same reason — an
+  /// `agent.left` that arrives after the host left the conversation must not
+  /// resurrect a snapshot for it.
+  SessionSnapshot? _session;
 
   // ── Connection ──────────────────────────────────────────────────────────
 
@@ -563,6 +579,10 @@ class ChatClient {
     _connection
         .send(_connection.buildFrame('session.leave', <String, Object?>{}));
     _sessionId = null;
+    // Same reason as the id beside it: an `agent.left` arriving after this
+    // must not fold onto — and re-publish — a snapshot for the conversation
+    // the host just left.
+    _session = null;
   }
 
   /// Abandons the current conversation and opens a brand-new one (§6.2).
@@ -629,6 +649,7 @@ class ChatClient {
     //    a persisted session selection). This package has none of those, so
     //    there is nothing else to reset — not a step skipped.
     _sessionId = null;
+    _session = null;
 
     // 5. A hello with no resumeFrom and `newSession: true` reads as a request
     //    for a fresh session (WAITING_FOR_AGENT, seq 0). Resolves on
@@ -839,6 +860,7 @@ class ChatClient {
       case 'connection.ack':
         final SessionSnapshot session = ConnectionAck.fromJson(d).session;
         _sessionId = session.sessionId;
+        _session = session;
         _emit(_sessions, session);
         break;
       case 'session.updated':
@@ -848,6 +870,7 @@ class ChatClient {
           frameType: type,
         );
         _sessionId = session.sessionId;
+        _session = session;
         _emit(_sessions, session);
         break;
       case 'session.closed':
@@ -871,7 +894,33 @@ class ChatClient {
         // One decoder for the one canonical identity shape: the same
         // HandledBy that arrives nested on a session snapshot arrives bare
         // here, so a host cannot see two different names for one participant.
-        _emit(_agentJoined, HandledBy.fromJson(d, 'd', frameType: type));
+        final HandledBy agent = HandledBy.fromJson(d, 'd', frameType: type);
+
+        // THE discriminator, and the last place it exists. `agent.joined` and
+        // `agent.left` carry byte-identical payloads; only `type` says which
+        // happened, and it is not on the object about to go out on
+        // [agentEvents]. So the session fold happens here — see
+        // `agent_presence.dart` on why a consumer downstream of that stream
+        // cannot do it, and why doing it there would put a departed agent's
+        // name back on the header at the moment they walked away.
+        final SessionSnapshot? folded = type == 'agent.joined'
+            ? applyAgentJoined(_session, agent)
+            : applyAgentLeft(_session, agent.id);
+
+        // Session first, then the event — the order
+        // `create-chat-client.ts:427` uses. A listener that reacts to the
+        // event by reading state should find the state already moved.
+        //
+        // `identical` rather than a null check: `applyAgentLeft` returns the
+        // SAME instance when the departing id is not the one on the header
+        // (an agent who handed off and then dropped off), and re-emitting an
+        // unchanged snapshot would repaint every session listener for an
+        // event that changed nothing.
+        if (folded != null && !identical(folded, _session)) {
+          _session = folded;
+          _emit(_sessions, folded);
+        }
+        _emit(_agentJoined, agent);
         break;
       case 'presence.update':
         _emit(_presence, PresenceEntry.fromJson(d, 'd', frameType: type));
