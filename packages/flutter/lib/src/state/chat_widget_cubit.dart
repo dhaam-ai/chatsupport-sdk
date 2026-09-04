@@ -23,11 +23,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../config/remote_config.dart';
+// For `shouldCollectOffline`, the one function that weighs `isOpenNow`
+// against `offlineMode` — see `surfaceInputs`.
+import '../config/remote_config_client.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
 import '../ui/composer_affordances/reply_target.dart';
 import '../ui/consent/consent.dart';
+import '../ui/offline_form/offline_form.dart';
 import '../ui/csat/session_actions.dart';
 import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
@@ -286,11 +290,19 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// "profile == null" again here would be the second answer that put the
   /// form on one path and not the other.
   ///
-  /// **Later nodes widen this, they do not replace it.** `shouldCollectOffline`
-  /// and `csatCard` are left at their "nothing is due" defaults because the
-  /// facts behind them do not exist yet: business hours are the offline
-  /// module's and whether a rating is owed is the CSAT machine's. Each adds
-  /// its own line here.
+  /// **Later nodes widen this, they do not replace it.** Both of the fields
+  /// this started life without have since been filled in by the node that
+  /// owned the fact behind them — `csatCard` by the CSAT machine's, and
+  /// `shouldCollectOffline` by the out-of-hours module's — each adding its
+  /// own line here rather than a second resolver of its own.
+  ///
+  /// Called on TICKS, never at construction: `_syncSurfaces` runs off the
+  /// stream listeners and off [applyRemoteConfig], matching the reference's
+  /// own `syncProductSurfaces`, which is likewise driven by the store
+  /// subscription and the config-applied path and not by init. So a config
+  /// handed to the constructor raises no surface until something syncs —
+  /// which is correct, because `initialConfig` is the host's pre-fetch
+  /// placeholder and the real one arrives through [applyRemoteConfig].
   SurfaceSyncInputs surfaceInputs() => SurfaceSyncInputs(
         isGuest: state.isGuest,
         preChatEnabled: state.config.preChatEnabled,
@@ -307,6 +319,19 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         // one question of one answerer, which is what stops the two of them
         // both deciding they are on.
         csatCard: dueCsatCard(),
+        // Until this line the out-of-hours branch could not fire at all:
+        // `resolveProductSurface` has read this input since the slot landed,
+        // and nothing supplied it — so a merchant on COLLECT_MESSAGE got the
+        // ordinary composer outside business hours and their customers'
+        // messages went into a conversation nobody was reading.
+        //
+        // A DECISION, like `csatCard` above, and one made by exactly one
+        // function: `shouldCollectOffline` weighs `isOpenNow` against
+        // `offlineMode`, and it is the same function `headerAvatarFor` already
+        // asks. Passing the two raw fields here instead would be a second
+        // place that could come to a different answer about whether the team
+        // is open.
+        shouldCollectOffline: shouldCollectOffline(state.config),
       );
 
   /// Re-derives what belongs in the slot and repaints.
@@ -696,6 +721,51 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     }
     emit(state.copyWith(preChatAnswered: true, preChatAnswers: answers));
     _syncSurfaces();
+  }
+
+  // ── Out of hours ──────────────────────────────────────────────────────
+
+  /// The STRUCTURED half of an offline send — `{kind, name, contact}`,
+  /// exactly the shape `widget.ts`'s own offline `onSubmit` puts on the wire.
+  ///
+  /// Rides on the SAME frame as the prose, for the reason
+  /// [_preChatMetadata] gives: one frame means the two halves can never
+  /// describe different people. Written once here so the `kind` string is not
+  /// retyped — a typo in it is not a compile error, it is a message that
+  /// silently never gets classified.
+  static Map<String, Object?> _offlineMetadata(OfflineMessage message) =>
+      <String, Object?>{
+        'kind': 'offline_message',
+        'name': message.name,
+        'contact': message.contact,
+      };
+
+  /// The customer left a message while the team was closed.
+  ///
+  /// ── Named in the body, not just in the metadata ─────────────────────
+  ///
+  /// The prose carries the name and contact too, because this message is read
+  /// by a human tomorrow morning in a thread with no live participant — the
+  /// structured copy is what chat-service classifies on, and the body is what
+  /// the agent actually sees. Character-for-character the reference's own
+  /// sentence, so a merchant whose customers meet this SDK on the web and in
+  /// an app receives one shape of message rather than two.
+  ///
+  /// ── Returns a Future that cannot reject, and that is not a mistake ──
+  ///
+  /// `sendMessage` returns the optimistic local echo synchronously and queues
+  /// the frame (§8.4), so there is nothing here to fail. The signature stays
+  /// a `Future` because [OfflineFormView] is built on
+  /// [FormSubmitController.submitOnce] like every other form in this package,
+  /// and because the seam is what lets a host — or a later REST-backed
+  /// send — supply one that CAN fail and get the re-enable and the failure
+  /// sentence for free.
+  Future<void> submitOfflineMessage(OfflineMessage message) async {
+    _client.sendMessage(
+      'Offline message from ${message.name} (${message.contact}):'
+      '\n\n${message.message}',
+      metadata: _offlineMetadata(message),
+    );
   }
 
   /// The customer declined the standalone gate.

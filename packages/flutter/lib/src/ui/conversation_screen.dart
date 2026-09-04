@@ -31,6 +31,7 @@ import 'csat/csat.dart';
 import 'message_list/message_list.dart';
 import 'pre_chat/pre_chat.dart';
 import 'new_conversation_view.dart';
+import 'offline_form/offline_form.dart';
 import 'composer.dart';
 import 'composer_affordances/composer_affordances.dart';
 
@@ -93,6 +94,36 @@ class _ConversationScreenState extends State<ConversationScreen> {
               onSubmit: cubit.submitPreChat,
               onSkip: cubit.skipPreChat,
               onError: _report,
+            );
+          case OfflineSurface():
+            return OfflineFormView(
+              // The merchant's pre-chat questions gate this surface too, and
+              // through the SAME function the standalone gate and the
+              // new-conversation form use — a signed-in visitor is not asked
+              // to type their own email address back just because the team
+              // happens to be closed.
+              //
+              // The form's own two built-ins are NOT covered by that gate and
+              // are asked regardless: they are the reply channel for an
+              // answer that will arrive out of band, and an agent reading
+              // this tomorrow morning has no socket to answer down.
+              //
+              // One deliberate difference from the reference, which spells
+              // this branch out as `preChatEnabled && isGuest` inline: going
+              // through `preChatFieldsToAsk` also weighs `preChatAnswered`, so
+              // a customer who has already answered these questions in this
+              // session is not asked them a second time here. That is the
+              // rule the other two surfaces follow, and re-deriving the gate
+              // inline to avoid it would be the second derivation this
+              // package keeps ending up burned by.
+              extraFields: preChatFieldsToAsk(
+                config: state.config,
+                isGuest: state.isGuest,
+                alreadyAnswered: state.preChatAnswered,
+              ),
+              onSubmit: cubit.submitOfflineMessage,
+              onError: _report,
+              offlineMessage: state.config.offlineMessage,
             );
           case CsatSurface(
               :final String sessionId,
