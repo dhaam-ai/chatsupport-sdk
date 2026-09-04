@@ -28,5 +28,9 @@ library;
 
 export 'delivery_failure.dart';
 export 'message_content.dart';
+export 'message_list_presenter.dart';
+export 'message_row.dart';
 export 'reply_quote.dart';
+export 'scroll_anchor.dart';
+export 'sender_label.dart';
 export 'tick_state.dart';
