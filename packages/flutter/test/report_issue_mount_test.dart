@@ -136,7 +136,8 @@ void main() {
     // HOST wires, exactly as `ChatSessionActions` is, so a merchant flag with
     // nothing behind it must hide the row rather than offer a form whose Send
     // can only ever fail — `header_menu.dart`'s "hidden, never disabled".
-    testWidgets('hides the row when the merchant turned it on but the host '
+    testWidgets(
+        'hides the row when the merchant turned it on but the host '
         'wired no reporter', (WidgetTester tester) async {
       build(wireReporter: false);
       await pump(tester);
@@ -150,7 +151,8 @@ void main() {
   });
 
   group('the form stands IN PLACE OF the conversation', () {
-    testWidgets('replaces the transcript and the composer rather than '
+    testWidgets(
+        'replaces the transcript and the composer rather than '
         'covering them', (WidgetTester tester) async {
       build();
       await pump(tester);
@@ -196,7 +198,8 @@ void main() {
     // second detour opened on top of the first is still a detour from where
     // the FIRST one started). Cancelling must not deposit them on a
     // conversation screen they never navigated to.
-    testWidgets('opened from Home by way of the new-conversation form: '
+    testWidgets(
+        'opened from Home by way of the new-conversation form: '
         'Cancel lands back on Home', (WidgetTester tester) async {
       build();
       await pump(tester);
@@ -274,7 +277,8 @@ void main() {
     // The control. Without it, "the form survived the tick" is consistent
     // with the tick being inert — and this run has already been burned once
     // by a component test that stayed green beside a live bug.
-    testWidgets('CONTROL: the same tick raises the pre-chat gate when no '
+    testWidgets(
+        'CONTROL: the same tick raises the pre-chat gate when no '
         'report is open', (WidgetTester tester) async {
       build(preChatEnabled: true);
       await pump(tester);
@@ -287,7 +291,8 @@ void main() {
       expect(cubit.state.activeSurface, isA<PreChatSurface>());
     });
 
-    testWidgets('the report form survives a session tick that would '
+    testWidgets(
+        'the report form survives a session tick that would '
         'otherwise raise the pre-chat gate', (WidgetTester tester) async {
       build(preChatEnabled: true);
       await pump(tester);
