@@ -26,6 +26,7 @@ import '../state/chat_widget_cubit.dart';
 import '../state/chat_widget_state.dart';
 import '../surfaces/product_surface_slot.dart';
 import 'attachments/attachments.dart';
+import 'consent/consent.dart';
 import 'csat/csat.dart';
 import 'message_list/message_list.dart';
 import 'pre_chat/pre_chat.dart';
@@ -68,6 +69,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
     return BlocBuilder<ChatWidgetCubit, ChatWidgetState>(
       builder: (BuildContext context, ChatWidgetState state) {
         final ChatWidgetCubit cubit = context.read<ChatWidgetCubit>();
+        // Derived ONCE and read twice below — by the notice and by the
+        // composer it gates. Two derivations of "is consent in force" is how
+        // a notice ends up on screen above a composer that still works, or a
+        // composer held shut behind a notice that renders nothing.
+        final bool consentIsGating = consentGating(state.config);
 
         // The surfaces that have landed are dispatched here. The rest
         // (offline, report) arrive with the nodes that build them and add
@@ -180,6 +186,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 attachmentBuilder: buildAttachmentBubble,
               ),
             ),
+            ConsentNotice(
+              gating: consentIsGating,
+              agreed: state.consentAgreed,
+              // Empty-safe: `consentGating` is already false for a merchant
+              // who wrote nothing, so this string is only ever read when
+              // there is something in it.
+              text: state.config.consentText ?? '',
+              onAgree: cubit.agreeToConsent,
+            ),
             SafeArea(
               top: false,
               child: Padding(
@@ -203,6 +218,17 @@ class _ConversationScreenState extends State<ConversationScreen> {
                     : Composer(
                         onSend: cubit.sendMessage,
                         controller: _composer,
+                        // The consent gate, and the whole of it: a visitor
+                        // who has not agreed may read everything above and
+                        // send nothing, because sending is the act that
+                        // creates the record the notice is about. `enabled`
+                        // is a prop `Composer` already took and T13's
+                        // chip-submit guard already reads, so a suggestion
+                        // chip cannot route round this — see [_composer].
+                        enabled: consentSatisfied(
+                          gating: consentIsGating,
+                          agreed: state.consentAgreed,
+                        ),
                         // Nothing on the Flutter side drove the agent's
                         // typing indicator before this line — for typed
                         // characters as much as for an emoji insertion.

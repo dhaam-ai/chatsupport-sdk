@@ -27,6 +27,7 @@ import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
 import '../ui/composer_affordances/reply_target.dart';
+import '../ui/consent/consent.dart';
 import '../ui/csat/session_actions.dart';
 import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
@@ -73,7 +74,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     Scheduler scheduler = const SystemScheduler(),
     Duration reconnectInterval = kReconnectInterval,
     ChatSessionActions? sessionActions,
+    ConsentGate? consent,
   })  : _client = client,
+        _consent = consent ?? ConsentGate.unremembered(),
         _sessionActions = sessionActions,
         _screens = ChatScreens(
           initial: initialScreen ??
@@ -124,6 +127,13 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       // decided while the lookup was `CsatLoading` has to be decided again.
       _csatSub = machine.changes.listen(_onCsatVerdict);
     }
+    // Read ONCE, here, and applied when it lands — see
+    // [ChatWidgetState.consentAgreed] on why the gate is closed until then.
+    // Fire-and-forget because there is nothing for a caller to await: the
+    // answer arrives as a state change like any other, and a Cubit whose
+    // construction awaited I/O would be untestable by construction (the same
+    // reason [connect] is not called from here either).
+    unawaited(_restoreConsent());
   }
 
   final WidgetChatClient _client;
@@ -138,6 +148,15 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// The server-truth memory of who has rated what. Null alongside
   /// [_sessionActions], since it has nothing to ask.
   CsatMachine? _csat;
+
+  /// The remembered answer to the merchant's consent notice.
+  ///
+  /// Never null: a host that wired no durable store gets
+  /// [ConsentGate.unremembered], which honours the click for this widget's
+  /// lifetime and asks again next mount. That is the reference's own
+  /// documented behaviour for a browser with site data blocked, not a
+  /// degraded mode — so there is no "consent is off" case to branch on here.
+  final ConsentGate _consent;
 
   /// [_csat]'s verdicts, mirrored for [ChatWidgetState.csatBySession]. The
   /// `emit` override below is the only writer of the state half.
@@ -1005,6 +1024,37 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   void setMuted(bool muted) {
     if (state.muted == muted) return;
     emit(state.copyWith(muted: muted));
+  }
+
+  // ── Consent ───────────────────────────────────────────────────────────
+
+  /// Applies the one stored-consent read to the gate.
+  ///
+  /// Only ever opens the gate, never closes it: a read that lands after the
+  /// visitor has already pressed "I agree" must not take the agreement back,
+  /// and `false` is what the state already says. [ConsentGate.readAgreed]
+  /// resolves `false` rather than rejecting when the store cannot be reached,
+  /// which is the same as a first visit.
+  Future<void> _restoreConsent() async {
+    if (await _consent.readAgreed()) {
+      emit(state.copyWith(consentAgreed: true));
+    }
+  }
+
+  /// The visitor agreed to the merchant's notice.
+  ///
+  /// ── Honoured first, recorded second ─────────────────────────────────
+  ///
+  /// The gate opens on this frame and the write follows. A failed write does
+  /// NOT revoke the click: refusing to let somebody chat because their device
+  /// blocks app data would punish them for a setting they are entitled to,
+  /// and the cost of the failure is only that they are asked again next
+  /// visit. [ConsentGate.recordAgreed] therefore never rejects — it reports
+  /// and returns.
+  void agreeToConsent() {
+    if (state.consentAgreed) return;
+    emit(state.copyWith(consentAgreed: true));
+    unawaited(_consent.recordAgreed());
   }
   // ── Inbound ───────────────────────────────────────────────────────────
 

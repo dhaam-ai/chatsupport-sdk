@@ -44,6 +44,7 @@ class ChatWidgetState extends Equatable {
     this.csatBySession = const <String, CsatLookup>{},
     this.muted = false,
     this.replyingTo,
+    this.consentAgreed = false,
   });
 
   /// Starting point for a fresh [ChatWidgetCubit] — disconnected, the
@@ -350,6 +351,33 @@ class ChatWidgetState extends Equatable {
   /// [ChatWidgetCubit.sendMessage] and [ChatWidgetCubit.openConversation].
   final ConversationTopic? selectedTopic;
 
+  /// Whether THIS VISITOR has agreed to the merchant's consent notice.
+  ///
+  /// ── Gates the COMPOSER, not the widget ──────────────────────────────
+  ///
+  /// A visitor who has not agreed may still open the panel, read the
+  /// greeting and see who they would be talking to — none of which stores
+  /// anything about them. What they may not do is send, because sending is
+  /// the act that creates the record the notice is about. See
+  /// `ui/consent/consent_gate.dart` for the full statement of what the gate
+  /// claims.
+  ///
+  /// ── `false` is the fail-safe, not merely the initial value ───────────
+  ///
+  /// The remembered answer lives in [ChatStorage] and is read ONCE, at
+  /// [ChatWidgetCubit] construction. That read is async and every consumer
+  /// of this is a synchronous build, so between construction and the read
+  /// landing this reads `false` and the gate is CLOSED. A visitor briefly
+  /// seeing a notice they already dismissed is a smaller failure than a
+  /// conversation stored before the answer was known.
+  ///
+  /// This alone does NOT decide whether the composer is usable:
+  /// `consentSatisfied(gating:, agreed:)` combines it with whether the
+  /// merchant's notice is in force at all. A merchant who required nothing —
+  /// or who switched the toggle on and left the text empty — gates nobody,
+  /// whatever this says.
+  final bool consentAgreed;
+
   ChatWidgetState copyWith({
     ConnectionState? connectionState,
     RemoteConfig? config,
@@ -391,6 +419,11 @@ class ChatWidgetState extends Equatable {
     // reply target that cannot be cleared would make every message after the
     // first one silently a reply too.
     bool clearReplyingTo = false,
+    // No "clear" sentinel: consent is not withdrawn from inside the
+    // widget — there is no control that un-agrees, and the record is
+    // cleared by clearing the app's data — so `??` says everything it
+    // needs to.
+    bool? consentAgreed,
   }) {
     return ChatWidgetState(
       connectionState: connectionState ?? this.connectionState,
@@ -424,6 +457,7 @@ class ChatWidgetState extends Equatable {
       csatBySession: csatBySession ?? this.csatBySession,
       muted: muted ?? this.muted,
       replyingTo: clearReplyingTo ? null : (replyingTo ?? this.replyingTo),
+      consentAgreed: consentAgreed ?? this.consentAgreed,
     );
   }
 
@@ -455,5 +489,6 @@ class ChatWidgetState extends Equatable {
         csatBySession,
         muted,
         replyingTo,
+        consentAgreed,
       ];
 }

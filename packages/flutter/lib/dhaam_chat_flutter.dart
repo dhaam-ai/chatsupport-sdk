@@ -60,3 +60,4 @@ export 'src/ui/unavailable_view.dart';
 export 'src/ui/message_list/message_list.dart';
 export 'src/ui/session_picker/session_picker.dart';
 export 'src/storage/chat_storage.dart';
+export 'src/ui/consent/consent.dart';
