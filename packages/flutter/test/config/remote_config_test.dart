@@ -5,6 +5,7 @@
 // defensive-parsing cases, because they are cases a real published config was
 // once caught doing.
 
+import 'package:dhaam_chat/dhaam_chat.dart' show safeLinkUrl;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -329,6 +330,41 @@ void main() {
       test('a blank string is treated the same as absent', () {
         final config = parseRemoteConfig(_body(behaviour: {'supportEmail': '   '}));
         expect(config!.supportEmail, isNull);
+      });
+    });
+
+    group('privacyUrl', () {
+      test('reads the merchant policy', () {
+        final config = parseRemoteConfig(
+          _body(behaviour: {'privacyUrl': 'https://acme.test/privacy'}),
+        );
+        expect(config!.privacyUrl, 'https://acme.test/privacy');
+      });
+
+      test('absent when the merchant published none — the menu then offers no '
+          'Privacy item at all rather than linking nowhere', () {
+        expect(parseRemoteConfig(_body())!.privacyUrl, isNull);
+        expect(defaultRemoteConfig.privacyUrl, isNull);
+      });
+
+      test('a blank string is treated the same as absent', () {
+        expect(
+          parseRemoteConfig(_body(behaviour: {'privacyUrl': '   '}))!.privacyUrl,
+          isNull,
+        );
+      });
+
+      test('an unsafe scheme is kept VERBATIM here and refused at the link', () {
+        // The parse deliberately does not validate: `safeLinkUrl` is applied
+        // by the code that navigates, so there is exactly one allowlist and
+        // it sits where the href is built. A parse that silently dropped this
+        // would make the menu look correct while moving the security
+        // decision somewhere nobody reads.
+        final config = parseRemoteConfig(
+          _body(behaviour: {'privacyUrl': 'javascript:alert(1)'}),
+        );
+        expect(config!.privacyUrl, 'javascript:alert(1)');
+        expect(safeLinkUrl(config.privacyUrl!), isNull);
       });
     });
   });

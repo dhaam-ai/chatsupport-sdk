@@ -42,6 +42,9 @@ export 'src/ui/composer_affordances/composer_affordances.dart';
 // surface.
 export 'src/ui/csat/csat.dart';
 export 'src/ui/conversation_screen.dart';
+// 'header.dart' is itself a barrel over the header module (see its header),
+// so this one line is the whole menu/identity/chime/transcript/report surface.
+export 'src/ui/header/header.dart';
 export 'src/ui/hero_header.dart';
 export 'src/ui/home_screen.dart';
 export 'src/ui/image_safety.dart';

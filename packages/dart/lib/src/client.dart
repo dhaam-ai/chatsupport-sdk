@@ -411,6 +411,12 @@ class ChatClient {
     MessageType type = MessageType.text,
     String? replyToMessageId,
     AttachmentMetadata? attachment,
+    // Forwarded, not dropped. `messageSendPayload` has always declared this
+    // field; this method simply never passed it, so a caller with structured
+    // context to attach (the pre-chat answers a conversation is opened with,
+    // say) had no way to get it onto the frame and the optimistic echo below
+    // described a frame that was never sent. Optional and omitted when null,
+    // so no existing caller changes behaviour. (Orchestrator decision D26.)
     Map<String, Object?>? metadata,
   }) {
     // The envelope id IS the permanent message id (D1), so it is minted by

@@ -40,6 +40,8 @@ class FakeWidgetChatClient implements WidgetChatClient {
   /// Every `session.closed` a test pushed, oldest first.
   final StreamController<SessionClosed> _sessionClosed =
       StreamController<SessionClosed>.broadcast();
+  final StreamController<AgentEvent> _agentEvents =
+      StreamController<AgentEvent>.broadcast();
   final List<String?> markReadCalls = <String?>[];
 
   /// How many outbound typing signals went out.
@@ -81,6 +83,9 @@ class FakeWidgetChatClient implements WidgetChatClient {
 
   @override
   Stream<SessionClosed> get sessionClosed => _sessionClosed.stream;
+
+  @override
+  Stream<AgentEvent> get agentEvents => _agentEvents.stream;
 
   @override
   ChatMessage sendMessage(
@@ -142,8 +147,14 @@ class FakeWidgetChatClient implements WidgetChatClient {
         SessionClosed(sessionId: sessionId, closeReason: closeReason),
       );
 
+  /// One `agent.joined`/`agent.left` frame. Both arrive as a bare [HandledBy]
+  /// on the same stream — see `WidgetChatClient.agentEvents` on why that means
+  /// this cannot say which of the two it was.
+  void emitAgentEvent(AgentEvent event) => _agentEvents.add(event);
+
   Future<void> dispose() async {
     await _sessionClosed.close();
+    await _agentEvents.close();
     await _reconnecting.close();
     await _connectionStates.close();
     await _messages.close();

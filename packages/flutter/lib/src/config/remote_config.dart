@@ -220,6 +220,7 @@ class RemoteConfig extends Equatable {
     required this.transcriptEmail,
     required this.consentRequired,
     required this.consentText,
+    required this.privacyUrl,
     required this.supportEmail,
     required this.handoffKeywords,
     required this.reportIssue,
@@ -269,6 +270,20 @@ class RemoteConfig extends Equatable {
   final bool transcriptEmail;
   final bool consentRequired;
   final String? consentText;
+
+  /// `behaviour.privacyUrl` — the merchant's own policy page, offered as the
+  /// Privacy item in the conversation header's menu.
+  ///
+  /// Absent HIDES that item rather than linking nowhere — the rule every item
+  /// in that menu follows, and the reason this field exists at all: the menu
+  /// has no other way to ask whether the merchant published a policy.
+  ///
+  /// Kept as the raw merchant-supplied string, NOT pre-validated here. It is
+  /// read through `safeLinkUrl` at the one place it lands in a link, so the
+  /// allowlist is applied by the code that navigates rather than by the code
+  /// that parses — the same split `brandingUrl` above already has, and the
+  /// reason a `javascript:` policy URL is unreachable rather than unlikely.
+  final String? privacyUrl;
 
   /// `behaviour.supportEmail` — where a visitor goes when the chat service
   /// cannot be reached at all. Absent shows no fallback rather than a guess —
@@ -328,6 +343,7 @@ class RemoteConfig extends Equatable {
         transcriptEmail,
         consentRequired,
         consentText,
+        privacyUrl,
         supportEmail,
         handoffKeywords,
         reportIssue,
@@ -385,6 +401,9 @@ const RemoteConfig defaultRemoteConfig = RemoteConfig(
   transcriptEmail: false,
   consentRequired: false,
   consentText: null,
+  // No policy published, so the menu offers no Privacy item. An unreadable
+  // config cannot invent a URL to send a customer to.
+  privacyUrl: null,
   supportEmail: null,
   handoffKeywords: <String>[],
   // Off, like every other surface this default touches: a widget whose
@@ -625,6 +644,7 @@ RemoteConfig? parseRemoteConfig(Object? body) {
       defaultRemoteConfig.consentRequired,
     ),
     consentText: readString(behaviour, 'consentText'),
+    privacyUrl: readString(behaviour, 'privacyUrl'),
     supportEmail: readString(behaviour, 'supportEmail'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
     reportIssue:

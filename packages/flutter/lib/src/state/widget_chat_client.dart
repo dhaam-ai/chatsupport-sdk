@@ -117,6 +117,26 @@ abstract interface class WidgetChatClient {
   /// Not derivable from [sessions] at all: the reason rides on this frame and
   /// on nothing else.
   Stream<SessionClosed> get sessionClosed;
+
+  /// Agent arrival and departure (§7.3).
+  ///
+  /// ── What this stream can and cannot tell you ────────────────────────────
+  ///
+  /// `ChatClient` decodes `agent.joined` and `agent.left` through the SAME
+  /// [HandledBy] decoder onto the SAME stream, so an event says WHO but not
+  /// WHETHER they arrived or left. That is deliberate on its side — one
+  /// canonical identity shape, so a header and a toast can never disagree
+  /// about a name — but it means this stream alone cannot drive an identity
+  /// header: reading an `agent.left` as an arrival would put the departed
+  /// agent's name back on the header at the moment they walked away.
+  ///
+  /// The authority for "who is handling this conversation" is therefore
+  /// [SessionSnapshot.status] + [SessionSnapshot.handledBy], read through
+  /// `isHandledByCurrent` — which is exactly what the reference does too
+  /// (`widget.ts` folds both frames into its session state and the header
+  /// renders from that, never from the frames). Use this stream for things
+  /// that are about the EVENT rather than the state: a chime, a toast.
+  Stream<AgentEvent> get agentEvents;
 }
 
 /// Wraps a real [ChatClient] to satisfy [WidgetChatClient] by delegation.
@@ -180,4 +200,7 @@ class ChatClientAdapter implements WidgetChatClient {
 
   @override
   Stream<SessionClosed> get sessionClosed => _client.sessionClosed;
+
+  @override
+  Stream<AgentEvent> get agentEvents => _client.agentEvents;
 }

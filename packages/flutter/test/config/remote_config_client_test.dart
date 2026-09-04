@@ -147,6 +147,7 @@ void main() {
         transcriptEmail: false,
         consentRequired: false,
         consentText: null,
+        privacyUrl: null,
         supportEmail: null,
         handoffKeywords: const <String>[],
         reportIssue: false,
