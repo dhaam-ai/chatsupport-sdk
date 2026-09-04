@@ -32,10 +32,14 @@
 library;
 
 import 'client.dart';
+import 'errors.dart';
 import 'internal/envelope.dart';
+import 'internal/json_reading.dart';
 import 'internal/limits.dart';
+import 'internal/session_decode.dart';
 import 'internal/session_summary_decode.dart';
 import 'models/csat.dart';
+import 'models/session.dart';
 import 'models/session_summary.dart';
 
 /// Route names, exactly as they reach a [RestMalformedResponseException].
@@ -47,6 +51,9 @@ import 'models/session_summary.dart';
 const String _kListSessionsRoute = 'GET /chat/sessions/customer';
 const String _kSubmitCsatRoute = 'POST /chat/sessions/{sessionId}/csat';
 const String _kGetCsatRoute = 'GET /chat/sessions/{sessionId}/csat';
+const String _kCloseRoute = 'POST /chat/sessions/{sessionId}/close';
+const String _kReopenRoute = 'POST /chat/sessions/{sessionId}/reopen';
+const String _kFullSessionRoute = 'GET /chat/sessions/{sessionId}/full';
 
 /// The session and CSAT surface of chat-service, on [RestClient].
 ///
@@ -56,6 +63,56 @@ const String _kGetCsatRoute = 'GET /chat/sessions/{sessionId}/csat';
 /// survives an `export`" is a language property worth pinning rather than
 /// assuming.
 extension SessionApi on RestClient {
+  /// `POST /chat/sessions/{id}/close`, then a read-back of
+  /// `GET /chat/sessions/{id}/full` — TWO round trips, never one.
+  ///
+  /// ── Do not collapse this ────────────────────────────────────────────────
+  ///
+  /// The mutating route returns a RECEIPT (`{sessionId, status, closedAt}`),
+  /// not the enriched session a caller needs: no assigned agent, no customer
+  /// profile, no ticket. A caller handed the receipt would render a session
+  /// whose nameplate and ticket link had silently emptied at exactly the
+  /// moment the conversation ended.
+  ///
+  /// ── The read-back retries; the MUTATION never does ──────────────────────
+  ///
+  /// Only the `GET` is retried, up to [kReadBackAttempts] times, and only
+  /// while the failure says a retry could plausibly differ. The POST is issued
+  /// exactly once because closing is NOT idempotent: a second one re-runs the
+  /// status update, re-marks participants as having left, and emits both a
+  /// fresh "chat closed" SYSTEM message and another Kafka event — all of it
+  /// visible in the customer's own transcript.
+  ///
+  /// There is no delay between attempts. This package has no clock seam, and
+  /// adding one would put an untestable timer inside an adapter whose
+  /// scheduling belongs to whoever owns the retry policy. The attempts cover
+  /// what is worth covering — one dropped connection, one 5xx from a replica
+  /// that has not caught up — and anything more persistent is reported rather
+  /// than waited on.
+  ///
+  /// Throws [RestSessionReadBackException] when every attempt fails. That is a
+  /// DIFFERENT outcome from a failed close, and the two demand opposite
+  /// recoveries: the session HAS changed on the server, so retrying the whole
+  /// action is specifically wrong, while re-issuing just this read is
+  /// specifically right.
+  Future<RestChatSession> closeSession(String sessionId) =>
+      _mutateThenReadBack(this, 'close', sessionId, _kCloseRoute);
+
+  /// `POST /chat/sessions/{id}/reopen`, then the same read-back
+  /// [closeSession] performs.
+  ///
+  /// The id that gets read back comes from the mutation's own RECEIPT, not
+  /// from the request: reopen may converge onto a different, already-active
+  /// session and return that one's id. Re-reading the requested id would then
+  /// hand back the wrong session — and the convergence stays inside the
+  /// authorization boundary, so the id that comes back is safe to follow.
+  ///
+  /// A converged id is NOT an error. A caller that treated a differing id as
+  /// one would fail the exact case the route added convergence for: a customer
+  /// reopening a conversation that another tab has already reopened.
+  Future<RestChatSession> reopenSession(String sessionId) =>
+      _mutateThenReadBack(this, 'reopen', sessionId, _kReopenRoute);
+
   /// `POST /chat/sessions/{id}/csat` — an upsert, safe to call again for the
   /// same session.
   ///
@@ -210,6 +267,99 @@ extension SessionApi on RestClient {
     }
     return sessions;
   }
+}
+
+/// Runs one non-idempotent mutation, then reads back the session it settled on.
+///
+/// Free functions rather than private members of [SessionApi] because that is
+/// what the extension's public surface should be: the five methods the
+/// contract names, and nothing a reader has to skip past to find them.
+Future<RestChatSession> _mutateThenReadBack(
+  RestClient client,
+  String action,
+  String sessionId,
+  String route,
+) async {
+  final Object? body = await client.request(
+    'POST',
+    '/chat/sessions/${_segment(sessionId)}/$action',
+  );
+
+  // Everything from here on is AFTER the server-side effect has happened.
+  final Map<String, Object?> receipt = unwrapEnvelope(body, route);
+
+  // The receipt's own id, not the requested one — reopen may converge onto a
+  // different, already-active session (`chat.routes.ts:297-308`).
+  //
+  // `optionalStringValue` folds `''` into absent, one notch stricter than TS's
+  // `typeof receipt.sessionId === 'string'`, which would accept an empty
+  // string and go on to read back `/chat/sessions//full` — a URL that
+  // addresses no session at all. Falling back to the requested id on a blank
+  // receipt is the only reading that can still be right.
+  final String settled = optionalStringValue(receipt['sessionId']) ?? sessionId;
+
+  return _readBackAfterMutation(client, settled);
+}
+
+/// Reads the session back, retrying the GET and ONLY the GET.
+///
+/// The retry surface is deliberately this one read. See [SessionApi.closeSession]
+/// for why the mutation above it is never re-issued.
+Future<RestChatSession> _readBackAfterMutation(
+  RestClient client,
+  String sessionId,
+) async {
+  RestException? failure;
+
+  for (int attempt = 1; attempt <= kReadBackAttempts; attempt += 1) {
+    try {
+      return await _readFullSession(client, sessionId);
+    } on RestException catch (error) {
+      // ── ONLY this package's own verdicts are caught ────────────────────
+      //
+      // A `TokenUnavailableError` from the token provider, or an `ArgumentError`
+      // from a caller bug, propagates unwrapped. The first is deliberate:
+      // `RestSessionReadBackException.cause` is typed to this package's own
+      // taxonomy, and laundering an auth failure into it would claim this
+      // package knows the mutation's fate when what it actually knows is that
+      // it has no credential. The COST is real and worth stating — a token
+      // that expires in the window between the POST and the GET reaches the
+      // caller as an ordinary auth failure, with no signal that a close
+      // already happened. Narrow, but not zero.
+      failure = error;
+
+      // A malformed body is contract drift, not a blip: no retry can reshape
+      // a response. `retryable` is the sealed base's own answer, so this stays
+      // one line where TS maintains a four-branch `isWorthRetrying` chain.
+      if (!error.retryable) break;
+    }
+  }
+
+  // Unreachable while kReadBackAttempts >= 1 — the loop either returned or
+  // assigned. Asserted rather than assumed, so a future zero would fail loudly
+  // here instead of silently skipping the read-back.
+  assert(failure != null, 'kReadBackAttempts must be at least 1');
+
+  throw RestSessionReadBackException(sessionId: sessionId, cause: failure!);
+}
+
+/// One `GET /chat/sessions/{id}/full`, projected.
+///
+/// `/full` answers `{session, messages, participants, hasMore}`; only the
+/// session is read. History travels through its own paginated seam, and
+/// handing a caller a second, differently-shaped copy of the same messages is
+/// how the two come to disagree.
+Future<RestChatSession> _readFullSession(
+  RestClient client,
+  String sessionId,
+) async {
+  final Object? body = await client.request(
+    'GET',
+    '/chat/sessions/${_segment(sessionId)}/full',
+  );
+
+  final Map<String, Object?> data = unwrapEnvelope(body, _kFullSessionRoute);
+  return decodeRestChatSession(data['session'], _kFullSessionRoute);
 }
 
 /// Percent-encodes a session id into a single path segment.

@@ -19,6 +19,7 @@ import 'package:dhaam_chat_rest/dhaam_chat_rest.dart' as barrel;
 import 'package:dhaam_chat_rest/src/client.dart';
 import 'package:dhaam_chat_rest/src/errors.dart';
 import 'package:dhaam_chat_rest/src/models/csat.dart';
+import 'package:dhaam_chat_rest/src/models/session.dart';
 import 'package:dhaam_chat_rest/src/models/session_summary.dart';
 import 'package:dhaam_chat_rest/src/sessions.dart';
 import 'package:http/http.dart' as http;
@@ -127,7 +128,492 @@ Map<String, Object?> _ratedStatus([
 Map<String, Object?> _sentBody(http.Request request) =>
     jsonDecode(request.body) as Map<String, Object?>;
 
+/// A raw session row as `GET /chat/sessions/{id}/full` nests it under
+/// `session` — integer enums, a bare `ticketId`, enrichment blocks with no ids
+/// of their own.
+Map<String, Object?> _fullSession([
+  Map<String, Object?> overrides = const <String, Object?>{},
+]) =>
+    <String, Object?>{
+      'success': true,
+      'data': <String, Object?>{
+        'session': <String, Object?>{
+          'id': 's1',
+          'tenantId': 't1',
+          'customerId': 'cust-1',
+          'assignedAgentId': 'agent-9',
+          'ticketId': 'TICK-7',
+          'mode': 2,
+          'status': 3,
+          'priority': 2,
+          'closedAt': null,
+          'createdAt': '2026-08-19T09:00:00.000Z',
+          'updatedAt': '2026-08-19T09:30:00.000Z',
+          // enrichSessionWithUsers attaches these — with no id of their own.
+          'assignedAgent': <String, Object?>{
+            'displayName': 'Ada',
+            'email': 'ada@x.test',
+            'avatarUrl': null,
+            'isOnline': true,
+          },
+          'customer': <String, Object?>{
+            'displayName': 'Bob',
+            'email': null,
+            'avatarUrl': null,
+            'isOnline': false,
+          },
+          ...overrides,
+        },
+        'messages': <Object?>[],
+        'participants': <Object?>[],
+        'hasMore': false,
+      },
+    };
+
+/// Routes a two-request action: the mutation receipt, then the `/full`
+/// read-back.
+MockClient _sessionActionMock(
+  _Recorder recorder, {
+  Map<String, Object?> fullOverrides = const <String, Object?>{},
+  String receiptId = 's1',
+}) =>
+    recorder.client(
+      (http.Request request) => request.url.path.endsWith('/full')
+          ? _json(_fullSession(fullOverrides))
+          : _json(<String, Object?>{
+              'success': true,
+              'data': <String, Object?>{'sessionId': receiptId, 'status': 4},
+            }),
+    );
+
 void main() {
+  group('session actions — close and reopen', () {
+    test('posts the mutation, then reads the session back from /full',
+        () async {
+      // TWO round trips on purpose: the mutating routes return only a receipt
+      // (`{sessionId, status, closedAt}`), and a caller needs the enriched
+      // session — assigned agent, customer profile, ticket. Order is asserted,
+      // not membership: a read-back that ran BEFORE its mutation would satisfy
+      // a set comparison and be exactly wrong.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(_sessionActionMock(recorder));
+
+      await client.reopenSession('s1');
+      await client.closeSession('s1');
+
+      expect(recorder.trace, <String>[
+        'POST /chat-services/api/v1/chat/sessions/s1/reopen',
+        'GET /chat-services/api/v1/chat/sessions/s1/full',
+        'POST /chat-services/api/v1/chat/sessions/s1/close',
+        'GET /chat-services/api/v1/chat/sessions/s1/full',
+      ]);
+    });
+
+    test('returns a fully-populated session, not a receipt', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(_sessionActionMock(recorder));
+
+      final RestChatSession session = await client.closeSession('s1');
+
+      expect(session.id, 's1');
+      expect(session.status, ChatStatus.assigned);
+      expect(session.mode, ChatMode.human);
+      expect(session.createdAt, DateTime.utc(2026, 8, 19, 9));
+      expect(session.closedAt, isNull);
+      expect(session.assignedAgent?.participantId, 'agent-9');
+      expect(session.assignedAgent?.displayName, 'Ada');
+      expect(session.assignedAgent?.avatarUrl, isNull);
+      expect(session.customer?.participantId, 'cust-1');
+      expect(session.customer?.displayName, 'Bob');
+      expect(session.ticket?.id, 'TICK-7');
+      expect(session.ticket?.url, isNull);
+    });
+
+    test('never carries the email /full actually returns', () async {
+      // The row above DOES contain `ada@x.test`. Nothing renders this field,
+      // and the widget this SDK serves runs inside third-party pages whose
+      // session-replay tools serialize application state wholesale — so
+      // populating it would put a real customer address into a store built for
+      // someone else's page to record, in exchange for zero feature.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(_sessionActionMock(recorder));
+
+      final RestChatSession session = await client.closeSession('s1');
+
+      expect(session.assignedAgent?.email, isNull);
+      expect(session.customer?.email, isNull);
+    });
+
+    test('reads back the session reopen converged on, not the one requested',
+        () async {
+      // reopen may converge onto a different, already-active session and
+      // returns THAT id; re-reading the requested one would return the wrong
+      // session. The convergence stays inside the authorization boundary, so
+      // the returned id is safe to follow — and a differing id is NOT an error.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        _sessionActionMock(
+          recorder,
+          fullOverrides: <String, Object?>{'id': 's2'},
+          receiptId: 's2',
+        ),
+      );
+
+      final RestChatSession session = await client.reopenSession('s1');
+
+      expect(recorder.trace, <String>[
+        'POST /chat-services/api/v1/chat/sessions/s1/reopen',
+        'GET /chat-services/api/v1/chat/sessions/s2/full',
+      ]);
+      expect(session.id, 's2');
+    });
+
+    test('falls back to the requested id when the receipt names none',
+        () async {
+      // TS reads any string, so an EMPTY one would build `/chat/sessions//full`
+      // — a URL addressing no session. Folding `''` into absent is the only
+      // reading that can still be right (one notch stricter, same shape as the
+      // apiUrl trim in §5.5).
+      for (final Object? receiptId in <Object?>[null, '', 42]) {
+        final _Recorder recorder = _Recorder();
+        final RestClient client = _clientOver(
+          recorder.client(
+            (http.Request request) => request.url.path.endsWith('/full')
+                ? _json(_fullSession())
+                : _json(<String, Object?>{
+                    'success': true,
+                    'data': <String, Object?>{'sessionId': receiptId},
+                  }),
+          ),
+        );
+
+        await client.closeSession('s1');
+
+        expect(
+          recorder.trace.last,
+          'GET /chat-services/api/v1/chat/sessions/s1/full',
+          reason: 'a receipt sessionId of ${jsonEncode(receiptId)} names no '
+              'session to follow',
+        );
+      }
+    });
+
+    test('decodes the integer status and ISO closedAt of a closed session',
+        () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        _sessionActionMock(
+          recorder,
+          fullOverrides: <String, Object?>{
+            'status': 4,
+            'closedAt': '2026-08-19T11:00:00.000Z',
+          },
+        ),
+      );
+
+      final RestChatSession session = await client.closeSession('s1');
+
+      expect(session.status, ChatStatus.closed);
+      expect(session.closedAt, DateTime.utc(2026, 8, 19, 11));
+    });
+
+    test(
+        'rejects an unenveloped /full response rather than returning a hollow '
+        'session', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (http.Request request) => request.url.path.endsWith('/full')
+              ? _json(<String, Object?>{
+                  'session': <String, Object?>{
+                    'id': 's1',
+                    'status': 3,
+                    'mode': 2,
+                  },
+                })
+              : _json(<String, Object?>{
+                  'success': true,
+                  'data': <String, Object?>{'sessionId': 's1'},
+                }),
+        ),
+      );
+
+      // Surfaced as a READ-BACK failure — the mutation still happened — with
+      // the underlying verdict retained rather than interpolated into a string.
+      await expectLater(
+        client.closeSession('s1'),
+        throwsA(
+          isA<RestSessionReadBackException>()
+              .having(
+                (RestSessionReadBackException e) => e.sessionId,
+                'sessionId',
+                's1',
+              )
+              .having(
+                (RestSessionReadBackException e) => e.cause,
+                'cause',
+                isA<RestMalformedResponseException>(),
+              ),
+        ),
+      );
+    });
+
+    test('reports a failed read-back distinguishably from a failed mutation',
+        () async {
+      // The server HAS closed the session by this point. A caller that treats
+      // this like a failed close is wrong in both directions: it will either
+      // leave the UI open on a closed session, or replay a non-idempotent POST.
+      //
+      // TS spells this with a `sessionMutationApplied = true` boolean, so
+      // `@dhaam-ccrm/core` — which may not import `@dhaam-ccrm/rest` — can
+      // recognise it structurally. Dart has no such layer to protect: every
+      // consumer already imports this package, so the TYPE is the marker, and
+      // unlike a duck-typed boolean it is statically checked (§5.6).
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (http.Request request) => request.url.path.endsWith('/full')
+              ? _json(
+                  <String, Object?>{
+                    'error': <String, Object?>{
+                      'code': 'INTERNAL',
+                      'message': 'boom',
+                    },
+                  },
+                  500,
+                )
+              : _json(<String, Object?>{
+                  'success': true,
+                  'data': <String, Object?>{'sessionId': 's1'},
+                }),
+        ),
+      );
+
+      final Object error = await client
+          .closeSession('s1')
+          .then<Object>((RestChatSession _) => 'did not throw')
+          .onError<RestException>((RestException e, _) => e);
+
+      expect(error, isA<RestSessionReadBackException>());
+      final RestSessionReadBackException readBack =
+          error as RestSessionReadBackException;
+      expect(readBack.sessionId, 's1');
+      expect(readBack.cause, isA<RestApiException>());
+      expect((readBack.cause as RestApiException).status, 500);
+      // Retrying the WHOLE action is specifically wrong on receipt of this.
+      expect(readBack.retryable, isFalse);
+    });
+
+    test('retries the read-back GET and never re-issues the mutation',
+        () async {
+      // closeSession is NOT idempotent: a second POST re-runs the status
+      // update, re-marks participants as left, and emits another "chat closed"
+      // SYSTEM message plus another Kafka event — all visible to the customer.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (http.Request request) => request.url.path.endsWith('/full')
+              ? _json(
+                  <String, Object?>{
+                    'error': <String, Object?>{
+                      'code': 'INTERNAL',
+                      'message': 'boom',
+                    },
+                  },
+                  500,
+                )
+              : _json(<String, Object?>{
+                  'success': true,
+                  'data': <String, Object?>{'sessionId': 's1'},
+                }),
+        ),
+      );
+
+      await expectLater(
+        client.closeSession('s1'),
+        throwsA(isA<RestSessionReadBackException>()),
+      );
+
+      expect(
+        recorder.calls
+            .where((http.Request r) => r.method == 'POST')
+            .map((http.Request r) => r.url.path),
+        <String>['/chat-services/api/v1/chat/sessions/s1/close'],
+        reason: 'exactly one POST, however many times the read-back failed',
+      );
+      expect(
+        recorder.calls.where((http.Request r) => r.method == 'GET'),
+        hasLength(kReadBackAttempts),
+      );
+    });
+
+    test('succeeds when a retried read-back recovers', () async {
+      int fullCalls = 0;
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client((http.Request request) {
+          if (!request.url.path.endsWith('/full')) {
+            return _json(<String, Object?>{
+              'success': true,
+              'data': <String, Object?>{'sessionId': 's1'},
+            });
+          }
+          fullCalls += 1;
+          // A dropped connection on the first attempt — the case the retry
+          // budget exists for.
+          if (fullCalls == 1) throw const SocketLikeFailure();
+          return _json(_fullSession());
+        }),
+      );
+
+      final RestChatSession session = await client.closeSession('s1');
+
+      expect(session.id, 's1');
+      expect(fullCalls, 2);
+    });
+
+    test('does not retry a read-back whose body no retry could reshape',
+        () async {
+      // A malformed envelope is contract drift, not a blip. `retryable` on the
+      // sealed base answers this in one line, where TS maintains a four-branch
+      // `isWorthRetrying` chain every new error type must be added to by hand.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (http.Request request) => request.url.path.endsWith('/full')
+              ? _json(<String, Object?>{
+                  'session': <String, Object?>{'id': 's1'},
+                })
+              : _json(<String, Object?>{
+                  'success': true,
+                  'data': <String, Object?>{'sessionId': 's1'},
+                }),
+        ),
+      );
+
+      await expectLater(
+        client.closeSession('s1'),
+        throwsA(isA<RestSessionReadBackException>()),
+      );
+
+      expect(
+        recorder.calls.where((http.Request r) => r.method == 'GET'),
+        hasLength(1),
+      );
+    });
+
+    test('does not issue the read-back when the mutation itself fails',
+        () async {
+      // Nothing happened server-side, so there is nothing to read back and no
+      // read-back exception to raise: a plain API refusal, which is what tells
+      // a caller it is safe to retry the whole action.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(
+            <String, Object?>{
+              'error': <String, Object?>{
+                'code': 'SESSION_NOT_FOUND',
+                'message': 'nope',
+              },
+            },
+            404,
+          ),
+        ),
+      );
+
+      await expectLater(
+        client.closeSession('s1'),
+        throwsA(
+          isA<RestApiException>().having(
+            (RestApiException e) => e.code,
+            'code',
+            'SESSION_NOT_FOUND',
+          ),
+        ),
+      );
+      expect(recorder.calls, hasLength(1));
+    });
+
+    test(
+        'does not read back — or wrap — when the mutation receipt is '
+        'unenveloped', () async {
+      // The POST succeeded, so something DID happen server-side, but with no
+      // envelope there is no id to follow. Surfaced as a plain malformed
+      // response rather than a read-back failure: no read was attempted, and
+      // claiming one would misreport which half of the pair broke.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client((_) => _json(<String, Object?>{'sessionId': 's1'})),
+      );
+
+      await expectLater(
+        client.closeSession('s1'),
+        throwsA(isA<RestMalformedResponseException>()),
+      );
+      expect(recorder.calls, hasLength(1));
+    });
+
+    test(
+        'lets a token failure through unwrapped, rather than claiming to know '
+        'the mutation applied', () async {
+      // A deliberate, documented cost of typing `RestSessionReadBackException
+      // .cause` to this package's own taxonomy: a token that expires in the
+      // window between the POST and the GET reaches the caller as an ordinary
+      // auth failure, with no signal that a close already happened. Narrow —
+      // the provider answered milliseconds earlier for the POST — but real,
+      // and pinned here so it stays a decision on record rather than a
+      // surprise. Laundering it into a read-back failure would claim this
+      // package knows the mutation's fate when what it knows is that it has no
+      // credential.
+      final _Recorder recorder = _Recorder();
+      int tokenCalls = 0;
+      final RestClient client = RestClient(
+        apiUrl: 'https://chat.example.test',
+        publishableKey: _key,
+        getAccessToken: () async {
+          tokenCalls += 1;
+          if (tokenCalls == 1) return 'tok_abc';
+          throw const TokenUnavailableError('refresh failed');
+        },
+        httpClient: _sessionActionMock(recorder),
+      );
+
+      await expectLater(
+        client.closeSession('s1'),
+        throwsA(isA<TokenUnavailableError>()),
+      );
+      // The POST went out; the GET never did.
+      expect(recorder.trace, <String>[
+        'POST /chat-services/api/v1/chat/sessions/s1/close',
+      ]);
+    });
+
+    test('percent-encodes the session id on both round trips', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (http.Request request) => request.url.path.endsWith('/full')
+              ? _json(_fullSession())
+              : _json(<String, Object?>{
+                  'success': true,
+                  'data': <String, Object?>{'sessionId': 'a/b'},
+                }),
+        ),
+      );
+
+      await client.closeSession('a/b');
+
+      expect(
+        recorder.calls.map((http.Request r) => r.url.toString()),
+        <String>[
+          'https://chat.example.test/chat-services/api/v1/chat/sessions/a%2Fb/close',
+          'https://chat.example.test/chat-services/api/v1/chat/sessions/a%2Fb/full',
+        ],
+      );
+    });
+  });
+
   group('submitCsat', () {
     test('is ONE round trip, unlike reopen/close — no /full read-back',
         () async {
