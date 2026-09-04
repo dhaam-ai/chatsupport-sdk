@@ -1,0 +1,141 @@
+name: Dart and Flutter
+
+# Every PR and every push to main. Dart and Flutter packages must pass tests.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A superseded push should stop burning runners, but never cancel main.
+concurrency:
+  group: dart-flutter-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  # Test count floors (ratchets — raise deliberately, never lower to make red green).
+  # These catch regressions that DELETE tests. Counts verified by filtering out
+  # synthetic "loading <file>" testStart entries from --reporter json output,
+  # then comparing against --reporter compact final count (+N).
+  DART_TEST_FLOOR: '262'
+  FLUTTER_TEST_FLOOR: '365'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Dart and Flutter CI: analyze, format, test
+  # ---------------------------------------------------------------------------
+  dart-flutter:
+    name: Dart and Flutter
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Flutter 3.24.4 pins Dart 3.5.4 transitively
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.24.4
+          cache: true
+
+      # ---------------------------------------------------------------------------
+      # packages/dart: pure Dart package
+      # ---------------------------------------------------------------------------
+      - name: packages/dart - pub get
+        run: cd packages/dart && dart pub get
+
+      - name: packages/dart - analyze --fatal-infos
+        run: cd packages/dart && dart analyze --fatal-infos
+
+      - name: packages/dart - format --set-exit-if-changed
+        run: cd packages/dart && dart format --set-exit-if-changed .
+
+      - name: packages/dart - test
+        run: cd packages/dart && dart test --reporter json 2>&1 | tee /tmp/dart-test.json
+        continue-on-error: false
+
+      - name: 'packages/dart - verify test count'
+        run: |
+          # Filter out synthetic "loading <file>" entries from testStart;
+          # count only real test starts (consistent with --reporter compact)
+          ACTUAL_COUNT=$(grep '"type":"testStart"' /tmp/dart-test.json | grep -v '"name":"loading' | wc -l)
+          FLOOR=${{ env.DART_TEST_FLOOR }}
+          echo "packages/dart: $ACTUAL_COUNT tests (floor: $FLOOR)"
+          if [ "$ACTUAL_COUNT" -lt "$FLOOR" ]; then
+            echo "::error::packages/dart test count REGRESSION: $ACTUAL_COUNT < $FLOOR (tests deleted)"
+            exit 1
+          fi
+
+      # ---------------------------------------------------------------------------
+      # packages/dart_rest: Dart REST adapter package (created by T1)
+      # Skip if it doesn't exist yet — T1 is parallel, may not have landed
+      # ---------------------------------------------------------------------------
+      - name: packages/dart_rest - check if package exists
+        id: dart_rest_exists
+        run: |
+          if [ -d "packages/dart_rest" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: packages/dart_rest - pub get
+        if: steps.dart_rest_exists.outputs.exists == 'true'
+        run: cd packages/dart_rest && dart pub get
+
+      - name: packages/dart_rest - analyze --fatal-infos
+        if: steps.dart_rest_exists.outputs.exists == 'true'
+        run: cd packages/dart_rest && dart analyze --fatal-infos
+
+      - name: packages/dart_rest - format --set-exit-if-changed
+        if: steps.dart_rest_exists.outputs.exists == 'true'
+        run: cd packages/dart_rest && dart format --set-exit-if-changed .
+
+      - name: packages/dart_rest - test
+        if: steps.dart_rest_exists.outputs.exists == 'true'
+        run: cd packages/dart_rest && dart test --reporter json 2>&1 | tee /tmp/dart_rest-test.json
+
+      - name: packages/dart_rest - verify test count
+        if: steps.dart_rest_exists.outputs.exists == 'true'
+        run: |
+          ACTUAL_COUNT=$(jq '[.[] | select(.type == "testDone")] | length' /tmp/dart_rest-test.json)
+          echo "✓ packages/dart_rest: $ACTUAL_COUNT tests passed"
+
+      # ---------------------------------------------------------------------------
+      # packages/flutter: Flutter package
+      # ---------------------------------------------------------------------------
+      - name: packages/flutter - pub get
+        run: cd packages/flutter && flutter pub get
+
+      - name: packages/flutter - analyze --fatal-infos
+        run: cd packages/flutter && flutter analyze --fatal-infos
+
+      # NO format gate here yet, deliberately. `dart format` rewrites 44 of this
+      # package's 49 files at the commit this job was written against, before any
+      # parity work touched them: the package is hand-formatted wider than
+      # `dart format`'s fixed 80 columns, and Dart 3.5.4 has no `page_width`
+      # setting (that arrived in 3.7). No `--line-length` value formats it clean
+      # either -- measured 90 -> 38 files changed, 100 -> 35, 110 -> 27, 120 -> 22.
+      #
+      # So adopting the gate means one mechanical reformat of the whole package,
+      # which would collide with every parity node still in flight. Node T16 does
+      # that reformat as its own isolated commit and re-adds this step in the
+      # same commit. `packages/dart` and `packages/dart_rest` are both clean and
+      # DO gate above -- this exemption is one package wide, not a policy.
+
+      - name: packages/flutter - test
+        run: cd packages/flutter && flutter test --reporter json 2>&1 | tee /tmp/flutter-test.json
+        continue-on-error: false
+
+      - name: 'packages/flutter - verify test count'
+        run: |
+          # Filter out synthetic "loading <file>" entries from testStart;
+          # count only real test starts (consistent with --reporter compact)
+          ACTUAL_COUNT=$(grep '"type":"testStart"' /tmp/flutter-test.json | grep -v '"name":"loading' | wc -l)
+          FLOOR=${{ env.FLUTTER_TEST_FLOOR }}
+          echo "packages/flutter: $ACTUAL_COUNT tests (floor: $FLOOR)"
+          if [ "$ACTUAL_COUNT" -lt "$FLOOR" ]; then
+            echo "::error::packages/flutter test count REGRESSION: $ACTUAL_COUNT < $FLOOR (tests deleted)"
+            exit 1
+          fi

@@ -1,0 +1,11 @@
+# Standard Dart package ignores. The root .gitignore is Node/pnpm-only.
+
+.dart_tool/
+.packages
+build/
+
+# A library commits no lockfile — only an application should, per Dart's own
+# guidance (dart.dev/guides/libraries/private-files#pubspeclock). Pinning
+# exact transitive versions here would fight every app that depends on this
+# package rather than helping it.
+pubspec.lock
