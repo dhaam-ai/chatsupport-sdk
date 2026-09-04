@@ -51,6 +51,12 @@ void main() {
 
     expect(cubit.state.screen, ScreenName.conversation);
     expect(cubit.state.composingNew, isTrue);
+    // The getter and the slot are one fact — see ChatWidgetState.composingNew.
+    expect(cubit.state.activeSurface, isA<ComposingNewSurface>());
+    // A form opened from Home is a DETOUR, not a conversation: counting it
+    // would arm the pre-chat gate behind the very form already asking those
+    // questions.
+    expect(cubit.state.conversationOpened, isFalse);
   });
 
   testWidgets('no Recent conversation section when there are no summaries', (tester) async {
@@ -142,7 +148,11 @@ void main() {
 
     expect(cubit.state.screen, ScreenName.conversation);
     expect(client.sentContent, <String>['How long does shipping take?']);
-    // sendMessage clears composingNew once the first message actually sends.
+    // The new-conversation surface is never raised at all on this route: a
+    // tapped question is a customer asking one specific thing, not filling
+    // in a form — see ChatWidgetCubit.startCommonQuestion.
     expect(cubit.state.composingNew, isFalse);
+    expect(cubit.state.activeSurface, isNull);
+    expect(cubit.state.conversationOpened, isTrue);
   });
 }

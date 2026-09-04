@@ -113,6 +113,12 @@ void main() {
       cubit.startNewConversation();
       expect(cubit.state.screen, ScreenName.conversation);
       expect(cubit.state.composingNew, isTrue);
+      // `composingNew` is now a GETTER over the surface slot rather than a
+      // stored flag, so it and the slot cannot disagree. Asserted together
+      // here so a later node re-introducing a parallel field fails loudly
+      // instead of quietly recreating the duplication.
+      expect(cubit.state.activeSurface, isA<ComposingNewSurface>());
+      expect(cubit.surfaces.active, same(cubit.state.activeSurface));
       expect(cubit.state.canGoBack, isTrue);
     });
 
@@ -121,6 +127,10 @@ void main() {
       expect(fakeClient.joinedSessionIds, ['past-session-1']);
       expect(cubit.state.screen, ScreenName.conversation);
       expect(cubit.state.composingNew, isFalse);
+      expect(cubit.state.activeSurface, isNull);
+      // Deliberately putting a conversation on screen is what arms the
+      // pre-chat gate — see ChatWidgetState.conversationOpened.
+      expect(cubit.state.conversationOpened, isTrue);
     });
 
     test('back() returns to wherever navigation came from', () {
@@ -196,6 +206,10 @@ void main() {
       cubit.sendMessage('hi');
 
       expect(cubit.state.composingNew, isFalse);
+      // The form's task COMPLETED, so the slot went back through `release`
+      // and the customer stays on the conversation they just started.
+      expect(cubit.state.activeSurface, isNull);
+      expect(cubit.state.screen, ScreenName.conversation);
     });
 
     test('sendMessage while composing also clears a selected topic — its job for this compose is done', () {

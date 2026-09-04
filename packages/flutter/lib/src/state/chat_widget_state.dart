@@ -8,6 +8,8 @@ import 'package:equatable/equatable.dart';
 import '../config/remote_config.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
+import '../surfaces/product_surface_slot.dart';
+import '../ui/pre_chat/chat_identity.dart';
 
 class ChatWidgetState extends Equatable {
   const ChatWidgetState({
@@ -15,7 +17,6 @@ class ChatWidgetState extends Equatable {
     required this.config,
     required this.screen,
     required this.canGoBack,
-    required this.composingNew,
     required this.session,
     required this.messages,
     required this.isTyping,
@@ -25,6 +26,18 @@ class ChatWidgetState extends Equatable {
     required this.failedAttempts,
     required this.queuedCount,
     this.selectedTopic,
+    // ── Appended, never interleaved ────────────────────────────────────
+    //
+    // New fields go on the END of this list and default to their
+    // "nothing has happened yet" reading, so a later node adding one more
+    // does not reorder anybody else's arguments and a half-built state
+    // cannot put a form in front of anybody. Same discipline
+    // `SurfaceSyncInputs` states for its own defaults.
+    this.identity = ChatIdentity.guest,
+    this.activeSurface,
+    this.conversationOpened = false,
+    this.preChatAnswered = false,
+    this.preChatAnswers,
   });
 
   /// Starting point for a fresh [ChatWidgetCubit] — disconnected, the
@@ -33,13 +46,18 @@ class ChatWidgetState extends Equatable {
   factory ChatWidgetState.initial({
     RemoteConfig config = defaultRemoteConfig,
     ScreenName screen = ScreenName.home,
+    ChatIdentity identity = ChatIdentity.guest,
+    bool conversationOpened = false,
   }) =>
       ChatWidgetState(
         connectionState: ConnectionState.idle,
         config: config,
         screen: screen,
+        identity: identity,
+        // A host that mounted this straight into a conversation put one in
+        // front of the customer — see [conversationOpened].
+        conversationOpened: conversationOpened,
         canGoBack: false,
-        composingNew: false,
         session: null,
         messages: const <ChatMessage>[],
         isTyping: false,
@@ -60,17 +78,95 @@ class ChatWidgetState extends Equatable {
   /// Whether [ScreenName.conversation] should render the New Conversation
   /// composer (topic chips + textarea + Start) rather than a transcript.
   ///
-  /// ── Why this is not a fourth [ScreenName] ───────────────────────────
+  /// ── A GETTER over the slot, not a field ─────────────────────────────
+  ///
+  /// This used to be stored, set by [ChatWidgetCubit.startNewConversation]
+  /// and cleared in three other places. `activeSurface is
+  /// ComposingNewSurface` now says exactly the same thing, and two
+  /// derivations of one fact is precisely the bug the surface slot exists to
+  /// prevent — the same shape as the `isGuest` duplication that put the
+  /// pre-chat form on one path and not the other.
+  ///
+  /// Keeping it as a getter rather than deleting it is deliberate: it is the
+  /// name every screen already asks this question by, and the question is
+  /// still a real one. What is gone is the second place the answer could be
+  /// wrong. A parallel field alongside the slot would have re-created the
+  /// bug under a new name.
+  ///
+  /// ── Why "new conversation" is not a fourth [ScreenName] ─────────────
   ///
   /// `screens.ts`'s `ScreenName` union has exactly three members — home,
   /// messages, conversation — and this package matches it rather than
   /// inventing a fourth. "New conversation" is a MODE of the conversation
   /// screen, not a separate place in the back stack: the CTA on Home and a
   /// row on Messages both land on `ScreenName.conversation`, differing only
-  /// in whether they name a session to join. Set by [ChatWidgetCubit.
-  /// startNewConversation], cleared by [ChatWidgetCubit.openConversation]
-  /// and the moment a message actually sends.
-  final bool composingNew;
+  /// in whether they name a session to join.
+  bool get composingNew => activeSurface is ComposingNewSurface;
+
+  /// Who the host says this visitor is. See [ChatIdentity].
+  final ChatIdentity identity;
+
+  /// Whether nobody has vouched for this visitor.
+  ///
+  /// A FORWARDER to [ChatIdentity.isGuest], not a second derivation: the
+  /// discriminator itself is stated exactly once, on that getter. This exists
+  /// so the Cubit and the screens can ask without reaching through to the
+  /// identity object, and it must stay a one-line delegation — the moment it
+  /// grows a condition of its own there are two answers again.
+  bool get isGuest => identity.isGuest;
+
+  /// The surface standing IN PLACE OF the conversation, or null for none.
+  ///
+  /// A mirror of `ProductSurfaceSlot.active`, and only ever that:
+  /// [ChatWidgetCubit] overrides `emit` to stamp the live slot onto every
+  /// state it emits, so there is no path by which this and the slot can
+  /// disagree. Nothing outside that override may set it.
+  final ProductSurface? activeSurface;
+
+  /// Whether the customer has actually OPENED a conversation — as opposed to
+  /// merely having one on the server.
+  ///
+  /// chat-service mints or resumes a session on `connection.hello`, so a
+  /// brand-new visitor has a live, zero-message session as soon as the socket
+  /// acks: at mount, before the panel has ever been opened. "A session
+  /// exists" is therefore NOT the same question, and the pre-chat gate needs
+  /// this one. Asked the other, the gate went up at MOUNT and took the panel
+  /// straight to the conversation screen, leaving Home reachable only by
+  /// pressing Back off a form nobody had asked for.
+  ///
+  /// Set where the widget deliberately PUTS a conversation on screen — see
+  /// [ChatWidgetCubit.openConversation] and
+  /// [ChatWidgetCubit.startCommonQuestion], plus construction for a host that
+  /// named a session. A SURFACE taking the slot deliberately does not count
+  /// even though opening one navigates: a new-conversation form opened from
+  /// Home is a detour, and the customer is not looking at a conversation yet.
+  ///
+  /// Never reset to false. It records that something happened, and it stays
+  /// having happened.
+  final bool conversationOpened;
+
+  /// Whether the customer has answered or skipped the pre-chat questions, for
+  /// this widget's lifetime.
+  ///
+  /// Not persisted: a reload asks again, matching the reference. Set by the
+  /// gate's submit and its Skip, and by a new-conversation start that
+  /// actually SHOWED fields. Deliberately NOT set by a Common Question tap —
+  /// that is a customer asking one specific thing, not filling in a form, so
+  /// the questions are still owed.
+  final bool preChatAnswered;
+
+  /// The pre-chat answers from the conversation the customer most recently
+  /// started, or null when they were never asked.
+  ///
+  /// ── null and {} are different answers ───────────────────────────────
+  ///
+  /// null says the customer was never asked — no fields showed, because the
+  /// merchant configured none, or the toggle is off, or this visitor is not a
+  /// guest. An empty map says they WERE asked and left every optional
+  /// question blank. Those reach an agent as different facts, and collapsing
+  /// them blames the customer for the merchant's configuration. See
+  /// `preChatAnswersFor`, which is where the distinction is produced.
+  final Map<String, String>? preChatAnswers;
 
   /// The session this client is currently in, or `null` before the first
   /// `connection.ack`/`session.updated` snapshot lands.
@@ -131,7 +227,6 @@ class ChatWidgetState extends Equatable {
     RemoteConfig? config,
     ScreenName? screen,
     bool? canGoBack,
-    bool? composingNew,
     SessionSnapshot? session,
     List<ChatMessage>? messages,
     bool? isTyping,
@@ -147,13 +242,21 @@ class ChatWidgetState extends Equatable {
     // this is the sentinel wrapper `session`'s own comment says was not yet
     // worth adding, now that there is an actual caller for it.
     bool clearSelectedTopic = false,
+    ChatIdentity? identity,
+    ProductSurface? activeSurface,
+    // The slot's occupant genuinely goes back to null — every close, cancel
+    // and discard does it — so this one needs the same sentinel
+    // `selectedTopic` has, and for the same reason: `??` cannot say "null".
+    bool clearActiveSurface = false,
+    bool? conversationOpened,
+    bool? preChatAnswered,
+    Map<String, String>? preChatAnswers,
   }) {
     return ChatWidgetState(
       connectionState: connectionState ?? this.connectionState,
       config: config ?? this.config,
       screen: screen ?? this.screen,
       canGoBack: canGoBack ?? this.canGoBack,
-      composingNew: composingNew ?? this.composingNew,
       // `session` has no way to be reset to null through `??` — not needed
       // yet (nothing in this package clears it) and not worth a sentinel
       // wrapper ahead of an actual caller.
@@ -166,6 +269,14 @@ class ChatWidgetState extends Equatable {
       failedAttempts: failedAttempts ?? this.failedAttempts,
       queuedCount: queuedCount ?? this.queuedCount,
       selectedTopic: clearSelectedTopic ? null : (selectedTopic ?? this.selectedTopic),
+      identity: identity ?? this.identity,
+      activeSurface:
+          clearActiveSurface ? null : (activeSurface ?? this.activeSurface),
+      conversationOpened: conversationOpened ?? this.conversationOpened,
+      preChatAnswered: preChatAnswered ?? this.preChatAnswered,
+      // No "clear" sentinel: nothing resets this to "never asked" once the
+      // customer has been asked, so `??` says everything it needs to.
+      preChatAnswers: preChatAnswers ?? this.preChatAnswers,
     );
   }
 
@@ -175,7 +286,9 @@ class ChatWidgetState extends Equatable {
         config,
         screen,
         canGoBack,
-        composingNew,
+        // `composingNew` is deliberately absent: it is a getter over
+        // `activeSurface`, which is right below, so listing it would compare
+        // the same fact twice.
         session,
         messages,
         isTyping,
@@ -185,5 +298,10 @@ class ChatWidgetState extends Equatable {
         failedAttempts,
         queuedCount,
         selectedTopic,
+        identity,
+        activeSurface,
+        conversationOpened,
+        preChatAnswered,
+        preChatAnswers,
       ];
 }

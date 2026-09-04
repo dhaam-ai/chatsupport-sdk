@@ -61,6 +61,7 @@ void main() {
     await tester.pump();
     expect(cubit.state.screen, ScreenName.conversation);
     expect(cubit.state.composingNew, isTrue);
+    expect(cubit.state.activeSurface, isA<ComposingNewSurface>());
   });
 
   group('row heading resolution — subject, then topic, then handledBy, then a generic fallback', () {

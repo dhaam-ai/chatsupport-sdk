@@ -24,6 +24,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../config/remote_config.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
+import '../surfaces/product_surface_slot.dart';
+import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
 import 'widget_chat_client.dart';
 
@@ -48,17 +50,50 @@ import 'widget_chat_client.dart';
 const Duration kReconnectInterval = Duration(seconds: 3);
 
 class ChatWidgetCubit extends Cubit<ChatWidgetState> {
+  /// [sessionId] names a conversation the HOST wants this widget to open on.
+  ///
+  /// It decides two things at once, and they are the same fact: which screen
+  /// the panel starts on, and whether the customer is looking at a
+  /// conversation from the first frame — see
+  /// [ChatWidgetState.conversationOpened]. A host that names one has put a
+  /// conversation in front of the customer; one that does not has not, and
+  /// the pre-chat gate must not fire at mount for it.
+  ///
+  /// [initialScreen] still overrides the screen half for a host that wants
+  /// to land on Messages, and is what the existing callers pass.
   ChatWidgetCubit({
     required WidgetChatClient client,
     RemoteConfig initialConfig = defaultRemoteConfig,
-    ScreenName initialScreen = ScreenName.home,
+    ScreenName? initialScreen,
+    String? sessionId,
+    ChatIdentity identity = ChatIdentity.guest,
     Scheduler scheduler = const SystemScheduler(),
     Duration reconnectInterval = kReconnectInterval,
   })  : _client = client,
-        _screens = ChatScreens(initial: initialScreen),
+        _screens = ChatScreens(
+          initial: initialScreen ??
+              (sessionId == null
+                  ? ScreenName.home
+                  : ScreenName.conversation),
+        ),
         _scheduler = scheduler,
         _reconnectInterval = reconnectInterval,
-        super(ChatWidgetState.initial(config: initialConfig, screen: initialScreen)) {
+        super(
+          ChatWidgetState.initial(
+            config: initialConfig,
+            screen: initialScreen ??
+                (sessionId == null
+                    ? ScreenName.home
+                    : ScreenName.conversation),
+            identity: identity,
+            // The port of `initialScreenName === 'conversation'`. Landing on
+            // the conversation screen IS the customer being put in front of
+            // a conversation, however the host spelled it.
+            conversationOpened:
+                (initialScreen ?? ScreenName.home) == ScreenName.conversation ||
+                    sessionId != null,
+          ),
+        ) {
     _connectionSub = _client.connectionStates.listen(_onConnectionState);
     _messagesSub = _client.messages.listen(_onMessage);
     _sessionsSub = _client.sessions.listen(_onSession);
@@ -68,6 +103,34 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   final WidgetChatClient _client;
   final ChatScreens _screens;
+
+  /// The ONE slot a product surface can occupy.
+  ///
+  /// ── This wiring lands once ─────────────────────────────────────────
+  ///
+  /// The CSAT card, the session picker, the header menu's report form and
+  /// the consent/offline surfaces all stand in this same slot. They append
+  /// their own methods below and their own facts to [surfaceInputs]; none of
+  /// them creates a second slot, re-runs the sync on its own cadence, or
+  /// mirrors the occupant into state by hand. A second slot is two surfaces
+  /// live at once, which is the state `ProductSurfaceSlot` exists to make
+  /// unreachable.
+  final ProductSurfaceSlot _surfaces = ProductSurfaceSlot();
+
+  /// The slot, for a screen that needs to cancel or release a surface it
+  /// opened. Read-only access to the occupant is
+  /// [ChatWidgetState.activeSurface], which is what widgets should build
+  /// from — this is for the mutators.
+  ProductSurfaceSlot get surfaces => _surfaces;
+
+  /// The claim on the slot held by the new-conversation form, or null when it
+  /// is not up.
+  ///
+  /// Held rather than re-derived because a ticket carries the GENERATION it
+  /// was issued for: a form the customer opened, walked away from and opened
+  /// again must not be closed by the first one's stale callback. See
+  /// [SurfaceTicket].
+  SurfaceTicket? _composingTicket;
 
   /// `dhaam_chat`'s own timer seam, reused rather than reinvented: the whole
   /// reconnect cadence below is then drivable from a test with a
@@ -102,6 +165,73 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// caller cannot widen back to the surface this class was built to avoid
   /// depending on.
   WidgetChatClient get client => _client;
+
+  // ── Surfaces ──────────────────────────────────────────────────────────
+
+  /// Stamps the live slot onto every state this Cubit emits.
+  ///
+  /// ── Why an override rather than a call at each site ────────────────
+  ///
+  /// [ChatWidgetState.activeSurface] is a MIRROR of `_surfaces.active`, and a
+  /// mirror that can drift is exactly the bug collapsing `composingNew` into
+  /// the slot was meant to end. Doing it here means there is no emit that can
+  /// forget, and no later node can add one: the invariant holds by
+  /// construction rather than by everybody remembering.
+  ///
+  /// `emit` is `@protected` on `BlocBase` and this is a subclass, which is
+  /// what makes overriding it legitimate (checked against bloc 9.2.1's own
+  /// source, not assumed). Deduplication still works: `super.emit` compares
+  /// the TRANSFORMED value against the current state, so a tick that changes
+  /// neither the state nor the slot still emits nothing.
+  @override
+  void emit(ChatWidgetState state) {
+    super.emit(
+      state.copyWith(
+        activeSurface: _surfaces.active,
+        clearActiveSurface: _surfaces.active == null,
+      ),
+    );
+  }
+
+  /// The facts [ProductSurfaceSlot.sync] judges, gathered from their owners.
+  ///
+  /// Every one is derived where it lives and handed in — never re-derived
+  /// here. `isGuest` in particular comes from [ChatWidgetState.isGuest],
+  /// which forwards to the single derivation on [ChatIdentity]; asking
+  /// "profile == null" again here would be the second answer that put the
+  /// form on one path and not the other.
+  ///
+  /// **Later nodes widen this, they do not replace it.** `shouldCollectOffline`
+  /// and `csatCard` are left at their "nothing is due" defaults because the
+  /// facts behind them do not exist yet: business hours are the offline
+  /// module's and whether a rating is owed is the CSAT machine's. Each adds
+  /// its own line here.
+  SurfaceSyncInputs surfaceInputs() => SurfaceSyncInputs(
+        isGuest: state.isGuest,
+        preChatEnabled: state.config.preChatEnabled,
+        // Separate from the toggle on purpose: they are two independent
+        // console controls, and gating on the toggle alone raised an empty
+        // form.
+        hasPreChatFields: state.config.preChatFields.isNotEmpty,
+        preChatAnswered: state.preChatAnswered,
+        conversationOpened: state.conversationOpened,
+        hasSession: state.session != null,
+        hasMessages: state.messages.isNotEmpty,
+      );
+
+  /// Re-derives what belongs in the slot and repaints.
+  ///
+  /// Called from every tick that changes a fact [surfaceInputs] reads —
+  /// session, messages, config — and after anything that changes
+  /// `conversationOpened` or `preChatAnswered`. Cheap and idempotent: the
+  /// slot only reports a change when the answer actually differs, so a sync
+  /// that finds nothing new rebuilds nothing.
+  void _syncSurfaces() {
+    _surfaces.sync(surfaceInputs());
+    // Unconditional: the override above is what carries the slot into state,
+    // and `super.emit`'s own equality check is what suppresses a no-op.
+    emit(state);
+  }
 
   // ── Boot ──────────────────────────────────────────────────────────────
 
@@ -158,7 +288,12 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   // ── Config ────────────────────────────────────────────────────────────
 
-  void applyRemoteConfig(RemoteConfig config) => emit(state.copyWith(config: config));
+  void applyRemoteConfig(RemoteConfig config) {
+    emit(state.copyWith(config: config));
+    // A publish can turn the merchant's pre-chat questions on, or add the
+    // first one to an empty list — both change what belongs in the slot.
+    _syncSurfaces();
+  }
 
   /// Supplies the Messages/Home screens' session list. See
   /// [ChatSessionSummary]'s header on why this Cubit cannot populate this
@@ -179,36 +314,120 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   }
 
   /// The Home CTA, or the Messages screen's "New conversation" button.
-  /// Composes fresh rather than opening a past session — see
-  /// [ChatWidgetState.composingNew]. Clears any topic left selected from a
-  /// PREVIOUS compose that never sent, so returning to this screen a second
-  /// time does not silently carry a stale chip forward as pre-selected.
+  ///
+  /// Takes the surface slot rather than setting a flag — see
+  /// [ChatWidgetState.composingNew]. The screen it is pressed FROM is
+  /// recorded with the claim, so [cancelNewConversation] can put the customer
+  /// back where they were: finishing a detour on the conversation screen
+  /// strands them on an empty transcript having pressed Cancel.
+  ///
+  /// Deliberately does NOT set [ChatWidgetState.conversationOpened]. A form
+  /// opened from Home is a detour, not a conversation — and counting it would
+  /// arm the pre-chat gate behind the very form that is already asking those
+  /// questions.
+  ///
+  /// Clears any topic left selected from a PREVIOUS compose that never sent,
+  /// so returning here does not silently carry a stale chip forward.
   void startNewConversation() {
+    _composingTicket =
+        _surfaces.open(const ComposingNewSurface(), from: _screens.current);
     _screens.go(ScreenName.conversation);
     emit(
       state.copyWith(
         screen: _screens.current,
         canGoBack: _screens.canGoBack,
-        composingNew: true,
         clearSelectedTopic: true,
       ),
     );
   }
 
-  /// Opens a past conversation from a Home/Messages row. Clears
-  /// [ChatWidgetState.selectedTopic] — a topic chip belongs to a prospective
-  /// NEW conversation, and has nothing to do with re-opening an existing one.
+  /// Backs out of the new-conversation form, returning the customer to the
+  /// screen they opened it from.
+  ///
+  /// Home → Home, Messages → Messages. Not a plain release: that is right for
+  /// a surface whose task COMPLETED, where the conversation is what the
+  /// customer just started, and wrong for one they abandoned. Opened from the
+  /// conversation itself, [ProductSurfaceSlot.cancel] answers
+  /// [SurfaceReleased] instead and the conversation comes back — including
+  /// its pre-chat gate, which the re-sync raises.
+  void cancelNewConversation() {
+    final SurfaceTicket? ticket = _composingTicket;
+    if (ticket == null) return;
+    _composingTicket = null;
+    final SurfaceCancelOutcome outcome =
+        _surfaces.cancel(ticket, surfaceInputs());
+    if (outcome case SurfaceReturnedToOrigin(:final ScreenName origin)) {
+      // Back if we can — this surface's own open pushed that origin — and
+      // swap otherwise, covering a stack emptied underneath us.
+      if (!_screens.back()) _screens.swap(origin);
+    }
+    _syncScreen();
+  }
+
+  /// Opens a past conversation from a Home/Messages row.
+  ///
+  /// One of the places the widget deliberately PUTS a conversation on screen,
+  /// so it sets [ChatWidgetState.conversationOpened] — this is what arms the
+  /// pre-chat gate in front of an empty one. `selectSession` (the session
+  /// picker's own entry point, landing later) is the same funnel and must set
+  /// it the same way.
+  ///
+  /// Discards a user-initiated surface on the way in: asking for a DIFFERENT
+  /// conversation is one of the two moments that mean "I am done with this",
+  /// and no state tick will ever clear one of those. Without it the new
+  /// conversation is drawn UNDER a stale form.
+  ///
+  /// Clears [ChatWidgetState.selectedTopic] — a topic chip belongs to a
+  /// prospective NEW conversation and has nothing to do with re-opening one.
   void openConversation(String sessionId) {
     _client.joinSession(sessionId);
+    _surfaces.discardUserSurface();
+    _composingTicket = null;
     _screens.go(ScreenName.conversation);
     emit(
       state.copyWith(
         screen: _screens.current,
         canGoBack: _screens.canGoBack,
-        composingNew: false,
+        conversationOpened: true,
         clearSelectedTopic: true,
       ),
     );
+    _syncSurfaces();
+  }
+
+  /// A Common Questions tap: straight into a conversation carrying that one
+  /// question, with no pre-chat form in front of it.
+  ///
+  /// ── Why the questions are skipped, and why that is not a hole ──────
+  ///
+  /// This is a customer asking one specific thing, not filling in a form. So
+  /// the gate is suppressed for the exchange — via
+  /// [ProductSurfaceSlot.beginOpeningLine], because the ack lands with an
+  /// empty transcript and that is precisely the window the gate would flash
+  /// in — and [ChatWidgetState.preChatAnswered] is deliberately left alone:
+  /// they were never asked, so the next form still asks.
+  ///
+  /// Sends the question's PROMPT, never its label: the label is the chip's
+  /// wording and the prompt is what the customer means by pressing it.
+  void startCommonQuestion(CommonQuestion question) {
+    _surfaces.discardUserSurface();
+    _composingTicket = null;
+    final OpeningLineLatch latch = _surfaces.beginOpeningLine();
+    try {
+      _screens.go(ScreenName.conversation);
+      emit(
+        state.copyWith(
+          screen: _screens.current,
+          canGoBack: _screens.canGoBack,
+          conversationOpened: true,
+          clearSelectedTopic: true,
+        ),
+      );
+      _syncSurfaces();
+      _client.sendMessage(question.prompt);
+    } finally {
+      latch.release();
+    }
   }
 
   /// Picks (or, tapped a second time, un-picks) a New Conversation topic
@@ -232,7 +451,39 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     return moved;
   }
 
-  void _syncScreen() => emit(state.copyWith(screen: _screens.current, canGoBack: _screens.canGoBack));
+  /// The single choke point every navigation goes through.
+  ///
+  /// ── Where `ChatScreens.onChange` would have been ───────────────────
+  ///
+  /// The reference hangs [ProductSurfaceSlot.discardUserSurface] off
+  /// `screens.onChange`. [ChatScreens] deliberately has no such callback (see
+  /// its header: this package's Cubit emits after every call instead), so
+  /// this method IS that hook — every `go`, `swap` and `back` in this class
+  /// ends here, which is what makes it one place rather than four.
+  ///
+  /// Leaving the conversation screen means the customer walked away from
+  /// whatever surface they had opened. Non-preemption means no state tick
+  /// will ever clear it for them — the slot is theirs until they hand it
+  /// back — so this is where the hand-back is recognised. Without it the next
+  /// conversation they open is drawn UNDER a stale form, and a second Start
+  /// on that form mints a conversation nobody asked for.
+  ///
+  /// The AUTOMATIC surfaces are deliberately left alone: they are re-derived
+  /// on the next sync, and a pre-chat gate parked behind Home is exactly what
+  /// must still be there when the customer returns to that empty
+  /// conversation.
+  void _syncScreen() {
+    if (_screens.current != ScreenName.conversation) {
+      _surfaces.discardUserSurface();
+      _composingTicket = null;
+    }
+    emit(
+      state.copyWith(
+        screen: _screens.current,
+        canGoBack: _screens.canGoBack,
+      ),
+    );
+  }
 
   // ── Outbound ──────────────────────────────────────────────────────────
 
@@ -246,8 +497,99 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// customer composes next.
   void sendMessage(String content, {String? replyToMessageId}) {
     _client.sendMessage(content, replyToMessageId: replyToMessageId);
-    if (state.composingNew) {
-      emit(state.copyWith(composingNew: false, clearSelectedTopic: true));
+    final SurfaceTicket? ticket = _composingTicket;
+    if (ticket != null) {
+      // The form's task COMPLETED, so the slot goes back through `release`
+      // (which re-runs the sync) rather than `cancel`. The customer stays on
+      // the conversation they just started, which is what they asked for.
+      _composingTicket = null;
+      _surfaces.release(ticket, surfaceInputs());
+      emit(state.copyWith(clearSelectedTopic: true));
+    }
+  }
+
+  // ── Pre-chat ──────────────────────────────────────────────────────────
+
+  /// The customer answered the standalone gate.
+  ///
+  /// Relays the answers as the opening MESSAGE — they are content, not
+  /// identity: a name typed into a form is a claim about this conversation,
+  /// not a verified fact about a person, and nothing here upserts a contact.
+  /// An empty [answers] sends nothing at all but still counts as answered,
+  /// which is the "asked and declined" case.
+  ///
+  /// Marks [ChatWidgetState.preChatAnswered] AFTER the send, so a customer
+  /// whose message failed and who answers again still carries their details.
+  Future<void> submitPreChat(Map<String, String> answers) async {
+    final String? details = preChatDetailsMessage(
+      fields: preChatFieldsToAsk(
+        config: state.config,
+        isGuest: state.isGuest,
+        alreadyAnswered: state.preChatAnswered,
+      ),
+      answers: answers,
+    );
+    if (details != null) _client.sendMessage(details);
+    emit(state.copyWith(preChatAnswered: true, preChatAnswers: answers));
+    _syncSurfaces();
+  }
+
+  /// The customer declined the standalone gate.
+  ///
+  /// Counts as answered — the gate does not come back. Offered only when the
+  /// merchant made nothing required; see [PreChatGate].
+  void skipPreChat() {
+    emit(state.copyWith(preChatAnswered: true));
+    _syncSurfaces();
+  }
+
+  /// Starts a conversation from the new-conversation form.
+  ///
+  /// [topic] is the chip's LABEL, never its id — the id is a console key and
+  /// the label is what a human reads. [answers] is null when no fields were
+  /// shown and a (possibly empty) map when they were; only the second counts
+  /// as having been asked, which is why [ChatWidgetState.preChatAnswered] is
+  /// set on exactly that condition.
+  ///
+  /// The details go out ahead of the opening line so an agent reads them
+  /// first, and the latch holds the pre-chat gate down across the whole
+  /// exchange: the first send lands with an empty transcript, which is
+  /// precisely the window the gate would otherwise flash in.
+  void startConversationFrom({
+    required String message,
+    String? topic,
+    Map<String, String>? answers,
+  }) {
+    final OpeningLineLatch latch = _surfaces.beginOpeningLine();
+    try {
+      if (answers != null) {
+        final String? details = preChatDetailsMessage(
+          fields: preChatFieldsToAsk(
+            config: state.config,
+            isGuest: state.isGuest,
+            alreadyAnswered: state.preChatAnswered,
+          ),
+          answers: answers,
+        );
+        if (details != null) _client.sendMessage(details);
+      }
+      _client.sendMessage(message);
+      emit(
+        state.copyWith(
+          // Absent stays absent: a customer who was never asked must still be
+          // asked by the next form.
+          preChatAnswered: answers != null ? true : null,
+          preChatAnswers: answers,
+        ),
+      );
+      final SurfaceTicket? ticket = _composingTicket;
+      if (ticket != null) {
+        _composingTicket = null;
+        _surfaces.release(ticket, surfaceInputs());
+      }
+      emit(state.copyWith(clearSelectedTopic: true));
+    } finally {
+      latch.release();
     }
   }
 
@@ -319,9 +661,15 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         queuedCount: _client.queuedCount,
       ),
     );
+    // A transcript that just stopped being empty closes the pre-chat gate's
+    // own precondition — see `SurfaceSyncInputs.hasMessages`.
+    _syncSurfaces();
   }
 
-  void _onSession(SessionSnapshot session) => emit(state.copyWith(session: session));
+  void _onSession(SessionSnapshot session) {
+    emit(state.copyWith(session: session));
+    _syncSurfaces();
+  }
 
   void _onTyping(TypingEvent event) => emit(state.copyWith(isTyping: event.isTyping));
 
