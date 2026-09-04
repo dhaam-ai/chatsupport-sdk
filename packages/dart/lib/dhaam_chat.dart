@@ -54,6 +54,7 @@ export 'src/connection/socket.dart'
         SocketProtocolException,
         SystemScheduler,
         WebSocketChatSocket;
+export 'src/logic/url_safety.dart' show safeLinkUrl;
 export 'src/protocol/enums.dart';
 export 'src/protocol/envelope.dart'
     show
