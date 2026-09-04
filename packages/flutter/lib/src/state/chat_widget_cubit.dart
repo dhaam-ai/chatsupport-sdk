@@ -703,7 +703,22 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// at the call site is what makes that true of EVERY send — a typed one, a
   /// suggestion chip, a quick reply — instead of the ones somebody remembered
   /// to clear.
-  void sendMessage(String content, {String? replyToMessageId}) {
+  ///
+  /// ── [attachment] is the file this message announces ──────────────────
+  ///
+  /// Supplied by the composer, which uploaded it inside its own submit and
+  /// therefore holds the only copy of the metadata `POST /upload` returned.
+  /// It travels on the SAME send as the text rather than on a second one,
+  /// which is what makes a caption and its file one message in the
+  /// transcript instead of two rows that can be separated by whatever else
+  /// arrives between them.
+  ///
+  /// Null for every send that carries no file, which omits the key entirely.
+  void sendMessage(
+    String content, {
+    String? replyToMessageId,
+    AttachmentMetadata? attachment,
+  }) {
     final ReplyTarget? addressedTo = state.replyingTo;
     if (addressedTo != null) {
       emit(state.copyWith(clearReplyingTo: true));
@@ -713,6 +728,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       content,
       replyToMessageId: addressedTo?.messageId ?? replyToMessageId,
       metadata: addressedTo?.metadata,
+      attachment: attachment,
     );
     final SurfaceTicket? ticket = _composingTicket;
     if (ticket != null) {

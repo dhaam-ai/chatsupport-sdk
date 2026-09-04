@@ -183,6 +183,78 @@ void main() {
     expect(socket.sends, hasLength(1));
   });
 
+  // ── The attachment hop ──────────────────────────────────────────────
+  //
+  // Same exposure `retry` had and for the same reason: `ChatClientAdapter`'s
+  // members are one-line delegations that nothing exercises, so an
+  // `attachment:` this adapter accepted and then quietly failed to pass on
+  // would leave every attachment test in the package green — the controller
+  // uploads, the composer calls back, the cubit forwards — while a customer
+  // sends a message that mentions no file at all.
+  //
+  // So this asserts against the FRAME, not against a fake's record of the
+  // call: the only thing that proves the file reached the wire is the wire.
+  group('an uploaded attachment reaches the wire', () {
+    const AttachmentMetadata photo = AttachmentMetadata(
+      url: 'https://cdn.example.com/receipt.pdf',
+      fileName: 'receipt.pdf',
+      mimeType: 'application/pdf',
+      size: 4096,
+      mediaType: 'DOCUMENT',
+    );
+
+    test('the metadata rides on the message.send frame', () async {
+      adapter.sendMessage('here you go', attachment: photo);
+
+      final Map<String, Object?> frame = socket.sends.single;
+      final Map<String, Object?> payload = frame['d']! as Map<String, Object?>;
+      final Map<String, Object?> sent =
+          payload['attachment']! as Map<String, Object?>;
+
+      expect(sent['url'], 'https://cdn.example.com/receipt.pdf');
+      expect(sent['fileName'], 'receipt.pdf');
+      expect(sent['mimeType'], 'application/pdf');
+      expect(sent['size'], 4096);
+      expect(sent['mediaType'], 'DOCUMENT');
+    });
+
+    test('the optimistic echo describes the frame that went out', () async {
+      // The transcript draws its attachment bubble from the echo, so an echo
+      // that dropped the file would show the caption with no file under it
+      // until the server's confirmation landed — or forever, offline.
+      final ChatMessage echo =
+          adapter.sendMessage('here you go', attachment: photo);
+
+      expect(echo.attachment, equals(photo));
+    });
+
+    test('a send with no file omits the key entirely, never sends null',
+        () async {
+      adapter.sendMessage('just words');
+
+      final Map<String, Object?> payload =
+          socket.sends.single['d']! as Map<String, Object?>;
+
+      // Absent, not present-and-null: `messageSendPayload` omits it, and a
+      // literal null would be a claim that this message HAS an attachment
+      // which is nothing.
+      expect(payload.containsKey('attachment'), isFalse);
+    });
+
+    test('a file travels on the same send as its caption', () async {
+      // One message, not two. A separate attachment send would let whatever
+      // else arrives in between separate a caption from the file it
+      // describes.
+      adapter.sendMessage('the receipt you asked for', attachment: photo);
+
+      expect(socket.sends, hasLength(1));
+      final Map<String, Object?> payload =
+          socket.sends.single['d']! as Map<String, Object?>;
+      expect(payload['content'], 'the receipt you asked for');
+      expect(payload['attachment'], isNotNull);
+    });
+  });
+
   test('the adapter forwards the id it was given, not some other message',
       () async {
     // The one failure mode a type-checked one-line delegation still has.

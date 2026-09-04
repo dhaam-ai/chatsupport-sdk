@@ -41,6 +41,10 @@ class FakeWidgetChatClient implements WidgetChatClient {
   /// [sentContent] — null where the send addressed no message.
   final List<String?> sentReplyToMessageId = <String?>[];
 
+  /// The `attachment` each send carried, index-aligned with [sentContent] —
+  /// null where the send announced no file.
+  final List<AttachmentMetadata?> sentAttachment = <AttachmentMetadata?>[];
+
   /// Every `session.closed` a test pushed, oldest first.
   final StreamController<SessionClosed> _sessionClosed =
       StreamController<SessionClosed>.broadcast();
@@ -96,10 +100,12 @@ class FakeWidgetChatClient implements WidgetChatClient {
     String content, {
     String? replyToMessageId,
     Map<String, Object?>? metadata,
+    AttachmentMetadata? attachment,
   }) {
     sentContent.add(content);
     sentMetadata.add(metadata);
     sentReplyToMessageId.add(replyToMessageId);
+    sentAttachment.add(attachment);
     final ChatMessage message = ChatMessage(
       id: 'sent-${sentContent.length}',
       sessionId: 's1',
@@ -111,6 +117,11 @@ class FakeWidgetChatClient implements WidgetChatClient {
       createdAt: DateTime.utc(2026, 1, 1),
       replyToMessageId: replyToMessageId,
       metadata: metadata,
+      // On the echo as well as on the record of the call: the real client
+      // puts it there (`client.dart`'s optimistic echo describes the frame it
+      // actually sent), so a fake that dropped it would let a transcript bug
+      // — an attachment bubble that never draws — pass every widget test.
+      attachment: attachment,
       delivery: MessageDelivery.pending,
     );
     _messages.add(message);

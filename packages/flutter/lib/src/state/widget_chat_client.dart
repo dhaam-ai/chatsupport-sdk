@@ -69,10 +69,28 @@ abstract interface class WidgetChatClient {
   ///
   /// Absent, never `{}`: an empty map asserts a structured claim was made
   /// and was empty, which is a different statement from making none.
+  ///
+  /// [attachment] is the uploaded file this message announces — the url,
+  /// name, media type and size `POST /upload` echoed back. It rides on the
+  /// frame, so a send held for the connection to come back replays it
+  /// unchanged.
+  ///
+  /// ── Why this parameter is not optional in the sense of "skippable" ─────
+  ///
+  /// `ChatClient.sendMessage` has accepted one since D26 and this interface
+  /// did not expose it, which meant the whole attachment path — the
+  /// paperclip, the 25 MiB refusal, the draft bar, `POST /upload`, all of it
+  /// tested — ended at a callback holding metadata with nowhere to put it.
+  /// A customer could pick a file, watch it upload, and send a message that
+  /// mentioned no file at all.
+  ///
+  /// Null omits the key entirely, exactly as [metadata] does, so no existing
+  /// caller changes behaviour.
   ChatMessage sendMessage(
     String content, {
     String? replyToMessageId,
     Map<String, Object?>? metadata,
+    AttachmentMetadata? attachment,
   });
 
   /// Joins an existing session — the Messages/Home "open this past
@@ -203,11 +221,13 @@ class ChatClientAdapter implements WidgetChatClient {
     String content, {
     String? replyToMessageId,
     Map<String, Object?>? metadata,
+    AttachmentMetadata? attachment,
   }) =>
       _client.sendMessage(
         content,
         replyToMessageId: replyToMessageId,
         metadata: metadata,
+        attachment: attachment,
       );
 
   @override
