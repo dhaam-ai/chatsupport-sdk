@@ -17,3 +17,5 @@ library;
 
 export 'chat_identity.dart';
 export 'pre_chat_fields.dart';
+export 'pre_chat_form.dart';
+export 'pre_chat_gate.dart';
