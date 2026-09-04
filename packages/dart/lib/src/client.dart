@@ -574,6 +574,61 @@ class ChatClient {
     );
   }
 
+  /// Records what is known about this visitor, to ride on the next hello.
+  ///
+  /// The wire end of the contact-info capture. `dhaam_chat_rest`'s
+  /// `captureContactInfo` is the collector; this is where its results go.
+  /// A host wires the two together with a one-line sink:
+  ///
+  /// ```dart
+  /// captureContactInfo(
+  ///   apiUrl: apiUrl,
+  ///   userAgent: myUserAgent,
+  ///   sink: (RestContactInfo i) => client.setContactInfo(
+  ///     ip: i.ip,
+  ///     ipWatermark: i.ipWatermark,
+  ///     userAgent: i.userAgent,
+  ///     geo: i.geo == null ? null : ContactGeo(lat: i.geo!.lat, lng: i.geo!.lng),
+  ///   ),
+  /// );
+  /// ```
+  ///
+  /// The translation is the host's rather than either package's because
+  /// `dhaam_chat` does not depend on `dhaam_chat_rest` and must not: this
+  /// package has one dependency and no HTTP. TypeScript keeps the same split
+  /// — `contact-info.ts` declares its own narrow `ContactInfoSink` and core
+  /// declares `setContactInfo` with its own shape, and the widget joins them.
+  ///
+  /// ── Do NOT await the capture before [connect] ───────────────────────────
+  ///
+  /// Fire the capture and connect; never gate one on the other. A slow
+  /// ip-watermark fetch, and especially a location permission prompt the
+  /// visitor may never answer, must not delay the chat opening. The design
+  /// makes that safe rather than lossy:
+  ///
+  ///  * The user agent is recorded SYNCHRONOUSLY, before `captureContactInfo`
+  ///    hits its first `await`, so it is already here when the first hello is
+  ///    built.
+  ///  * Anything that resolves later misses that hello and rides the next
+  ///    one, because this record is re-read on every socket open and is never
+  ///    cleared. A capture that never resolves sends nothing, which is the
+  ///    right outcome rather than a failure.
+  ///
+  /// Merging, never replacing — a null argument means "nothing new about this
+  /// field". See [ConnectionController.setContactInfo].
+  void setContactInfo({
+    String? ip,
+    String? ipWatermark,
+    String? userAgent,
+    ContactGeo? geo,
+  }) =>
+      _connection.setContactInfo(
+        ip: ip,
+        ipWatermark: ipWatermark,
+        userAgent: userAgent,
+        geo: geo,
+      );
+
   /// Leaves the current session (§6.2).
   void leaveSession() {
     _connection

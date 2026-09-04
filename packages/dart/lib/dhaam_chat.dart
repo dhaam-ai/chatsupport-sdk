@@ -89,6 +89,7 @@ export 'src/protocol/frames.dart'
         AttachmentMetadata,
         ChatMessage,
         ConnectionAck,
+        ContactGeo,
         HandledBy,
         MessageDelivered,
         MessageDelivery,

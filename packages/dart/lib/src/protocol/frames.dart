@@ -77,6 +77,26 @@ import 'json.dart';
 /// the same absence rule [resumeFrom] follows above: the server branches on
 /// the key's PRESENCE, and an explicit `false` is a different thing from an
 /// absent key to a deployment that predates the field.
+/// A visitor's coarse location, for `connection.hello.d.geo`.
+///
+/// The one NESTED field in the contact-info block — `ip`, `ipWatermark` and
+/// `userAgent` ride flat beside it, which is the reference's own shape
+/// (`connection/controller.ts:511`) rather than a `contactInfo` sub-object.
+///
+/// Two doubles and nothing else: this is a city-level pin beside a
+/// conversation, never a track. See `dhaam_chat_rest`'s `RestGeoPosition`,
+/// which is the same pair on the capture side — deliberately not shared,
+/// because `dhaam_chat` takes no dependency on `dhaam_chat_rest` and a wire
+/// payload type is not somebody else's to define.
+class ContactGeo {
+  const ContactGeo({required this.lat, required this.lng});
+
+  final double lat;
+  final double lng;
+
+  Map<String, Object?> toJson() => <String, Object?>{'lat': lat, 'lng': lng};
+}
+
 Map<String, Object?> connectionHelloPayload({
   required String token,
   required String publishableKey,
@@ -85,6 +105,10 @@ Map<String, Object?> connectionHelloPayload({
   bool newSession = false,
   String? subject,
   String? topic,
+  String? ip,
+  String? ipWatermark,
+  String? userAgent,
+  ContactGeo? geo,
 }) =>
     <String, Object?>{
       'token': token,
@@ -94,6 +118,20 @@ Map<String, Object?> connectionHelloPayload({
       if (newSession) 'newSession': true,
       if (subject != null) 'subject': subject,
       if (topic != null) 'topic': topic,
+      // ── Contact-info enrichment (§ not in 7.3; recovered from the server) ─
+      //
+      // Whatever is known AT THE MOMENT this hello is built. A capture that
+      // resolves later simply misses this hello and rides the next one — see
+      // [ChatClient.setContactInfo], which explains why that is the accepted
+      // trade rather than something to await.
+      //
+      // Flat, not nested under a `contactInfo` key: that is the shape
+      // `controller.ts:511` sends, and the server reads these as four
+      // top-level siblings.
+      if (ip != null) 'ip': ip,
+      if (ipWatermark != null) 'ipWatermark': ipWatermark,
+      if (userAgent != null) 'userAgent': userAgent,
+      if (geo != null) 'geo': geo.toJson(),
     };
 
 /// Builds `connection.reauth.d` (§7.3, §10.5, D3).

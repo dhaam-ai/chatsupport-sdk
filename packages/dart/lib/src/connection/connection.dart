@@ -197,6 +197,14 @@ class ConnectionController {
   String? _pendingNewSessionSubject;
   String? _pendingNewSessionTopic;
 
+  /// What this client currently knows about the visitor — see
+  /// [setContactInfo]. Read at hello-build time and NEVER cleared by
+  /// `connection.ack`, unlike the three fields above.
+  String? _contactIp;
+  String? _contactIpWatermark;
+  String? _contactUserAgent;
+  ContactGeo? _contactGeo;
+
   /// Current state.
   ConnectionState get state => _state;
 
@@ -275,6 +283,41 @@ class ConnectionController {
     _pendingNewSession = true;
     _pendingNewSessionSubject = subject;
     _pendingNewSessionTopic = topic;
+  }
+
+  /// Records what is known about the visitor, to ride on the next hello.
+  ///
+  /// ── Merge, never replace ────────────────────────────────────────────────
+  ///
+  /// Each capture reports AS IT RESOLVES — the user agent synchronously, the
+  /// ip+watermark and the geolocation whenever they land — so a call carries
+  /// one field and must not blank the other three. A null argument therefore
+  /// means "nothing new about this one", not "clear it". There is no clearing
+  /// path at all: a key never passed here is simply never sent, which is the
+  /// reference's own rule (`controller.ts:313`).
+  ///
+  /// ── Sends nothing by itself ─────────────────────────────────────────────
+  ///
+  /// This only records. The value reaches the server the next time a hello is
+  /// built, which is why a late capture is harmless rather than lost: it
+  /// misses the hello that already went out and rides the next one.
+  ///
+  /// ── NOT cleared by `connection.ack` ─────────────────────────────────────
+  ///
+  /// Unlike [requestNewSession]'s three fields, which are a one-shot intent
+  /// that gets fulfilled. This is "what the widget currently knows about this
+  /// visitor", which stays true, so it is correct to keep resending on every
+  /// reconnect for the life of the connection.
+  void setContactInfo({
+    String? ip,
+    String? ipWatermark,
+    String? userAgent,
+    ContactGeo? geo,
+  }) {
+    _contactIp = ip ?? _contactIp;
+    _contactIpWatermark = ipWatermark ?? _contactIpWatermark;
+    _contactUserAgent = userAgent ?? _contactUserAgent;
+    _contactGeo = geo ?? _contactGeo;
   }
 
   /// Opens the connection and drives it to [ConnectionState.connected].
@@ -499,6 +542,12 @@ class ConnectionController {
           newSession: _pendingNewSession,
           subject: _pendingNewSessionSubject,
           topic: _pendingNewSessionTopic,
+          // Read here, at socket-open time, rather than subscribed to: this
+          // hello carries whatever had resolved by now. See [setContactInfo].
+          ip: _contactIp,
+          ipWatermark: _contactIpWatermark,
+          userAgent: _contactUserAgent,
+          geo: _contactGeo,
         ),
       ).encode(),
     );
