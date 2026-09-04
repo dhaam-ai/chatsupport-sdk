@@ -102,7 +102,8 @@ void main() {
       expect(target.excerpt, 'Message');
     });
 
-    test('caps a long excerpt at the render side\'s own limit', () {
+    test('caps a long excerpt at the CONTRACT, not at the render tolerance',
+        () {
       final ReplyTarget target = ReplyTarget.from(
         _message(content: 'x' * 400),
         senderName: 'Alex',
@@ -110,17 +111,24 @@ void main() {
 
       // Never LONGER than the cap it is named for: the ellipsis takes the
       // last slot rather than being appended.
-      expect(target.excerpt.length, kMaxQuoteExcerpt);
+      expect(target.excerpt.length, kReplyExcerptContract);
       expect(target.excerpt.endsWith('…'), isTrue);
+
+      // The distinction this whole test exists for. 120 is what this client
+      // PROMISED to send; 160 is what it TOLERATES receiving, chosen wider
+      // precisely because a peer might ignore the promise. Producing against
+      // the tolerance would quietly turn it into the contract.
+      expect(kReplyExcerptContract, lessThan(kMaxQuoteExcerpt));
+      expect(target.excerpt.length, lessThan(kMaxQuoteExcerpt));
     });
 
-    test('leaves an excerpt at exactly the cap untouched', () {
+    test('leaves an excerpt at exactly the contract length untouched', () {
       final ReplyTarget target = ReplyTarget.from(
-        _message(content: 'y' * kMaxQuoteExcerpt),
+        _message(content: 'y' * kReplyExcerptContract),
         senderName: 'Alex',
       );
 
-      expect(target.excerpt, 'y' * kMaxQuoteExcerpt);
+      expect(target.excerpt, 'y' * kReplyExcerptContract);
       expect(target.excerpt.endsWith('…'), isFalse);
     });
 
@@ -162,9 +170,9 @@ void main() {
     });
 
     test('a capped excerpt survives the round trip unchanged', () {
-      // Producing against the render side's own constant is what makes this
-      // true: an excerpt the chip showed is never re-trimmed on arrival, so
-      // the two can never say different things.
+      // The chip and the quote can never say different things: we produce at
+      // 120 and the reader tolerates 160, so an excerpt the chip showed is
+      // always already inside what arrives — never re-trimmed on the way in.
       final ReplyTarget target = ReplyTarget.from(
         _message(content: 'z' * 400),
         senderName: 'Alex',

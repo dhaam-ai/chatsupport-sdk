@@ -43,6 +43,17 @@ import '../message_list/reply_quote.dart';
 final RegExp _whitespaceRun = RegExp(r'\s+');
 
 /// What is being replied to.
+
+/// Longest excerpt this client PUTS ON THE WIRE — the contract agreed with
+/// the console team, and the port of `widget.ts`'s `MAX_REPLY_EXCERPT`.
+///
+/// Not the same number as `reply_quote.dart`'s [kMaxQuoteExcerpt] (160) and
+/// deliberately so: that one is what this client TOLERATES from another
+/// participant's client, chosen wider precisely because it guards against a
+/// peer that ignored this contract. Producing against a tolerance is how a
+/// tolerance becomes the contract.
+const int kReplyExcerptContract = 120;
+
 class ReplyTarget extends Equatable {
   const ReplyTarget({
     required this.messageId,
@@ -85,28 +96,27 @@ class ReplyTarget extends Equatable {
   static String _wordlessExcerpt(ChatMessage message) =>
       message.attachment != null ? 'Attachment' : 'Message';
 
-  /// Trims to [kMaxQuoteExcerpt].
+  /// Trims to [kReplyExcerptContract].
   ///
-  /// ── Deliberately NOT a second cap ───────────────────────────────────
+  /// ── Two caps, because they are two different obligations ────────────
   ///
-  /// [kMaxQuoteExcerpt] is `reply_quote.dart`'s, the one the RENDER side
-  /// already enforces on a quote arriving from another participant's client.
-  /// Producing against the same constant is what makes the chip the customer
-  /// saw and the quote their reader draws the same string, rather than two
-  /// numbers that have to be kept in step by hand.
+  /// This is the PRODUCING cap: what this client agreed with the console
+  /// team to put on the wire, 120 characters (`widget.ts`'s
+  /// `MAX_REPLY_EXCERPT`). `reply_quote.dart`'s [kMaxQuoteExcerpt] is the
+  /// RENDERING cap, and its own header is explicit that 160 is deliberately
+  /// wider than the contract "because this is a backstop against a
+  /// misbehaving peer, not a second opinion about the contract."
   ///
-  /// **Consequence, stated rather than hidden:** the wire contract agreed
-  /// with the console team caps this at 120 and [kMaxQuoteExcerpt] is 160, so
-  /// an excerpt between the two lengths goes out longer than that contract
-  /// asks for. It is well within what every reader here caps at, so nothing
-  /// renders wrong — but it IS a divergence from the reference's own
-  /// producing cap, and the fix if the contract is to be honoured exactly is
-  /// to change the constant this line reads, in one place.
-  static String _cap(String text) => text.length > kMaxQuoteExcerpt
+  /// So reusing 160 here would not be de-duplication — it would be adopting
+  /// a number chosen for somebody else's bad behaviour as our own promise,
+  /// and every excerpt between 120 and 160 would go out longer than agreed.
+  /// Nothing would render wrong, since every reader caps at 160; it would
+  /// simply be this client quietly not honouring a contract it signed.
+  static String _cap(String text) => text.length > kReplyExcerptContract
       // The ellipsis takes the last slot rather than being appended, so the
       // result is never longer than the cap it is named for — the same rule
       // `readReplyQuote` applies on the way back in.
-      ? '${text.substring(0, kMaxQuoteExcerpt - 1)}…'
+      ? '${text.substring(0, kReplyExcerptContract - 1)}…'
       : text;
 
   /// The id the send frame's `replyToMessageId` carries.
