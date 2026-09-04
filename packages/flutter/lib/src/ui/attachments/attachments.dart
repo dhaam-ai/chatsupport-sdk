@@ -30,5 +30,7 @@
 /// `AttachmentDraftController.uploadDraft`.
 library;
 
+export 'attachment_bubble.dart';
+export 'attachment_composer_controls.dart';
 export 'attachment_draft.dart';
 export 'attachment_draft_controller.dart';
