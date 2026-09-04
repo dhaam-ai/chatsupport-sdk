@@ -194,6 +194,71 @@ bool requireBool(
   return value;
 }
 
+// ── Enums ──────────────────────────────────────────────────────────────────
+
+/// Decodes one INTEGER enum through [table], or throws.
+///
+/// ── Why integers appear here at all ───────────────────────────────────────
+///
+/// chat-service's org-wide rule is that enums are stored in the DB and
+/// transmitted over APIs as INTEGERS — 1-based, append-only, never renumbered
+/// and never reused. The WebSocket path converts them before they leave the
+/// server; the raw-row REST routes (`/messages`, `/full`) never did. This is
+/// the only place in either Dart package that reads that form, and
+/// `dhaam_chat`'s own `enums.dart` deliberately parses string names only.
+///
+/// ── Why an unmapped value throws instead of falling back ──────────────────
+///
+/// Guessing is what v1 did, and it is how `RESOLVED` and `ON_HOLD` silently
+/// became `OPEN` for years (§12.1). Since the tables are append-only, an
+/// unknown integer always means this package is behind the service — a code
+/// change, not something a retry or a default can paper over. Same refusal,
+/// and the same reasoning, as `dhaam_chat`'s `requireEnum`.
+T requireIntEnum<T>(
+  Map<int, T> table,
+  Map<String, Object?> object,
+  String key,
+  String path, {
+  required String context,
+}) {
+  // Read through `optionalIntValue` rather than `is int`: on Flutter Web the
+  // row's `1` has already become `1.0`, and rejecting it there would break
+  // this decoder on exactly one of three target platforms.
+  final int? raw = optionalIntValue(object[key]);
+  final T? decoded = raw == null ? null : table[raw];
+  if (decoded == null) {
+    // The offending VALUE is not echoed, matching every other reader here.
+    throw malformed(context, 'unmappable $path.$key');
+  }
+  return decoded;
+}
+
+/// Decodes one STRING enum through [fromWire], or throws.
+///
+/// The sibling of [requireIntEnum] for routes that already send v2's canonical
+/// string names — `GET /chat/sessions/customer` is the one. Same refusal to
+/// guess, for the same reason: an unrecognized value means this package is
+/// behind the service.
+///
+/// A stray INTEGER reaching here is exactly as unmappable as a bogus string,
+/// and is refused identically. That is not incidental — this route is
+/// documented to send strings, so an integer would mean the raw-row shape had
+/// leaked onto a projected route.
+T requireStringEnum<T>(
+  T? Function(String) fromWire,
+  Map<String, Object?> object,
+  String key,
+  String path, {
+  required String context,
+}) {
+  final Object? raw = object[key];
+  final T? decoded = raw is String ? fromWire(raw) : null;
+  if (decoded == null) {
+    throw malformed(context, 'unmappable $path.$key');
+  }
+  return decoded;
+}
+
 // ── Timestamps ─────────────────────────────────────────────────────────────
 
 /// Reads a wire timestamp leniently — an ISO-8601 string OR epoch millis —

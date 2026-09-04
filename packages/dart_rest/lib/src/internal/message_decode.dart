@@ -68,36 +68,6 @@ const Map<int, MessageType> _messageTypeByInt = <int, MessageType>{
   7: MessageType.typing,
 };
 
-/// Decodes one integer enum, or throws.
-///
-/// Guessing is not an option for these fields. Coercing an unmapped
-/// `senderType` to a default would attribute an agent's message to the
-/// customer who is reading it. The backend's own WS projection throws on the
-/// same input, and since the enums are append-only an unknown integer always
-/// means this package is behind the service — a code change, not something a
-/// retry or a fallback can fix. Same refusal, and the same reasoning, as
-/// `dhaam_chat`'s `requireEnum`.
-T _decodeInt<T>(
-  Map<int, T> table,
-  Map<String, Object?> row,
-  String key,
-  String path, {
-  required String context,
-}) {
-  // Read through `optionalIntValue` rather than `is int`: on Flutter Web the
-  // row's `1` has already become `1.0`, and rejecting it there would make this
-  // decoder fail on exactly one of three target platforms.
-  final int? raw = optionalIntValue(row[key]);
-  final T? decoded = raw == null ? null : table[raw];
-  if (decoded == null) {
-    // The offending VALUE is not echoed, matching every other reader in this
-    // package. An unknown enum is the one case where echoing is tempting and
-    // still wrong: a rule with an exception is a rule nobody applies.
-    throw malformed(context, 'unmappable $path.$key');
-  }
-  return decoded;
-}
-
 // ── Metadata ───────────────────────────────────────────────────────────────
 
 /// The one key never copied into the metadata bag this package publishes.
@@ -165,7 +135,7 @@ ChatMessage decodeChatMessage(Object? row, String context) {
     // (`projection.ts:204`), so this matches rather than inventing a second
     // answer.
     senderId: optionalString(source, 'senderId') ?? '',
-    senderType: _decodeInt(
+    senderType: requireIntEnum(
       _senderTypeByInt,
       source,
       'senderType',
@@ -173,7 +143,7 @@ ChatMessage decodeChatMessage(Object? row, String context) {
       context: context,
     ),
     // Rename: the row keys this `messageType`.
-    type: _decodeInt(
+    type: requireIntEnum(
       _messageTypeByInt,
       source,
       'messageType',
