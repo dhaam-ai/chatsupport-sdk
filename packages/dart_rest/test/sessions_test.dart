@@ -18,6 +18,7 @@ import 'package:dhaam_chat/dhaam_chat.dart';
 import 'package:dhaam_chat_rest/dhaam_chat_rest.dart' as barrel;
 import 'package:dhaam_chat_rest/src/client.dart';
 import 'package:dhaam_chat_rest/src/errors.dart';
+import 'package:dhaam_chat_rest/src/models/csat.dart';
 import 'package:dhaam_chat_rest/src/models/session_summary.dart';
 import 'package:dhaam_chat_rest/src/sessions.dart';
 import 'package:http/http.dart' as http;
@@ -92,7 +93,396 @@ Map<String, Object?> _summaryRow(
       ...overrides,
     };
 
+/// `chat.routes.ts`'s own `/csat` POST response — `{success, data: CsatRecord}`.
+Map<String, Object?> _csatRecord([
+  Map<String, Object?> overrides = const <String, Object?>{},
+]) =>
+    <String, Object?>{
+      'success': true,
+      'data': <String, Object?>{
+        'sessionId': 's1',
+        'rating': 4,
+        'comment': null,
+        'submittedAt': '2026-08-19T09:30:00.000Z',
+        ...overrides,
+      },
+    };
+
+/// The GET route's answered shape — a rating that already exists.
+Map<String, Object?> _ratedStatus([
+  Map<String, Object?> overrides = const <String, Object?>{},
+]) =>
+    <String, Object?>{
+      'success': true,
+      'data': <String, Object?>{
+        'rated': true,
+        'rating': 4,
+        'comment': 'quick and clear',
+        'submittedAt': '2026-08-19T09:30:00.000Z',
+        ...overrides,
+      },
+    };
+
+/// The JSON body that actually went out on a recorded request.
+Map<String, Object?> _sentBody(http.Request request) =>
+    jsonDecode(request.body) as Map<String, Object?>;
+
 void main() {
+  group('submitCsat', () {
+    test('is ONE round trip, unlike reopen/close — no /full read-back',
+        () async {
+      // A rating touches no session state, so there is nothing for a read-back
+      // to refresh. This is the assertion that keeps someone from "fixing" the
+      // asymmetry with close/reopen by adding one.
+      final _Recorder recorder = _Recorder();
+      final RestClient client =
+          _clientOver(recorder.client((_) => _json(_csatRecord())));
+
+      await client.submitCsat('s1', rating: 4);
+
+      expect(
+        recorder.trace,
+        <String>['POST /chat-services/api/v1/chat/sessions/s1/csat'],
+      );
+    });
+
+    test('sends the rating and comment as the JSON body', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client =
+          _clientOver(recorder.client((_) => _json(_csatRecord())));
+
+      await client.submitCsat('s1', rating: 5, comment: 'great help');
+
+      expect(
+        _sentBody(recorder.calls.single),
+        <String, Object?>{'rating': 5, 'comment': 'great help'},
+      );
+    });
+
+    test('POSTs to /csat rather than sending the rating as a chat message',
+        () async {
+      // `csat-submit.test.ts:308-331`'s wire half. The rest of that case — the
+      // card, the thanks panel, and specifically that no `message.send` frame
+      // goes out — is the CSAT card's (T10); what this package answers for is
+      // that a rating leaves over HTTP at all, with the customer's typed
+      // comment intact.
+      final _Recorder recorder = _Recorder();
+      final RestClient client =
+          _clientOver(recorder.client((_) => _json(_csatRecord())));
+
+      await client.submitCsat(
+        'sess_current',
+        rating: 4,
+        comment: 'Great help, thanks!',
+      );
+
+      expect(
+        recorder.calls.single.url.path,
+        contains('/chat/sessions/sess_current/csat'),
+      );
+      expect(
+        _sentBody(recorder.calls.single),
+        <String, Object?>{'rating': 4, 'comment': 'Great help, thanks!'},
+      );
+    });
+
+    test('omits comment from the body rather than sending it as null',
+        () async {
+      // `csat-submit.test.ts:332-343` — "omits the comment from the request
+      // body when the customer left none". The key must be ABSENT, not null:
+      // an explicit null asserts that the customer was asked and declined.
+      final _Recorder recorder = _Recorder();
+      final RestClient client =
+          _clientOver(recorder.client((_) => _json(_csatRecord())));
+
+      await client.submitCsat('s1', rating: 3);
+
+      final Map<String, Object?> body = _sentBody(recorder.calls.single);
+      expect(body.containsKey('comment'), isFalse);
+      expect(body, <String, Object?>{'rating': 3});
+    });
+
+    test('omits an EMPTY comment too — one notch stricter than TS', () async {
+      // TS omits only `undefined`, so `''` reaches the wire as `comment: ''`.
+      // An empty string is not something a customer typed either, and this
+      // package already folds `''` into absent on the read side. The route
+      // trims and nulls a blank comment regardless, so nothing is lost —
+      // except a body claiming an answer that was never given.
+      final _Recorder recorder = _Recorder();
+      final RestClient client =
+          _clientOver(recorder.client((_) => _json(_csatRecord())));
+
+      await client.submitCsat('s1', rating: 3, comment: '');
+
+      expect(_sentBody(recorder.calls.single), <String, Object?>{'rating': 3});
+    });
+
+    test('returns the stored rating field-for-field', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(
+            _csatRecord(<String, Object?>{'rating': 2, 'comment': 'meh'}),
+          ),
+        ),
+      );
+
+      final RestCsatSubmission record =
+          await client.submitCsat('s1', rating: 2, comment: 'meh');
+
+      expect(record.sessionId, 's1');
+      expect(record.rating, 2);
+      expect(record.comment, 'meh');
+      // A DateTime, not the raw string TS keeps — every wire timestamp in this
+      // SDK is a DateTime, with no exceptions (contract §5.7).
+      expect(record.submittedAt, DateTime.utc(2026, 8, 19, 9, 30));
+    });
+
+    test('rejects an unenveloped response, never a hollow record', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client((_) => _json(<String, Object?>{'rating': 4})),
+      );
+
+      await expectLater(
+        client.submitCsat('s1', rating: 4),
+        throwsA(isA<RestMalformedResponseException>()),
+      );
+    });
+
+    test('propagates a refused rating as a RestApiException', () async {
+      // e.g. another customer's session.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(
+            <String, Object?>{
+              'error': <String, Object?>{
+                'code': 'UNAUTHORIZED',
+                'message': 'not your session',
+              },
+            },
+            403,
+          ),
+        ),
+      );
+
+      await expectLater(
+        client.submitCsat('s1', rating: 4),
+        throwsA(
+          isA<RestApiException>()
+              .having((RestApiException e) => e.code, 'code', 'UNAUTHORIZED')
+              .having((RestApiException e) => e.status, 'status', 403),
+        ),
+      );
+    });
+  });
+
+  group('getCsat', () {
+    test('is a GET on the same path the POST uses, in one round trip',
+        () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client =
+          _clientOver(recorder.client((_) => _json(_ratedStatus())));
+
+      await client.getCsat('s1');
+
+      expect(
+        recorder.trace,
+        <String>['GET /chat-services/api/v1/chat/sessions/s1/csat'],
+      );
+    });
+
+    test('returns the stored rating', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client =
+          _clientOver(recorder.client((_) => _json(_ratedStatus())));
+
+      final RestCsatStatus status = await client.getCsat('s1');
+
+      final RestCsatRated rated = status as RestCsatRated;
+      expect(rated.rating, 4);
+      expect(rated.comment, 'quick and clear');
+      expect(rated.submittedAt, DateTime.utc(2026, 8, 19, 9, 30));
+    });
+
+    test(
+        'normalises a missing comment to null — the route documents '
+        '`string | null`', () async {
+      final Map<String, Object?> body = _ratedStatus();
+      (body['data']! as Map<String, Object?>).remove('comment');
+      final _Recorder recorder = _Recorder();
+      final RestClient client =
+          _clientOver(recorder.client((_) => _json(body)));
+
+      final RestCsatRated rated = await client.getCsat('s1') as RestCsatRated;
+
+      expect(rated.rating, 4);
+      expect(rated.comment, isNull);
+      expect(rated.submittedAt, DateTime.utc(2026, 8, 19, 9, 30));
+    });
+
+    test('reports an unrated session as an ANSWER, not an absence', () async {
+      // A caller acts on this: it is what lets the survey be offered at all,
+      // and it must stay distinguishable from a lookup that failed. The sealed
+      // union is what makes that distinction a compile-time one.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{'rated': false},
+          }),
+        ),
+      );
+
+      expect(await client.getCsat('s1'), isA<RestCsatUnrated>());
+    });
+
+    test(
+        'rejects a body with no boolean `rated` rather than reading it as '
+        'unrated', () async {
+      // Reading a malformed body as "not rated yet" would offer the survey
+      // again over a rated session, and the POST is an upsert — the exact
+      // duplicate this call exists to prevent.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{'rating': 4},
+          }),
+        ),
+      );
+
+      await expectLater(
+        client.getCsat('s1'),
+        throwsA(isA<RestMalformedResponseException>()),
+      );
+    });
+
+    test('rejects a non-boolean `rated` — the string "true" is not a verdict',
+        () async {
+      // TS tests `typeof data.rated !== 'boolean'` through an absent field
+      // only. A truthy STRING is the shape that would slip past a looser check
+      // and lock a card on a value the server never asserted.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{'rated': 'true', 'rating': 4},
+          }),
+        ),
+      );
+
+      await expectLater(
+        client.getCsat('s1'),
+        throwsA(isA<RestMalformedResponseException>()),
+      );
+    });
+
+    test(
+        'rejects `rated: true` with no numeric rating — a locked card with '
+        'nothing in it', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{'rated': true, 'comment': 'hm'},
+          }),
+        ),
+      );
+
+      await expectLater(
+        client.getCsat('s1'),
+        throwsA(isA<RestMalformedResponseException>()),
+      );
+    });
+
+    test(
+        'accepts an integral JSON double as the rating — Flutter Web sends '
+        'every number as one', () async {
+      // Not a TS case: it cannot be one, because JS has a single number type.
+      // On Flutter Web `"rating": 4` decodes to `4.0`, and an `is int` test
+      // alone would reject a valid body on exactly one of the three platforms
+      // this package targets.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => http.Response(
+            '{"success":true,"data":{"rated":true,"rating":4.0}}',
+            200,
+          ),
+        ),
+      );
+
+      expect((await client.getCsat('s1') as RestCsatRated).rating, 4);
+    });
+
+    test('rejects an unenveloped response as malformed', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client((_) => _json(<String, Object?>{'rated': false})),
+      );
+
+      await expectLater(
+        client.getCsat('s1'),
+        throwsA(isA<RestMalformedResponseException>()),
+      );
+    });
+
+    test("propagates the POST's own owner guards — 403 and 404", () async {
+      for (final (int status, String code) in <(int, String)>[
+        (403, 'UNAUTHORIZED'),
+        (404, 'SESSION_NOT_FOUND'),
+      ]) {
+        final _Recorder recorder = _Recorder();
+        final RestClient client = _clientOver(
+          recorder.client(
+            (_) => _json(
+              <String, Object?>{
+                'error': <String, Object?>{'code': code, 'message': 'nope'},
+              },
+              status,
+            ),
+          ),
+        );
+
+        await expectLater(
+          client.getCsat('s1'),
+          throwsA(
+            isA<RestApiException>()
+                .having((RestApiException e) => e.status, 'status', status),
+          ),
+          reason: 'a $status must stay an ordinary API refusal',
+        );
+      }
+    });
+
+    test('percent-encodes the session id into the path', () async {
+      // `Uri.parse` escapes nothing, so an unencoded `/` would silently
+      // address `/chat/sessions/a/b/csat` — a different route.
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{'rated': false},
+          }),
+        ),
+      );
+
+      await client.getCsat('a/b');
+
+      expect(
+        recorder.calls.single.url.toString(),
+        'https://chat.example.test/chat-services/api/v1/chat/sessions/a%2Fb/csat',
+      );
+    });
+  });
+
   group('listSessions', () {
     test('requests GET /chat/sessions/customer under the correct base path',
         () async {

@@ -35,6 +35,7 @@ import 'client.dart';
 import 'internal/envelope.dart';
 import 'internal/limits.dart';
 import 'internal/session_summary_decode.dart';
+import 'models/csat.dart';
 import 'models/session_summary.dart';
 
 /// Route names, exactly as they reach a [RestMalformedResponseException].
@@ -44,6 +45,8 @@ import 'models/session_summary.dart';
 /// response content in it, and a route name that is never interpolated is how
 /// that stays true by construction rather than by review.
 const String _kListSessionsRoute = 'GET /chat/sessions/customer';
+const String _kSubmitCsatRoute = 'POST /chat/sessions/{sessionId}/csat';
+const String _kGetCsatRoute = 'GET /chat/sessions/{sessionId}/csat';
 
 /// The session and CSAT surface of chat-service, on [RestClient].
 ///
@@ -53,6 +56,86 @@ const String _kListSessionsRoute = 'GET /chat/sessions/customer';
 /// survives an `export`" is a language property worth pinning rather than
 /// assuming.
 extension SessionApi on RestClient {
+  /// `POST /chat/sessions/{id}/csat` — an upsert, safe to call again for the
+  /// same session.
+  ///
+  /// ── ONE round trip, deliberately unlike close/reopen ────────────────────
+  ///
+  /// The route's own response already carries the whole rating
+  /// (`{success: true, data: record}`, answered straight from `submitCsat`'s
+  /// return value), so there is no partial receipt here needing a `/full` read
+  /// to complete — and nothing about a rating changes a session's state for
+  /// such a read to refresh. Adding one would spend a round trip on the last
+  /// interaction of a conversation fetching a session nothing has altered.
+  ///
+  /// ── [comment] is OMITTED when there is none, never sent as null ─────────
+  ///
+  /// The body stays an honest record of what the customer actually typed. An
+  /// explicit `comment: null` asserts that they were asked and declined, in a
+  /// way an absent key does not.
+  ///
+  /// One notch stricter than TS, on purpose: TS omits only `undefined`, so an
+  /// empty string reaches the wire as `comment: ''`. This treats `''` and
+  /// `null` alike, because an empty string is not something a customer typed
+  /// either, and this package already folds `''` into absent everywhere on the
+  /// READ side (`optionalString`). Nothing is lost server-side — the route
+  /// trims and nulls a blank comment regardless — so the only difference is a
+  /// request body that no longer claims an answer that was never given.
+  ///
+  /// Throws [RestMalformedResponseException] if the response is not a
+  /// `{success: true, data}` envelope carrying the stored record — never a
+  /// hollow [RestCsatSubmission] a caller would render as a saved rating.
+  Future<RestCsatSubmission> submitCsat(
+    String sessionId, {
+    required int rating,
+    String? comment,
+  }) async {
+    final Object? body = await request(
+      'POST',
+      '/chat/sessions/${_segment(sessionId)}/csat',
+      jsonBody: <String, Object?>{
+        'rating': rating,
+        if (comment != null && comment.isNotEmpty) 'comment': comment,
+      },
+    );
+
+    return RestCsatSubmission.fromJson(
+      unwrapEnvelope(body, _kSubmitCsatRoute),
+      _kSubmitCsatRoute,
+    );
+  }
+
+  /// `GET /chat/sessions/{id}/csat` — whether THIS session already carries a
+  /// rating.
+  ///
+  /// The read half of the same route, and the reason a customer cannot rate
+  /// one conversation twice: a widget's own memory of "already rated" is state
+  /// a page reload destroys, and the POST is an upsert that would happily
+  /// overwrite the score.
+  ///
+  /// Returns [RestCsatUnrated] on a `200 {rated: false}`, which is a normal
+  /// ANSWER rather than a 404 — "no rating yet" is a fact about a session the
+  /// customer owns.
+  ///
+  /// Throws [RestMalformedResponseException] rather than reading a malformed
+  /// body as unrated, on both of the route's shapes (a non-boolean `rated`, or
+  /// `rated: true` with no numeric `rating`). The strictness itself lives in
+  /// [RestCsatStatus.fromJson]; the reason lives here: a caller that cannot
+  /// tell "not rated" from "the server said something we do not understand"
+  /// offers the survey again on the exact case this route exists to prevent,
+  /// while its documented answer to a FAILED lookup is to withhold it.
+  Future<RestCsatStatus> getCsat(String sessionId) async {
+    final Object? body = await request(
+      'GET',
+      '/chat/sessions/${_segment(sessionId)}/csat',
+    );
+
+    return RestCsatStatus.fromJson(
+      unwrapEnvelope(body, _kGetCsatRoute),
+      _kGetCsatRoute,
+    );
+  }
+
   /// `GET /chat/sessions/customer` — the authenticated customer's own recent
   /// sessions, most recent first. What a session picker renders.
   ///
@@ -128,3 +211,12 @@ extension SessionApi on RestClient {
     return sessions;
   }
 }
+
+/// Percent-encodes a session id into a single path segment.
+///
+/// `Uri.parse` does not escape what it is handed, so an id containing a `/`
+/// would otherwise split into two segments and address a different route
+/// entirely — `/chat/sessions/a/b/csat` is not `/chat/sessions/{a%2Fb}/csat`.
+/// Mirrors every `encodeURIComponent` call in `adapters.ts`; the two escape
+/// the same set, leaving only `A-Za-z0-9-_.!~*'()` untouched.
+String _segment(String sessionId) => Uri.encodeComponent(sessionId);
