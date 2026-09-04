@@ -40,6 +40,7 @@ class ChatWidgetState extends Equatable {
     this.preChatAnswers,
     this.startedTopicLabel,
     this.localParticipantId,
+    this.muted = false,
   });
 
   /// Starting point for a fresh [ChatWidgetCubit] — disconnected, the
@@ -219,6 +220,34 @@ class ChatWidgetState extends Equatable {
   /// reference's own tick derivation makes, and for the same reason.
   final String? localParticipantId;
 
+  /// Whether THIS VISITOR has silenced the local chime.
+  ///
+  /// ── Not a merchant setting ──────────────────────────────────────────
+  ///
+  /// `RemoteConfig.sound` is the merchant deciding whether a chime exists at
+  /// all; this is the person in front of the screen deciding they have heard
+  /// enough of it. Both have to agree before anything plays — see
+  /// `chime.dart`, which is the one place the two are combined.
+  ///
+  /// ── Not persisted, and where that belongs ───────────────────────────
+  ///
+  /// The reference remembers it in `localStorage` under
+  /// `chatsdk:<publishableKey>:muted`, keyed per publishable key so two
+  /// tenants on one browser cannot mute each other. This package has no
+  /// key-value store and does not add one here: the consent gate needs the
+  /// same store, under the same per-publishable-key rule, and inventing a
+  /// second one now would leave two answers to "where does this widget
+  /// remember a per-visitor decision".
+  ///
+  /// So for this widget's lifetime, and re-asked on the next mount — which
+  /// is the safe direction (a visitor who muted and comes back hears one
+  /// chime and can mute again; the reverse would silence someone who never
+  /// asked for it). `HeaderMenu` already paints the flipped label from
+  /// whatever this says, including an already-muted value it has never seen
+  /// change, so wiring a persisted read to it later is one line and no new
+  /// behaviour.
+  final bool muted;
+
   /// The session this client is currently in, or `null` before the first
   /// `connection.ack`/`session.updated` snapshot lands.
   final SessionSnapshot? session;
@@ -304,6 +333,7 @@ class ChatWidgetState extends Equatable {
     Map<String, String>? preChatAnswers,
     String? startedTopicLabel,
     String? localParticipantId,
+    bool? muted,
   }) {
     return ChatWidgetState(
       connectionState: connectionState ?? this.connectionState,
@@ -332,6 +362,7 @@ class ChatWidgetState extends Equatable {
       preChatAnswers: preChatAnswers ?? this.preChatAnswers,
       startedTopicLabel: startedTopicLabel ?? this.startedTopicLabel,
       localParticipantId: localParticipantId ?? this.localParticipantId,
+      muted: muted ?? this.muted,
     );
   }
 
@@ -360,5 +391,6 @@ class ChatWidgetState extends Equatable {
         preChatAnswers,
         startedTopicLabel,
         localParticipantId,
+        muted,
       ];
 }

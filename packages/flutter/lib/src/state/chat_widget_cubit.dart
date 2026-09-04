@@ -596,6 +596,21 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   void markRead({String? upToMessageId}) => _client.markRead(upToMessageId: upToMessageId);
 
+  /// Silences or restores the local chime for this visitor.
+  ///
+  /// Takes the NEW state rather than flipping the old one, matching
+  /// `HeaderMenu.onMuteChange`, which already knows what it is asking for.
+  /// A toggle that computed the flip HERE as well would be a second copy of
+  /// the same fact, and the two can disagree the moment a menu is rebuilt
+  /// from a state that changed underneath it.
+  ///
+  /// Nothing is persisted — see [ChatWidgetState.muted] for where that
+  /// belongs and why it is not here.
+  void setMuted(bool muted) {
+    if (state.muted == muted) return;
+    emit(state.copyWith(muted: muted));
+  }
+
   // ── Inbound ───────────────────────────────────────────────────────────
 
   void _onConnectionState(ConnectionState connectionState) {
