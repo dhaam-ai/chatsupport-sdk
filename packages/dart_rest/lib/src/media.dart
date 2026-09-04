@@ -18,11 +18,14 @@
 /// method on [RestClient] for the same reason [fetchIpWatermark] is not.
 library;
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:dhaam_chat/dhaam_chat.dart'
     show AttachmentMetadata, ChatMessage;
+import 'package:http/http.dart' as http;
 
+import 'bootstrap.dart';
 import 'client.dart';
 import 'errors.dart';
 import 'internal/envelope.dart';
@@ -307,6 +310,196 @@ extension MediaApi on RestClient {
       _identifyContext,
     );
   }
+}
+
+// ── Contact-info capture ────────────────────────────────────────────────────
+
+/// A GPS fix, or as much of one as this feature needs.
+///
+/// Approximate "where is this visitor" for the console's contact panel, never
+/// last-metre accuracy — which is what makes a cached fix an acceptable
+/// substitute for a fresh one, and high-accuracy mode unnecessary.
+class RestGeoPosition {
+  const RestGeoPosition({required this.lat, required this.lng});
+
+  final double lat;
+  final double lng;
+}
+
+/// One partial contribution to the contact-info panel.
+///
+/// Every field is optional because [captureContactInfo] reports each capture
+/// AS IT RESOLVES rather than assembling one complete record — a value that
+/// arrives after the first hello has gone out simply rides along on the next
+/// one, and a value that never arrives is a field the console does not show.
+/// A caller merges these; it is never handed a snapshot claiming to be whole.
+class RestContactInfo {
+  const RestContactInfo({this.ip, this.ipWatermark, this.userAgent, this.geo});
+
+  final String? ip;
+  final String? ipWatermark;
+  final String? userAgent;
+  final RestGeoPosition? geo;
+}
+
+/// Where [captureContactInfo] sends each capture as it lands.
+///
+/// A plain callback rather than an interface: it is the narrowest shape a test
+/// double can satisfy, and a host holding whatever object owns contact info
+/// passes that object's method as a tear-off. TS declares a one-method
+/// `ContactInfoSink` interface for the same "narrow enough that a double does
+/// not need the whole thing" reason; in Dart a function type already is that.
+typedef ContactInfoSink = void Function(RestContactInfo info);
+
+/// Asks the platform for a GPS fix, bounded by [timeout].
+///
+/// ── This is a SEAM, and the platform side is not in this package ──────────
+///
+/// `dhaam_chat_rest` is pure Dart with no Flutter and no platform plugins, so
+/// there is no `navigator.geolocation` here to call and no location plugin to
+/// depend on. Geolocation therefore arrives as an injected callback, and the
+/// real implementation — whichever plugin the Flutter layer settles on —
+/// lives there. That keeps the permission prompt, the platform channels and
+/// the plugin choice on the side of the boundary that can actually make them,
+/// and keeps this package's dependency list at two.
+///
+/// ── The contract an implementation must honour ────────────────────────────
+///
+///  * **Resolve `null`; never reject.** Permission denied, the API absent, an
+///    insecure origin, a fix that times out — every non-success path is the
+///    same outcome to this feature: fall back to IP geolocation server-side.
+///    [captureContactInfo] folds a probe that throws into `null` anyway, but
+///    an implementation that relies on that is reporting a failure it should
+///    have named.
+///  * **Pass [timeout] to the platform API; do not race a second timer.** The
+///    platform is the thing that can actually abandon a pending prompt and
+///    stop draining the radio. A timer racing it leaves the request running
+///    with nothing left to receive its answer.
+///  * **Never re-prompt.** A visitor who declined has answered.
+typedef GeolocationProbe = Future<RestGeoPosition?> Function(Duration timeout);
+
+/// How long a geolocation probe may take before the platform abandons it.
+///
+/// Much longer than a REST round trip, deliberately: a permission prompt and a
+/// GPS fix can legitimately take several seconds, and the visitor may be
+/// reading the prompt. It must still be BOUNDED, because "wait indefinitely
+/// for a fix that never comes because nobody answered" is exactly the block
+/// this feature is not allowed to become.
+const Duration kGeolocationTimeout = Duration(seconds: 5);
+
+/// Kicks off every contact-info capture for this session and hands each result
+/// to [sink] as — and if — it resolves.
+///
+/// ── DO NOT await this before connecting ───────────────────────────────────
+///
+/// That is the entire point of the design, not a performance note. This data
+/// is enrichment, not a precondition: GPS in particular must never gate the
+/// chat opening, and by extension neither may a slow or failed ip-watermark
+/// fetch. Call this once, as early as possible, immediately BEFORE the first
+/// connect, and drop the returned future on the floor. It exists so a TEST can
+/// know when every capture has settled — not to gate anything in production.
+///
+/// A value that resolves after the first hello has already gone out rides
+/// along on the next one, which is an accepted trade-off rather than a bug to
+/// chase.
+///
+/// ── userAgent is recorded SYNCHRONOUSLY, before anything is awaited ───────
+///
+/// A Dart `async` function body "executes only until it encounters its first
+/// `await` expression" (dart.dev/language/async), so [userAgent] reaches
+/// [sink] during the CALL, before this function has returned its future. That
+/// is the property that puts it on the FIRST hello even when neither async
+/// capture has settled — the same guarantee TS gets from doing the same thing
+/// before its own first `await`. Moving that block below an `await`, or
+/// wrapping it in one, silently loses it.
+///
+/// [userAgent] is a parameter for the same reason [geolocation] is a seam:
+/// there is no `navigator` in pure Dart. A host that cannot name one passes
+/// nothing, and nothing is recorded for it — an empty string is not a user
+/// agent and is treated as absent, matching TS's own length check.
+///
+/// ── Never throws ──────────────────────────────────────────────────────────
+///
+/// Same contract as [fetchIpWatermark] and for the same reason: a widget that
+/// throws during boot takes the host app down with it, and enrichment that
+/// failed is "send nothing", not an error. When both async captures fail,
+/// [sink] sees exactly one call — the user agent — and nothing else.
+Future<void> captureContactInfo({
+  required ContactInfoSink sink,
+  required String apiUrl,
+  String? userAgent,
+  GeolocationProbe? geolocation,
+  http.Client? httpClient,
+  Duration ipWatermarkTimeout = kIpWatermarkTimeout,
+  Duration geolocationTimeout = kGeolocationTimeout,
+}) async {
+  // Everything above the first `await` runs during the call itself. Keep it
+  // that way — see this function's doc.
+  if (userAgent != null && userAgent.isNotEmpty) {
+    sink(RestContactInfo(userAgent: userAgent));
+  }
+
+  // Independent of each other and of the user agent above: either, both or
+  // neither may end up contributing to the session that gets created.
+  await Future.wait<void>(<Future<void>>[
+    _recordIpWatermark(
+      sink: sink,
+      apiUrl: apiUrl,
+      httpClient: httpClient,
+      timeout: ipWatermarkTimeout,
+    ),
+    _recordGeolocation(
+      sink: sink,
+      geolocation: geolocation,
+      timeout: geolocationTimeout,
+    ),
+  ]);
+}
+
+Future<void> _recordIpWatermark({
+  required ContactInfoSink sink,
+  required String apiUrl,
+  required http.Client? httpClient,
+  required Duration timeout,
+}) async {
+  // Already collapses every failure class to null and is documented never to
+  // throw, so there is nothing to catch here.
+  final RestIpWatermark? result = await fetchIpWatermark(
+    apiUrl: apiUrl,
+    httpClient: httpClient,
+    timeout: timeout,
+  );
+  if (result == null) return;
+  sink(RestContactInfo(ip: result.ip, ipWatermark: result.watermark));
+}
+
+Future<void> _recordGeolocation({
+  required ContactInfoSink sink,
+  required GeolocationProbe? geolocation,
+  required Duration timeout,
+}) async {
+  // No probe at all is the Dart analogue of `navigator.geolocation` being
+  // absent — a non-browser embed, or an insecure origin most browsers refuse
+  // the API on. Same outcome: record nothing, ask nobody.
+  if (geolocation == null) return;
+
+  final RestGeoPosition? position;
+  try {
+    // The timeout goes INTO the probe, which passes it to the platform API.
+    // Racing a `.timeout()` here instead would leave the platform request
+    // running with nothing left to receive its answer, and would report a
+    // fix that arrived at 5.1s as a failure while the radio kept draining.
+    position = await geolocation(timeout);
+  } catch (_) {
+    // A probe is documented to resolve null rather than throw, but it is
+    // caller-supplied code calling a platform channel. Letting one throw would
+    // break this function's own "never throws" contract and, through
+    // Future.wait, discard a perfectly good ip-watermark alongside it.
+    return;
+  }
+
+  if (position == null) return;
+  sink(RestContactInfo(geo: position));
 }
 
 /// Absence becomes [kUnknownAttachmentMimeType]; wrongness is left to the
