@@ -19,4 +19,6 @@
 library;
 
 export 'chime.dart';
+export 'header_avatar.dart';
 export 'header_menu.dart';
+export 'identity_header.dart';
