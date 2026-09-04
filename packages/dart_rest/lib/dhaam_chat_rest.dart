@@ -25,7 +25,18 @@
 ///
 /// The invariant that DOES survive, and IS asserted by a test
 /// (`test/no_core_import_test.dart`): **`dhaam_chat` imports nothing from
-/// `dhaam_chat_rest`.** Its zero-HTTP boundary is the real constraint.
+/// `dhaam_chat_rest`, and carries no HTTP dependency at all.** Its zero-HTTP
+/// boundary is the real constraint.
+///
+/// ── The types this package re-exports, and why ────────────────────────────
+///
+/// A consumer decoding a message page gets back `dhaam_chat`'s own
+/// `ChatMessage` — the SAME type a `message.new` frame decodes into. Rather
+/// than make every such consumer import both packages to name one type, the
+/// handful of `dhaam_chat` types that appear in THIS package's signatures are
+/// re-exported below. Nothing else is: this is not a facade over
+/// `dhaam_chat`, and a consumer that wants a `ChatClient` imports that package
+/// directly.
 ///
 /// ── What is deliberately NOT exported ─────────────────────────────────────
 ///
@@ -35,8 +46,48 @@
 /// how `dhaam_chat`'s own `lib/src/protocol/json.dart` is present but absent
 /// from its barrel — an established convention in this workspace, not a new
 /// one.
+///
+/// ```dart
+/// final rest = RestClient(
+///   apiUrl: 'https://chat.example.com',
+///   publishableKey: PublishableKey.parse(const String.fromEnvironment('DH_KEY')),
+///   getAccessToken: () => myBackend.mintChatToken(),
+/// );
+/// ```
 library;
 
+/// The `dhaam_chat` types that appear in this package's own signatures.
+///
+/// `PublishableKey` and `TokenProvider` are `RestClient`'s constructor
+/// parameters; `ChatMessage` and `AttachmentMetadata` are what its decoders
+/// return; `ChatStatus`, `ChatMode` and `HandledBy` are the leaf vocabulary on
+/// the session models. Everything else stays behind `package:dhaam_chat`.
+export 'package:dhaam_chat/dhaam_chat.dart'
+    show
+        AttachmentMetadata,
+        ChatMessage,
+        ChatMode,
+        ChatStatus,
+        HandledBy,
+        HandledByKind,
+        PublishableKey,
+        TokenProvider,
+        TokenUnavailableError;
+export 'src/bootstrap.dart'
+    show
+        RestIpWatermark,
+        fetchIpWatermark,
+        fetchWidgetConfig,
+        kIpWatermarkTimeout,
+        kWidgetConfigTimeout;
+export 'src/client.dart'
+    show
+        RestClient,
+        RestMultipartFile,
+        kReadBackAttempts,
+        kRestBasePath,
+        kSessionSummaryLimitMax,
+        kSessionSummaryLimitMin;
 export 'src/errors.dart'
     show
         RestApiException,
@@ -45,3 +96,17 @@ export 'src/errors.dart'
         RestSessionReadBackException,
         RestTransportException,
         RestValidationException;
+export 'src/media_type.dart' show normalizeMediaType;
+export 'src/models/csat.dart'
+    show RestCsatRated, RestCsatStatus, RestCsatSubmission, RestCsatUnrated;
+export 'src/models/identity.dart'
+    show
+        RestDevicePlatform,
+        RestIdentityDevice,
+        RestIdentityProfile,
+        RestIdentityResult;
+export 'src/models/issue_report.dart' show RestIssueReport;
+export 'src/models/message_page.dart' show RestMessagePage;
+export 'src/models/session.dart'
+    show RestChatParticipantProfile, RestChatSession, RestChatTicket;
+export 'src/models/session_summary.dart' show RestChatSessionSummary;
