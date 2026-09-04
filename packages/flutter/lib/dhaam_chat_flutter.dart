@@ -39,6 +39,9 @@ export 'src/ui/image_safety.dart';
 export 'src/ui/messages_screen.dart';
 export 'src/ui/new_conversation_view.dart';
 export 'src/ui/offline_banner.dart';
+// `pre_chat.dart` is itself a barrel over the four files of the pre-chat
+// module (see its header) — so this one line is the whole gate surface.
+export 'src/ui/pre_chat/pre_chat.dart';
 export 'src/ui/quick_replies.dart';
 export 'src/ui/topic_chips.dart';
 export 'src/ui/unavailable_view.dart';

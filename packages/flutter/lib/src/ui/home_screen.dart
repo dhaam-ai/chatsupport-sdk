@@ -69,10 +69,13 @@ class HomeScreen extends StatelessWidget {
                     const SizedBox(height: 8),
                     CommonQuestionsList(
                       questions: config.commonQuestions,
-                      onSelect: (CommonQuestion question) {
-                        cubit.startNewConversation();
-                        cubit.sendMessage(question.prompt);
-                      },
+                      // One call, not "open the new-conversation form and
+                      // then send into it": a tapped question is a customer
+                      // asking one specific thing, and routing it through the
+                      // form would put the merchant's pre-chat questions in
+                      // front of an answer they already asked for. See
+                      // ChatWidgetCubit.startCommonQuestion.
+                      onSelect: cubit.startCommonQuestion,
                     ),
                   ],
                 ],
