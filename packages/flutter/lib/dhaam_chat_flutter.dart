@@ -29,6 +29,9 @@ export 'src/state/widget_chat_client.dart';
 export 'src/surfaces/product_surface_slot.dart';
 export 'src/theme/chat_theme.dart';
 export 'src/theme/header_style.dart';
+// `attachments.dart` is itself a barrel over the attachment module (see its
+// header), so this one line is the whole picking/upload surface.
+export 'src/ui/attachments/attachments.dart';
 export 'src/ui/chat_bottom_nav.dart';
 export 'src/ui/common_questions_list.dart';
 export 'src/ui/composer.dart';
