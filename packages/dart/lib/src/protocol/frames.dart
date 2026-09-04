@@ -55,17 +55,45 @@ import 'json.dart';
 /// a frame id, despite §8.3's "the id/seq of the last frame". Omit it on a
 /// first connect; the server reads absent as "fresh" and present-but-stale as
 /// something to replay.
+///
+/// [newSession] asks the server to CLOSE whatever session this customer is
+/// currently in (SWITCHED) and mint a fresh one, rather than resolving them
+/// back into it. It is the companion to dropping [resumeFrom], and the half
+/// that is easy to miss: an absent `resumeFrom` only makes the hello *look*
+/// like a first connection, and chat-service resolves a customer to their one
+/// active session either way — so a reconnect without this lands straight back
+/// in the conversation the caller was trying to leave. That is "the customer
+/// pressed *Start a new conversation* and kept talking in the old one".
+///
+/// [subject] and [topic] carry the "New conversation" screen's choice onto the
+/// same hello. They ride here rather than on a later frame because the session
+/// they describe is minted BY this handshake — a frame sent afterwards would
+/// be describing a session the server has already created without them.
+///
+/// SPEC GAP: none of these three is in §7.3. All were recovered from the
+/// server, like most of this file.
+///
+/// Every one is omitted when unset rather than sent as `false`/null, which is
+/// the same absence rule [resumeFrom] follows above: the server branches on
+/// the key's PRESENCE, and an explicit `false` is a different thing from an
+/// absent key to a deployment that predates the field.
 Map<String, Object?> connectionHelloPayload({
   required String token,
   required String publishableKey,
   int protocolVersion = kProtocolVersion,
   int? resumeFrom,
+  bool newSession = false,
+  String? subject,
+  String? topic,
 }) =>
     <String, Object?>{
       'token': token,
       'publishableKey': publishableKey,
       'protocolVersion': protocolVersion,
       if (resumeFrom != null) 'resumeFrom': resumeFrom,
+      if (newSession) 'newSession': true,
+      if (subject != null) 'subject': subject,
+      if (topic != null) 'topic': topic,
     };
 
 /// Builds `connection.reauth.d` (§7.3, §10.5, D3).

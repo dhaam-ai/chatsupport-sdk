@@ -64,6 +64,44 @@ void main() {
       expect(d['protocolVersion'], equals(kProtocolVersion));
     });
 
+    test('connection.hello omits newSession/subject/topic when unasked', () {
+      // Absent, not `false` and not null. The server branches on the key's
+      // presence, so a hello that always carried `newSession: false` would
+      // differ on the wire from every hello this client sent before the field
+      // existed — for a request nobody made.
+      final Map<String, Object?> d =
+          connectionHelloPayload(token: 't', publishableKey: 'k');
+      expect(d.containsKey('newSession'), isFalse);
+      expect(d.containsKey('subject'), isFalse);
+      expect(d.containsKey('topic'), isFalse);
+    });
+
+    test('connection.hello carries newSession with the subject and topic', () {
+      final Map<String, Object?> d = connectionHelloPayload(
+        token: 't',
+        publishableKey: 'k',
+        newSession: true,
+        subject: 'Refund for order 41',
+        topic: 'Billing',
+      );
+      expect(d['newSession'], isTrue);
+      expect(d['subject'], equals('Refund for order 41'));
+      expect(d['topic'], equals('Billing'));
+    });
+
+    test('connection.hello can carry newSession with no subject or topic', () {
+      // "Start a new conversation" with no topic picked is the ordinary case,
+      // and it must not become a hello that asks for nothing.
+      final Map<String, Object?> d = connectionHelloPayload(
+        token: 't',
+        publishableKey: 'k',
+        newSession: true,
+      );
+      expect(d['newSession'], isTrue);
+      expect(d.containsKey('subject'), isFalse);
+      expect(d.containsKey('topic'), isFalse);
+    });
+
     test('message.send always emits type, which the server requires', () {
       // §6.3 shows type as optional (`opts?: { type?: MessageType }`). The
       // server requires it. A client that follows §6.3 literally fails every
