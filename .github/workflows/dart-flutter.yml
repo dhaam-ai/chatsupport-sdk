@@ -20,6 +20,7 @@ env:
   # synthetic "loading <file>" testStart entries from --reporter json output,
   # then comparing against --reporter compact final count (+N).
   DART_TEST_FLOOR: '262'
+  DART_REST_TEST_FLOOR: '303'
   FLUTTER_TEST_FLOOR: '365'
 
 jobs:
@@ -68,39 +69,33 @@ jobs:
           fi
 
       # ---------------------------------------------------------------------------
-      # packages/dart_rest: Dart REST adapter package (created by T1)
-      # Skip if it doesn't exist yet — T1 is parallel, may not have landed
+      # packages/dart_rest: the REST surface dhaam_chat deliberately has no HTTP
+      # client to reach. Gated exactly like the other two.
       # ---------------------------------------------------------------------------
-      - name: packages/dart_rest - check if package exists
-        id: dart_rest_exists
-        run: |
-          if [ -d "packages/dart_rest" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: packages/dart_rest - pub get
-        if: steps.dart_rest_exists.outputs.exists == 'true'
         run: cd packages/dart_rest && dart pub get
 
       - name: packages/dart_rest - analyze --fatal-infos
-        if: steps.dart_rest_exists.outputs.exists == 'true'
         run: cd packages/dart_rest && dart analyze --fatal-infos
 
       - name: packages/dart_rest - format --set-exit-if-changed
-        if: steps.dart_rest_exists.outputs.exists == 'true'
         run: cd packages/dart_rest && dart format --set-exit-if-changed .
 
       - name: packages/dart_rest - test
-        if: steps.dart_rest_exists.outputs.exists == 'true'
         run: cd packages/dart_rest && dart test --reporter json 2>&1 | tee /tmp/dart_rest-test.json
 
       - name: packages/dart_rest - verify test count
-        if: steps.dart_rest_exists.outputs.exists == 'true'
         run: |
-          ACTUAL_COUNT=$(jq '[.[] | select(.type == "testDone")] | length' /tmp/dart_rest-test.json)
-          echo "✓ packages/dart_rest: $ACTUAL_COUNT tests passed"
+          # Same filter as the two packages above: `--reporter json` emits
+          # newline-delimited JSON (NOT an array, so `jq '.[]'` cannot read it)
+          # and prefixes one synthetic "loading <file>" testStart per suite.
+          ACTUAL_COUNT=$(grep '"type":"testStart"' /tmp/dart_rest-test.json | grep -v '"name":"loading' | wc -l)
+          FLOOR=${{ env.DART_REST_TEST_FLOOR }}
+          echo "packages/dart_rest: $ACTUAL_COUNT tests (floor: $FLOOR)"
+          if [ "$ACTUAL_COUNT" -lt "$FLOOR" ]; then
+            echo "::error::packages/dart_rest test count REGRESSION: $ACTUAL_COUNT < $FLOOR (tests deleted)"
+            exit 1
+          fi
 
       # ---------------------------------------------------------------------------
       # packages/flutter: Flutter package
