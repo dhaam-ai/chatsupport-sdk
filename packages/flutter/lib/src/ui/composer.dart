@@ -29,13 +29,25 @@
 /// inside the widget. Both popovers here are ordinary widgets stacked above
 /// the field.
 ///
-/// ── Attach and voice are NOT here ────────────────────────────────────────
+/// ── All four icons, and where each one's state lives ─────────────────────
 ///
-/// `composer.ts` has all four icons. Attachment picking and voice capture
-/// land with their own nodes, which own the platform seams they need; this
-/// file owns emoji, link, and the suggestion path. [uploading] is the one
-/// fact this widget needs FROM the attachment side, and it is a plain
-/// parameter rather than state owned here.
+/// `composer.ts` has attach, emoji, mic and link inside the border, and so
+/// does this. None of the four owns its own state here: emoji and link are
+/// popovers over a controller-free field, while attach and mic are drawn from
+/// [Composer.attachments] and [Composer.voice] — two controllers this widget
+/// renders and never constructs, because the picker, the uploader and the
+/// microphone all belong to the host that has them.
+///
+/// ── "Is an upload in flight" is ONE fact ─────────────────────────────────
+///
+/// [Composer.uploading] was a plain parameter because the upload belonged to
+/// another node. Now that the draft controller is here, `_uploading` is the
+/// single answer, combining the parameter with
+/// `AttachmentDraftController.canSend`, and **every** consumer reads it: the
+/// send button, the affordance gate, and the `uploading` argument
+/// [chipSubmitRefusal] takes. Two derivations of that flag would let a
+/// suggestion chip send during the very upload the send button is refusing —
+/// which is the concrete bug the unification prevents, not a tidiness point.
 ///
 /// ── The reply chip renders a target it does not own ──────────────────────
 ///
@@ -51,9 +63,14 @@
 /// subject to the same consent gate.
 library;
 
+import 'dart:async';
+
+import 'package:dhaam_chat/dhaam_chat.dart' show AttachmentMetadata;
 import 'package:flutter/material.dart';
 
+import 'attachments/attachments.dart';
 import 'composer_affordances/composer_affordances.dart';
+import 'voice/voice.dart';
 
 class Composer extends StatefulWidget {
   const Composer({
@@ -66,6 +83,11 @@ class Composer extends StatefulWidget {
     this.controller,
     this.replyTo,
     this.onCancelReply,
+    this.attachments,
+    this.onSendAttachment,
+    this.fileUploads = false,
+    this.voice,
+    this.onVoiceRecorded,
   });
 
   /// The customer submitted [text] — already trimmed, always non-blank.
@@ -103,6 +125,48 @@ class Composer extends StatefulWidget {
   /// traps a mistaken tap. A caller that supplies [replyTo] supplies this.
   final VoidCallback? onCancelReply;
 
+  /// The pending attachment, or `null` for a composer that cannot attach.
+  ///
+  /// Drawn here, owned by the host: the picker and the uploader behind it are
+  /// the host's to supply, and a controller constructed in this widget would
+  /// be rebuilt away with it — taking the customer's chosen file along.
+  final AttachmentDraftController? attachments;
+
+  /// An attachment finished uploading and is ready to be announced.
+  ///
+  /// Separate from [onSend] rather than folded into it, exactly as
+  /// `composer.ts` keeps `onSendAttachment` separate from `onSend`. Keeping
+  /// [onSend] a `ValueChanged<String>` is load-bearing — see this library's
+  /// header — and a send may legitimately carry a file, some words, or both.
+  final ValueChanged<AttachmentMetadata>? onSendAttachment;
+
+  /// `RemoteConfig.fileUploads`. False renders no paperclip at all.
+  ///
+  /// The gate is read here and nowhere else, which is
+  /// [AttachmentAttachButton]'s own rule: `AttachmentDraftController`
+  /// deliberately knows nothing about `RemoteConfig`, so there is exactly one
+  /// derivation of "may this customer attach".
+  ///
+  /// Defaults to **false**, and that default is deliberate: a composer built
+  /// before the config has landed must not offer a feature the merchant may
+  /// have turned off. The same fail-safe direction `RemoteConfig.sound` takes.
+  final bool fileUploads;
+
+  /// Voice capture, or `null` for a composer with no microphone.
+  ///
+  /// `null` renders no mic button — see [VoiceRecordButton] for why an absent
+  /// control is the honest one when no [VoiceDevice] has been supplied.
+  final VoiceCaptureController? voice;
+
+  /// A finished voice note.
+  ///
+  /// Deliberately NOT wired into [attachments] here: a note becomes a message
+  /// by becoming a draft, and `AttachmentDraftController` accepts drafts only
+  /// from its own picker. Until it can take one from outside, the host is the
+  /// only party that can complete that hop — so this widget hands the note
+  /// out rather than pretending to deliver it.
+  final ValueChanged<VoiceRecording>? onVoiceRecorded;
+
   @override
   State<Composer> createState() => _ComposerState();
 }
@@ -135,6 +199,15 @@ class _ComposerState extends State<Composer> {
     // every input event.
     _controller.addListener(() => setState(() {}));
     widget.controller?.attach(_submitSuggestion);
+    // The send button, the affordance gate and the popover rule all read the
+    // draft controller, so this widget has to rebuild when it changes — the
+    // two attachment widgets' own `ListenableBuilder`s only cover
+    // themselves.
+    widget.attachments?.addListener(_onAttachmentsChanged);
+  }
+
+  void _onAttachmentsChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -143,6 +216,10 @@ class _ComposerState extends State<Composer> {
     if (!identical(oldWidget.controller, widget.controller)) {
       oldWidget.controller?.detach(_submitSuggestion);
       widget.controller?.attach(_submitSuggestion);
+    }
+    if (!identical(oldWidget.attachments, widget.attachments)) {
+      oldWidget.attachments?.removeListener(_onAttachmentsChanged);
+      widget.attachments?.addListener(_onAttachmentsChanged);
     }
     // A disabled or uploading composer must not leave a popover open: its
     // trigger is dead in both states, so the popover would be unreachable and
@@ -170,6 +247,9 @@ class _ComposerState extends State<Composer> {
   @override
   void dispose() {
     widget.controller?.detach(_submitSuggestion);
+    // Removed, never disposed: the controller outlives this widget and
+    // belongs to whoever built it.
+    widget.attachments?.removeListener(_onAttachmentsChanged);
     _controller.dispose();
     _focusNode.dispose();
     _emojiButtonFocus.dispose();
@@ -177,7 +257,16 @@ class _ComposerState extends State<Composer> {
     super.dispose();
   }
 
-  bool get _affordancesEnabled => widget.enabled && !widget.uploading;
+  /// **The one answer to "is an upload in flight".**
+  ///
+  /// [Composer.uploading] is the flag a caller with no draft controller
+  /// passes; `canSend` is the same fact when there IS one. Combined here,
+  /// once, so the send button and [chipSubmitRefusal] cannot disagree — see
+  /// this library's header for the bug two derivations would allow.
+  bool get _uploading =>
+      widget.uploading || !(widget.attachments?.canSend ?? true);
+
+  bool get _affordancesEnabled => widget.enabled && !_uploading;
 
   /// The three effects every insertion has. See this library's own doc for
   /// why each one is a real bug when skipped, and why they share a funnel.
@@ -211,15 +300,44 @@ class _ComposerState extends State<Composer> {
     returnFocusTo.requestFocus();
   }
 
-  void _submit() {
+  /// The one send path — typed, suggested, or a file.
+  ///
+  /// ── The order is upload FIRST, then clear, then announce ─────────────
+  ///
+  /// `composer.ts` clears the box and the pending file BEFORE awaiting the
+  /// upload. That is right for the TEXT — `dhaam_chat`'s `ChatClient` marks an
+  /// unreachable send failed rather than losing it, so re-showing the words
+  /// would only invite a duplicate send — and wrong for the FILE, because
+  /// nothing queues an upload: if the bytes did not land, the only copy is
+  /// the one in the draft controller.
+  ///
+  /// So the clear moves after the await, and the three guards below are what
+  /// make that safe. They are `AttachmentDraftController`'s own specified
+  /// contract, not this widget's invention; see `uploadDraft`'s doc for why
+  /// `hasDraft` after the await is the literal fact rather than a result code.
+  ///
+  /// A file with no words is a message. `composer.ts` guards on
+  /// `text === '' && file === null`, not on the text alone, and a composer
+  /// that refused to send a photo without a caption would be refusing the
+  /// commonest attachment there is.
+  Future<void> _submit() async {
     final String text = _controller.text.trim();
-    if (text.isEmpty) return;
-    // Cleared optimistically, before the send even resolves: dhaam_chat's
-    // ChatClient marks an unreachable send failed rather than losing it
-    // (see its own class doc), so re-showing the text would only invite a
-    // duplicate send — same reasoning composer.ts's own submit() gives.
+    final AttachmentDraftController? attachments = widget.attachments;
+    if (text.isEmpty && !(attachments?.hasDraft ?? false)) return;
+
+    AttachmentMetadata? file;
+    if (attachments != null) {
+      if (!attachments.canSend) return; // in-flight upload blocks send
+      file = await attachments.uploadDraft();
+      if (attachments.hasDraft) return; // upload failed; draft + text kept
+    }
+
+    // Past the guards the send is committed, so the box is cleared before
+    // either callback runs — the reference's own optimistic clear, moved to
+    // the first point at which nothing can still refuse the send.
     _controller.clear();
-    widget.onSend(text);
+    if (file != null) widget.onSendAttachment?.call(file);
+    if (text.isNotEmpty) widget.onSend(text);
   }
 
   /// The suggestion path, and the one rule that makes it safe.
@@ -237,17 +355,25 @@ class _ComposerState extends State<Composer> {
       suggestion: text,
       draft: _controller.text,
       enabled: widget.enabled,
-      uploading: widget.uploading,
+      // The SAME flag the send button reads. See `_uploading`.
+      uploading: _uploading,
     );
     if (refusal != null) return refusal;
     _controller.text = text.trim();
-    _submit();
+    // A chip's caller gets its refusal synchronously and has nothing to do
+    // with the send's future; `unawaited` says so rather than leaving
+    // `unawaited_futures` to flag it.
+    unawaited(_submit());
     return null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final bool hasContent = _controller.text.trim().isNotEmpty;
+    final AttachmentDraftController? attachments = widget.attachments;
+    // `composer.ts`: `input.value.trim() !== '' || pendingFile !== null`. A
+    // photo with no caption still enables Send.
+    final bool hasContent =
+        _controller.text.trim().isNotEmpty || (attachments?.hasDraft ?? false);
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final bool affordances = _affordancesEnabled;
 
@@ -271,6 +397,13 @@ class _ComposerState extends State<Composer> {
             },
             onCancel: () => _closePopover(_linkButtonFocus),
           ),
+        // Transient, like a palette: it exists only while the microphone is
+        // open, so it stacks above the things that describe the message
+        // itself.
+        VoiceRecordingBar(controller: widget.voice),
+        // What is attached right now — a sibling of the field, never inside
+        // it, so a long file name cannot push the input around.
+        if (attachments != null) AttachmentDraftBar(controller: attachments),
         // Directly above the box and below the popovers: the chip describes
         // what the NEXT send answers, so it belongs against the thing being
         // typed into, while a palette is transient and stacks over it.
@@ -301,16 +434,34 @@ class _ComposerState extends State<Composer> {
               borderRadius: BorderRadius.circular(widget.radius),
               borderSide: BorderSide.none,
             ),
-            prefixIcon: IconButton(
-              focusNode: _emojiButtonFocus,
-              tooltip: 'Insert an emoji',
-              icon: const Icon(Icons.emoji_emotions_outlined),
-              onPressed:
-                  affordances ? () => _togglePopover(_Popover.emoji) : null,
+            // The reference's own order — attach, emoji, mic, link, send —
+            // split across the two slots Flutter's decoration offers.
+            prefixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (attachments != null)
+                  AttachmentAttachButton(
+                    controller: attachments,
+                    enabled: widget.fileUploads,
+                    composerEnabled: widget.enabled,
+                  ),
+                IconButton(
+                  focusNode: _emojiButtonFocus,
+                  tooltip: 'Insert an emoji',
+                  icon: const Icon(Icons.emoji_emotions_outlined),
+                  onPressed:
+                      affordances ? () => _togglePopover(_Popover.emoji) : null,
+                ),
+              ],
             ),
             suffixIcon: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
+                VoiceRecordButton(
+                  controller: widget.voice,
+                  enabled: affordances,
+                  onRecorded: widget.onVoiceRecorded,
+                ),
                 IconButton(
                   focusNode: _linkButtonFocus,
                   tooltip: 'Insert a link',
@@ -321,10 +472,11 @@ class _ComposerState extends State<Composer> {
                 IconButton(
                   tooltip: 'Send message',
                   icon: const Icon(Icons.send),
-                  onPressed:
-                      widget.enabled && !widget.uploading && hasContent
-                          ? _submit
-                          : null,
+                  // `_uploading`, not `widget.uploading`: the send button and
+                  // the chip guard read one flag.
+                  onPressed: widget.enabled && !_uploading && hasContent
+                      ? _submit
+                      : null,
                 ),
               ],
             ),
