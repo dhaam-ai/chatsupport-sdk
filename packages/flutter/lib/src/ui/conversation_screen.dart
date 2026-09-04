@@ -67,6 +67,44 @@ class _ConversationScreenState extends State<ConversationScreen> {
   /// keeps a chip from overwriting a half-typed draft.
   final ComposerController _composer = ComposerController();
 
+  /// This composer's pending attachment, or null when the host wired no
+  /// uploader — in which case the composer grows no attach controls at all.
+  ///
+  /// ── Built here because a draft is this screen's, not the Cubit's ─────
+  ///
+  /// The two seams behind it (`AttachmentPicker`, `AttachmentUploader`) live
+  /// on the Cubit, because it is the only thing a host hands to
+  /// `ChatWidget`. The DRAFT does not: it is one composer's pending file and
+  /// it should die with the screen. A controller on the Cubit would carry a
+  /// chosen file across a navigation away and back, and would outlive the
+  /// widget that is the only thing able to show its status sentence.
+  ///
+  /// Deliberately NOT rebuilt in `build`: it is a `ChangeNotifier` holding
+  /// the customer's chosen file, and re-creating it on every rebuild — a
+  /// keystroke, a message arriving — would drop that file on the floor
+  /// between picking it and pressing Send.
+  AttachmentDraftController? _attachments;
+
+  @override
+  void initState() {
+    super.initState();
+    // `read`, not `watch`: this needs the Cubit once, to build a controller,
+    // and nothing about the seams it carries can change afterwards.
+    _attachments = context
+        .read<ChatWidgetCubit>()
+        .createAttachmentDraft(onError: _report);
+  }
+
+  @override
+  void dispose() {
+    // Owns a lifetime — `AttachmentDraftController`'s own rule. This is also
+    // what makes its `_disposed` guard load-bearing rather than defensive: an
+    // upload can still be in flight when the customer navigates away, and its
+    // `finally` runs regardless.
+    _attachments?.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<ChatWidgetCubit, ChatWidgetState>(
@@ -302,6 +340,32 @@ class _ConversationScreenState extends State<ConversationScreen> {
                         // on why that belongs there and not here.
                         replyTo: state.replyingTo,
                         onCancelReply: () => cubit.replyTo(null),
+                        // The composer hop D23 named: the attach button, the
+                        // draft bar and the three submit guards were all
+                        // built, tested and reachable by nobody, because
+                        // this line did not exist.
+                        //
+                        // Null when the host wired no uploader, which draws
+                        // no paperclip — the same "off, not broken" rule the
+                        // ⋯ menu applies to an unbacked row.
+                        attachments: _attachments,
+                        // Its OWN message, per §12.10 — the URL travels as
+                        // the content and the media type becomes the message
+                        // type. `Composer._submit` calls this first and
+                        // `onSend` after, exactly as `composer.ts` does, so
+                        // a file with a caption is two messages and a file
+                        // alone is one.
+                        onSendAttachment: cubit.sendAttachment,
+                        // The merchant's switch, read here and nowhere else
+                        // — `AttachmentDraftController` deliberately knows
+                        // nothing about `RemoteConfig`, so there is exactly
+                        // one derivation of "may this customer attach".
+                        //
+                        // Read from state on every build rather than
+                        // captured, so a config that lands after the
+                        // composer is on screen turns the paperclip on
+                        // without a remount.
+                        fileUploads: state.config.fileUploads,
                       ),
               ),
             ),

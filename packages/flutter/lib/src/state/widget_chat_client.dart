@@ -71,23 +71,32 @@ abstract interface class WidgetChatClient {
   /// and was empty, which is a different statement from making none.
   ///
   /// [attachment] is the uploaded file this message announces — the url,
-  /// name, media type and size `POST /upload` echoed back. It rides on the
-  /// frame, so a send held for the connection to come back replays it
-  /// unchanged.
+  /// name, media type and size `POST /upload` echoed back — and [type] is
+  /// what kind of message it therefore is. Both ride on the frame, so a send
+  /// held for the connection to come back replays them unchanged.
   ///
-  /// ── Why this parameter is not optional in the sense of "skippable" ─────
+  /// ── Why these two arrived together ───────────────────────────────────
   ///
-  /// `ChatClient.sendMessage` has accepted one since D26 and this interface
-  /// did not expose it, which meant the whole attachment path — the
-  /// paperclip, the 25 MiB refusal, the draft bar, `POST /upload`, all of it
-  /// tested — ended at a callback holding metadata with nowhere to put it.
-  /// A customer could pick a file, watch it upload, and send a message that
-  /// mentioned no file at all.
+  /// `ChatClient.sendMessage` has accepted both since D26 and this interface
+  /// exposed neither, which meant the whole attachment path — the paperclip,
+  /// the 25 MiB refusal, the draft bar, `POST /upload`, all of it tested —
+  /// ended at a callback holding metadata with nowhere to put it. A customer
+  /// could pick a file, watch it upload, and send a message that mentioned
+  /// no file at all.
   ///
-  /// Null omits the key entirely, exactly as [metadata] does, so no existing
-  /// caller changes behaviour.
+  /// They arrive as a pair rather than one at a time because §12.10's shape
+  /// needs both at once: an attachment message carries the URL as its
+  /// `content` AND a [MessageType] derived from the media type. An
+  /// `attachment` exposed without a `type` would put an image on the wire
+  /// as `TEXT`, which no other client in this system produces — see
+  /// `ChatWidgetCubit.sendAttachment`, the one caller that passes them.
+  ///
+  /// Null omits the attachment key entirely, exactly as [metadata] does, and
+  /// [type] defaults to what every existing caller already sends, so no
+  /// existing caller changes behaviour.
   ChatMessage sendMessage(
     String content, {
+    MessageType type = MessageType.text,
     String? replyToMessageId,
     Map<String, Object?>? metadata,
     AttachmentMetadata? attachment,
@@ -219,12 +228,14 @@ class ChatClientAdapter implements WidgetChatClient {
   @override
   ChatMessage sendMessage(
     String content, {
+    MessageType type = MessageType.text,
     String? replyToMessageId,
     Map<String, Object?>? metadata,
     AttachmentMetadata? attachment,
   }) =>
       _client.sendMessage(
         content,
+        type: type,
         replyToMessageId: replyToMessageId,
         metadata: metadata,
         attachment: attachment,

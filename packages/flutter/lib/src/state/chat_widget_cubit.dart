@@ -29,6 +29,7 @@ import '../config/remote_config_client.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
+import '../ui/attachments/attachments.dart';
 import '../ui/composer_affordances/reply_target.dart';
 import '../ui/consent/consent.dart';
 import '../ui/offline_form/offline_form.dart';
@@ -38,6 +39,7 @@ import '../ui/csat/session_actions.dart';
 // import above: a function type declared where its widget lives, consumed
 // here, so this class still constructs no network client of its own.
 import '../ui/header/transcript_email.dart';
+import '../forms/forms.dart' show FormErrorReporter;
 import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
 import 'widget_chat_client.dart';
@@ -85,10 +87,14 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     ChatSessionActions? sessionActions,
     ConsentGate? consent,
     IssueReporter? issueReporter,
+    AttachmentUploader? attachmentUploader,
+    AttachmentPicker attachmentPicker = filePickerAttachmentPicker,
   })  : _client = client,
         _consent = consent ?? ConsentGate.unremembered(),
         _sessionActions = sessionActions,
         _issueReporter = issueReporter,
+        _attachmentUploader = attachmentUploader,
+        _attachmentPicker = attachmentPicker,
         _screens = ChatScreens(
           initial: initialScreen ??
               (sessionId == null
@@ -186,6 +192,49 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// The `late` is safe because the closure is not invoked during
   /// construction — only when a report is actually filed.
   final IssueReporter? _issueReporter;
+
+  /// `POST /upload`, or null when the host wired none up — in which case the
+  /// composer grows no paperclip at all.
+  ///
+  /// Off, not broken, exactly as [_issueReporter] and [_sessionActions] are.
+  /// An attach button that opened a picker and then had nowhere to send the
+  /// bytes would let a customer choose a file, watch a spinner and get a
+  /// failure sentence for a feature that was never wired — worse than an
+  /// absent control, which at least tells the truth immediately.
+  ///
+  /// ── Why the host closes the session id over ──────────────────────────
+  ///
+  /// [AttachmentUploader] takes only the file; the session comes from the
+  /// closure the host built it with, read at upload time rather than
+  /// captured when the composer was built. Same rule and same reason as
+  /// [_issueReporter]'s [SessionIdSource] — a long-lived draft controller
+  /// must not post a file against the conversation that happened to be open
+  /// when its widget was created.
+  ///
+  /// ```dart
+  /// late final ChatWidgetCubit cubit;
+  /// cubit = ChatWidgetCubit(
+  ///   client: client,
+  ///   attachmentUploader: (PickedAttachment file) => restClient.uploadAttachment(
+  ///     sessionId: cubit.state.session?.sessionId ?? '',
+  ///     bytes: file.bytes,
+  ///     fileName: file.fileName,
+  ///     mimeType: file.mimeType,
+  ///   ),
+  /// );
+  /// ```
+  final AttachmentUploader? _attachmentUploader;
+
+  /// Where a file comes from. Defaults to the real platform chooser.
+  ///
+  /// Unlike [_attachmentUploader] this has a default, and the asymmetry is
+  /// the point: a picker is something this package CAN supply (it carries
+  /// `file_picker`, and `filePickerAttachmentPicker` is its own one-line
+  /// wrapper), while an uploader needs an endpoint and credentials only the
+  /// host has. So the seam stays open — a widget test passes a closure and
+  /// touches no `MethodChannel` — without obliging every host to supply
+  /// something the package already has.
+  final AttachmentPicker _attachmentPicker;
 
   /// The server-truth memory of who has rated what. Null alongside
   /// [_sessionActions], since it has nothing to ask.
@@ -703,22 +752,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// at the call site is what makes that true of EVERY send — a typed one, a
   /// suggestion chip, a quick reply — instead of the ones somebody remembered
   /// to clear.
-  ///
-  /// ── [attachment] is the file this message announces ──────────────────
-  ///
-  /// Supplied by the composer, which uploaded it inside its own submit and
-  /// therefore holds the only copy of the metadata `POST /upload` returned.
-  /// It travels on the SAME send as the text rather than on a second one,
-  /// which is what makes a caption and its file one message in the
-  /// transcript instead of two rows that can be separated by whatever else
-  /// arrives between them.
-  ///
-  /// Null for every send that carries no file, which omits the key entirely.
-  void sendMessage(
-    String content, {
-    String? replyToMessageId,
-    AttachmentMetadata? attachment,
-  }) {
+  void sendMessage(String content, {String? replyToMessageId}) {
     final ReplyTarget? addressedTo = state.replyingTo;
     if (addressedTo != null) {
       emit(state.copyWith(clearReplyingTo: true));
@@ -728,7 +762,6 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       content,
       replyToMessageId: addressedTo?.messageId ?? replyToMessageId,
       metadata: addressedTo?.metadata,
-      attachment: attachment,
     );
     final SurfaceTicket? ticket = _composingTicket;
     if (ticket != null) {
@@ -739,6 +772,63 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       _surfaces.release(ticket, surfaceInputs());
       emit(state.copyWith(clearSelectedTopic: true));
     }
+  }
+
+  /// A draft controller for one composer, or null when no host uploader was
+  /// wired — in which case the composer grows no attach controls at all.
+  ///
+  /// ── Built here, owned by the caller ──────────────────────────────────
+  ///
+  /// The two seams live on this Cubit because it is the only thing the host
+  /// hands to [ChatWidget]; the DRAFT does not, because a draft is one
+  /// composer's pending file and dies with it. So this assembles the pieces
+  /// and the caller owns the lifetime — every caller that gets a non-null
+  /// answer must `dispose()` it.
+  ///
+  /// Not a getter and not cached: two composers would each want their own,
+  /// and a shared one would let a file picked in a conversation reappear in
+  /// the next.
+  AttachmentDraftController? createAttachmentDraft({
+    required FormErrorReporter onError,
+  }) {
+    final AttachmentUploader? uploader = _attachmentUploader;
+    if (uploader == null) return null;
+    return AttachmentDraftController(
+      picker: _attachmentPicker,
+      uploader: uploader,
+      onError: onError,
+    );
+  }
+
+  /// Announces an already-uploaded [file] as its own message (§12.10).
+  ///
+  /// Called by the composer, which did the upload inside its own submit and
+  /// therefore holds the only copy of the metadata `POST /upload` returned.
+  ///
+  /// ── Its own message, not a caption's passenger ───────────────────────
+  ///
+  /// A file and words typed alongside it are TWO messages, exactly as
+  /// `composer.ts` sends them — `onSendAttachment(file)`, then
+  /// `onSend(text)`. §12.10 is explicit that the URL travels AS the content,
+  /// and `visibleContent` is this port's already-shipped other half of that
+  /// contract: it suppresses the placeholder by comparing `content` against
+  /// `attachment.url`. Folding the two into one send would put a caption in
+  /// that field, mark an image as [MessageType.text], and produce a shape no
+  /// other client in this system emits. See `attachment_message.dart`.
+  ///
+  /// ── No reply target is consumed here ─────────────────────────────────
+  ///
+  /// [sendMessage] clears [ChatWidgetState.replyingTo] because it is the
+  /// send the customer composed. This one runs FIRST in the same submit, and
+  /// consuming the target here would leave the words that follow — the
+  /// actual reply — addressed to nobody. The file rides along with the reply
+  /// rather than becoming it.
+  void sendAttachment(AttachmentMetadata file) {
+    _client.sendMessage(
+      attachmentMessageContent(file),
+      type: attachmentMessageType(file.mediaType),
+      attachment: file,
+    );
   }
 
   /// Replays the failed send [messageId], returning what actually happened.

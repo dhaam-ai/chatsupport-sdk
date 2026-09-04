@@ -45,6 +45,14 @@ class FakeWidgetChatClient implements WidgetChatClient {
   /// null where the send announced no file.
   final List<AttachmentMetadata?> sentAttachment = <AttachmentMetadata?>[];
 
+  /// The `type` each send carried, index-aligned with [sentContent].
+  ///
+  /// Worth recording rather than assuming: §12.10's attachment message is
+  /// distinguished from a text one by this field and by nothing else on the
+  /// frame, so a send that got the type wrong would otherwise look identical
+  /// to a correct one in every assertion.
+  final List<MessageType> sentType = <MessageType>[];
+
   /// Every `session.closed` a test pushed, oldest first.
   final StreamController<SessionClosed> _sessionClosed =
       StreamController<SessionClosed>.broadcast();
@@ -98,6 +106,7 @@ class FakeWidgetChatClient implements WidgetChatClient {
   @override
   ChatMessage sendMessage(
     String content, {
+    MessageType type = MessageType.text,
     String? replyToMessageId,
     Map<String, Object?>? metadata,
     AttachmentMetadata? attachment,
@@ -106,12 +115,13 @@ class FakeWidgetChatClient implements WidgetChatClient {
     sentMetadata.add(metadata);
     sentReplyToMessageId.add(replyToMessageId);
     sentAttachment.add(attachment);
+    sentType.add(type);
     final ChatMessage message = ChatMessage(
       id: 'sent-${sentContent.length}',
       sessionId: 's1',
       senderId: '',
       senderType: SenderType.customer,
-      type: MessageType.text,
+      type: type,
       content: content,
       seq: null,
       createdAt: DateTime.utc(2026, 1, 1),

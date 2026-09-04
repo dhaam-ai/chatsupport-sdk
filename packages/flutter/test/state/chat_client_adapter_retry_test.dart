@@ -241,17 +241,30 @@ void main() {
       expect(payload.containsKey('attachment'), isFalse);
     });
 
-    test('a file travels on the same send as its caption', () async {
-      // One message, not two. A separate attachment send would let whatever
-      // else arrives in between separate a caption from the file it
-      // describes.
-      adapter.sendMessage('the receipt you asked for', attachment: photo);
+    test('the type reaches the frame, so an image is not sent as TEXT',
+        () async {
+      // §12.10's attachment message is distinguished from a text one by this
+      // field and by nothing else on the frame. A `type` this adapter
+      // accepted and dropped would put every photo on the wire as TEXT —
+      // invisible to anything that renders by type, and green in every test
+      // that only checks the attachment came through.
+      adapter.sendMessage(
+        'https://cdn.example.com/cat.png',
+        type: MessageType.image,
+        attachment: photo,
+      );
 
-      expect(socket.sends, hasLength(1));
       final Map<String, Object?> payload =
           socket.sends.single['d']! as Map<String, Object?>;
-      expect(payload['content'], 'the receipt you asked for');
-      expect(payload['attachment'], isNotNull);
+      expect(payload['type'], 'IMAGE');
+    });
+
+    test('the default type is TEXT, so no existing caller changed', () async {
+      adapter.sendMessage('just words');
+
+      final Map<String, Object?> payload =
+          socket.sends.single['d']! as Map<String, Object?>;
+      expect(payload['type'], 'TEXT');
     });
   });
 
