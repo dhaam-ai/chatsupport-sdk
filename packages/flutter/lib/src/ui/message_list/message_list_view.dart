@@ -89,16 +89,24 @@ class _MessageListViewState extends State<MessageListView> {
   MessageListPresenter get _presenter =>
       widget.presenter ?? (_owned ??= MessageListPresenter());
 
-  /// Captured in [didUpdateWidget] — BEFORE the new list is laid out, since
-  /// reading a scroll offset after an append gives the post-append value and
-  /// would make "was the customer at the bottom" always true.
-  bool _wasAtBottom = true;
-  String? _spoken;
+  /// Whether the transcript should follow the newest message down once this
+  /// frame is laid out.
+  ///
+  /// Armed ONLY by a new [MessageListInputs] — never by a plain rebuild. A
+  /// theme change, a keyboard opening or a parent rebuilding does not move
+  /// the transcript, and a customer who has scrolled up to re-read something
+  /// is not yanked back to the bottom because the phone rotated. The first
+  /// frame arms it, so a transcript opens at its newest end.
+  bool _followToBottom = true;
 
   @override
   void didUpdateWidget(MessageListView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _wasAtBottom = _atBottomNow();
+    if (identical(oldWidget.inputs, widget.inputs)) return;
+    // Read BEFORE the new list is laid out: a scroll offset read after an
+    // append gives the post-append value, which would make "was the customer
+    // at the bottom" always true for a growing list.
+    _followToBottom = _atBottomNow();
   }
 
   bool _atBottomNow() {
@@ -118,20 +126,36 @@ class _MessageListViewState extends State<MessageListView> {
   void _afterLayout(String? announcement) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (_wasAtBottom && _scroll.hasClients) {
-        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      if (_followToBottom) {
+        _followToBottom = false;
+        if (_scroll.hasClients) {
+          _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        }
       }
-      if (announcement != null && announcement != _spoken) {
-        _spoken = announcement;
+      // No de-duplication here: `present` already returns `null` for a
+      // rebuild that brought no new message, so an announcement reaching
+      // this point is one the customer has not heard. Comparing against the
+      // last text instead would swallow the second of two identical
+      // messages, which is a real thing an agent sends.
+      if (announcement != null) {
         SemanticsService.announce(announcement, Directionality.of(context));
       }
     });
   }
 
+  /// message id → its position in the rows currently rendered. Rebuilt each
+  /// pass; see [ListView.builder]'s `findChildIndexCallback` below.
+  final Map<String, int> _indexById = <String, int>{};
+
   @override
   Widget build(BuildContext context) {
     final MessageListRender render = _presenter.present(widget.inputs);
     _afterLayout(render.announcement);
+
+    _indexById.clear();
+    for (int i = 0; i < render.rows.length; i += 1) {
+      _indexById[render.rows[i].message.id] = i;
+    }
 
     return Column(
       children: <Widget>[
@@ -148,11 +172,30 @@ class _MessageListViewState extends State<MessageListView> {
                       vertical: 8,
                     ),
                     itemCount: render.rows.length,
+                    // What makes the keys below actually reuse an element
+                    // across an insertion. A sliver matches children by
+                    // INDEX unless it is told where a key moved to, so
+                    // without this the keys would only prevent the wrong
+                    // state being inherited — they would not preserve the
+                    // right state either, and an open menu would still shut
+                    // the moment a message landed above it.
+                    findChildIndexCallback: (Key key) {
+                      final String? id =
+                          key is ValueKey<String> ? key.value : null;
+                      return id == null ? null : _indexById[id];
+                    },
                     itemBuilder: (BuildContext context, int index) {
+                      final MessageRow row = render.rows[index];
                       return Padding(
+                        // Keyed by message id, the way `message-list.ts`
+                        // keys its rows: a `ListView` recycles elements by
+                        // INDEX, so without this an open action menu (or a
+                        // half-finished Copy) would ride an insertion onto
+                        // a different message.
+                        key: ValueKey<String>(row.message.id),
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: MessageBubbleRow(
-                          row: render.rows[index],
+                          row: row,
                           callbacks: widget.callbacks,
                           attachmentBuilder: widget.attachmentBuilder,
                         ),

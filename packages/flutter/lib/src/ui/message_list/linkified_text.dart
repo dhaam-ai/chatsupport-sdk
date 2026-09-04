@@ -46,7 +46,33 @@ class LinkifiedText extends StatefulWidget {
 }
 
 class _LinkifiedTextState extends State<LinkifiedText> {
+  /// The recognizers currently attached to [_spans].
+  ///
+  /// Rebuilt only when the text, the styling or the callback changes — NOT
+  /// on every build. A recognizer holds a closure over the href it opens, so
+  /// rebuilding it per frame would be both wasted work in a scrolling list
+  /// and a chance to dispose one a live paragraph still holds.
   final List<TapGestureRecognizer> _recognizers = <TapGestureRecognizer>[];
+
+  List<InlineSpan>? _spans;
+
+  @override
+  void initState() {
+    super.initState();
+    _rebuildSpans();
+  }
+
+  @override
+  void didUpdateWidget(LinkifiedText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text == widget.text &&
+        oldWidget.style == widget.style &&
+        oldWidget.linkStyle == widget.linkStyle &&
+        oldWidget.onOpenLink == widget.onOpenLink) {
+      return;
+    }
+    _rebuildSpans();
+  }
 
   @override
   void dispose() {
@@ -61,16 +87,16 @@ class _LinkifiedTextState extends State<LinkifiedText> {
     _recognizers.clear();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // Rebuilt per build rather than cached: a recognizer holds a callback
-    // that closes over `widget`, and a stale one would open the link a
-    // previous build's text pointed at.
+  void _rebuildSpans() {
+    // Safe here and not in `build`: this runs before the paragraph is
+    // updated in the same frame, so nothing dispatches a pointer event to a
+    // recognizer between the dispose and its replacement.
     _disposeRecognizers();
 
     final List<TextLink> links = findLinks(widget.text);
     if (links.isEmpty) {
-      return Text(widget.text, style: widget.style);
+      _spans = null;
+      return;
     }
 
     final TextStyle linkStyle = widget.linkStyle ??
@@ -106,7 +132,13 @@ class _LinkifiedTextState extends State<LinkifiedText> {
     if (cursor < widget.text.length) {
       spans.add(TextSpan(text: widget.text.substring(cursor)));
     }
+    _spans = spans;
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    final List<InlineSpan>? spans = _spans;
+    if (spans == null) return Text(widget.text, style: widget.style);
     return Text.rich(TextSpan(style: widget.style, children: spans));
   }
 }
