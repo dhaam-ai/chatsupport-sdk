@@ -46,3 +46,4 @@ export 'src/ui/quick_replies.dart';
 export 'src/ui/topic_chips.dart';
 export 'src/ui/unavailable_view.dart';
 export 'src/ui/message_list/message_list.dart';
+export 'src/ui/session_picker/session_picker.dart';
