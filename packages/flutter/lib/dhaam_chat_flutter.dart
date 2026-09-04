@@ -57,5 +57,9 @@ export 'src/ui/pre_chat/pre_chat.dart';
 export 'src/ui/quick_replies.dart';
 export 'src/ui/topic_chips.dart';
 export 'src/ui/unavailable_view.dart';
+// `voice.dart` is itself a barrel over the voice module (see its header on
+// the dependency decision), so this one line is the whole taxonomy,
+// recorder and mic-affordance surface.
+export 'src/ui/voice/voice.dart';
 export 'src/ui/message_list/message_list.dart';
 export 'src/ui/session_picker/session_picker.dart';
