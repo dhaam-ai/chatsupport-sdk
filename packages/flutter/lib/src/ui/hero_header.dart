@@ -1,7 +1,17 @@
 /// The Home screen's tall branded header — background, avatar stack,
-/// greeting and sub-greeting. Mirrors `ui/hero-header.ts`'s CONTENT only;
-/// see this file's "What this does not render" section for what is
-/// deliberately left to the Home screen instead.
+/// greeting and sub-greeting — and the rule by which it gets out of the way
+/// once the visitor scrolls into the content below it.
+///
+/// Mirrors `ui/hero-header.ts`; see this file's "What this does not render"
+/// section for what is deliberately left to the Home screen instead.
+///
+/// Two things live here, split the way the reference splits them: [HeroHeader]
+/// is what the merchant configured, drawn, and is a plain [StatelessWidget]
+/// that any test can pump on its own. [CollapsingHeroHeader] is the scroll
+/// behaviour wrapped around it, and [heroCollapseDecision] is the rule that
+/// behaviour obeys — a pure function over three numbers, so the oscillation
+/// guard it exists for is assertable without a scroll gesture, a viewport or
+/// a frame.
 library;
 
 import 'package:flutter/material.dart';
@@ -120,6 +130,206 @@ class HeroHeader extends StatelessWidget {
                 ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// How far past the top the visitor must scroll before the hero goes — and
+/// the slack the collapse must SURVIVE in order to happen at all.
+///
+/// One number, used twice, because the two are the same fact: the distance
+/// that has to exist on either side of the collapse for it not to undo
+/// itself. The reference's `COLLAPSE_SLACK_PX` says the same thing.
+const double kHeroCollapseSlackPx = 32;
+
+/// What the hero should do about the scroll position it has just been told
+/// about.
+///
+/// Three outcomes rather than a boolean, and the third one is the point:
+/// refusing to collapse is NOT the same as expanding. See
+/// [heroCollapseDecision].
+enum HeroCollapseDecision {
+  /// The visitor is at (or near) the top. The hero is shown in full.
+  expand,
+
+  /// The visitor has scrolled away and there is room to give the height back.
+  collapse,
+
+  /// The visitor has scrolled away, but collapsing would un-scroll the very
+  /// scroll that caused it. Whatever the hero is doing now, it keeps doing.
+  hold,
+}
+
+/// Whether the hero may collapse, given where the scroll is and how much
+/// height collapsing would hand back.
+///
+/// ── The oscillation this closes ──────────────────────────────────────────
+///
+/// Collapsing returns the hero's full height to the scroll container. If the
+/// content's current overflow is not comfortably larger than that height, the
+/// framework clamps the scroll offset back toward the top the instant the
+/// space arrives — which puts the hero back in its expand zone, which expands
+/// it, which re-consumes the space, which scrolls it away again. The two
+/// states re-trigger each other every frame, and what a customer sees is a
+/// header strobing on a Home screen that barely overflows.
+///
+/// Two guards close it, and BOTH are needed:
+///
+///  1. **The slack margin.** [expand] until the visitor has scrolled more than
+///     [kHeroCollapseSlackPx] — not the instant the offset leaves zero. This
+///     alone makes the collapse unreachable when the whole overflow is smaller
+///     than the slack, so the loop is never even woken for the sub-slack
+///     scrolls that are the commonest way into it.
+///  2. **The layout check, read AT COLLAPSE TIME.** Collapse only when, after
+///     the height is handed back, the container will STILL be scrolled at
+///     least that same slack. This covers the wider band of heights that full
+///     removal exposes, which the margin alone cannot.
+///
+/// [maxScrollExtent] is Flutter's name for exactly what the reference computes
+/// as `scrollHeight - clientHeight`: the content extent minus the viewport,
+/// i.e. how far the container can scroll. So `maxScrollExtent - heroHeight` is
+/// the reference's `overflow - freed`, and the guard is the same inequality.
+///
+/// [heroHeight] must be measured when this is called, never cached at build:
+/// a config publish or an image finishing its load changes the hero's height,
+/// and a stale number re-opens the loop this closes.
+///
+/// Refusing to collapse on a too-short Home is the CORRECT behaviour, not a
+/// degraded one — there is nowhere for the freed space to go.
+HeroCollapseDecision heroCollapseDecision({
+  required double scrollOffset,
+  required double maxScrollExtent,
+  required double heroHeight,
+}) {
+  if (scrollOffset <= kHeroCollapseSlackPx) return HeroCollapseDecision.expand;
+  if (maxScrollExtent - heroHeight <= kHeroCollapseSlackPx) {
+    // NOT `expand`. Expanding here would be a second writer of the same state
+    // fighting whatever put the hero where it is; "there is no room to do
+    // this" is a refusal to act, not an instruction to act the other way.
+    return HeroCollapseDecision.hold;
+  }
+  return HeroCollapseDecision.collapse;
+}
+
+/// A [HeroHeader] pinned above a scroll view, which gets out of the way once
+/// the visitor scrolls into the content below it.
+///
+/// ── Why this owns the arrangement rather than just the header ────────────
+///
+/// It takes the scroll view as its [child] and builds the whole band-plus-
+/// content column itself. That is not convenience: the hero has to sit ABOVE
+/// the scroll view for a collapse to mean anything (a hero that were merely
+/// the scroll view's first child would already be gone by the time the
+/// visitor had scrolled past it), and a widget above a scroll view can reach
+/// neither `Scrollable.of` — which searches ancestors, and the scroll view is
+/// a sibling — nor that view's notifications, which bubble up past it. Owning
+/// both halves puts this widget where the notifications actually pass and
+/// spares every caller a [ScrollController] to thread through.
+///
+/// ── Collapsed means GONE, not a short bar ────────────────────────────────
+///
+/// There is no compact layer and no shrunken variant. Scrolled away from the
+/// top the hero occupies NO space at all; scrolled back, it returns whole.
+/// The reference is explicit that this is the behaviour, and the reason is
+/// that a panel this size has room for one branded band — the app bar — and a
+/// second, shorter one underneath it is two headers.
+///
+/// Spelled as [Align] with a zero `heightFactor` inside a [ClipRect], which is
+/// the framework's own way of saying the reference's `height: 0;
+/// overflow: hidden`. [Align] still lays its child out at full height and
+/// merely reports zero for ITSELF, so the hero can be measured while
+/// collapsed — which is what lets [heroCollapseDecision] read a real
+/// [heroHeight] at the moment it decides, rather than the zero a removed
+/// subtree would report.
+///
+/// ── A notification, not an observer, and why that is not a downgrade ─────
+///
+/// The reference picks an `IntersectionObserver` over a `scroll` listener
+/// specifically because the DOM's scroll event misses anything that moves the
+/// offset without a gesture — a programmatic `scrollTo`, a `scrollIntoView`
+/// from elsewhere in the tree. Flutter has no such gap: `jumpTo`,
+/// `animateTo` and `ensureVisible` all drive [ScrollPosition], and every one
+/// of them emits a [ScrollUpdateNotification]. So the concern that chose the
+/// observer there does not exist here, and the framework's own mechanism is
+/// the right one.
+///
+/// A hero given a [child] that does not scroll simply never collapses, which
+/// is correct rather than degraded — the same answer the reference gives an
+/// environment with no `IntersectionObserver` at all.
+class CollapsingHeroHeader extends StatefulWidget {
+  const CollapsingHeroHeader({
+    super.key,
+    required this.config,
+    required this.child,
+  });
+
+  final RemoteConfig config;
+
+  /// The scrolling content the hero sits above. Given the remaining height.
+  final Widget child;
+
+  @override
+  State<CollapsingHeroHeader> createState() => _CollapsingHeroHeaderState();
+}
+
+class _CollapsingHeroHeaderState extends State<CollapsingHeroHeader> {
+  /// Measures the hero at its natural height, collapsed or not — see the
+  /// class doc on why [Align] is what makes that possible.
+  final GlobalKey _heroKey = GlobalKey();
+
+  bool _collapsed = false;
+
+  bool _onScroll(ScrollNotification notification) {
+    // Only the view this widget is wrapped around, never one nested inside
+    // its content: a horizontally scrolling row of chips down in the page
+    // says nothing about how far Home itself has been scrolled.
+    if (notification.depth != 0) return false;
+
+    final RenderBox? hero =
+        _heroKey.currentContext?.findRenderObject() as RenderBox?;
+    if (hero == null || !hero.hasSize) return false;
+
+    switch (heroCollapseDecision(
+      scrollOffset: notification.metrics.pixels,
+      maxScrollExtent: notification.metrics.maxScrollExtent,
+      // Read HERE, at the moment of the decision, never cached at build.
+      heroHeight: hero.size.height,
+    )) {
+      case HeroCollapseDecision.expand:
+        _apply(false);
+      case HeroCollapseDecision.collapse:
+        _apply(true);
+      case HeroCollapseDecision.hold:
+        // Deliberately nothing. See `hold`'s own doc.
+        break;
+    }
+    // Never swallowed: this only observes, and a pull-to-refresh or a scroll
+    // metric watcher further up has as much right to hear about the scroll as
+    // this does.
+    return false;
+  }
+
+  void _apply(bool collapsed) {
+    if (_collapsed == collapsed || !mounted) return;
+    setState(() => _collapsed = collapsed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScroll,
+      child: Column(
+        children: <Widget>[
+          ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: _collapsed ? 0.0 : 1.0,
+              child: HeroHeader(key: _heroKey, config: widget.config),
+            ),
+          ),
+          Expanded(child: widget.child),
         ],
       ),
     );

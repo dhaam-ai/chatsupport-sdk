@@ -93,6 +93,34 @@ dependencies:
   # implementation instead of pushing that onto the host.
   dhaam_chat_rest:
     path: ../dart_rest
+  # The durable half of `ChatStorage` (`lib/src/storage/chat_storage.dart`),
+  # which is the ONE place this widget remembers a per-visitor decision:
+  # whether the visitor agreed to the merchant's consent notice, and (next)
+  # whether they silenced the chime. `ChatWidgetState.muted` recorded the debt
+  # this pays off — "the consent gate needs the same store, under the same
+  # per-publishable-key rule, and inventing a second one now would leave two
+  # answers to 'where does this widget remember a per-visitor decision'".
+  #
+  # The Flutter team's own plugin, and the one both sibling apps already
+  # carry, so this adds nothing to a host that has either. Chosen over
+  # `flutter_secure_storage`, which was the other candidate: what is stored
+  # here is a yes/no the visitor themselves gave, not a credential, and
+  # keychain/keystore access has a real cost (a slower first read, and on some
+  # Android devices a keystore that can be invalidated by a lock-screen
+  # change) that would buy nothing for a boolean whose worst-case leak is that
+  # somebody learns this device agreed to a privacy notice.
+  #
+  # ^2.5.3, not the newer ^2.5.5: `flutter pub get` here resolves 2.5.3 and
+  # reports 2.5.5 as incompatible with the SDK this repo pins (Dart 3.5.4 /
+  # Flutter 3.24.4) — verified by running it, the same way the url_launcher
+  # and file_picker pins above were, never assumed.
+  #
+  # `SharedPreferencesAsync` is the API used, not the legacy `SharedPreferences`
+  # class — see `SharedPreferencesChatStorage`'s own doc for the plugin's own
+  # note marking that one legacy, and for why its `flutter.` key prefix is the
+  # wrong thing to put in front of a per-publishable-key namespace.
+  # https://pub.dev/packages/shared_preferences
+  shared_preferences: ^2.5.3
 
 dev_dependencies:
   flutter_test:
@@ -104,6 +132,15 @@ dev_dependencies:
   # imported by name in test code, and pinning it to what url_launcher
   # ^6.3.1 already resolves (2.3.2) is what keeps that import honest.
   url_launcher_platform_interface: ^2.3.2
+  # Only for chat_storage_test.dart's in-memory preference store — the
+  # plugin's own documented test seam (`SharedPreferencesAsyncPlatform.instance`
+  # exists so platform calls can be swapped out under test), exactly the shape
+  # url_launcher_platform_interface is used in above. A direct dev dependency
+  # rather than relying on it transitively through shared_preferences: it is
+  # imported by name in test code, and pinning it to what
+  # shared_preferences ^2.5.3 already resolves (2.4.1) is what keeps that
+  # import honest.
+  shared_preferences_platform_interface: ^2.4.1
   # Matches the sibling apps' lint package (they use flutter_lints ^5.0.0);
   # `dhaam_chat` uses plain `lints` because it has no Flutter to lint against.
   flutter_lints: ^5.0.0

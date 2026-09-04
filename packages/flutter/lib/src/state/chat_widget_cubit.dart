@@ -23,10 +23,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../config/remote_config.dart';
+// For `shouldCollectOffline`, the one function that weighs `isOpenNow`
+// against `offlineMode` — see `surfaceInputs`.
+import '../config/remote_config_client.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
 import '../surfaces/product_surface_slot.dart';
 import '../ui/composer_affordances/reply_target.dart';
+import '../ui/consent/consent.dart';
+import '../ui/offline_form/offline_form.dart';
 import '../ui/csat/session_actions.dart';
 import '../ui/pre_chat/pre_chat.dart';
 import 'chat_widget_state.dart';
@@ -73,7 +78,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     Scheduler scheduler = const SystemScheduler(),
     Duration reconnectInterval = kReconnectInterval,
     ChatSessionActions? sessionActions,
+    ConsentGate? consent,
   })  : _client = client,
+        _consent = consent ?? ConsentGate.unremembered(),
         _sessionActions = sessionActions,
         _screens = ChatScreens(
           initial: initialScreen ??
@@ -124,6 +131,13 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       // decided while the lookup was `CsatLoading` has to be decided again.
       _csatSub = machine.changes.listen(_onCsatVerdict);
     }
+    // Read ONCE, here, and applied when it lands — see
+    // [ChatWidgetState.consentAgreed] on why the gate is closed until then.
+    // Fire-and-forget because there is nothing for a caller to await: the
+    // answer arrives as a state change like any other, and a Cubit whose
+    // construction awaited I/O would be untestable by construction (the same
+    // reason [connect] is not called from here either).
+    unawaited(_restoreConsent());
   }
 
   final WidgetChatClient _client;
@@ -138,6 +152,15 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// The server-truth memory of who has rated what. Null alongside
   /// [_sessionActions], since it has nothing to ask.
   CsatMachine? _csat;
+
+  /// The remembered answer to the merchant's consent notice.
+  ///
+  /// Never null: a host that wired no durable store gets
+  /// [ConsentGate.unremembered], which honours the click for this widget's
+  /// lifetime and asks again next mount. That is the reference's own
+  /// documented behaviour for a browser with site data blocked, not a
+  /// degraded mode — so there is no "consent is off" case to branch on here.
+  final ConsentGate _consent;
 
   /// [_csat]'s verdicts, mirrored for [ChatWidgetState.csatBySession]. The
   /// `emit` override below is the only writer of the state half.
@@ -267,11 +290,19 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// "profile == null" again here would be the second answer that put the
   /// form on one path and not the other.
   ///
-  /// **Later nodes widen this, they do not replace it.** `shouldCollectOffline`
-  /// and `csatCard` are left at their "nothing is due" defaults because the
-  /// facts behind them do not exist yet: business hours are the offline
-  /// module's and whether a rating is owed is the CSAT machine's. Each adds
-  /// its own line here.
+  /// **Later nodes widen this, they do not replace it.** Both of the fields
+  /// this started life without have since been filled in by the node that
+  /// owned the fact behind them — `csatCard` by the CSAT machine's, and
+  /// `shouldCollectOffline` by the out-of-hours module's — each adding its
+  /// own line here rather than a second resolver of its own.
+  ///
+  /// Called on TICKS, never at construction: `_syncSurfaces` runs off the
+  /// stream listeners and off [applyRemoteConfig], matching the reference's
+  /// own `syncProductSurfaces`, which is likewise driven by the store
+  /// subscription and the config-applied path and not by init. So a config
+  /// handed to the constructor raises no surface until something syncs —
+  /// which is correct, because `initialConfig` is the host's pre-fetch
+  /// placeholder and the real one arrives through [applyRemoteConfig].
   SurfaceSyncInputs surfaceInputs() => SurfaceSyncInputs(
         isGuest: state.isGuest,
         preChatEnabled: state.config.preChatEnabled,
@@ -288,6 +319,19 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         // one question of one answerer, which is what stops the two of them
         // both deciding they are on.
         csatCard: dueCsatCard(),
+        // Until this line the out-of-hours branch could not fire at all:
+        // `resolveProductSurface` has read this input since the slot landed,
+        // and nothing supplied it — so a merchant on COLLECT_MESSAGE got the
+        // ordinary composer outside business hours and their customers'
+        // messages went into a conversation nobody was reading.
+        //
+        // A DECISION, like `csatCard` above, and one made by exactly one
+        // function: `shouldCollectOffline` weighs `isOpenNow` against
+        // `offlineMode`, and it is the same function `headerAvatarFor` already
+        // asks. Passing the two raw fields here instead would be a second
+        // place that could come to a different answer about whether the team
+        // is open.
+        shouldCollectOffline: shouldCollectOffline(state.config),
       );
 
   /// Re-derives what belongs in the slot and repaints.
@@ -679,6 +723,51 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     _syncSurfaces();
   }
 
+  // ── Out of hours ──────────────────────────────────────────────────────
+
+  /// The STRUCTURED half of an offline send — `{kind, name, contact}`,
+  /// exactly the shape `widget.ts`'s own offline `onSubmit` puts on the wire.
+  ///
+  /// Rides on the SAME frame as the prose, for the reason
+  /// [_preChatMetadata] gives: one frame means the two halves can never
+  /// describe different people. Written once here so the `kind` string is not
+  /// retyped — a typo in it is not a compile error, it is a message that
+  /// silently never gets classified.
+  static Map<String, Object?> _offlineMetadata(OfflineMessage message) =>
+      <String, Object?>{
+        'kind': 'offline_message',
+        'name': message.name,
+        'contact': message.contact,
+      };
+
+  /// The customer left a message while the team was closed.
+  ///
+  /// ── Named in the body, not just in the metadata ─────────────────────
+  ///
+  /// The prose carries the name and contact too, because this message is read
+  /// by a human tomorrow morning in a thread with no live participant — the
+  /// structured copy is what chat-service classifies on, and the body is what
+  /// the agent actually sees. Character-for-character the reference's own
+  /// sentence, so a merchant whose customers meet this SDK on the web and in
+  /// an app receives one shape of message rather than two.
+  ///
+  /// ── Returns a Future that cannot reject, and that is not a mistake ──
+  ///
+  /// `sendMessage` returns the optimistic local echo synchronously and queues
+  /// the frame (§8.4), so there is nothing here to fail. The signature stays
+  /// a `Future` because [OfflineFormView] is built on
+  /// [FormSubmitController.submitOnce] like every other form in this package,
+  /// and because the seam is what lets a host — or a later REST-backed
+  /// send — supply one that CAN fail and get the re-enable and the failure
+  /// sentence for free.
+  Future<void> submitOfflineMessage(OfflineMessage message) async {
+    _client.sendMessage(
+      'Offline message from ${message.name} (${message.contact}):'
+      '\n\n${message.message}',
+      metadata: _offlineMetadata(message),
+    );
+  }
+
   /// The customer declined the standalone gate.
   ///
   /// Counts as answered — the gate does not come back. Offered only when the
@@ -1032,6 +1121,38 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     return session.status != ChatStatus.closed &&
         session.status != ChatStatus.resolved;
   }
+
+  // ── Consent ───────────────────────────────────────────────────────────
+
+  /// Applies the one stored-consent read to the gate.
+  ///
+  /// Only ever opens the gate, never closes it: a read that lands after the
+  /// visitor has already pressed "I agree" must not take the agreement back,
+  /// and `false` is what the state already says. [ConsentGate.readAgreed]
+  /// resolves `false` rather than rejecting when the store cannot be reached,
+  /// which is the same as a first visit.
+  Future<void> _restoreConsent() async {
+    if (await _consent.readAgreed()) {
+      emit(state.copyWith(consentAgreed: true));
+    }
+  }
+
+  /// The visitor agreed to the merchant's notice.
+  ///
+  /// ── Honoured first, recorded second ─────────────────────────────────
+  ///
+  /// The gate opens on this frame and the write follows. A failed write does
+  /// NOT revoke the click: refusing to let somebody chat because their device
+  /// blocks app data would punish them for a setting they are entitled to,
+  /// and the cost of the failure is only that they are asked again next
+  /// visit. [ConsentGate.recordAgreed] therefore never rejects — it reports
+  /// and returns.
+  void agreeToConsent() {
+    if (state.consentAgreed) return;
+    emit(state.copyWith(consentAgreed: true));
+    unawaited(_consent.recordAgreed());
+  }
+
   // ── Inbound ───────────────────────────────────────────────────────────
 
   void _onConnectionState(ConnectionState connectionState) {

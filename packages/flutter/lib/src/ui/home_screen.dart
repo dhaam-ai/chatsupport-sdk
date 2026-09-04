@@ -34,54 +34,66 @@ class HomeScreen extends StatelessWidget {
         final ChatSessionSummary? recent = mostRecentSummary(state.sessionSummaries);
         final double radius = chatCornerRadius(config);
 
-        return ListView(
-          padding: EdgeInsets.zero,
-          children: <Widget>[
-            HeroHeader(config: config),
-            Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  _SendMessageCta(
-                    // The merchant's own response-time line, reused rather
-                    // than a second hardcoded "we usually reply instantly" —
-                    // home-screen.ts's own comment on why this is the SAME
-                    // ctaSubtitle the hero's own CTA would have shown, now
-                    // that this card is the one place it renders (see
-                    // hero_header.dart's header).
-                    subtitle: config.header.ctaSubtitle,
-                    radius: radius,
-                    onTap: cubit.startNewConversation,
-                  ),
-                  if (recent != null) ...<Widget>[
-                    const SizedBox(height: 24),
-                    _RecentConversationSection(
-                      summary: recent,
+        // ── The hero is pinned ABOVE the scroll view, not inside it ──
+        //
+        // Collapsing has to hand the hero's height back to something. A hero
+        // that were merely the scroll view's first child would already be
+        // gone by the time the visitor had scrolled past it, so there would
+        // be nothing for a collapse to mean; pinned above, it stays put while
+        // the content moves under it and then gets out of the way entirely.
+        // `CollapsingHeroHeader` owns that arrangement rather than this
+        // screen assembling it — see its own header for why the band and the
+        // scroll view have to be one widget's business.
+        return CollapsingHeroHeader(
+          config: config,
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    _SendMessageCta(
+                      // The merchant's own response-time line, reused rather
+                      // than a second hardcoded "we usually reply instantly" —
+                      // home-screen.ts's own comment on why this is the SAME
+                      // ctaSubtitle the hero's own CTA would have shown, now
+                      // that this card is the one place it renders (see
+                      // hero_header.dart's header).
+                      subtitle: config.header.ctaSubtitle,
                       radius: radius,
-                      onSeeAll: () => cubit.switchTab(ScreenName.messages),
-                      onOpen: () => cubit.openConversation(recent.id),
+                      onTap: cubit.startNewConversation,
                     ),
+                    if (recent != null) ...<Widget>[
+                      const SizedBox(height: 24),
+                      _RecentConversationSection(
+                        summary: recent,
+                        radius: radius,
+                        onSeeAll: () => cubit.switchTab(ScreenName.messages),
+                        onOpen: () => cubit.openConversation(recent.id),
+                      ),
+                    ],
+                    if (config.commonQuestions.isNotEmpty) ...<Widget>[
+                      const SizedBox(height: 24),
+                      _SectionHeading('Common Questions'),
+                      const SizedBox(height: 8),
+                      CommonQuestionsList(
+                        questions: config.commonQuestions,
+                        // One call, not "open the new-conversation form and
+                        // then send into it": a tapped question is a customer
+                        // asking one specific thing, and routing it through the
+                        // form would put the merchant's pre-chat questions in
+                        // front of an answer they already asked for. See
+                        // ChatWidgetCubit.startCommonQuestion.
+                        onSelect: cubit.startCommonQuestion,
+                      ),
+                    ],
                   ],
-                  if (config.commonQuestions.isNotEmpty) ...<Widget>[
-                    const SizedBox(height: 24),
-                    _SectionHeading('Common Questions'),
-                    const SizedBox(height: 8),
-                    CommonQuestionsList(
-                      questions: config.commonQuestions,
-                      // One call, not "open the new-conversation form and
-                      // then send into it": a tapped question is a customer
-                      // asking one specific thing, and routing it through the
-                      // form would put the merchant's pre-chat questions in
-                      // front of an answer they already asked for. See
-                      // ChatWidgetCubit.startCommonQuestion.
-                      onSelect: cubit.startCommonQuestion,
-                    ),
-                  ],
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
