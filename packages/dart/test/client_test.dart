@@ -10,7 +10,8 @@ final PublishableKey testKey = PublishableKey.parse('dhp_${'test'}_abc123XYZ');
 
 const String _serverUlid = '01BX5ZZKBKACTAV9WEVGEMMVRZ';
 
-String ackJson({int seq = 5}) => jsonEncode(<String, Object?>{
+String ackJson({int seq = 5, String sessionId = 's1'}) =>
+    jsonEncode(<String, Object?>{
       'v': 1,
       't': 'connection.ack',
       'id': _serverUlid,
@@ -19,7 +20,7 @@ String ackJson({int seq = 5}) => jsonEncode(<String, Object?>{
         'protocolVersion': 1,
         'seq': seq,
         'session': <String, Object?>{
-          'sessionId': 's1',
+          'sessionId': sessionId,
           'status': 'OPEN',
           'mode': 'BOT',
           'participants': <Object?>[],
@@ -515,6 +516,273 @@ void main() {
       expect(seen, hasLength(1));
       expect(seen.single.handledBy?.displayName, equals('Priya S.'));
       expect(seen.single.participants.single.displayName, equals('Priya S.'));
+
+      await harness.client.dispose();
+    });
+  });
+
+  group('startNewSession', () {
+    /// The `d` of the hello on socket [index].
+    Map<String, Object?> helloOf(Harness harness, int index) =>
+        (jsonDecode(harness.sockets[index].sent[0])
+            as Map<String, Object?>)['d']! as Map<String, Object?>;
+
+    /// Every `message.send` written to socket [index].
+    List<Map<String, Object?>> sendsOn(Harness harness, int index) =>
+        harness.sockets[index].sent
+            .map((String raw) => jsonDecode(raw) as Map<String, Object?>)
+            .where((Map<String, Object?> f) => f['t'] == 'message.send')
+            .toList();
+
+    test('asks the server for a new session, with the topic and subject',
+        () async {
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final Future<void> started =
+          harness.client.startNewSession(topic: 'Billing', subject: 'Refund');
+      await flush();
+
+      expect(harness.sockets.length, equals(2));
+      final Map<String, Object?> hello = helloOf(harness, 1);
+      expect(hello['newSession'], isTrue);
+      expect(hello['topic'], equals('Billing'));
+      expect(hello['subject'], equals('Refund'));
+
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      await started;
+
+      await harness.client.dispose();
+    });
+
+    test('genuinely forgets the resume anchor', () async {
+      // The single reason disconnect() + connect() is not already a working
+      // "start over": a surviving anchor makes the next hello claim a history
+      // the server has closed, and the v2 endpoint answers that with a
+      // NON-RETRYABLE VALIDATION_FAILED — suspended, not restarted.
+      final Harness harness = Harness();
+      unawaited(harness.client.connect());
+      await flush();
+      harness.socket.deliver(ackJson(seq: 12));
+      await flush();
+      expect(helloOf(harness, 0).containsKey('resumeFrom'), isFalse);
+
+      final Future<void> started = harness.client.startNewSession();
+      await flush();
+
+      // Absent, not 0 — 0 means "replay everything" (D2). Had the anchor
+      // survived, this would read 12.
+      expect(helloOf(harness, 1).containsKey('resumeFrom'), isFalse);
+
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      await started;
+
+      await harness.client.dispose();
+    });
+
+    test('a plain reconnect still resumes — the anchor is not always dropped',
+        () async {
+      // The control for the test above. forgetResumeAnchor is for this
+      // transition only; a client that dropped its anchor on every reconnect
+      // would silently stop resuming.
+      final Harness harness = Harness();
+      unawaited(harness.client.connect());
+      await flush();
+      harness.socket.deliver(ackJson(seq: 12));
+      await flush();
+
+      await harness.socket.drop();
+      await flush();
+      await harness.scheduler.advanceToNextTimer();
+      await flush();
+
+      expect(helloOf(harness, 1)['resumeFrom'], equals(12));
+
+      harness.socket.deliver(ackJson());
+      await flush();
+      await harness.client.dispose();
+    });
+
+    test('fails queued sends instead of draining them into the new session',
+        () async {
+      final Harness harness = Harness();
+      await harness.connected();
+
+      // Compose with no wire to write to, so the send is HELD in the outbox.
+      await harness.socket.drop();
+      await flush();
+      final ChatMessage held = harness.client.sendMessage('about order 41');
+      expect(held.delivery, equals(MessageDelivery.queued));
+      expect(harness.client.queuedCount, equals(1));
+
+      final List<ChatMessage> seen = <ChatMessage>[];
+      harness.client.messages.listen(seen.add);
+
+      final Future<void> started = harness.client.startNewSession();
+      await flush();
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      await started;
+
+      // Failed, not delivered. An unsent question about a resolved order must
+      // not become the opening line of a brand-new ticket.
+      expect(harness.client.queuedCount, equals(0));
+      expect(sendsOn(harness, 1), isEmpty);
+      expect(
+        seen.where((ChatMessage m) => m.id == held.id).last.delivery,
+        equals(MessageDelivery.failed),
+      );
+
+      await harness.client.dispose();
+    });
+
+    test('fails in-flight sends too, which the disconnect would re-queue',
+        () async {
+      // The one that is easy to get wrong. An unacked send sits in _pending,
+      // and the disconnect in step 2 moves everything there to the FRONT of
+      // the outbox — so clearing only the outbox beforehand hands those
+      // orphans straight to the new session one microtask later.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final ChatMessage inFlight = harness.client.sendMessage('about order 41');
+      expect(inFlight.delivery, equals(MessageDelivery.pending));
+
+      final List<ChatMessage> seen = <ChatMessage>[];
+      harness.client.messages.listen(seen.add);
+
+      final Future<void> started = harness.client.startNewSession();
+      await flush();
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      await started;
+
+      expect(harness.client.queuedCount, equals(0));
+      expect(sendsOn(harness, 1), isEmpty);
+      expect(
+        seen.where((ChatMessage m) => m.id == inFlight.id).last.delivery,
+        equals(MessageDelivery.failed),
+      );
+
+      await harness.client.dispose();
+    });
+
+    test('an abandoned send stays retryable, under its original address',
+        () async {
+      // Failed, not deleted: the customer typed it, and a host renders it as
+      // dead with a Retry affordance. The replay carries the ORIGINAL frame,
+      // so it is still addressed to the old session — the server answers with
+      // a real verdict rather than the message quietly joining the new
+      // conversation.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final ChatMessage inFlight = harness.client.sendMessage('about order 41');
+
+      final Future<void> started = harness.client.startNewSession();
+      await flush();
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      await started;
+
+      final RetryOutcome outcome = harness.client.retry(inFlight.id);
+      expect(outcome, isA<RetryRetried>());
+
+      final List<Map<String, Object?>> replayed = sendsOn(harness, 1);
+      expect(replayed, hasLength(1));
+      expect(replayed.single['id'], equals(inFlight.id));
+      expect(
+        (replayed.single['d']! as Map<String, Object?>)['sessionId'],
+        equals('s1'),
+      );
+
+      await harness.client.dispose();
+    });
+
+    test('sends composed afterwards address the NEW session', () async {
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final Future<void> started = harness.client.startNewSession();
+      await flush();
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      await started;
+
+      harness.client.sendMessage('a fresh question');
+
+      final List<Map<String, Object?>> sends = sendsOn(harness, 1);
+      expect(sends, hasLength(1));
+      expect(
+        (sends.single['d']! as Map<String, Object?>)['sessionId'],
+        equals('s2'),
+      );
+
+      await harness.client.dispose();
+    });
+
+    test('pushes the new session snapshot', () async {
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final List<SessionSnapshot> seen = <SessionSnapshot>[];
+      harness.client.sessions.listen(seen.add);
+
+      final Future<void> started = harness.client.startNewSession();
+      await flush();
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      await started;
+
+      expect(seen.last.sessionId, equals('s2'));
+
+      await harness.client.dispose();
+    });
+
+    test('a first attempt that dies still asks on the retry', () async {
+      // End to end through the client: the latch is what keeps a flaky
+      // reconnect from silently dropping the customer back into the old
+      // session.
+      final Harness harness = Harness();
+      await harness.connected();
+
+      final Future<void> started =
+          harness.client.startNewSession(topic: 'Billing');
+      await flush();
+      expect(helloOf(harness, 1)['newSession'], isTrue);
+
+      // Dies before the new session's ack.
+      await harness.socket.drop();
+      await flush();
+      await harness.scheduler.advanceToNextTimer();
+      await flush();
+
+      expect(harness.sockets.length, equals(3));
+      expect(helloOf(harness, 2)['newSession'], isTrue);
+      expect(helloOf(harness, 2)['topic'], equals('Billing'));
+
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      await started;
+
+      await harness.client.dispose();
+    });
+
+    test('completes only once the new session has acked', () async {
+      final Harness harness = Harness();
+      await harness.connected();
+
+      bool done = false;
+      unawaited(harness.client.startNewSession().then((_) => done = true));
+      await flush();
+      // The socket is up and the hello is out, but no session exists yet.
+      expect(done, isFalse);
+
+      harness.socket.deliver(ackJson(sessionId: 's2'));
+      await flush();
+      expect(done, isTrue);
 
       await harness.client.dispose();
     });

@@ -565,6 +565,121 @@ class ChatClient {
     _sessionId = null;
   }
 
+  /// Abandons the current conversation and opens a brand-new one (§6.2).
+  ///
+  /// What "Start a new conversation" has to call. [topic] and [subject] are
+  /// the New-conversation screen's choice and ride on the handshake that mints
+  /// the session — see [ConnectionController.requestNewSession] for why they
+  /// cannot be a later frame.
+  ///
+  /// Completes on the new session's `connection.ack`, so a caller that awaits
+  /// this knows [sessions] has already pushed the new snapshot.
+  ///
+  /// ── Why this is not disconnect() + connect() ──────────────────────────
+  ///
+  /// Because that reconnects into the SAME conversation, twice over. The
+  /// resume anchor survives, so the hello claims a history the server has
+  /// closed and gets a non-retryable VALIDATION_FAILED — suspended, not
+  /// restarted. And even with the anchor dropped, chat-service resolves a
+  /// customer to their one active session, so the reconnect lands right back
+  /// where it started: the customer pressed "Start a new conversation" and
+  /// kept talking in the old one. [ConnectionController.forgetResumeAnchor]
+  /// and [ConnectionController.requestNewSession] are the two halves that fix
+  /// those, and both are needed.
+  ///
+  /// [joinSession] is not this either — it joins a session that already
+  /// exists, and the whole point here is that none does yet.
+  ///
+  /// ── The order is load-bearing ─────────────────────────────────────────
+  ///
+  /// Every step below has to happen before the socket comes back up, and step
+  /// 1 has to happen before the socket goes DOWN. See each.
+  Future<void> startNewSession({String? topic, String? subject}) async {
+    // 1. The old conversation's undelivered sends, before anything touches the
+    //    socket — and before the disconnect specifically, because
+    //    [_onConnectionState] moves everything in [_pending] to the front of
+    //    [_outbox] the moment the connection drops. Clearing only the outbox
+    //    here would hand those orphans to the new session a microtask later,
+    //    which is the bug this step exists to prevent.
+    _abandonUndeliveredSends();
+
+    // 2. Close the socket BEFORE forgetting the anchor, so no frame still in
+    //    flight can advance it again between the reset and the reconnect.
+    await _connection.disconnect();
+
+    // 3. The anchor. Without this the next hello carries a resumeFrom from a
+    //    history this client no longer holds; see the method doc.
+    _connection.forgetResumeAnchor();
+
+    // 3b. And SAY so. Forgetting the anchor only makes the hello LOOK like a
+    //     first connection; it does not make the server treat it as one.
+    //     `newSession: true` closes the old session (SWITCHED) and mints a
+    //     fresh one, which is the whole operation. Latched, so a flaky first
+    //     attempt still asks on its retry.
+    _connection.requestNewSession(topic: topic, subject: subject);
+
+    // 4. The address a message composed now would carry. Cleared rather than
+    //    left pointing at a session the server is closing: a send racing this
+    //    method would otherwise be stamped with the outgoing conversation.
+    //    Null omits the field, which is the right thing to say while there
+    //    genuinely is no session — the next `connection.ack` names the new one
+    //    and is, per [joinSession], the only thing that writes this field.
+    //
+    //    packages/core does more here (a presence coordinator, a switch epoch,
+    //    a persisted session selection). This package has none of those, so
+    //    there is nothing else to reset — not a step skipped.
+    _sessionId = null;
+
+    // 5. A hello with no resumeFrom and `newSession: true` reads as a request
+    //    for a fresh session (WAITING_FOR_AGENT, seq 0). Resolves on
+    //    `connection.ack`, so awaiting this means the new session is in state.
+    await _connection.connect();
+  }
+
+  /// Fails every send that has not reached the server, in composition order.
+  ///
+  /// FAILED, not dropped: the customer typed these, and a host that renders
+  /// [MessageDelivery.failed] can show them as dead with a Retry affordance
+  /// rather than have them vanish. They stay in [_failed], so [retry] finds
+  /// them.
+  ///
+  /// ── Why they cannot simply ride along into the new session ────────────
+  ///
+  /// [sendMessage] stamps `sessionId` onto the frame ONCE, at compose time, so
+  /// a held send carries whichever conversation it was typed into. Drained
+  /// into a new session it is either addressed to a session the server has
+  /// just closed, or — if it was composed before any snapshot named one, when
+  /// the field is absent — attributed to the new session outright. That last
+  /// one is the case worth spelling out: an unsent question about a resolved
+  /// order, silently reappearing as the opening line of a brand-new ticket.
+  ///
+  /// A retry of one of these is safe for the same reason. The frame replays
+  /// under its original envelope id and its original address, so the server
+  /// answers a closed session with a real verdict the customer can see; it
+  /// cannot quietly land in the new conversation. `retryable` is null — no
+  /// server produced a verdict on this one — which resolves through
+  /// [kDefaultRetryable] to offering the retry.
+  ///
+  /// [_pending] before [_outbox], because an in-flight send was composed
+  /// before anything still waiting behind it — the same ordering
+  /// [_onConnectionState] preserves when it puts orphans at the front.
+  void _abandonUndeliveredSends() {
+    final List<_InFlightSend> abandoned = <_InFlightSend>[
+      ..._pending.values,
+      ..._outbox,
+    ];
+    _pending.clear();
+    _outbox.clear();
+
+    for (final _InFlightSend entry in abandoned) {
+      // The PENDING echo goes into the record and the FAILED one onto the
+      // stream — the same split the `AckFailureFrame` path uses, so a retry
+      // re-emits a pending message rather than a permanently failed one.
+      _failed[entry.frame.id] = _FailedSend(entry.frame, entry.message, null);
+      _emit(_messages, entry.message.failed());
+    }
+  }
+
   /// Asks for a human agent (§6.2).
   void requestAgent({String? reason}) {
     _connection.send(
