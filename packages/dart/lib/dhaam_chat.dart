@@ -54,6 +54,19 @@ export 'src/connection/socket.dart'
         SocketProtocolException,
         SystemScheduler,
         WebSocketChatSocket;
+export 'src/logic/csat.dart'
+    show
+        CsatCard,
+        CsatLoading,
+        CsatLookup,
+        CsatLookupFn,
+        CsatMachine,
+        CsatRated,
+        CsatRouteMissing,
+        CsatStatus,
+        CsatUnknown,
+        CsatUnrated,
+        CsatUnsupported;
 export 'src/logic/handoff_keywords.dart' show asksForAHuman;
 export 'src/logic/linkify.dart' show TextLink, findLinks;
 export 'src/logic/url_safety.dart' show safeLinkUrl;
