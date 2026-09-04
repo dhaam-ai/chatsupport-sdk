@@ -333,6 +333,7 @@ extension on RemoteConfig {
         transcriptEmail: transcriptEmail,
         consentRequired: consentRequired,
         consentText: consentText,
+        privacyUrl: privacyUrl,
         supportEmail: supportEmail,
         handoffKeywords: handoffKeywords,
         reportIssue: reportIssue,

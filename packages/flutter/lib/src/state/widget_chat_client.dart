@@ -57,7 +57,50 @@ abstract interface class WidgetChatClient {
 
   /// Sends [content] and returns the optimistic local echo immediately —
   /// see `ChatClient.sendMessage` for why there is no `Future` here.
-  ChatMessage sendMessage(String content, {String? replyToMessageId});
+  ///
+  /// [metadata] is structured context to travel WITH the message rather than
+  /// inside it — the pre-chat answers a conversation is opened with are the
+  /// case that forced it. Omitted from the frame entirely when null.
+  ChatMessage sendMessage(
+    String content, {
+    String? replyToMessageId,
+    Map<String, Object?>? metadata,
+  });
+
+  /// Signals that the local customer started typing (§6.3).
+  ///
+  /// The producer side of the agent's typing indicator. Every insertion into
+  /// the composer drives this — a typed character as much as a picked emoji —
+  /// so the indicator does not stop while the customer is choosing a glyph.
+  void startTyping();
+
+  /// Session closure, carrying a structured reason (§12.5).
+  ///
+  /// The one signal that distinguishes an ENDED conversation from a PARKED
+  /// one: a `SWITCHED` close is another tab taking over, not a conversation
+  /// the customer finished, and it must raise neither the survey nor the
+  /// ended footer.
+  Stream<SessionClosed> get sessionClosed;
+
+  /// Agent arrival and departure (§7.3).
+  ///
+  /// ── What this stream can and cannot tell you ────────────────────────────
+  ///
+  /// `ChatClient` decodes `agent.joined` and `agent.left` through the SAME
+  /// [HandledBy] decoder onto the SAME stream, so an event says WHO but not
+  /// WHETHER they arrived or left. That is deliberate on its side — one
+  /// canonical identity shape, so a header and a toast can never disagree
+  /// about a name — but it means this stream alone cannot drive an identity
+  /// header: reading an `agent.left` as an arrival would put the departed
+  /// agent's name back on the header at the moment they walked away.
+  ///
+  /// The authority for "who is handling this conversation" is therefore
+  /// [SessionSnapshot.status] + [SessionSnapshot.handledBy], read through
+  /// `isHandledByCurrent` — which is exactly what the reference does too
+  /// (`widget.ts` folds both frames into its session state and the header
+  /// renders from that, never from the frames). Use this stream for things
+  /// that are about the EVENT rather than the state: a chime, a toast.
+  Stream<AgentEvent> get agentEvents;
 
   /// Joins an existing session — the Messages/Home "open this past
   /// conversation" path. See `ChatClient.joinSession` on why this does not
@@ -105,8 +148,25 @@ class ChatClientAdapter implements WidgetChatClient {
   bool retryNow() => _client.retryNow();
 
   @override
-  ChatMessage sendMessage(String content, {String? replyToMessageId}) =>
-      _client.sendMessage(content, replyToMessageId: replyToMessageId);
+  ChatMessage sendMessage(
+    String content, {
+    String? replyToMessageId,
+    Map<String, Object?>? metadata,
+  }) =>
+      _client.sendMessage(
+        content,
+        replyToMessageId: replyToMessageId,
+        metadata: metadata,
+      );
+
+  @override
+  void startTyping() => _client.startTyping();
+
+  @override
+  Stream<SessionClosed> get sessionClosed => _client.sessionClosed;
+
+  @override
+  Stream<AgentEvent> get agentEvents => _client.agentEvents;
 
   @override
   void joinSession(String sessionId) => _client.joinSession(sessionId);

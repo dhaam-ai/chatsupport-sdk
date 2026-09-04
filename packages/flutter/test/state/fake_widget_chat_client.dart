@@ -15,6 +15,8 @@ class FakeWidgetChatClient implements WidgetChatClient {
   final StreamController<SessionSnapshot> _sessions = StreamController<SessionSnapshot>.broadcast();
   final StreamController<TypingEvent> _typing = StreamController<TypingEvent>.broadcast();
   final StreamController<ReconnectingEvent> _reconnecting = StreamController<ReconnectingEvent>.broadcast();
+  final StreamController<SessionClosed> _sessionClosed = StreamController<SessionClosed>.broadcast();
+  final StreamController<AgentEvent> _agentEvents = StreamController<AgentEvent>.broadcast();
 
   ConnectionState _state = ConnectionState.idle;
   int connectCalls = 0;
@@ -34,6 +36,16 @@ class FakeWidgetChatClient implements WidgetChatClient {
   final List<String> sentContent = <String>[];
   final List<String?> markReadCalls = <String?>[];
 
+  /// Every `metadata` map a send carried, positionally matching [sentContent]
+  /// — null for a send that carried none, which is a different fact from an
+  /// empty map and is kept as one.
+  final List<Map<String, Object?>?> sentMetadata = <Map<String, Object?>?>[];
+
+  /// How many times `startTyping()` was called. A count rather than a flag:
+  /// the composer is meant to signal on EVERY insertion, and a flag cannot
+  /// tell one signal from twenty.
+  int startTypingCalls = 0;
+
   @override
   ConnectionState get connectionState => _state;
   @override
@@ -46,6 +58,10 @@ class FakeWidgetChatClient implements WidgetChatClient {
   Stream<TypingEvent> get typing => _typing.stream;
   @override
   Stream<ReconnectingEvent> get reconnecting => _reconnecting.stream;
+  @override
+  Stream<SessionClosed> get sessionClosed => _sessionClosed.stream;
+  @override
+  Stream<AgentEvent> get agentEvents => _agentEvents.stream;
   @override
   int get queuedCount => queued;
 
@@ -65,8 +81,16 @@ class FakeWidgetChatClient implements WidgetChatClient {
   }
 
   @override
-  ChatMessage sendMessage(String content, {String? replyToMessageId}) {
+  void startTyping() => startTypingCalls += 1;
+
+  @override
+  ChatMessage sendMessage(
+    String content, {
+    String? replyToMessageId,
+    Map<String, Object?>? metadata,
+  }) {
     sentContent.add(content);
+    sentMetadata.add(metadata);
     final ChatMessage message = ChatMessage(
       id: 'sent-${sentContent.length}',
       sessionId: 's1',
@@ -106,7 +130,16 @@ class FakeWidgetChatClient implements WidgetChatClient {
   void emitReconnecting({int attempt = 0, Duration delay = const Duration(milliseconds: 500)}) =>
       _reconnecting.add(ReconnectingEvent(attempt: attempt, delay: delay));
 
+  void emitSessionClosed(SessionClosed closed) => _sessionClosed.add(closed);
+
+  /// One `agent.joined`/`agent.left` frame. Both arrive as a bare [HandledBy]
+  /// on the same stream — see `WidgetChatClient.agentEvents` on why that means
+  /// this cannot say which of the two it was.
+  void emitAgentEvent(AgentEvent event) => _agentEvents.add(event);
+
   Future<void> dispose() async {
+    await _sessionClosed.close();
+    await _agentEvents.close();
     await _reconnecting.close();
     await _connectionStates.close();
     await _messages.close();

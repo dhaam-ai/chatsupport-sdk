@@ -75,6 +75,24 @@ dependencies:
   # assumed. Requires Dart ^3.2.0, well inside the 3.5.4 this repo resolves.
   # https://pub.dev/packages/mime
   mime: ^2.0.0
+  # The REST surface `dhaam_chat` deliberately does not speak. Four screens in
+  # this package need it — the CSAT card (submit/lookup, close/reopen), the
+  # session picker (`listSessions`), the composer (`POST /upload`) and the
+  # header (transcript email, report issue) — so leaving it undeclared would
+  # force each of them to invent a seam for the SAME package and oblige every
+  # host to wire four of them (orchestrator decision D22).
+  #
+  # A path dependency, like `dhaam_chat` above: all three packages are versioned
+  # and released together out of this repo, so a version constraint between two
+  # of them would describe a compatibility question that cannot arise.
+  #
+  # The function-typed seams the widgets themselves take (`AttachmentUploader`,
+  # `TranscriptEmailer`, `IssueReporter`) are NOT replaced by this: they are
+  # what keeps every widget test runnable with a closure and no network. What
+  # this dependency changes is only that this package may now SUPPLY the real
+  # implementation instead of pushing that onto the host.
+  dhaam_chat_rest:
+    path: ../dart_rest
 
 dev_dependencies:
   flutter_test:
