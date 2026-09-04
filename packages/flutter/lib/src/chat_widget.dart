@@ -50,6 +50,7 @@ import 'ui/header/header.dart';
 import 'ui/home_screen.dart';
 import 'ui/messages_screen.dart';
 import 'ui/offline_banner.dart';
+import 'ui/session_picker/session_picker.dart';
 import 'ui/unavailable_view.dart';
 
 /// The [ConnectionState]s that mean the client has stopped on purpose rather
@@ -252,6 +253,45 @@ class _ConversationAppBar extends StatelessWidget implements PreferredSizeWidget
         // Reads the SAME `isHandledByCurrent` gate the title does, which is
         // what stops a face of Ada sitting beside "Acme Support".
         HeaderAvatar(session: state.session, config: state.config),
+        // Surface 2 of the session picker, mounted where its popover needs to
+        // be — a customer already inside one conversation is otherwise stuck
+        // in it with no way back.
+        //
+        // ── Right-aligned is a requirement, not a preference ──────────────
+        //
+        // The panel is 300px wide and anchors `bottomRight → topRight`
+        // (session_switcher.dart:196-199), so it hangs LEFTWARD from the
+        // toggle's right edge and does NOT clamp to the viewport. A toggle
+        // near the left edge therefore puts most of the panel off-screen,
+        // where taps hit nothing. `actions:` is the right-hand side of the
+        // app bar, which is why the header components were put here; this
+        // sits inboard of the ⋯ menu so the ⋯ stays last, and its right edge
+        // is still a full panel-width clear of the left edge. Pinned by
+        // `session_switcher_mount_test.dart`, which measures the rendered
+        // panel rather than trusting this comment.
+        //
+        // ── The gate is the CALLER's, and it is exactly length > 0 ────────
+        //
+        // `session-picker.ts`'s own header: "the client rule is exactly
+        // `sessions.length > 0` ⇒ show the picker", decided outside the
+        // module because whether to reveal a surface at all is a screen-flow
+        // choice. The module itself renders an empty list as an empty-state
+        // ROW, never as a hidden component, and asks no guest question of its
+        // own — re-deriving "is this a guest" here would be the second
+        // derivation D10 exists to forbid. `sessionSummaries` is empty for a
+        // guest because the server says so, and that is the whole rule.
+        if (state.sessionSummaries.isNotEmpty)
+          SessionSwitcher(
+            sessions: state.sessionSummaries,
+            currentSessionId: state.session?.sessionId,
+            onSelect: cubit.selectSession,
+            onStartNew: cubit.startNewConversation,
+            // Left at its default `false`. The busy flag exists for
+            // `SessionPickerScreen`, whose Start mints a session over a round
+            // trip; `startNewConversation` only raises the new-conversation
+            // form and returns, so there is no in-flight state to show and a
+            // spinner here would describe nothing.
+          ),
         HeaderMenu(
           canEnd: cubit.canEndConversation,
           privacyUrl: state.config.privacyUrl,
