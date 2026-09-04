@@ -33,6 +33,12 @@ export 'product_surface.dart';
 /// precedence and non-preemption. It does not own "is this a guest", "is it
 /// out of hours" or "is a rating due", and asking those questions a second
 /// time here would make this the second place each answer could be wrong.
+///
+/// Every default is the "nothing is due" reading, so a caller that has not
+/// learned a fact yet raises no surface rather than guessing one. The
+/// pre-chat gate in particular needs six of these actively supplied before
+/// it can fire — a half-built inputs object cannot put a form in front of
+/// anybody.
 class SurfaceSyncInputs extends Equatable {
   const SurfaceSyncInputs({
     this.shouldCollectOffline = false,
