@@ -96,7 +96,7 @@ export 'src/errors.dart'
         RestSessionReadBackException,
         RestTransportException,
         RestValidationException;
-export 'src/media.dart' show MediaApi;
+export 'src/media.dart' show MediaApi, kUnknownAttachmentMimeType;
 export 'src/media_type.dart' show normalizeMediaType;
 export 'src/models/csat.dart'
     show RestCsatRated, RestCsatStatus, RestCsatSubmission, RestCsatUnrated;
