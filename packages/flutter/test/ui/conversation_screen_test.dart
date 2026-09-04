@@ -170,21 +170,28 @@ void main() {
     }
   });
 
-  testWidgets('a failed send shows "Not sent"', (tester) async {
+  testWidgets('a failed send states its reason end to end', (tester) async {
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
 
     client.emitMessage(
-      testMessage(id: 'm1', senderType: SenderType.customer, delivery: MessageDelivery.failed),
+      testMessage(
+        id: 'm1',
+        senderType: SenderType.customer,
+        delivery: const MessageFailed(reason: SendFailureReason.rejected, retryable: true),
+      ),
     );
     await flush(tester);
     await tester.pump();
 
-    // A failure is stated only when the host says WHY: `MessageDelivery` in
-    // `dhaam_chat` is a bare enum with no reason and no `retryable`, so the
-    // sentence comes from `MessageListInputs.failures`, which nothing
-    // populates until the client surfaces a per-message failure.
-    expect(find.text('This message could not be sent.'), findsNothing);
+    // Was `findsNothing`. The reason now rides on the message itself, so the
+    // sentence reaches the transcript with nothing in between to populate.
+    expect(find.text('This message could not be sent.'), findsOneWidget);
+    // Retry is still absent HERE, and that is the honest state of this
+    // screen rather than a property of the affordance: `MessageListCallbacks`
+    // hides the button when `onRetry` is null, and this screen has not been
+    // given one yet. `message_list_view_test.dart` and
+    // `message_retry_test.dart` cover the button against a host that has.
     expect(find.text('Retry'), findsNothing);
   });
 

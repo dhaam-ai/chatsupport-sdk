@@ -172,7 +172,15 @@ void main() {
 
     test('a failed send has no tick — a tick would claim it arrived', () {
       expect(
-        _tick(_message(seq: 5, delivery: MessageDelivery.failed)),
+        _tick(
+          _message(
+            seq: 5,
+            delivery: const MessageFailed(
+              reason: SendFailureReason.rejected,
+              retryable: true,
+            ),
+          ),
+        ),
         isNull,
       );
     });
@@ -222,10 +230,6 @@ void main() {
         SendFailureReason.rejected: 'This message could not be sent.',
         SendFailureReason.sessionClosed:
             'This conversation ended before this message could send.',
-        SendFailureReason.expired: 'This message took too long to send.',
-        SendFailureReason.evicted: 'Too many messages were waiting to send.',
-        SendFailureReason.storage:
-            'This message could not be saved on this device.',
       };
 
       // Iterating `values` is what makes this exhaustive at runtime; the
@@ -236,6 +240,11 @@ void main() {
       }
       expect(expected, hasLength(SendFailureReason.values.length));
       expect(expected.values.toSet(), hasLength(expected.length));
+      // Two, not five. `expired`, `evicted` and `storage` had sentences here
+      // that nothing could ever render, because no code path in `dhaam_chat`
+      // can construct those reasons — see SendFailureReason's own doc for
+      // the queue features that would make each reachable.
+      expect(expected, hasLength(2));
     });
   });
 }

@@ -22,8 +22,8 @@
 /// with "absent means server-confirmed"; `dhaam_chat` splits the confirmed
 /// case in two, giving `pending` (sent optimistically, no ack, `seq` null)
 /// alongside `confirmed`. Core's optimistic echo is itself recorded as
-/// `{state: 'queued'}` (messages/controller.ts), so [MessageDelivery.pending]
-/// and [MessageDelivery.queued] BOTH correspond to core's `queued` and both
+/// `{state: 'queued'}` (messages/controller.ts), so [MessagePending]
+/// and [MessageQueued] BOTH correspond to core's `queued` and both
 /// yield [MessageTickState.pending] here. They differ in where the message is
 /// — a socket's write buffer versus this client's outbox — and not in
 /// anything the customer can act on, which is the same call
@@ -31,7 +31,14 @@
 library;
 
 import 'package:dhaam_chat/dhaam_chat.dart'
-    show ChatMessage, MessageDelivery, ParticipantSnapshot, SessionSnapshot;
+    show
+        ChatMessage,
+        MessageConfirmed,
+        MessageFailed,
+        MessagePending,
+        MessageQueued,
+        ParticipantSnapshot,
+        SessionSnapshot;
 
 /// The four tick states, weakest to strongest.
 enum MessageTickState { pending, sent, delivered, read }
@@ -88,7 +95,7 @@ class TickInput {
 ///  1. The message is not ours. §6.4 has no tick concept for someone else's
 ///     message — their client renders that.
 ///  2. [TickInput.localParticipantId] is `null`. See its doc.
-///  3. The delivery state is [MessageDelivery.failed]. The table has no row
+///  3. The delivery state is [MessageFailed]. The table has no row
 ///     for it and a tick is the wrong affordance: a failure reason plus a
 ///     retry button is what that state needs. `pending`'s clock or `sent`'s
 ///     single tick would both claim something untrue about a message that
@@ -110,13 +117,19 @@ MessageTickState? deriveTickState(TickInput input) {
   final ChatMessage message = input.message;
   if (message.senderId != local) return null;
 
+  // Object patterns over the sealed union, not constant patterns over the
+  // three named instances: a constant pattern compares with `==` and gives
+  // the switch no exhaustiveness, so a fifth delivery state added to
+  // `dhaam_chat` would fall through here silently instead of failing to
+  // compile. Falling through means `sent` — a single tick under a message
+  // whose state this file has never heard of.
   switch (message.delivery) {
-    case MessageDelivery.failed:
+    case MessageFailed():
       return null;
-    case MessageDelivery.pending:
-    case MessageDelivery.queued:
+    case MessagePending():
+    case MessageQueued():
       return MessageTickState.pending;
-    case MessageDelivery.confirmed:
+    case MessageConfirmed():
       break;
   }
 

@@ -7,7 +7,7 @@
 /// retry rule appearing in the render path.
 library;
 
-import 'package:dhaam_chat/dhaam_chat.dart' show ChatMessage;
+import 'package:dhaam_chat/dhaam_chat.dart' show ChatMessage, MessageFailed;
 
 import 'delivery_failure.dart';
 import 'reply_quote.dart';
@@ -65,10 +65,17 @@ class MessageRow {
   /// at all — see that function's doc for the four cases.
   final MessageTickState? tick;
 
-  /// The failure to state, or `null`. Carries `retryable` as core reported
-  /// it; nothing here re-derives it from [SendFailure.reason] or
-  /// [SendFailure.code].
-  final SendFailure? failure;
+  /// The failure to state, or `null` — [ChatMessage.delivery] itself when
+  /// it is a [MessageFailed], and never a second record beside it.
+  ///
+  /// It was a lookup the caller supplied, back when `MessageDelivery` could
+  /// not carry a reason. Nothing could populate that lookup, so no failure
+  /// ever rendered. Reading it off the message removes the possibility of a
+  /// row whose failure disagrees with its own delivery state.
+  ///
+  /// Nothing here re-derives [MessageFailed.retryable] from
+  /// [MessageFailed.reason] or [MessageFailed.code].
+  final MessageFailed? failure;
 
   /// The message this one replies to, or `null`.
   final ReplyQuote? quote;
@@ -78,7 +85,7 @@ class MessageRow {
   /// Shown on EVERY failure, whether or not [showRetry] is true: a
   /// permanently-refused send still owes the customer a reason.
   String? get failureText {
-    final SendFailure? f = failure;
+    final MessageFailed? f = failure;
     return f == null ? null : failureReasonCopy(f.reason);
   }
 

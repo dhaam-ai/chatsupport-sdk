@@ -54,14 +54,12 @@ MessageListInputs _inputs({
   required List<ChatMessage> messages,
   SessionSnapshot? session,
   String? local = _me,
-  Map<String, SendFailure> failures = const <String, SendFailure>{},
   bool initialLoaded = false,
 }) {
   return MessageListInputs(
     messages: messages,
     session: session,
     localParticipantId: local,
-    failures: failures,
     initialLoaded: initialLoaded,
   );
 }
@@ -201,14 +199,15 @@ void main() {
       final MessageListRender render = MessageListPresenter().present(
         _inputs(
           messages: <ChatMessage>[
-            _msg(id: 'a', seq: 5, delivery: MessageDelivery.failed),
-          ],
-          failures: const <String, SendFailure>{
-            'a': SendFailure(
-              reason: SendFailureReason.rejected,
-              retryable: true,
+            _msg(
+              id: 'a',
+              seq: 5,
+              delivery: const MessageFailed(
+                reason: SendFailureReason.rejected,
+                retryable: true,
+              ),
             ),
-          },
+          ],
         ),
       );
       final MessageRow row = render.rows.single;
@@ -225,15 +224,15 @@ void main() {
       final MessageListRender render = MessageListPresenter().present(
         _inputs(
           messages: <ChatMessage>[
-            _msg(id: 'a', delivery: MessageDelivery.failed),
-          ],
-          failures: const <String, SendFailure>{
-            'a': SendFailure(
-              reason: SendFailureReason.rejected,
-              code: 'SESSION_CLOSED',
-              retryable: false,
+            _msg(
+              id: 'a',
+              delivery: const MessageFailed(
+                reason: SendFailureReason.rejected,
+                code: ErrorCode.sessionClosed,
+                retryable: false,
+              ),
             ),
-          },
+          ],
         ),
       );
       final MessageRow row = render.rows.single;
@@ -248,15 +247,15 @@ void main() {
         final MessageListRender render = MessageListPresenter().present(
           _inputs(
             messages: <ChatMessage>[
-              _msg(id: 'a', delivery: MessageDelivery.failed),
-            ],
-            failures: <String, SendFailure>{
-              'a': SendFailure(
-                reason: SendFailureReason.sessionClosed,
-                code: 'SESSION_CLOSED',
-                retryable: retryable,
+              _msg(
+                id: 'a',
+                delivery: MessageFailed(
+                  reason: SendFailureReason.sessionClosed,
+                  code: ErrorCode.sessionClosed,
+                  retryable: retryable,
+                ),
               ),
-            },
+            ],
           ),
         );
         expect(render.rows.single.showRetry, retryable);
@@ -272,14 +271,14 @@ void main() {
       final MessageListRender failed = presenter.present(
         _inputs(
           messages: <ChatMessage>[
-            _msg(id: 'a', delivery: MessageDelivery.failed),
-          ],
-          failures: const <String, SendFailure>{
-            'a': SendFailure(
-              reason: SendFailureReason.rejected,
-              retryable: true,
+            _msg(
+              id: 'a',
+              delivery: const MessageFailed(
+                reason: SendFailureReason.rejected,
+                retryable: true,
+              ),
             ),
-          },
+          ],
         ),
       );
       expect(failed.rows.single.failureText, isNotNull);
@@ -309,15 +308,12 @@ void main() {
               id: 'att-1',
               content: url,
               attachment: attachment,
-              delivery: MessageDelivery.failed,
+              delivery: const MessageFailed(
+                reason: SendFailureReason.rejected,
+                retryable: true,
+              ),
             ),
           ],
-          failures: const <String, SendFailure>{
-            'att-1': SendFailure(
-              reason: SendFailureReason.rejected,
-              retryable: true,
-            ),
-          },
         ),
       );
       final MessageRow row = render.rows.single;

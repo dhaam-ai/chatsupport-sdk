@@ -1,89 +1,27 @@
-/// Why a send failed, and what the transcript says about it. Ports
-/// `state/types.ts`'s `SendFailureReason` and `ui/message-list.ts`'s
+/// What a failed send says to the customer. Ports `ui/message-list.ts`'s
 /// `FAILURE_REASON_COPY`.
 ///
-/// ── Why this lives here and not in `dhaam_chat` ──────────────────────────
+/// ── Why the reason itself is not defined here ────────────────────────────
 ///
-/// `dhaam_chat`'s `MessageDelivery` is a four-value enum — `pending`,
-/// `confirmed`, `queued`, `failed` — with no reason and no `retryable`,
-/// because the durable offline queue that produces the other reasons is not
-/// in that package yet (see [MessageDelivery.failed]'s own doc). The widget
-/// nonetheless has to render a distinct sentence per reason and offer Retry
-/// only where retrying is honest, so [SendFailure] is the shape the caller
-/// hands down until core carries it.
+/// It used to be. `dhaam_chat`'s `MessageDelivery` was a four-value enum
+/// recording THAT a send failed and never why, so this module carried its own
+/// `SendFailureReason` and a `SendFailure` record that a caller had to supply
+/// from outside — and no caller ever could, because the fact it needed was
+/// computed inside `ChatClient` and never escaped a private map.
 ///
-/// The important consequence is a good one: this module CANNOT re-derive
-/// [SendFailure.retryable], because it never sees the code or the transport
-/// that would let it. `retry.hidden = !delivery.retryable` is enforced by
-/// the type, not by discipline.
+/// `MessageDelivery` is now a union and `MessageFailed` carries the reason,
+/// the server's §7.4 code and its `retryable` verdict, so the parallel
+/// hierarchy is gone: there is one `SendFailureReason`, in the package that
+/// can construct one. This file keeps the only half that was ever the
+/// widget's business — the sentence.
+///
+/// The consequence worth naming: `retryable` still cannot be re-derived
+/// here, and now for a stronger reason than before. It is not merely absent
+/// from this module's inputs; it is a field on the message, decided once by
+/// whoever failed the send. `MessageRow.showRetry` reads it and nothing else.
 library;
 
-/// Why a queued send will never be retried again — `state/types.ts`'s own
-/// union, value for value.
-enum SendFailureReason {
-  /// The server refused it. A retry would be refused identically (§7.4).
-  rejected,
-
-  /// The session it was queued against ended before it reached the wire
-  /// (§12.5's terminal `CloseReason`s).
-  ///
-  /// Distinct from [rejected] precisely because a retry is not futile: this
-  /// send was refused by US, locally, and the same content sent into a new
-  /// session would go through.
-  sessionClosed,
-
-  /// It outlived the queue's configured max age (§9.6).
-  expired,
-
-  /// Pruned to bring the queue under its configured max entries (§9.6).
-  evicted,
-
-  /// The durable write did not land and is not recoverable (§9.1).
-  storage,
-}
-
-/// One message's failure, as core reported it.
-///
-/// Constructed by whoever owns the queue and handed to the transcript.
-/// Nothing here is computed from anything else.
-class SendFailure {
-  const SendFailure({
-    required this.reason,
-    required this.retryable,
-    this.code,
-  });
-
-  final SendFailureReason reason;
-
-  /// Whether retrying this exact send is worth attempting.
-  ///
-  /// Mirrors the server's `ErrorPayload.retryable` one for one when the queue
-  /// had it to report — the server already computes this once per code
-  /// (§7.4), so nothing re-derives it from a second, hand-maintained copy of
-  /// that table. Always present, even when it was defaulted, precisely so a
-  /// renderer never has to ask "was this reported, or defaulted?": it has one
-  /// boolean to branch on.
-  final bool retryable;
-
-  /// The server's §7.4 code, present only when this failure came from a
-  /// rejected `message.send`. Never read to decide anything — it is here so
-  /// a host's error sink can log something diagnosable.
-  final String? code;
-
-  @override
-  bool operator ==(Object other) =>
-      other is SendFailure &&
-      other.reason == reason &&
-      other.retryable == retryable &&
-      other.code == code;
-
-  @override
-  int get hashCode => Object.hash(reason, retryable, code);
-
-  @override
-  String toString() =>
-      'SendFailure(${reason.name}, retryable: $retryable, code: $code)';
-}
+import 'package:dhaam_chat/dhaam_chat.dart' show SendFailureReason;
 
 /// What a failed send says, per [SendFailureReason].
 ///
@@ -92,14 +30,16 @@ class SendFailure {
 /// expression with no default clause, so a reason core adds that this list
 /// has not been taught to describe is a COMPILE ERROR rather than a bubble
 /// that silently says nothing.
+///
+/// Two sentences, because `SendFailureReason` has two values. It had five
+/// here once — one each for `expired`, `evicted` and `storage` — written,
+/// reviewed and reachable by nothing, because the durable queue that
+/// produces those reasons does not exist. They come back in the change that
+/// can first make one of them happen.
 String failureReasonCopy(SendFailureReason reason) {
   return switch (reason) {
     SendFailureReason.rejected => 'This message could not be sent.',
     SendFailureReason.sessionClosed =>
       'This conversation ended before this message could send.',
-    SendFailureReason.expired => 'This message took too long to send.',
-    SendFailureReason.evicted => 'Too many messages were waiting to send.',
-    SendFailureReason.storage =>
-      'This message could not be saved on this device.',
   };
 }
