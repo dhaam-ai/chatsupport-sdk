@@ -19,18 +19,29 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import 'package:dhaam_chat/dhaam_chat.dart' show ChatMessage;
+import 'package:dhaam_chat/dhaam_chat.dart' show ChatMessage, CsatRated;
 import 'package:flutter/services.dart';
 
 import '../state/chat_widget_cubit.dart';
 import '../state/chat_widget_state.dart';
 import '../surfaces/product_surface_slot.dart';
 import 'attachments/attachments.dart';
+import 'csat/csat.dart';
 import 'message_list/message_list.dart';
 import 'pre_chat/pre_chat.dart';
 import 'new_conversation_view.dart';
 import 'composer.dart';
 import 'composer_affordances/composer_affordances.dart';
+
+/// Where a surface's rejected submit goes.
+///
+/// The error object carries a stack and possibly a URL, so it goes to the
+/// host's reporter and never onto the customer's screen — the split every
+/// form in this package makes. Lifted out of the pre-chat arm now that three
+/// surfaces want the same three lines.
+void _report(Object error, StackTrace stackTrace) => FlutterError.reportError(
+      FlutterErrorDetails(exception: error, stack: stackTrace),
+    );
 
 class ConversationScreen extends StatefulWidget {
   const ConversationScreen({super.key});
@@ -58,11 +69,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
       builder: (BuildContext context, ChatWidgetState state) {
         final ChatWidgetCubit cubit = context.read<ChatWidgetCubit>();
 
-        // Only the two surfaces this node owns are dispatched here. The
-        // others (offline, CSAT, report, confirm-end) land with the nodes
-        // that build them and add their own arm; an unhandled surface falls
-        // through to the conversation rather than to a blank pane, which is
-        // the safe reading while one is still to come.
+        // The surfaces that have landed are dispatched here. The rest
+        // (offline, report) arrive with the nodes that build them and add
+        // their own arm; an unhandled surface falls through to the
+        // conversation rather than to a blank pane, which is the safe reading
+        // while one is still to come.
         switch (state.activeSurface) {
           case ComposingNewSurface():
             return const NewConversationView();
@@ -75,12 +86,42 @@ class _ConversationScreenState extends State<ConversationScreen> {
               ),
               onSubmit: cubit.submitPreChat,
               onSkip: cubit.skipPreChat,
-              // The error object carries a stack and possibly a URL. It goes
-              // to the host's reporter, never onto the customer's screen.
-              onError: (Object error, StackTrace stackTrace) =>
-                  FlutterError.reportError(
-                FlutterErrorDetails(exception: error, stack: stackTrace),
+              onError: _report,
+            );
+          case CsatSurface(
+              :final String sessionId,
+              :final bool alreadyRated,
+            ):
+            return CsatCardView(
+              // The port of `openSurface`'s `${sessionId}:${ask|rated}` key.
+              // The card for ONE session changes SHAPE when a rating is
+              // recorded, and without a differing key Flutter reuses the
+              // State — so the locked read-out would never draw over the ask
+              // it replaces.
+              key: ValueKey<String>(
+                '$sessionId:${alreadyRated ? 'rated' : 'ask'}',
               ),
+              style: state.config.csatStyle,
+              // Read from the mirror of the CSAT machine, which is the single
+              // memory of what the server said. The slot deliberately carries
+              // only the flag, so no copy of the rating can go stale beside
+              // it.
+              existing: switch (state.csatBySession[sessionId]) {
+                final CsatRated rated when alreadyRated => rated,
+                _ => null,
+              },
+              onSubmit: (int rating, String? comment) => cubit.rateSession(
+                sessionId,
+                rating: rating,
+                comment: comment,
+              ),
+              onError: _report,
+            );
+          case ConfirmEndSurface(:final String sessionId):
+            return EndConversationConfirm(
+              onConfirm: () => cubit.confirmEndConversation(sessionId),
+              onCancel: cubit.cancelEndConversation,
+              onError: _report,
             );
           case _:
             break;
@@ -122,10 +163,30 @@ class _ConversationScreenState extends State<ConversationScreen> {
               top: false,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                child: Composer(
-                  onSend: cubit.sendMessage,
-                  controller: _composer,
-                ),
+                // The ended footer is a SIBLING of the composer, not a
+                // product surface: the customer is deciding about the
+                // transcript they are looking at, and hiding it to show two
+                // buttons would take away the thing being decided about. So
+                // the two trade places here — the same "one at a time" rule
+                // the slot enforces, applied one level lower.
+                child: cubit.endedFooterDue
+                    ? EndedFooter(
+                        // Hidden when the host wired up no
+                        // `ChatSessionActions`: a Reopen that quietly does
+                        // nothing is worse than no Reopen.
+                        onReopen:
+                            cubit.canReopen ? cubit.reopenEndedSession : null,
+                        onStartNew: cubit.startNewConversation,
+                        onError: _report,
+                      )
+                    : Composer(
+                        onSend: cubit.sendMessage,
+                        controller: _composer,
+                        // Nothing on the Flutter side drove the agent's
+                        // typing indicator before this line — for typed
+                        // characters as much as for an emoji insertion.
+                        onTyping: cubit.startTyping,
+                      ),
               ),
             ),
           ],
