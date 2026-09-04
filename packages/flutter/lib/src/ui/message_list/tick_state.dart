@@ -30,7 +30,8 @@
 /// `conversation_screen.dart`'s own delivery glyph already made.
 library;
 
-import 'package:dhaam_chat/dhaam_chat.dart' show ChatMessage, MessageDelivery;
+import 'package:dhaam_chat/dhaam_chat.dart'
+    show ChatMessage, MessageDelivery, ParticipantSnapshot, SessionSnapshot;
 
 /// The four tick states, weakest to strongest.
 enum MessageTickState { pending, sent, delivered, read }
@@ -178,4 +179,28 @@ TickPresentation tickPresentation(MessageTickState tick) {
     MessageTickState.delivered => const TickPresentation('✓✓', 'Delivered'),
     MessageTickState.read => const TickPresentation('✓✓', 'Read'),
   };
+}
+
+/// The read watermarks a session snapshot already carries.
+///
+/// A projection, not a derivation: `ParticipantSnapshot.lastReadAt` IS the
+/// §9.5 read watermark, so reading it here computes nothing — it renames a
+/// field into the map [TickInput] wants. Participants who have read nothing
+/// yet are absent from the result rather than present at the epoch, which is
+/// the distinction that field's own doc draws.
+///
+/// There is no counterpart for delivered watermarks: `dhaam_chat` decodes
+/// `message.delivered` and deliberately drops it (see `client.dart`), so
+/// nothing in this package knows another participant's highest held `seq`
+/// and no honest `delivered` tick can be drawn until it does.
+Map<String, DateTime> readWatermarksFrom(SessionSnapshot? session) {
+  if (session == null) return const <String, DateTime>{};
+  final Map<String, DateTime> watermarks = <String, DateTime>{};
+  for (final ParticipantSnapshot participant in session.participants) {
+    final DateTime? lastReadAt = participant.lastReadAt;
+    if (lastReadAt != null) {
+      watermarks[participant.participantId] = lastReadAt;
+    }
+  }
+  return watermarks;
 }

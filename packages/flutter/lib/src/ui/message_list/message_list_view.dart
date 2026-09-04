@@ -23,17 +23,25 @@ import 'tick_state.dart';
 /// Everything the transcript hands back to its host.
 class MessageListCallbacks {
   const MessageListCallbacks({
-    required this.onRetry,
     required this.onCopyMessage,
-    required this.onReplyToMessage,
     required this.onQuickReply,
+    this.onRetry,
+    this.onReplyToMessage,
     this.onOpenLink,
   });
 
   /// Replays THIS message — the object core gave the row, id and all, never
   /// its rendered text. A retry keyed on `message.id` can therefore never
   /// see the §12.10 placeholder-stripped string.
-  final ValueChanged<ChatMessage> onRetry;
+  ///
+  /// `null` when the host has no per-message replay to offer, and then no
+  /// Retry button is drawn at all — `WidgetChatClient` deliberately does not
+  /// expose `ChatClient.retry()` yet, and its `retryNow()` is a CONNECTION
+  /// retry, not a message one. Wiring the button to that would be the same
+  /// lie in a new place: a control that cannot do what its label says.
+  /// [MessageRow.showRetry] is unchanged — the projection still answers
+  /// "should this message be retryable"; this answers "can anyone retry it".
+  final ValueChanged<ChatMessage>? onRetry;
 
   /// Puts the message's text on the clipboard. Throws if the platform
   /// refuses.
@@ -45,7 +53,11 @@ class MessageListCallbacks {
   /// resolve it: a [ChatMessage] carries no display name, and the composer
   /// needs the name for its quote chip and for the send's `reply` metadata
   /// without re-deriving it from state a second way.
-  final void Function(ChatMessage message, String senderName) onReplyToMessage;
+  ///
+  /// `null` removes the Reply item from the menu entirely, for the same
+  /// reason edit and delete are absent: reply needs somewhere to put the
+  /// draft, and a menu item that cannot work is worse than an absent one.
+  final void Function(ChatMessage message, String senderName)? onReplyToMessage;
 
   /// Sends one of the bot's suggested follow-ups as the customer's next
   /// message — verbatim, which is why the chip row is handoff-filtered.
@@ -305,8 +317,12 @@ class MessageBubbleRow extends StatelessWidget {
         ),
         MessageActions(
           onCopy: () => callbacks.onCopyMessage(row.message),
-          onReply: () =>
-              callbacks.onReplyToMessage(row.message, row.replyAttribution),
+          onReply: callbacks.onReplyToMessage == null
+              ? null
+              : () => callbacks.onReplyToMessage!(
+                    row.message,
+                    row.replyAttribution,
+                  ),
         ),
       ],
     );
@@ -458,11 +474,13 @@ class _MetaRow extends StatelessWidget {
                   // Offered only when core said retrying is worth
                   // attempting. `showRetry` is `!failure.retryable` and
                   // nothing else — never re-derived from the reason or the
-                  // code.
-                  if (row.showRetry) ...<Widget>[
+                  // code. The second half of the condition is a different
+                  // question: whether the host has a per-message replay to
+                  // offer at all. See `onRetry`.
+                  if (row.showRetry && callbacks.onRetry != null) ...<Widget>[
                     const SizedBox(width: 4),
                     TextButton(
-                      onPressed: () => callbacks.onRetry(row.message),
+                      onPressed: () => callbacks.onRetry!(row.message),
                       style: TextButton.styleFrom(
                         minimumSize: Size.zero,
                         padding: const EdgeInsets.symmetric(horizontal: 6),

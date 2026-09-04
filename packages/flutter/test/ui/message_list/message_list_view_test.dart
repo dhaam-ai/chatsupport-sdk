@@ -353,6 +353,75 @@ void main() {
     );
   });
 
+  testWidgets('a host with no per-message replay draws no Retry button',
+      (WidgetTester tester) async {
+    // `WidgetChatClient` does not expose `ChatClient.retry()` yet, and its
+    // `retryNow()` is a CONNECTION retry. A button wired to that would be
+    // the same lie in a new place, so the reason is stated with no control
+    // beside it — exactly as for a non-retryable failure.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 600,
+            child: MessageListView(
+              inputs: MessageListInputs(
+                messages: <ChatMessage>[
+                  _msg(id: 'a', delivery: MessageDelivery.failed),
+                ],
+                localParticipantId: _me,
+                failures: const <String, SendFailure>{
+                  'a': SendFailure(
+                    reason: SendFailureReason.rejected,
+                    retryable: true,
+                  ),
+                },
+              ),
+              callbacks: MessageListCallbacks(
+                onCopyMessage: (ChatMessage _) async {},
+                onQuickReply: (String _) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('This message could not be sent.'), findsOneWidget);
+    expect(find.text('Retry'), findsNothing);
+  });
+
+  testWidgets('a host with nowhere to put a draft offers no Reply item',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 600,
+            child: MessageListView(
+              inputs: MessageListInputs(
+                messages: <ChatMessage>[_msg(id: 'a')],
+                localParticipantId: _me,
+              ),
+              callbacks: MessageListCallbacks(
+                onCopyMessage: (ChatMessage _) async {},
+                onQuickReply: (String _) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pumpAndSettle();
+    // Copy always works — the clipboard is this package's to reach.
+    expect(find.text('Copy'), findsOneWidget);
+    expect(find.text('Reply'), findsNothing);
+  });
+
   testWidgets('every row offers Copy and Reply, and Reply carries the name',
       (WidgetTester tester) async {
     final _Recorder recorder = await _pump(

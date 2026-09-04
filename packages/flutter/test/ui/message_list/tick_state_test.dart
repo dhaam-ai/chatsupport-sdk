@@ -182,6 +182,39 @@ void main() {
     });
   });
 
+  group('readWatermarksFrom', () {
+    test('renames lastReadAt into the map TickInput wants', () {
+      final DateTime read = _createdAt.add(const Duration(minutes: 1));
+      final SessionSnapshot session = SessionSnapshot(
+        sessionId: 's1',
+        status: ChatStatus.assigned,
+        mode: ChatMode.human,
+        createdAt: _createdAt,
+        participants: <ParticipantSnapshot>[
+          ParticipantSnapshot(
+            participantId: _agent,
+            type: ParticipantType.agent,
+            lastReadAt: read,
+          ),
+          // Has read nothing yet — absent, NOT present at the epoch.
+          const ParticipantSnapshot(
+            participantId: _me,
+            type: ParticipantType.customer,
+          ),
+        ],
+      );
+
+      expect(readWatermarksFrom(session), <String, DateTime>{_agent: read});
+      expect(readWatermarksFrom(null), isEmpty);
+
+      // And it is enough on its own to raise a tick to `read`.
+      expect(
+        _tick(_message(seq: 5), read: readWatermarksFrom(session)),
+        MessageTickState.read,
+      );
+    });
+  });
+
   group('failureReasonCopy', () {
     test('a distinct sentence per SendFailureReason, exhaustively', () {
       final Map<SendFailureReason, String> expected =

@@ -177,7 +177,10 @@ class MessageActions extends StatefulWidget {
   final Future<void> Function() onCopy;
 
   /// Starts a reply addressed to this message.
-  final VoidCallback onReply;
+  ///
+  /// `null` removes the item, for the same reason edit and delete are
+  /// absent: a menu item that cannot work is worse than an absent one.
+  final VoidCallback? onReply;
 
   /// An externally-owned controller, for a caller that needs to close the
   /// menu itself. When `null` this widget owns one and disposes it.
@@ -327,14 +330,15 @@ class _MessageActionsState extends State<MessageActions> {
                           ? null
                           : () => unawaited(_controller.copy(widget.onCopy)),
                     ),
-                    _MenuItem(
-                      icon: Icons.reply_rounded,
-                      label: 'Reply',
-                      onPressed: () {
-                        _controller.close();
-                        widget.onReply();
-                      },
-                    ),
+                    if (widget.onReply != null)
+                      _MenuItem(
+                        icon: Icons.reply_rounded,
+                        label: 'Reply',
+                        onPressed: () {
+                          _controller.close();
+                          widget.onReply!();
+                        },
+                      ),
                   ],
                 ),
               ),
