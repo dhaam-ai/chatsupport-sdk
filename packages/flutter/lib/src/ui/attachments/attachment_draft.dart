@@ -131,7 +131,26 @@ class PickedAttachment {
     required this.fileName,
     required this.mimeType,
     required this.bytes,
-  });
+    int? size,
+  }) : _declaredSize = size;
+
+  /// The platform's own byte count, when it is known WITHOUT having read the
+  /// file.
+  ///
+  /// ── Why this exists, and why it is not just `bytes.length` ────────────
+  ///
+  /// A picker that loaded every chosen file into memory before anyone could
+  /// look at its size would run out of memory on a 2 GB video — and it would
+  /// do so BEFORE the 25 MiB refusal could say a word, which is a cap that
+  /// crashes instead of refusing.
+  ///
+  /// So the real picker reads the platform's declared size first and, for a
+  /// file already over the cap, hands back one of these with the size filled
+  /// in and [bytes] left empty. [size] then still reports the truth, [
+  /// isTooLarge] is still true, and the controller still refuses it in words.
+  /// Without this field such a file would report a length of zero, sail past
+  /// the cap, and upload nothing at all.
+  final int? _declaredSize;
 
   /// What the platform called this file. May be blank — see
   /// [kAttachmentUnnamedMessage] for what happens then.
@@ -157,7 +176,11 @@ class PickedAttachment {
 
   final Uint8List bytes;
 
-  int get size => bytes.length;
+  /// How many bytes this file is.
+  ///
+  /// The platform's declared size when one was given, and otherwise the
+  /// length of what was actually read. See [_declaredSize].
+  int get size => _declaredSize ?? bytes.length;
 
   /// Whether this file is over [kMaxAttachmentBytes].
   bool get isTooLarge => size > kMaxAttachmentBytes;
