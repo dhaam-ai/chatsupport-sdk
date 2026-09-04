@@ -25,6 +25,7 @@ import 'package:flutter/services.dart';
 import '../state/chat_widget_cubit.dart';
 import '../state/chat_widget_state.dart';
 import '../surfaces/product_surface_slot.dart';
+import 'attachments/attachments.dart';
 import 'message_list/message_list.dart';
 import 'pre_chat/pre_chat.dart';
 import 'new_conversation_view.dart';
@@ -89,6 +90,13 @@ class ConversationScreen extends StatelessWidget {
                   ),
                   onQuickReply: cubit.sendMessage,
                 ),
+                // Fills the seam T9 declared and deliberately left empty.
+                // Ungated by `fileUploads`: that flag governs whether the
+                // customer may SEND a file, not whether an attachment
+                // already in the transcript is drawn. A merchant who turns
+                // uploads off does not thereby blank out the photo an agent
+                // sent yesterday.
+                attachmentBuilder: buildAttachmentBubble,
               ),
             ),
             SafeArea(
