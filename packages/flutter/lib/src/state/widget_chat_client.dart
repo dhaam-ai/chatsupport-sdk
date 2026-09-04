@@ -3,7 +3,7 @@
 /// ── Why this exists instead of depending on ChatClient directly ─────────
 ///
 /// `ChatClient`'s real surface is wider than any one screen needs — presence,
-/// retry, `leaveSession`, `dispose`, `stopTyping` — and
+/// `leaveSession`, `dispose`, `stopTyping` — and
 /// constructing a real one for a test means driving a full §7/§8 handshake
 /// through a fake socket. `dhaam_chat`'s OWN test suite does exactly that
 /// (`test/fakes.dart`'s `FakeSocket` + `FakeScheduler`), and that is the
@@ -97,11 +97,11 @@ abstract interface class WidgetChatClient {
   /// on a frame from here.
   ///
   /// So exposing it would add a member with no producer and no consumer —
-  /// the same emptiness `TicketLinked` wore before T17, and the same reason
-  /// `onRetry` stays unwired while `MessageDelivery` cannot answer for it.
-  /// This interface's whole purpose is to be what this layer actually calls.
-  /// When a caller for a stop appears, it is one line here and one in the
-  /// adapter.
+  /// the same emptiness `TicketLinked` wore before it was surfaced, and the
+  /// same emptiness [retry] wore while `MessageDelivery` could not answer for
+  /// it. This interface's whole purpose is to be what this layer actually
+  /// calls. When a caller for a stop appears, it is one line here and one in
+  /// the adapter.
   void startTyping();
 
   /// One event per `session.closed` push (§12.5).
@@ -137,6 +137,28 @@ abstract interface class WidgetChatClient {
   /// renders from that, never from the frames). Use this stream for things
   /// that are about the EVENT rather than the state: a chime, a toast.
   Stream<AgentEvent> get agentEvents;
+
+  /// Replays ONE failed send under its original envelope id (§9.3, D1).
+  ///
+  /// Not [retryNow], which is the connection's backoff and says nothing about
+  /// any particular message. Wiring a per-message Retry button to that one
+  /// would be a control that cannot do what its label says.
+  ///
+  /// ── Why this returns the outcome instead of a `bool` or nothing ────────
+  ///
+  /// Because a refusal is an expected result a caller has to be able to tell
+  /// apart, and the three reasons are not interchangeable.
+  /// [RetryRefusalReason.notRetryable] should never be seen by a host that
+  /// gates its button on [MessageFailed.retryable] — the same flag rides on
+  /// the message. [RetryRefusalReason.disconnected] cannot be predicted that
+  /// way at all: a connection can drop between drawing the button and the
+  /// press, and "it failed again" is the wrong thing to say about an attempt
+  /// that never left the device.
+  ///
+  /// A success needs no reporting: the client re-emits the message as
+  /// [MessagePending] on [messages], so the transcript's failure line and
+  /// Retry button both clear by themselves.
+  RetryOutcome retry(String messageId);
 }
 
 /// Wraps a real [ChatClient] to satisfy [WidgetChatClient] by delegation.
@@ -203,4 +225,7 @@ class ChatClientAdapter implements WidgetChatClient {
 
   @override
   Stream<AgentEvent> get agentEvents => _client.agentEvents;
+
+  @override
+  RetryOutcome retry(String messageId) => _client.retry(messageId);
 }

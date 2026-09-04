@@ -634,6 +634,24 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     }
   }
 
+  /// Replays the failed send [messageId], returning what actually happened.
+  ///
+  /// Nothing is emitted here on success and nothing needs to be: the client
+  /// re-emits the message as [MessagePending] on its own stream, so
+  /// [_onMessage] repaints the transcript with the failure line and the Retry
+  /// button both gone. Writing a second copy of that transition into state
+  /// would be a fact this Cubit maintains beside the one the client already
+  /// publishes, and the two would drift the first time a retry raced an ack.
+  ///
+  /// The outcome is RETURNED rather than swallowed because a refusal must not
+  /// read as a success. Nothing visible changes on one — the message stays
+  /// failed, which is true — so the only way a caller can say anything about
+  /// it is to be told. See `WidgetChatClient.retry` on why the reasons are
+  /// not interchangeable, and in particular why
+  /// [RetryRefusalReason.disconnected] cannot be predicted from the message
+  /// the way [RetryRefusalReason.notRetryable] can.
+  RetryOutcome retryMessage(String messageId) => _client.retry(messageId);
+
   // ── Pre-chat ──────────────────────────────────────────────────────────
 
   /// The STRUCTURED half of a pre-chat send — `{kind, answers}`, exactly the

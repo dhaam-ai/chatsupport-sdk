@@ -123,6 +123,23 @@ class FakeWidgetChatClient implements WidgetChatClient {
   @override
   void markRead({String? upToMessageId}) => markReadCalls.add(upToMessageId);
 
+  /// Every message id `retry()` was asked to replay, oldest first.
+  final List<String> retriedIds = <String>[];
+
+  /// What `retry()` reports.
+  ///
+  /// Defaults to a REFUSAL, matching the real contract for an id with no
+  /// failure record — and for the same reason `retryNowSucceeds` defaults to
+  /// the real thing rather than to yes: a fake that always claimed success
+  /// would let a caller that ignores the outcome pass.
+  RetryOutcome retryOutcome = const RetryRefused(RetryRefusalReason.notFound);
+
+  @override
+  RetryOutcome retry(String messageId) {
+    retriedIds.add(messageId);
+    return retryOutcome;
+  }
+
   @override
   void startTyping() {
     if (startTypingThrows != null) throw startTypingThrows!;
