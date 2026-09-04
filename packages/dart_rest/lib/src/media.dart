@@ -29,6 +29,7 @@ import 'internal/envelope.dart';
 import 'internal/json_reading.dart';
 import 'internal/message_decode.dart';
 import 'media_type.dart';
+import 'models/identity.dart';
 import 'models/message_page.dart';
 
 /// Route names as they appear in a [RestMalformedResponseException].
@@ -37,6 +38,7 @@ import 'models/message_page.dart';
 /// [RestMalformedResponseException.context] for why that rule is absolute.
 const String _historyContext = 'GET /chat/sessions/{sessionId}/messages';
 const String _uploadContext = 'POST /upload';
+const String _identifyContext = 'POST /identify';
 
 /// What [MediaApi.uploadAttachment] declares for a file whose type the
 /// platform declined to name.
@@ -256,6 +258,53 @@ extension MediaApi on RestClient {
       // side only knows `IMAGE|VIDEO|AUDIO` — so unnormalized, every uploaded
       // image degrades to a generic FILE attachment.
       mediaType: normalizeMediaType(data['mediaType']),
+    );
+  }
+
+  /// `POST /identify` — upserts the logged-in customer into the CRM as a
+  /// Contact.
+  ///
+  /// Mirrors `createIdentitySync(client).sync`.
+  ///
+  /// ── Optionals are OMITTED, never sent as null ─────────────────────────
+  ///
+  /// The route body is `.strict()`, so a field present with a null value is
+  /// not the same request as a field that is absent, and `{"email": null}` is
+  /// how an identify call starts failing validation for a customer who simply
+  /// has no email on file. [RestIdentityProfile.toJson] already drops every
+  /// null field, and this method sends that map verbatim rather than
+  /// rebuilding it — one place decides what "absent" means.
+  ///
+  /// An empty profile therefore goes out as `{}`, which the route accepts.
+  ///
+  /// ── Nothing is retried here ───────────────────────────────────────────
+  ///
+  /// Identify is idempotent by construction — a repeat call converges on the
+  /// same contact — so a retry is safe, but it is a CALLER's decision and not
+  /// this adapter's. `kReadBackAttempts` is scoped to the close/reopen
+  /// read-back and is deliberately not a pattern to generalize: that loop
+  /// re-reads after a mutation that already happened, which is a different
+  /// question from re-issuing a mutation.
+  ///
+  /// Throws [RestMalformedResponseException] if the envelope is missing or if
+  /// any of `contactId`, `externalId` or `lastLoginAt` is absent or empty. All
+  /// three are required: a receipt missing its contact id is not a partially
+  /// successful identify, it is a response this package does not understand.
+  ///
+  /// `lastLoginAt` comes back as a [DateTime], not the raw string TS
+  /// deliberately keeps — the same consistency argument `identity.ts` makes,
+  /// applied to a Dart SDK where every wire timestamp is a [DateTime], gives
+  /// the opposite concrete answer (contract §5.7).
+  Future<RestIdentityResult> identify(RestIdentityProfile profile) async {
+    final Object? body = await request(
+      'POST',
+      '/identify',
+      jsonBody: profile.toJson(),
+    );
+
+    return RestIdentityResult.fromJson(
+      unwrapEnvelope(body, _identifyContext),
+      _identifyContext,
     );
   }
 }
