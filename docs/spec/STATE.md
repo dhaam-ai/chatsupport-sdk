@@ -56,6 +56,29 @@ Push it: `git push -u origin integ/backend-wave1`.
   trimmed voice implementation in src/ui/voice.ts for bundle size.
 - `examples/demo` — runnable dogfooding app (token server + React page).
 
+### Dart / Flutter (added 2026-09-05)
+
+Three packages, deliberately split, mirroring the core/rest/UI shape above.
+
+- `packages/dart` (`dhaam_chat`) — §7 frame protocol, §8 connection state
+  machine, §10 auth, resume, outbox. **Pure Dart, one dependency**
+  (`web_socket_channel`). No HTTP: that boundary is why `dart_rest` exists.
+- `packages/dart_rest` (`dhaam_chat_rest`) — the REST surface `dhaam_chat` does
+  not speak: history, `/upload`, session close/reopen/CSAT, `listSessions`,
+  `/identify`, transcript email, report-issue, and the two unauthed bootstrap
+  calls (`ip-watermark`, widget config). Pure Dart.
+- `packages/flutter` (`dhaam_chat_flutter`) — the screens, `ChatWidgetCubit`,
+  the typed `RemoteConfig` model.
+- `packages/flutter/example` — **runnable** host app. This is the only way to
+  exercise the port by hand; the packages are otherwise unit-tested only.
+
+Unlike the TS split, **`dhaam_chat_rest` DOES depend on `dhaam_chat`** — see
+ADR-0005 §1 for why the `no-core-import` invariant does not transfer. The
+direction that does hold, and is asserted by a test: `dhaam_chat` imports
+nothing from `dhaam_chat_rest`.
+
+Scope, divergences and known gaps: **`docs/adr/0005-dart-flutter-parity-scope.md`**.
+
 ## Running locally
 
 ```bash
@@ -72,6 +95,40 @@ cd examples/demo && pnpm start     # :5173
 Provisioned test key pair for tenant `12775` lives in `examples/demo/.env`.
 `WS_V2_ENABLED=true` is required; the endpoint is opt-in and fails closed
 without a provisioned publishable key.
+
+### Flutter
+
+Toolchain is pinned and several dependency pins exist only because of it:
+**Flutter 3.24.4 / Dart 3.5.4**. `url_launcher` stays `^6.3.1` (6.3.2 needs
+Dart ^3.6.0), `file_picker` `^11.0.3`, `shared_preferences` `^2.5.3`,
+`record` `^6.2.1` — each verified by running `flutter pub get`, never assumed.
+
+```bash
+cd packages/flutter/example && flutter pub get
+flutter run \
+  --dart-define=DHAAM_WS_URL=wss://chat.your-host.example \
+  --dart-define=DHAAM_API_URL=https://api.your-host.example \
+  --dart-define=DHAAM_PUBLISHABLE_KEY=pk_test_... \
+  --dart-define=DHAAM_ACCESS_TOKEN=...
+```
+
+No key has a default. An unset one renders a page naming every missing key
+rather than crashing or hanging. The app also shows a **Seams panel** saying
+which injectable seams are wired — read it before concluding a control is
+missing.
+
+Host platform entries the plugins oblige (the example carries exactly these
+and no invented ones): macOS needs the *User Selected File Read* entitlement
+plus `com.apple.security.network.client` (without the latter a sandboxed build
+cannot open the socket at all), `NSMicrophoneUsageDescription` on iOS/macOS,
+`RECORD_AUDIO` on Android, and `INTERNET` in Android's `src/main` — the
+`flutter create` scaffold puts it only in `src/debug`, so a release build
+debugs fine and then cannot connect.
+
+**Suite is slow and contention-sensitive.** ~80s serial. Running other
+`flutter` processes alongside it produces spurious widget-test failures whose
+set differs run to run — measured at 12, 7, 2 and 0 failures for the same
+commit under different load. Run it alone before believing a red result.
 
 ## Decisions that are binding (PRD §0.5)
 
