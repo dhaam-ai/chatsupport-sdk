@@ -45,7 +45,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
   @override
   void initState() {
     super.initState();
-    _search.addListener(() => setState(() => _query = _search.text.trim().toLowerCase()));
+    _search.addListener(
+        () => setState(() => _query = _search.text.trim().toLowerCase()));
   }
 
   @override
@@ -87,7 +88,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return BlocBuilder<ChatWidgetCubit, ChatWidgetState>(
       builder: (BuildContext context, ChatWidgetState state) {
         final ChatWidgetCubit cubit = context.read<ChatWidgetCubit>();
-        final List<ChatSessionSummary> visible = state.sessionSummaries.where(_matches).toList(growable: false);
+        final List<ChatSessionSummary> visible =
+            state.sessionSummaries.where(_matches).toList(growable: false);
         final double radius = chatCornerRadius(state.config);
 
         return Column(
@@ -121,7 +123,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 label: const Text('New conversation'),
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(44),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(radius)),
                 ),
               ),
             ),
@@ -149,7 +152,9 @@ class _SearchField extends StatelessWidget {
         isDense: true,
         filled: true,
         fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(radius), borderSide: BorderSide.none),
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(radius),
+            borderSide: BorderSide.none),
       ),
     );
   }
@@ -166,7 +171,9 @@ class _EmptyState extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          hasQuery ? 'No conversations match your search.' : 'No previous conversations yet.',
+          hasQuery
+              ? 'No conversations match your search.'
+              : 'No previous conversations yet.',
           textAlign: TextAlign.center,
           style: Theme.of(context)
               .textTheme
@@ -179,7 +186,8 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ConversationRow extends StatelessWidget {
-  const _ConversationRow({required this.summary, required this.radius, required this.onTap});
+  const _ConversationRow(
+      {required this.summary, required this.radius, required this.onTap});
 
   final ChatSessionSummary summary;
   final double radius;
@@ -188,10 +196,14 @@ class _ConversationRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final String heading = summary.subject ?? summary.topic ?? summary.handledBy?.displayName ?? 'Conversation';
+    final String heading = summary.subject ??
+        summary.topic ??
+        summary.handledBy?.displayName ??
+        'Conversation';
     final String preview = summary.lastMessagePreview ?? '';
     final String handled = handledByText(summary.handledBy);
-    final String time = relativeTimeLabel(summary.lastMessageAt ?? summary.createdAt);
+    final String time =
+        relativeTimeLabel(summary.lastMessageAt ?? summary.createdAt);
 
     return Material(
       color: scheme.surface,
@@ -220,14 +232,20 @@ class _ConversationRow extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text(
                     time,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ],
               ),
               const SizedBox(height: 2),
               Text(
                 chatStatusLabel(summary.status),
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.primary),
+                style: Theme.of(context)
+                    .textTheme
+                    .labelSmall
+                    ?.copyWith(color: scheme.primary),
               ),
               if (preview.isNotEmpty)
                 Padding(
@@ -236,7 +254,10 @@ class _ConversationRow extends StatelessWidget {
                     preview,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ),
               if (handled.isNotEmpty || summary.unreadCount > 0)
@@ -258,11 +279,19 @@ class _ConversationRow extends StatelessWidget {
                         ),
                       if (summary.unreadCount > 0)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                          decoration: BoxDecoration(color: scheme.error, borderRadius: BorderRadius.circular(999)),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 1),
+                          decoration: BoxDecoration(
+                              color: scheme.error,
+                              borderRadius: BorderRadius.circular(999)),
                           child: Text(
-                            summary.unreadCount > 99 ? '99+' : '${summary.unreadCount}',
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.onError),
+                            summary.unreadCount > 99
+                                ? '99+'
+                                : '${summary.unreadCount}',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(color: scheme.onError),
                           ),
                         ),
                     ],

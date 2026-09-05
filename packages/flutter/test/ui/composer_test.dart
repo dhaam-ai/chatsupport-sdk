@@ -5,22 +5,27 @@ import 'package:flutter_test/flutter_test.dart';
 Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
-  testWidgets('Send is disabled until there is non-blank content', (tester) async {
+  testWidgets('Send is disabled until there is non-blank content',
+      (tester) async {
     await tester.pumpWidget(_wrap(Composer(onSend: (_) {})));
 
-    IconButton sendButton() => tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send));
+    IconButton sendButton() =>
+        tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send));
     expect(sendButton().onPressed, isNull);
 
     await tester.enterText(find.byType(TextField), '   ');
     await tester.pump();
-    expect(sendButton().onPressed, isNull, reason: 'whitespace-only is not real content');
+    expect(sendButton().onPressed, isNull,
+        reason: 'whitespace-only is not real content');
 
     await tester.enterText(find.byType(TextField), 'Hello');
     await tester.pump();
     expect(sendButton().onPressed, isNotNull);
   });
 
-  testWidgets('tapping Send calls onSend with the trimmed text and clears the field', (tester) async {
+  testWidgets(
+      'tapping Send calls onSend with the trimmed text and clears the field',
+      (tester) async {
     String? sent;
     await tester.pumpWidget(_wrap(Composer(onSend: (text) => sent = text)));
 
@@ -30,7 +35,8 @@ void main() {
     await tester.pump();
 
     expect(sent, 'Hello there');
-    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty);
   });
 
   testWidgets('submitting via the keyboard action also sends', (tester) async {
@@ -44,7 +50,8 @@ void main() {
     expect(sent, 'Sent via enter');
   });
 
-  testWidgets('a blank submission via the keyboard action does nothing', (tester) async {
+  testWidgets('a blank submission via the keyboard action does nothing',
+      (tester) async {
     String? sent;
     await tester.pumpWidget(_wrap(Composer(onSend: (text) => sent = text)));
 
@@ -55,33 +62,40 @@ void main() {
     expect(sent, isNull);
   });
 
-  testWidgets('the emoji sheet offers all 16 glyphs, and picking one inserts it', (tester) async {
+  testWidgets(
+      'the emoji sheet offers all 16 glyphs, and picking one inserts it',
+      (tester) async {
     await tester.pumpWidget(_wrap(Composer(onSend: (_) {})));
 
     await tester.enterText(find.byType(TextField), 'Hi ');
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined));
+    await tester
+        .tap(find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined));
     await tester.pumpAndSettle();
 
     for (final emoji in kComposerEmoji) {
-      expect(find.text(emoji), findsOneWidget, reason: 'missing $emoji in the sheet');
+      expect(find.text(emoji), findsOneWidget,
+          reason: 'missing $emoji in the sheet');
     }
 
     await tester.tap(find.text('👍'));
     await tester.pumpAndSettle();
 
-    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, 'Hi 👍');
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Hi 👍');
   });
 
   testWidgets('inserts at the caret, not always at the end', (tester) async {
     await tester.pumpWidget(_wrap(Composer(onSend: (_) {})));
 
     await tester.enterText(find.byType(TextField), 'Hi there');
-    final controller = tester.widget<TextField>(find.byType(TextField)).controller!;
+    final controller =
+        tester.widget<TextField>(find.byType(TextField)).controller!;
     // Caret after "Hi " (index 3), before "there".
     controller.selection = const TextSelection.collapsed(offset: 3);
     await tester.pump();
 
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined));
+    await tester
+        .tap(find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined));
     await tester.pumpAndSettle();
     await tester.tap(find.text('👍'));
     await tester.pumpAndSettle();
@@ -89,12 +103,22 @@ void main() {
     expect(controller.text, 'Hi 👍there');
   });
 
-  testWidgets('enabled: false disables the field and both icon buttons', (tester) async {
+  testWidgets('enabled: false disables the field and both icon buttons',
+      (tester) async {
     await tester.pumpWidget(_wrap(Composer(onSend: (_) {}, enabled: false)));
 
     expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
-    expect(tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined)).onPressed, isNull);
-    expect(tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send)).onPressed, isNull);
+    expect(
+        tester
+            .widget<IconButton>(
+                find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined))
+            .onPressed,
+        isNull);
+    expect(
+        tester
+            .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send))
+            .onPressed,
+        isNull);
   });
 
   // ── the suggestion chips ───────────────────────────────────────────────
@@ -147,13 +171,13 @@ void main() {
       );
     });
 
-    testWidgets('is a no-op while the composer is disabled — the consent gate '
+    testWidgets(
+        'is a no-op while the composer is disabled — the consent gate '
         'holds', (tester) async {
       final (ComposerController controller, List<String> sent) =
           await mount(tester, enabled: false);
 
-      expect(
-          controller.submit('Check my account'),
+      expect(controller.submit('Check my account'),
           ChipSubmitRefusal.composerDisabled);
       await tester.pump();
 
@@ -186,8 +210,8 @@ void main() {
       await tester.enterText(find.byType(TextField), 'my order was ');
       await tester.pump();
 
-      expect(
-          controller.submit('Check my account'), ChipSubmitRefusal.draftPresent);
+      expect(controller.submit('Check my account'),
+          ChipSubmitRefusal.draftPresent);
       await tester.pump();
 
       expect(sent, isEmpty);
@@ -275,7 +299,8 @@ void main() {
 
     // A dead trigger with an open popover leaves it unreachable and
     // unclosable by pointer.
-    testWidgets('closes rather than stranding itself when the composer is '
+    testWidgets(
+        'closes rather than stranding itself when the composer is '
         'disabled while it is open', (tester) async {
       await tester.pumpWidget(_wrap(Composer(onSend: (_) {})));
       await tester.tap(emojiButton());
@@ -380,12 +405,13 @@ void main() {
       await tester.tap(linkButton());
       await tester.pumpAndSettle();
 
-      expect(tester.widget<TextField>(find.byKey(url)).controller!.text,
-          isEmpty);
+      expect(
+          tester.widget<TextField>(find.byKey(url)).controller!.text, isEmpty);
       expect(find.text(kLinkRejectionMessage), findsNothing);
     });
 
-    testWidgets('is disabled, and will not open, while the composer is '
+    testWidgets(
+        'is disabled, and will not open, while the composer is '
         'disabled', (tester) async {
       await tester.pumpWidget(_wrap(Composer(onSend: (_) {}, enabled: false)));
       expect(tester.widget<IconButton>(linkButton()).onPressed, isNull);
@@ -408,8 +434,8 @@ void main() {
       final List<String> sent = <String>[];
       await tester.pumpWidget(_wrap(Composer(onSend: sent.add)));
 
-      IconButton send() =>
-          tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send));
+      IconButton send() => tester
+          .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send));
       expect(send().onPressed, isNull, reason: 'the premise: an empty box');
 
       await tester
@@ -425,11 +451,12 @@ void main() {
       expect(sent, <String>['👍']);
     });
 
-    testWidgets('3. onTyping — the agent is not told the customer stopped '
+    testWidgets(
+        '3. onTyping — the agent is not told the customer stopped '
         'writing while they pick glyphs', (tester) async {
       int typing = 0;
-      await tester
-          .pumpWidget(_wrap(Composer(onSend: (_) {}, onTyping: () => typing++)));
+      await tester.pumpWidget(
+          _wrap(Composer(onSend: (_) {}, onTyping: () => typing++)));
 
       await tester
           .tap(find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined));
@@ -445,8 +472,8 @@ void main() {
 
     testWidgets('3. onTyping fires for a link insertion too', (tester) async {
       int typing = 0;
-      await tester
-          .pumpWidget(_wrap(Composer(onSend: (_) {}, onTyping: () => typing++)));
+      await tester.pumpWidget(
+          _wrap(Composer(onSend: (_) {}, onTyping: () => typing++)));
 
       await tester.tap(find.widgetWithIcon(IconButton, Icons.link));
       await tester.pumpAndSettle();
@@ -461,8 +488,8 @@ void main() {
     testWidgets('3. a REJECTED link is not a keystroke — nothing is announced',
         (tester) async {
       int typing = 0;
-      await tester
-          .pumpWidget(_wrap(Composer(onSend: (_) {}, onTyping: () => typing++)));
+      await tester.pumpWidget(
+          _wrap(Composer(onSend: (_) {}, onTyping: () => typing++)));
 
       await tester.tap(find.widgetWithIcon(IconButton, Icons.link));
       await tester.pumpAndSettle();
@@ -473,18 +500,19 @@ void main() {
       expect(typing, 0);
     });
 
-    testWidgets('1. autogrow — the box still declares the bounds it grows '
+    testWidgets(
+        '1. autogrow — the box still declares the bounds it grows '
         'between', (tester) async {
       await tester.pumpWidget(_wrap(Composer(onSend: (_) {})));
-      final TextField field =
-          tester.widget<TextField>(find.byType(TextField));
+      final TextField field = tester.widget<TextField>(find.byType(TextField));
       // Autogrow is the framework's, driven by these two arguments. Deleting
       // them removes the effect silently, so they are pinned here.
       expect(field.minLines, 1);
       expect(field.maxLines, 5);
     });
 
-    testWidgets('focus returns to the message box, so the next keystroke '
+    testWidgets(
+        'focus returns to the message box, so the next keystroke '
         'lands in it', (tester) async {
       await tester.pumpWidget(_wrap(Composer(onSend: (_) {})));
       await tester

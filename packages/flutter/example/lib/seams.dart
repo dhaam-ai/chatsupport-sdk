@@ -257,8 +257,7 @@ const List<SeamReport> seamReports = <SeamReport>[
   SeamReport(
     name: 'ChimePlayer',
     wiring: SeamWiring.wired,
-    detail:
-        'Chime() with the package default (SystemSound.alert — no audio '
+    detail: 'Chime() with the package default (SystemSound.alert — no audio '
         'plugin, no asset), passed to ChatWidget(chime:). ChatWidget builds '
         'its own when a host passes none, so arrivals chime either way; what '
         'this seam buys is replacing the sound.',

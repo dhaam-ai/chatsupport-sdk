@@ -9,7 +9,10 @@ import 'package:dhaam_chat/dhaam_chat.dart' show safeLinkUrl;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Map<String, Object?> _body({Object? appearance, Object? behaviour, Map<String, Object?> data = const {}}) {
+Map<String, Object?> _body(
+    {Object? appearance,
+    Object? behaviour,
+    Map<String, Object?> data = const {}}) {
   return {
     'data': {
       if (appearance != null) 'appearance': appearance,
@@ -31,7 +34,9 @@ void main() {
       expect(parseRemoteConfig(<String, Object?>{'data': 'nope'}), isNull);
     });
 
-    test('defaults every leaf when appearance and behaviour are absent entirely', () {
+    test(
+        'defaults every leaf when appearance and behaviour are absent entirely',
+        () {
       final config = parseRemoteConfig(_body());
       expect(config, isNotNull);
       expect(config!.accent, isNull);
@@ -44,7 +49,8 @@ void main() {
     });
 
     test('survives appearance/behaviour being the wrong type entirely', () {
-      final config = parseRemoteConfig(_body(appearance: 'nope', behaviour: 42));
+      final config =
+          parseRemoteConfig(_body(appearance: 'nope', behaviour: 42));
       expect(config, isNotNull);
       expect(config!.accent, isNull);
       expect(config.greeting, isNull);
@@ -72,7 +78,8 @@ void main() {
       expect(config!.offlineMode, OfflineMode.hideWidget);
     });
 
-    test('isOpenNow, flows, botDisplayName and publishedVersion read from data', () {
+    test('isOpenNow, flows, botDisplayName and publishedVersion read from data',
+        () {
       final config = parseRemoteConfig(_body(data: {
         'isOpenNow': false,
         'flows': [
@@ -117,25 +124,31 @@ void main() {
       expect(config.fontFamily, 'Inter');
     });
 
-    test('treats an empty-string accent or title as unset, not as a blank value', () {
-      final config = parseRemoteConfig(_body(appearance: {'accent': '', 'title': '   '}));
+    test(
+        'treats an empty-string accent or title as unset, not as a blank value',
+        () {
+      final config =
+          parseRemoteConfig(_body(appearance: {'accent': '', 'title': '   '}));
       expect(config!.accent, isNull);
       expect(config.title, isNull);
     });
 
-    test('keeps a zero corner radius, which is a real choice and not "unset"', () {
+    test('keeps a zero corner radius, which is a real choice and not "unset"',
+        () {
       final config = parseRemoteConfig(_body(appearance: {'cornerRadius': 0}));
       expect(config!.cornerRadius, 0);
     });
 
     test('keeps a zero offset, which pins the launcher flush to the edge', () {
-      final config = parseRemoteConfig(_body(appearance: {'offsetX': 0, 'offsetY': 0}));
+      final config =
+          parseRemoteConfig(_body(appearance: {'offsetX': 0, 'offsetY': 0}));
       expect(config!.offsetX, 0);
       expect(config.offsetY, 0);
     });
 
     test('an unrecognised enum value degrades to null, not a guess', () {
-      final config = parseRemoteConfig(_body(appearance: {'theme': 'psychedelic'}));
+      final config =
+          parseRemoteConfig(_body(appearance: {'theme': 'psychedelic'}));
       expect(config!.theme, isNull);
     });
   });
@@ -143,14 +156,20 @@ void main() {
   group('parseRemoteConfig — launcherIcon / launcherShadow', () {
     test('keeps only the launcherIcon fields it could actually read', () {
       final config = parseRemoteConfig(_body(appearance: {
-        'launcherIcon': {'source': 'emoji', 'emoji': 42, 'library': 'chat-bubble'},
+        'launcherIcon': {
+          'source': 'emoji',
+          'emoji': 42,
+          'library': 'chat-bubble'
+        },
       }));
       expect(config!.launcherIcon.source, LauncherIconSource.emoji);
       expect(config.launcherIcon.emoji, isNull); // wrong type, dropped
       expect(config.launcherIcon.library, 'chat-bubble');
     });
 
-    test('keeps a launcherShadow the merchant switched OFF, rather than reading it as unset', () {
+    test(
+        'keeps a launcherShadow the merchant switched OFF, rather than reading it as unset',
+        () {
       final config = parseRemoteConfig(_body(appearance: {
         'launcherShadow': {'enabled': false, 'intensity': 0},
       }));
@@ -159,7 +178,8 @@ void main() {
       expect(config.launcherShadow.isEmpty, isFalse);
     });
 
-    test('an object-shaped field absent entirely parses to the empty value', () {
+    test('an object-shaped field absent entirely parses to the empty value',
+        () {
       final config = parseRemoteConfig(_body(appearance: const {}));
       expect(config!.launcherIcon.isEmpty, isTrue);
       expect(config.launcherShadow.isEmpty, isTrue);
@@ -189,7 +209,8 @@ void main() {
       expect(config!.header.avatars, isNull);
     });
 
-    test('filters a broken avatar out of the row rather than dropping the row', () {
+    test('filters a broken avatar out of the row rather than dropping the row',
+        () {
       final config = parseRemoteConfig(_body(appearance: {
         'header': {
           'avatars': [null, 'ok.png', 7],
@@ -201,14 +222,18 @@ void main() {
 
   group('parseRemoteConfig — behaviour leaves', () {
     test('falls back to never for an autoOpen it cannot name', () {
-      final config = parseRemoteConfig(_body(behaviour: {'autoOpen': 'sometimes'}));
+      final config =
+          parseRemoteConfig(_body(behaviour: {'autoOpen': 'sometimes'}));
       expect(config!.autoOpen, AutoOpen.never);
     });
 
     test('reads delay and exit-intent', () {
-      expect(parseRemoteConfig(_body(behaviour: {'autoOpen': 'delay'}))!.autoOpen, AutoOpen.delay);
       expect(
-        parseRemoteConfig(_body(behaviour: {'autoOpen': 'exit-intent'}))!.autoOpen,
+          parseRemoteConfig(_body(behaviour: {'autoOpen': 'delay'}))!.autoOpen,
+          AutoOpen.delay);
+      expect(
+        parseRemoteConfig(_body(behaviour: {'autoOpen': 'exit-intent'}))!
+            .autoOpen,
         AutoOpen.exitIntent,
       );
     });
@@ -279,7 +304,11 @@ void main() {
     test('commonQuestions drops entries with no id, label or prompt', () {
       final config = parseRemoteConfig(_body(behaviour: {
         'commonQuestions': [
-          {'id': 'q1', 'label': 'Shipping?', 'prompt': 'How long does shipping take?'},
+          {
+            'id': 'q1',
+            'label': 'Shipping?',
+            'prompt': 'How long does shipping take?'
+          },
           {'id': 'q2', 'label': 'No prompt'},
         ],
       }));
@@ -287,7 +316,9 @@ void main() {
       expect(config.commonQuestions.single.id, 'q1');
     });
 
-    test('commonQuestions defaults to an empty list when absent, not a built-in list', () {
+    test(
+        'commonQuestions defaults to an empty list when absent, not a built-in list',
+        () {
       final config = parseRemoteConfig(_body());
       expect(config!.commonQuestions, isEmpty);
     });
@@ -305,20 +336,32 @@ void main() {
       expect(config.conversationTopics.single.label, 'Delivery issue');
     });
 
-    test('conversationTopics defaults to an empty list when absent, not an invented one', () {
+    test(
+        'conversationTopics defaults to an empty list when absent, not an invented one',
+        () {
       final config = parseRemoteConfig(_body());
       expect(config!.conversationTopics, isEmpty);
     });
 
     test('csatStyle: only "emoji" is not stars', () {
-      expect(parseRemoteConfig(_body(behaviour: {'csatStyle': 'emoji'}))!.csatStyle, CsatStyle.emoji);
-      expect(parseRemoteConfig(_body(behaviour: {'csatStyle': 'stars'}))!.csatStyle, CsatStyle.stars);
-      expect(parseRemoteConfig(_body(behaviour: {'csatStyle': 'thumbs'}))!.csatStyle, CsatStyle.stars);
+      expect(
+          parseRemoteConfig(_body(behaviour: {'csatStyle': 'emoji'}))!
+              .csatStyle,
+          CsatStyle.emoji);
+      expect(
+          parseRemoteConfig(_body(behaviour: {'csatStyle': 'stars'}))!
+              .csatStyle,
+          CsatStyle.stars);
+      expect(
+          parseRemoteConfig(_body(behaviour: {'csatStyle': 'thumbs'}))!
+              .csatStyle,
+          CsatStyle.stars);
     });
 
     group('supportEmail', () {
       test('reads the merchant address', () {
-        final config = parseRemoteConfig(_body(behaviour: {'supportEmail': 'help@example.com'}));
+        final config = parseRemoteConfig(
+            _body(behaviour: {'supportEmail': 'help@example.com'}));
         expect(config!.supportEmail, 'help@example.com');
       });
 
@@ -328,7 +371,8 @@ void main() {
       });
 
       test('a blank string is treated the same as absent', () {
-        final config = parseRemoteConfig(_body(behaviour: {'supportEmail': '   '}));
+        final config =
+            parseRemoteConfig(_body(behaviour: {'supportEmail': '   '}));
         expect(config!.supportEmail, isNull);
       });
     });
@@ -341,7 +385,8 @@ void main() {
         expect(config!.privacyUrl, 'https://acme.test/privacy');
       });
 
-      test('absent when the merchant published none — the menu then offers no '
+      test(
+          'absent when the merchant published none — the menu then offers no '
           'Privacy item at all rather than linking nowhere', () {
         expect(parseRemoteConfig(_body())!.privacyUrl, isNull);
         expect(defaultRemoteConfig.privacyUrl, isNull);
@@ -349,12 +394,14 @@ void main() {
 
       test('a blank string is treated the same as absent', () {
         expect(
-          parseRemoteConfig(_body(behaviour: {'privacyUrl': '   '}))!.privacyUrl,
+          parseRemoteConfig(_body(behaviour: {'privacyUrl': '   '}))!
+              .privacyUrl,
           isNull,
         );
       });
 
-      test('an unsafe scheme is kept VERBATIM here and refused at the link', () {
+      test('an unsafe scheme is kept VERBATIM here and refused at the link',
+          () {
         // The parse deliberately does not validate: `safeLinkUrl` is applied
         // by the code that navigates, so there is exactly one allowlist and
         // it sits where the href is built. A parse that silently dropped this
@@ -411,9 +458,12 @@ void main() {
     });
 
     test('reads all three real values', () {
-      expect(parseRemoteConfig(_body(data: {'offlineMode': 1}))!.offlineMode, OfflineMode.showMessage);
-      expect(parseRemoteConfig(_body(data: {'offlineMode': 2}))!.offlineMode, OfflineMode.collectMessage);
-      expect(parseRemoteConfig(_body(data: {'offlineMode': 3}))!.offlineMode, OfflineMode.hideWidget);
+      expect(parseRemoteConfig(_body(data: {'offlineMode': 1}))!.offlineMode,
+          OfflineMode.showMessage);
+      expect(parseRemoteConfig(_body(data: {'offlineMode': 2}))!.offlineMode,
+          OfflineMode.collectMessage);
+      expect(parseRemoteConfig(_body(data: {'offlineMode': 3}))!.offlineMode,
+          OfflineMode.hideWidget);
     });
   });
 

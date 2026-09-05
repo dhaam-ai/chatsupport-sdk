@@ -16,7 +16,8 @@ void main() {
     });
 
     test('options not a list -> no chips', () {
-      expect(readQuickReplies(<String, Object?>{'options': 'not a list'}), isEmpty);
+      expect(readQuickReplies(<String, Object?>{'options': 'not a list'}),
+          isEmpty);
     });
 
     test('reads plain string options, trimmed', () {
@@ -39,12 +40,17 @@ void main() {
 
     test('drops a label over the max length — a sentence, not an option', () {
       final tooLong = 'x' * (kMaxQuickReplyLabel + 1);
-      expect(readQuickReplies(<String, Object?>{'options': <Object?>[tooLong, 'ok']}), <String>['ok']);
+      expect(
+          readQuickReplies(<String, Object?>{
+            'options': <Object?>[tooLong, 'ok']
+          }),
+          <String>['ok']);
     });
 
     test('caps at kMaxQuickReplies even when the model returns more', () {
       final many = List<String>.generate(20, (i) => 'option $i');
-      expect(readQuickReplies(<String, Object?>{'options': many}), hasLength(kMaxQuickReplies));
+      expect(readQuickReplies(<String, Object?>{'options': many}),
+          hasLength(kMaxQuickReplies));
     });
   });
 
@@ -55,16 +61,23 @@ void main() {
 
     test('reads options off the NEWEST message', () {
       final messages = [
-        testMessage(id: 'm1', metadata: {'options': <Object?>['stale']}),
-        testMessage(id: 'm2', metadata: {'options': <Object?>['fresh']}),
+        testMessage(id: 'm1', metadata: {
+          'options': <Object?>['stale']
+        }),
+        testMessage(id: 'm2', metadata: {
+          'options': <Object?>['fresh']
+        }),
       ];
       expect(quickRepliesFor(messages), <String>['fresh']);
     });
 
     test('no chips when the newest message is the customer\'s own', () {
       final messages = [
-        testMessage(id: 'm1', metadata: {'options': <Object?>['ignored']}),
-        testMessage(id: 'm2', senderType: SenderType.customer, content: 'ok thanks'),
+        testMessage(id: 'm1', metadata: {
+          'options': <Object?>['ignored']
+        }),
+        testMessage(
+            id: 'm2', senderType: SenderType.customer, content: 'ok thanks'),
       ];
       expect(quickRepliesFor(messages), isEmpty);
     });
@@ -78,19 +91,22 @@ void main() {
     Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
     testWidgets('renders nothing for an empty option list', (tester) async {
-      await tester.pumpWidget(wrap(QuickReplies(options: const [], onSelect: (_) {})));
+      await tester
+          .pumpWidget(wrap(QuickReplies(options: const [], onSelect: (_) {})));
       expect(find.byType(ActionChip), findsNothing);
     });
 
     testWidgets('renders one chip per option', (tester) async {
-      await tester.pumpWidget(wrap(QuickReplies(options: const ['Yes', 'No'], onSelect: (_) {})));
+      await tester.pumpWidget(
+          wrap(QuickReplies(options: const ['Yes', 'No'], onSelect: (_) {})));
       expect(find.text('Yes'), findsOneWidget);
       expect(find.text('No'), findsOneWidget);
     });
 
     testWidgets('tapping a chip calls onSelect with its text', (tester) async {
       String? selected;
-      await tester.pumpWidget(wrap(QuickReplies(options: const ['Yes', 'No'], onSelect: (v) => selected = v)));
+      await tester.pumpWidget(wrap(QuickReplies(
+          options: const ['Yes', 'No'], onSelect: (v) => selected = v)));
       await tester.tap(find.text('No'));
       expect(selected, 'No');
     });

@@ -28,7 +28,8 @@
 /// `state/chat_widget_cubit.dart`.
 library;
 
-import 'package:dhaam_chat/dhaam_chat.dart' show ChatMode, ChatStatus, HandledBy;
+import 'package:dhaam_chat/dhaam_chat.dart'
+    show ChatMode, ChatStatus, HandledBy;
 
 class ChatSessionSummary {
   const ChatSessionSummary({

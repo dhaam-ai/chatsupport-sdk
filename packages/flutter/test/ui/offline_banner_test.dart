@@ -48,7 +48,8 @@ void main() {
       expect(resolve(failedAttempts: 1), isNull);
     });
 
-    test('nothing once connected, when the platform agrees there is a network', () {
+    test('nothing once connected, when the platform agrees there is a network',
+        () {
       expect(resolve(connectionState: ConnectionState.connected), isNull);
     });
 
@@ -60,25 +61,31 @@ void main() {
           resolve(connectionState: ConnectionState.connected, online: false);
 
       expect(view?.tone, OfflineBannerTone.offline);
-      expect(view?.message, 'You’re offline. Messages will send when you’re back online.');
+      expect(view?.message,
+          'You’re offline. Messages will send when you’re back online.');
     });
 
     test('nothing for closed or suspended — neither is about the network', () {
       // `closed` is the host's own disconnect. `suspended` is a credential or
       // protocol fault the network cannot fix, and the client has STOPPED —
       // so promising a later delivery there would be a straight lie.
-      expect(resolve(connectionState: ConnectionState.closed, online: false), isNull);
-      expect(resolve(connectionState: ConnectionState.suspended, online: false), isNull);
+      expect(resolve(connectionState: ConnectionState.closed, online: false),
+          isNull);
+      expect(resolve(connectionState: ConnectionState.suspended, online: false),
+          isNull);
     });
 
-    test('offline outranks unreachable — it is the reason they are failing', () {
-      expect(resolve(online: false, failedAttempts: 9)?.tone, OfflineBannerTone.offline);
+    test('offline outranks unreachable — it is the reason they are failing',
+        () {
+      expect(resolve(online: false, failedAttempts: 9)?.tone,
+          OfflineBannerTone.offline);
     });
 
     test('unreachable only once the outage threshold is met', () {
       expect(resolve(failedAttempts: kOutageAttemptThreshold - 1), isNull);
 
-      final OfflineBannerView? view = resolve(failedAttempts: kOutageAttemptThreshold);
+      final OfflineBannerView? view =
+          resolve(failedAttempts: kOutageAttemptThreshold);
       expect(view?.tone, OfflineBannerTone.unreachable);
       expect(view?.message, 'Can’t reach chat — still trying.');
     });
@@ -106,14 +113,19 @@ void main() {
       expect(find.byType(Text), findsNothing);
     });
 
-    testWidgets('the sentence, with a glyph beside it', (WidgetTester tester) async {
+    testWidgets('the sentence, with a glyph beside it',
+        (WidgetTester tester) async {
       await pump(tester, resolve(online: false, queuedCount: 2));
 
-      expect(find.text('You’re offline. 2 messages will send when you’re back online.'), findsOneWidget);
+      expect(
+          find.text(
+              'You’re offline. 2 messages will send when you’re back online.'),
+          findsOneWidget);
       expect(find.byIcon(Icons.wifi_off_rounded), findsOneWidget);
     });
 
-    testWidgets('announced as a live region, not as an interruption', (WidgetTester tester) async {
+    testWidgets('announced as a live region, not as an interruption',
+        (WidgetTester tester) async {
       // The platform speaks it at the next pause. An alert would cut across
       // whatever is currently being read, and a dropped wifi does not earn
       // that.
@@ -131,7 +143,8 @@ void main() {
       handle.dispose();
     });
 
-    testWidgets('the two tones are visually distinct', (WidgetTester tester) async {
+    testWidgets('the two tones are visually distinct',
+        (WidgetTester tester) async {
       await pump(tester, resolve(online: false));
       final Color offlineBg = _bannerColor(tester);
 
@@ -141,7 +154,8 @@ void main() {
       expect(offlineBg, isNot(unreachableBg));
     });
 
-    testWidgets('dark mode is a different palette, not the light one dimmed', (WidgetTester tester) async {
+    testWidgets('dark mode is a different palette, not the light one dimmed',
+        (WidgetTester tester) async {
       await pump(tester, resolve(online: false));
       final Color light = _bannerColor(tester);
 
@@ -158,7 +172,10 @@ void main() {
 
 Color _bannerColor(WidgetTester tester) {
   final Container container = tester.widget<Container>(
-    find.descendant(of: find.byType(OfflineBanner), matching: find.byType(Container)).first,
+    find
+        .descendant(
+            of: find.byType(OfflineBanner), matching: find.byType(Container))
+        .first,
   );
   return (container.decoration! as BoxDecoration).color!;
 }

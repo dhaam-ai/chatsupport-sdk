@@ -16,14 +16,16 @@ void main() {
       expect(screens.canGoBack, isTrue);
     });
 
-    test('go() to the current screen is a no-op that does not grow the stack', () {
+    test('go() to the current screen is a no-op that does not grow the stack',
+        () {
       final screens = ChatScreens(initial: ScreenName.home);
       screens.go(ScreenName.home);
       expect(screens.current, ScreenName.home);
       expect(screens.canGoBack, isFalse);
     });
 
-    test('back() returns to wherever go() was called FROM, not a fixed screen', () {
+    test('back() returns to wherever go() was called FROM, not a fixed screen',
+        () {
       // Picked a conversation out of the Messages list: Home -> Messages -> Conversation.
       final screens = ChatScreens(initial: ScreenName.home);
       screens.go(ScreenName.messages);
@@ -36,7 +38,9 @@ void main() {
       expect(screens.current, ScreenName.home);
     });
 
-    test('back() from a conversation opened off Home returns to Home, not Messages', () {
+    test(
+        'back() from a conversation opened off Home returns to Home, not Messages',
+        () {
       // The same conversation screen, reached a different way, must remember
       // ITS OWN path back — this is the whole reason back() is a stack and
       // not "always go to Messages".

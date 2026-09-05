@@ -106,7 +106,8 @@ Future<RemoteConfig?> fetchRemoteConfig({
 /// follow business hours, so there is no "outside" to be outside of.
 bool shouldMount(RemoteConfig remote) {
   if (!remote.enabled) return false;
-  return !(remote.offlineMode == OfflineMode.hideWidget && remote.isOpenNow == false);
+  return !(remote.offlineMode == OfflineMode.hideWidget &&
+      remote.isOpenNow == false);
 }
 
 /// Whether the out-of-hours form replaces the composer.
@@ -115,7 +116,8 @@ bool shouldMount(RemoteConfig remote) {
 /// closed but leaves the composer alone, and `hideWidget` never gets this
 /// far — see [shouldMount].
 bool shouldCollectOffline(RemoteConfig remote) =>
-    remote.isOpenNow == false && remote.offlineMode == OfflineMode.collectMessage;
+    remote.isOpenNow == false &&
+    remote.offlineMode == OfflineMode.collectMessage;
 
 /// Convenience for the UI layer: is the team closed right now?
 bool isOutOfHours(RemoteConfig remote) => remote.isOpenNow == false;

@@ -11,7 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'state/fake_widget_chat_client.dart';
 import 'support/remote_config_fixtures.dart';
 
-Widget _wrap(ChatWidgetCubit cubit) => MaterialApp(home: ChatWidget(cubit: cubit));
+Widget _wrap(ChatWidgetCubit cubit) =>
+    MaterialApp(home: ChatWidget(cubit: cubit));
 
 /// Lets a queued connection-state event actually reach [ChatWidgetCubit]
 /// before the next pump captures a frame. Same helper, same reasoning, as
@@ -65,7 +66,8 @@ void main() {
     expect(find.byType(ChatBottomNav), findsOneWidget);
   });
 
-  testWidgets('tapping the Messages tab switches screens, still no back bar', (tester) async {
+  testWidgets('tapping the Messages tab switches screens, still no back bar',
+      (tester) async {
     await tester.pumpWidget(_wrap(cubit));
     await tester.tap(find.text('Messages'));
     await tester.pump();
@@ -74,7 +76,9 @@ void main() {
     expect(find.byType(AppBar), findsNothing);
   });
 
-  testWidgets('starting a new conversation shows a back bar titled "New conversation"', (tester) async {
+  testWidgets(
+      'starting a new conversation shows a back bar titled "New conversation"',
+      (tester) async {
     await tester.pumpWidget(_wrap(cubit));
     await tester.tap(find.text('Send us a message'));
     await tester.pump();
@@ -85,7 +89,8 @@ void main() {
     expect(find.byType(BackButton), findsOneWidget);
   });
 
-  testWidgets('tapping the back button returns to Home and drops the back bar', (tester) async {
+  testWidgets('tapping the back button returns to Home and drops the back bar',
+      (tester) async {
     await tester.pumpWidget(_wrap(cubit));
     await tester.tap(find.text('Send us a message'));
     await tester.pump();
@@ -98,7 +103,9 @@ void main() {
     expect(find.byType(AppBar), findsNothing);
   });
 
-  testWidgets('PopScope.canPop mirrors !state.canGoBack, and an unconsumed system pop calls cubit.back()', (tester) async {
+  testWidgets(
+      'PopScope.canPop mirrors !state.canGoBack, and an unconsumed system pop calls cubit.back()',
+      (tester) async {
     // PopScope<T> is generic (confirmed against the pinned SDK's own source,
     // packages/flutter/lib/src/widgets/pop_scope.dart), and this widget's
     // onPopInvokedWithResult callback makes Dart infer PopScope<Object> —
@@ -108,7 +115,8 @@ void main() {
     // predicate on the runtimeType's string name sidesteps needing the
     // exact type argument at all, which is what every other find.byType
     // call in this suite gets for free with a non-generic widget.
-    final popScopeFinder = find.byWidgetPredicate((Widget w) => w.runtimeType.toString().startsWith('PopScope'));
+    final popScopeFinder = find.byWidgetPredicate(
+        (Widget w) => w.runtimeType.toString().startsWith('PopScope'));
 
     await tester.pumpWidget(_wrap(cubit));
     expect(tester.widget<PopScope>(popScopeFinder).canPop, isTrue);
@@ -127,16 +135,20 @@ void main() {
     expect(cubit.state.screen, ScreenName.home);
   });
 
-  testWidgets('the panel theme follows the published accent, not the host MaterialApp theme', (tester) async {
+  testWidgets(
+      'the panel theme follows the published accent, not the host MaterialApp theme',
+      (tester) async {
     cubit = ChatWidgetCubit(client: client, initialConfig: defaultRemoteConfig);
     await tester.pumpWidget(
       MaterialApp(
-        theme: ThemeData(colorScheme: const ColorScheme.light(primary: Colors.purple)),
+        theme: ThemeData(
+            colorScheme: const ColorScheme.light(primary: Colors.purple)),
         home: ChatWidget(cubit: cubit),
       ),
     );
 
-    final ThemeData panelTheme = Theme.of(tester.element(find.byType(HomeScreen)));
+    final ThemeData panelTheme =
+        Theme.of(tester.element(find.byType(HomeScreen)));
     // Falls back to kDefaultAccent (#1f2937), not the host app's purple.
     expect(panelTheme.colorScheme.primary, isNot(Colors.purple));
   });
@@ -145,7 +157,8 @@ void main() {
     // The gate is the client having GIVEN UP, not it having failed. Showing
     // this over a reconnect that is about to succeed would tell a customer the
     // service is down while it is coming back.
-    testWidgets('stays hidden while the client is still working', (tester) async {
+    testWidgets('stays hidden while the client is still working',
+        (tester) async {
       await tester.pumpWidget(_wrap(cubit));
       for (final ConnectionState state in <ConnectionState>[
         ConnectionState.idle,
@@ -155,7 +168,8 @@ void main() {
       ]) {
         client.emitConnectionState(state);
         await flush(tester);
-        expect(find.byType(UnavailableView), findsNothing, reason: '$state is not terminal');
+        expect(find.byType(UnavailableView), findsNothing,
+            reason: '$state is not terminal');
       }
     });
 
@@ -164,7 +178,8 @@ void main() {
       for (final ConnectionState state in kTerminalConnectionStates) {
         client.emitConnectionState(state);
         await flush(tester);
-        expect(find.byType(UnavailableView), findsOneWidget, reason: '$state is terminal');
+        expect(find.byType(UnavailableView), findsOneWidget,
+            reason: '$state is terminal');
         expect(find.text('Chat is temporarily unavailable'), findsOneWidget);
         // Nothing else is left behind it — a live composer under this notice
         // would invite a message that has nowhere to go.
@@ -186,15 +201,18 @@ void main() {
     // The rule shared with the JS widget: an address nobody monitors is worse
     // than admitting there is no second route, because the customer waits on a
     // reply that never comes.
-    testWidgets('offers no email when the merchant configured none', (tester) async {
+    testWidgets('offers no email when the merchant configured none',
+        (tester) async {
       await tester.pumpWidget(_wrap(cubit));
       client.emitConnectionState(ConnectionState.closed);
       await flush(tester);
       expect(find.textContaining('Email '), findsNothing);
     });
 
-    testWidgets('offers the merchant address when there is one', (tester) async {
-      cubit.applyRemoteConfig(testRemoteConfig(supportEmail: 'support@dhaam.com'));
+    testWidgets('offers the merchant address when there is one',
+        (tester) async {
+      cubit.applyRemoteConfig(
+          testRemoteConfig(supportEmail: 'support@dhaam.com'));
       await tester.pumpWidget(_wrap(cubit));
       client.emitConnectionState(ConnectionState.closed);
       await flush(tester);
@@ -203,8 +221,10 @@ void main() {
 
     // Merchant-supplied and lands in a mailto:, where a newline can append
     // HEADERS to the message the customer is about to send.
-    testWidgets('offers nothing rather than an address it could not make safe', (tester) async {
-      cubit.applyRemoteConfig(testRemoteConfig(supportEmail: 'a@b.com\nbcc:x@evil.test'));
+    testWidgets('offers nothing rather than an address it could not make safe',
+        (tester) async {
+      cubit.applyRemoteConfig(
+          testRemoteConfig(supportEmail: 'a@b.com\nbcc:x@evil.test'));
       await tester.pumpWidget(_wrap(cubit));
       client.emitConnectionState(ConnectionState.closed);
       await flush(tester);

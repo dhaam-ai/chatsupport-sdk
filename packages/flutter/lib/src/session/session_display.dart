@@ -41,7 +41,10 @@ typedef SessionStatusWords = ({String label, String pill});
 /// learn two vocabularies for one status.
 SessionStatusWords sessionStatusWords(ChatStatus status) => switch (status) {
       ChatStatus.open => (label: 'Open', pill: 'Open'),
-      ChatStatus.waitingForAgent => (label: 'Waiting for an agent', pill: 'Waiting'),
+      ChatStatus.waitingForAgent => (
+          label: 'Waiting for an agent',
+          pill: 'Waiting'
+        ),
       ChatStatus.assigned => (label: 'With an agent', pill: 'With an agent'),
       ChatStatus.onHold => (label: 'On hold', pill: 'On hold'),
       ChatStatus.resolved => (label: 'Resolved', pill: 'Resolved'),

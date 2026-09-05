@@ -59,8 +59,7 @@ enum PreChatFieldType implements WireEnum {
   @override
   final String wire;
 
-  static PreChatFieldType? fromWire(String value) =>
-      lookupWire(values, value);
+  static PreChatFieldType? fromWire(String value) => lookupWire(values, value);
 }
 
 /// How the post-resolution rating is presented. The backend knows only these
@@ -579,11 +578,13 @@ RemoteConfig? parseRemoteConfig(Object? body) {
   final Map<String, Object?> dataMap = data! as Map<String, Object?>;
 
   final Object? rawAppearance = dataMap['appearance'];
-  final Map<String, Object?> appearance =
-      isJsonObject(rawAppearance) ? rawAppearance! as Map<String, Object?> : const <String, Object?>{};
+  final Map<String, Object?> appearance = isJsonObject(rawAppearance)
+      ? rawAppearance! as Map<String, Object?>
+      : const <String, Object?>{};
   final Object? rawBehaviour = dataMap['behaviour'];
-  final Map<String, Object?> behaviour =
-      isJsonObject(rawBehaviour) ? rawBehaviour! as Map<String, Object?> : const <String, Object?>{};
+  final Map<String, Object?> behaviour = isJsonObject(rawBehaviour)
+      ? rawBehaviour! as Map<String, Object?>
+      : const <String, Object?>{};
 
   final Object? rawOfflineMode = dataMap['offlineMode'];
   final Object? rawCsat = behaviour['csatStyle'];
@@ -652,7 +653,8 @@ RemoteConfig? parseRemoteConfig(Object? body) {
     preChatEnabled: readBool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),
-    conversationTopics: parseConversationTopics(behaviour['conversationTopics']),
+    conversationTopics:
+        parseConversationTopics(behaviour['conversationTopics']),
     csatStyle: rawCsat == 'emoji' ? CsatStyle.emoji : CsatStyle.stars,
     offlineMode: rawOfflineMode is int
         ? (OfflineMode.fromWire(rawOfflineMode) ?? OfflineMode.showMessage)

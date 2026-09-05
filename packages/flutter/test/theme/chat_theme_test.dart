@@ -8,8 +8,16 @@ import '../support/remote_config_fixtures.dart';
 /// shared [testRemoteConfig] takes every leaf, but repeating "accent:
 /// accent, theme: theme, ..." at each call site below would be its own kind
 /// of noise.
-RemoteConfig _config({String? accent, WidgetTheme? theme, String? fontFamily, double? cornerRadius}) {
-  return testRemoteConfig(accent: accent, theme: theme, fontFamily: fontFamily, cornerRadius: cornerRadius);
+RemoteConfig _config(
+    {String? accent,
+    WidgetTheme? theme,
+    String? fontFamily,
+    double? cornerRadius}) {
+  return testRemoteConfig(
+      accent: accent,
+      theme: theme,
+      fontFamily: fontFamily,
+      cornerRadius: cornerRadius);
 }
 
 void main() {
@@ -27,7 +35,8 @@ void main() {
       expect(parseHexColor('#AbCdEf'), parseHexColor('#abcdef'));
     });
 
-    test('null for absent, malformed, or a CSS colour Flutter cannot parse', () {
+    test('null for absent, malformed, or a CSS colour Flutter cannot parse',
+        () {
       expect(parseHexColor(null), isNull);
       expect(parseHexColor('not-a-color'), isNull);
       expect(parseHexColor('rebeccapurple'), isNull);
@@ -37,28 +46,47 @@ void main() {
   });
 
   group('chatThemeData', () {
-    test('an absent accent falls back to the JS widget\'s own default (#1f2937)', () {
+    test(
+        'an absent accent falls back to the JS widget\'s own default (#1f2937)',
+        () {
       final theme = chatThemeData(_config(), Brightness.light);
-      expect(theme.colorScheme, ColorScheme.fromSeed(seedColor: kDefaultAccent, brightness: Brightness.light));
+      expect(
+          theme.colorScheme,
+          ColorScheme.fromSeed(
+              seedColor: kDefaultAccent, brightness: Brightness.light));
     });
 
     test('a published accent seeds the ColorScheme', () {
       final theme = chatThemeData(_config(accent: '#ff0000'), Brightness.light);
       expect(
         theme.colorScheme,
-        ColorScheme.fromSeed(seedColor: const Color(0xFFFF0000), brightness: Brightness.light),
+        ColorScheme.fromSeed(
+            seedColor: const Color(0xFFFF0000), brightness: Brightness.light),
       );
     });
 
-    test('WidgetTheme.light and .dark pin the brightness regardless of the platform', () {
-      expect(chatThemeData(_config(theme: WidgetTheme.light), Brightness.dark).brightness, Brightness.light);
-      expect(chatThemeData(_config(theme: WidgetTheme.dark), Brightness.light).brightness, Brightness.dark);
+    test(
+        'WidgetTheme.light and .dark pin the brightness regardless of the platform',
+        () {
+      expect(
+          chatThemeData(_config(theme: WidgetTheme.light), Brightness.dark)
+              .brightness,
+          Brightness.light);
+      expect(
+          chatThemeData(_config(theme: WidgetTheme.dark), Brightness.light)
+              .brightness,
+          Brightness.dark);
     });
 
     test('WidgetTheme.auto and an absent theme both follow the platform', () {
-      expect(chatThemeData(_config(theme: WidgetTheme.auto), Brightness.dark).brightness, Brightness.dark);
-      expect(chatThemeData(_config(), Brightness.dark).brightness, Brightness.dark);
-      expect(chatThemeData(_config(), Brightness.light).brightness, Brightness.light);
+      expect(
+          chatThemeData(_config(theme: WidgetTheme.auto), Brightness.dark)
+              .brightness,
+          Brightness.dark);
+      expect(chatThemeData(_config(), Brightness.dark).brightness,
+          Brightness.dark);
+      expect(chatThemeData(_config(), Brightness.light).brightness,
+          Brightness.light);
     });
 
     test('a published fontFamily reaches the text theme', () {
@@ -67,17 +95,26 @@ void main() {
       // https://api.flutter.dev/flutter/material/ThemeData/ThemeData.html),
       // so that is where a published font actually shows up.
       expect(
-        chatThemeData(_config(fontFamily: 'Inter'), Brightness.light).textTheme.bodyMedium?.fontFamily,
+        chatThemeData(_config(fontFamily: 'Inter'), Brightness.light)
+            .textTheme
+            .bodyMedium
+            ?.fontFamily,
         'Inter',
       );
     });
 
-    test('an unset fontFamily leaves Material 3\'s own default (Roboto) alone', () {
+    test('an unset fontFamily leaves Material 3\'s own default (Roboto) alone',
+        () {
       // Not null: passing fontFamily: null to ThemeData() does not blank the
       // font, it leaves Material 3's own default text theme untouched. An
       // absent RemoteConfig.fontFamily should mean exactly that — "no
       // opinion" — not "no font at all".
-      expect(chatThemeData(_config(), Brightness.light).textTheme.bodyMedium?.fontFamily, 'Roboto');
+      expect(
+          chatThemeData(_config(), Brightness.light)
+              .textTheme
+              .bodyMedium
+              ?.fontFamily,
+          'Roboto');
     });
   });
 

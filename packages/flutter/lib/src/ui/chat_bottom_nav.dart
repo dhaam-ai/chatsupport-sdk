@@ -105,7 +105,8 @@ class _NavTab extends StatelessWidget {
       // `maxCount` parameter does not exist yet on this version). The base
       // Badge constructor with a hand-built label is what gets nav.ts's own
       // 99+ cap exactly.
-      final String label = unreadCount > kUnreadBadgeCap ? '$kUnreadBadgeCap+' : '$unreadCount';
+      final String label =
+          unreadCount > kUnreadBadgeCap ? '$kUnreadBadgeCap+' : '$unreadCount';
       iconWidget = Badge(label: Text(label), child: iconWidget);
     }
 
@@ -127,7 +128,10 @@ class _NavTab extends StatelessWidget {
               const SizedBox(height: 2),
               Text(
                 label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(color: color),
+                style: Theme.of(context)
+                    .textTheme
+                    .labelSmall
+                    ?.copyWith(color: color),
               ),
             ],
           ),

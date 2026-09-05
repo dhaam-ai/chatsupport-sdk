@@ -100,9 +100,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         _attachmentPicker = attachmentPicker,
         _screens = ChatScreens(
           initial: initialScreen ??
-              (sessionId == null
-                  ? ScreenName.home
-                  : ScreenName.conversation),
+              (sessionId == null ? ScreenName.home : ScreenName.conversation),
         ),
         _scheduler = scheduler,
         _reconnectInterval = reconnectInterval,
@@ -110,9 +108,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
           ChatWidgetState.initial(
             config: initialConfig,
             screen: initialScreen ??
-                (sessionId == null
-                    ? ScreenName.home
-                    : ScreenName.conversation),
+                (sessionId == null ? ScreenName.home : ScreenName.conversation),
             identity: identity,
             // The port of `initialScreenName === 'conversation'`. Landing on
             // the conversation screen IS the customer being put in front of
@@ -527,7 +523,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// itself — `dhaam_chat` cannot list sessions, so a host that has its own
   /// backend calls this with what it fetched there.
   void updateSessionSummaries(List<ChatSessionSummary> summaries) {
-    final int unread = summaries.fold(0, (int sum, ChatSessionSummary s) => sum + s.unreadCount);
+    final int unread = summaries.fold(
+        0, (int sum, ChatSessionSummary s) => sum + s.unreadCount);
     emit(state.copyWith(sessionSummaries: summaries, unreadCount: unread));
   }
 
@@ -535,7 +532,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
 
   /// Tab switch — Home or Messages. Not a drill-down: see [ChatScreens.swap].
   void switchTab(ScreenName tab) {
-    assert(tab == ScreenName.home || tab == ScreenName.messages, 'not a tab: $tab');
+    assert(tab == ScreenName.home || tab == ScreenName.messages,
+        'not a tab: $tab');
     _screens.swap(tab);
     _syncScreen();
   }
@@ -1032,7 +1030,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     }
   }
 
-  void markRead({String? upToMessageId}) => _client.markRead(upToMessageId: upToMessageId);
+  void markRead({String? upToMessageId}) =>
+      _client.markRead(upToMessageId: upToMessageId);
 
   /// Tells the other participants the customer is typing (§6.3).
   ///
@@ -1381,6 +1380,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// `joinSession` writes a frame and returns, so there is no rejection to
   /// leak onto a host's error tracker either.
   void selectSession(String sessionId) => openConversation(sessionId);
+
   /// Silences or restores the local chime for this visitor.
   ///
   /// Takes the NEW state rather than flipping the old one, matching
@@ -1557,7 +1557,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     _syncSurfaces();
   }
 
-  void _onTyping(TypingEvent event) => emit(state.copyWith(isTyping: event.isTyping));
+  void _onTyping(TypingEvent event) =>
+      emit(state.copyWith(isTyping: event.isTyping));
 
   @override
   Future<void> close() async {

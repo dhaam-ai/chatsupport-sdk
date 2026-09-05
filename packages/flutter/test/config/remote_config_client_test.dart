@@ -29,7 +29,10 @@ void main() {
         return http.Response(jsonEncode(_validBody()), 200);
       });
 
-      await fetchRemoteConfig(apiUrl: 'https://api.example.com', publishableKey: _key, client: client);
+      await fetchRemoteConfig(
+          apiUrl: 'https://api.example.com',
+          publishableKey: _key,
+          client: client);
 
       expect(seen, isNotNull);
       expect(seen!.headers['X-Publishable-Key'], 'dhp_test_abc123');
@@ -43,29 +46,42 @@ void main() {
         return http.Response(jsonEncode(_validBody()), 200);
       });
 
-      await fetchRemoteConfig(apiUrl: 'https://api.example.com', publishableKey: _key, client: client);
+      await fetchRemoteConfig(
+          apiUrl: 'https://api.example.com',
+          publishableKey: _key,
+          client: client);
 
-      expect(seenUri.toString(), 'https://api.example.com/chat-services/api/v1/widget/config');
+      expect(seenUri.toString(),
+          'https://api.example.com/chat-services/api/v1/widget/config');
     });
 
-    test('strips a trailing slash off apiUrl rather than doubling it', () async {
+    test('strips a trailing slash off apiUrl rather than doubling it',
+        () async {
       Uri? seenUri;
       final client = MockClient((request) async {
         seenUri = request.url;
         return http.Response(jsonEncode(_validBody()), 200);
       });
 
-      await fetchRemoteConfig(apiUrl: 'https://api.example.com/', publishableKey: _key, client: client);
+      await fetchRemoteConfig(
+          apiUrl: 'https://api.example.com/',
+          publishableKey: _key,
+          client: client);
 
-      expect(seenUri.toString(), 'https://api.example.com/chat-services/api/v1/widget/config');
+      expect(seenUri.toString(),
+          'https://api.example.com/chat-services/api/v1/widget/config');
     });
 
     test('parses a well-formed 200 into a RemoteConfig', () async {
       final client = MockClient(
-        (request) async => http.Response(jsonEncode(_validBody(appearance: {'accent': '#ff0000'})), 200),
+        (request) async => http.Response(
+            jsonEncode(_validBody(appearance: {'accent': '#ff0000'})), 200),
       );
 
-      final config = await fetchRemoteConfig(apiUrl: 'https://api.example.com', publishableKey: _key, client: client);
+      final config = await fetchRemoteConfig(
+          apiUrl: 'https://api.example.com',
+          publishableKey: _key,
+          client: client);
 
       expect(config, isNotNull);
       expect(config!.accent, '#ff0000');
@@ -74,28 +90,40 @@ void main() {
     test('returns null on a non-2xx status rather than throwing', () async {
       final client = MockClient((request) async => http.Response('nope', 404));
 
-      final config = await fetchRemoteConfig(apiUrl: 'https://api.example.com', publishableKey: _key, client: client);
+      final config = await fetchRemoteConfig(
+          apiUrl: 'https://api.example.com',
+          publishableKey: _key,
+          client: client);
 
       expect(config, isNull);
     });
 
     test('returns null when the body is not JSON', () async {
-      final client = MockClient((request) async => http.Response('<html>not json</html>', 200));
+      final client = MockClient(
+          (request) async => http.Response('<html>not json</html>', 200));
 
-      final config = await fetchRemoteConfig(apiUrl: 'https://api.example.com', publishableKey: _key, client: client);
+      final config = await fetchRemoteConfig(
+          apiUrl: 'https://api.example.com',
+          publishableKey: _key,
+          client: client);
 
       expect(config, isNull);
     });
 
     test('returns null on a network error rather than throwing', () async {
-      final client = MockClient((request) async => throw Exception('connection refused'));
+      final client =
+          MockClient((request) async => throw Exception('connection refused'));
 
-      final config = await fetchRemoteConfig(apiUrl: 'https://api.example.com', publishableKey: _key, client: client);
+      final config = await fetchRemoteConfig(
+          apiUrl: 'https://api.example.com',
+          publishableKey: _key,
+          client: client);
 
       expect(config, isNull);
     });
 
-    test('gives up after the timeout instead of hanging the widget forever', () async {
+    test('gives up after the timeout instead of hanging the widget forever',
+        () async {
       final client = MockClient((request) async {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         return http.Response(jsonEncode(_validBody()), 200);
@@ -113,7 +141,8 @@ void main() {
   });
 
   group('shouldMount / shouldCollectOffline / isOutOfHours', () {
-    RemoteConfig withOverrides({bool? enabled, OfflineMode? offlineMode, bool? isOpenNow}) {
+    RemoteConfig withOverrides(
+        {bool? enabled, OfflineMode? offlineMode, bool? isOpenNow}) {
       return RemoteConfig(
         enabled: enabled ?? defaultRemoteConfig.enabled,
         accent: null,
@@ -172,36 +201,43 @@ void main() {
 
     test('does not mount when hideWidget and the team is closed', () {
       expect(
-        shouldMount(withOverrides(offlineMode: OfflineMode.hideWidget, isOpenNow: false)),
+        shouldMount(withOverrides(
+            offlineMode: OfflineMode.hideWidget, isOpenNow: false)),
         isFalse,
       );
     });
 
     test('still mounts under hideWidget while the team is open', () {
       expect(
-        shouldMount(withOverrides(offlineMode: OfflineMode.hideWidget, isOpenNow: true)),
+        shouldMount(withOverrides(
+            offlineMode: OfflineMode.hideWidget, isOpenNow: true)),
         isTrue,
       );
     });
 
     test('treats an unknown open-state (null) as always open', () {
       expect(
-        shouldMount(withOverrides(offlineMode: OfflineMode.hideWidget, isOpenNow: null)),
+        shouldMount(withOverrides(
+            offlineMode: OfflineMode.hideWidget, isOpenNow: null)),
         isTrue,
       );
     });
 
-    test('collects an offline message only under collectMessage while closed', () {
+    test('collects an offline message only under collectMessage while closed',
+        () {
       expect(
-        shouldCollectOffline(withOverrides(offlineMode: OfflineMode.collectMessage, isOpenNow: false)),
+        shouldCollectOffline(withOverrides(
+            offlineMode: OfflineMode.collectMessage, isOpenNow: false)),
         isTrue,
       );
       expect(
-        shouldCollectOffline(withOverrides(offlineMode: OfflineMode.showMessage, isOpenNow: false)),
+        shouldCollectOffline(withOverrides(
+            offlineMode: OfflineMode.showMessage, isOpenNow: false)),
         isFalse,
       );
       expect(
-        shouldCollectOffline(withOverrides(offlineMode: OfflineMode.collectMessage, isOpenNow: true)),
+        shouldCollectOffline(withOverrides(
+            offlineMode: OfflineMode.collectMessage, isOpenNow: true)),
         isFalse,
       );
     });

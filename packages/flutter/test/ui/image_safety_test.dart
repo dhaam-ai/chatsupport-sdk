@@ -7,8 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('safeImageUrl', () {
     test('accepts https and http', () {
-      expect(safeImageUrl('https://example.com/logo.png'), 'https://example.com/logo.png');
-      expect(safeImageUrl('http://example.com/logo.png'), 'http://example.com/logo.png');
+      expect(safeImageUrl('https://example.com/logo.png'),
+          'https://example.com/logo.png');
+      expect(safeImageUrl('http://example.com/logo.png'),
+          'http://example.com/logo.png');
     });
 
     test('accepts a data:image/* URI in the allowed subtypes', () {
@@ -21,7 +23,8 @@ void main() {
     });
 
     test('trims whitespace', () {
-      expect(safeImageUrl('  https://example.com/logo.png  '), 'https://example.com/logo.png');
+      expect(safeImageUrl('  https://example.com/logo.png  '),
+          'https://example.com/logo.png');
     });
 
     test('refuses null, blank, and non-image/non-http schemes', () {

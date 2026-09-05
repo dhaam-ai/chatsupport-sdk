@@ -246,6 +246,7 @@ class ChatWidgetState extends Equatable {
   /// Empty when the host wired up no `ChatSessionActions` — the feature is
   /// off, not broken.
   final Map<String, CsatLookup> csatBySession;
+
   /// Whether THIS VISITOR has silenced the local chime.
   ///
   /// ── Not a merchant setting ──────────────────────────────────────────
@@ -441,7 +442,8 @@ class ChatWidgetState extends Equatable {
       online: online ?? this.online,
       failedAttempts: failedAttempts ?? this.failedAttempts,
       queuedCount: queuedCount ?? this.queuedCount,
-      selectedTopic: clearSelectedTopic ? null : (selectedTopic ?? this.selectedTopic),
+      selectedTopic:
+          clearSelectedTopic ? null : (selectedTopic ?? this.selectedTopic),
       identity: identity ?? this.identity,
       activeSurface:
           clearActiveSurface ? null : (activeSurface ?? this.activeSurface),

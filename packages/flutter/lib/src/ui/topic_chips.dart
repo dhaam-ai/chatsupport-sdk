@@ -14,7 +14,11 @@ import 'package:flutter/material.dart';
 import '../config/remote_config.dart';
 
 class TopicChips extends StatelessWidget {
-  const TopicChips({super.key, required this.topics, required this.selected, required this.onSelect});
+  const TopicChips(
+      {super.key,
+      required this.topics,
+      required this.selected,
+      required this.onSelect});
 
   final List<ConversationTopic> topics;
 

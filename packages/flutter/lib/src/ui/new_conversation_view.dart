@@ -116,7 +116,8 @@ class _NewConversationViewState extends State<NewConversationView> {
               PreChatFieldsBlock(fields: _fields),
               if (_fields.isNotEmpty) const SizedBox(height: 16),
               if (config.conversationTopics.isNotEmpty) ...<Widget>[
-                Text('What can we help with?', style: Theme.of(context).textTheme.titleSmall),
+                Text('What can we help with?',
+                    style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
                 TopicChips(
                   topics: config.conversationTopics,
@@ -132,7 +133,8 @@ class _NewConversationViewState extends State<NewConversationView> {
                 textInputAction: TextInputAction.newline,
                 decoration: InputDecoration(
                   hintText: 'Type your message…',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(radius)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(radius)),
                 ),
               ),
               const SizedBox(height: 8),
@@ -142,7 +144,8 @@ class _NewConversationViewState extends State<NewConversationView> {
                 onPressed: canStart ? start : null,
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(44),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(radius)),
                 ),
                 child: const Text('Start'),
               ),

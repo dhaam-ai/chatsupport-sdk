@@ -83,7 +83,8 @@ Uri? safeMailtoUri(String? value) {
 /// panel out on its own. There is no window here for a second tap to do
 /// anything a disabled button would have prevented.
 class UnavailableView extends StatelessWidget {
-  const UnavailableView({super.key, required this.config, required this.onTryAgain});
+  const UnavailableView(
+      {super.key, required this.config, required this.onTryAgain});
 
   final RemoteConfig config;
 
@@ -111,21 +112,28 @@ class UnavailableView extends StatelessWidget {
             Text(
               'Chat is temporarily unavailable',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
             Text(
               "We couldn't reach the support service. Try again, or email us and "
               "we'll pick it up from there.",
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 20),
             FilledButton(
               onPressed: onTryAgain,
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(44),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(radius)),
               ),
               child: const Text('Try again'),
             ),

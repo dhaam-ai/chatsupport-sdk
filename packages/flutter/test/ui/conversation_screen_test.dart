@@ -105,14 +105,17 @@ void main() {
     );
   });
 
-  testWidgets('shows NewConversationView while composingNew is true', (tester) async {
+  testWidgets('shows NewConversationView while composingNew is true',
+      (tester) async {
     cubit.startNewConversation();
     await tester.pumpWidget(_wrap(cubit));
     expect(find.byType(NewConversationView), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
   });
 
-  testWidgets('shows the empty-transcript prompt for an existing, message-less conversation', (tester) async {
+  testWidgets(
+      'shows the empty-transcript prompt for an existing, message-less conversation',
+      (tester) async {
     const String empty = 'No messages yet. Ask us anything about your order.';
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
@@ -132,7 +135,10 @@ void main() {
     await tester.pumpWidget(_wrap(cubit));
 
     client.emitMessage(testMessage(id: 'm1', content: 'Hi, how can I help?'));
-    client.emitMessage(testMessage(id: 'm2', content: 'My order never arrived', senderType: SenderType.customer));
+    client.emitMessage(testMessage(
+        id: 'm2',
+        content: 'My order never arrived',
+        senderType: SenderType.customer));
     await flush(tester);
     await tester.pump();
 
@@ -140,15 +146,25 @@ void main() {
     expect(find.text('My order never arrived'), findsOneWidget);
   });
 
-  testWidgets('an outgoing (customer) message shows a delivery tick; an incoming one does not', (tester) async {
+  testWidgets(
+      'an outgoing (customer) message shows a delivery tick; an incoming one does not',
+      (tester) async {
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
 
     client.emitMessage(
-      testMessage(id: 'm1', content: 'from the agent', senderType: SenderType.agent, delivery: MessageDelivery.confirmed),
+      testMessage(
+          id: 'm1',
+          content: 'from the agent',
+          senderType: SenderType.agent,
+          delivery: MessageDelivery.confirmed),
     );
     client.emitMessage(
-      testMessage(id: 'm2', content: 'from me', senderType: SenderType.customer, delivery: MessageDelivery.pending),
+      testMessage(
+          id: 'm2',
+          content: 'from me',
+          senderType: SenderType.customer,
+          delivery: MessageDelivery.pending),
     );
     await flush(tester);
     await tester.pump();
@@ -165,7 +181,12 @@ void main() {
     // refuses, because it would make an agent-side embed draw ticks on the
     // customer's own messages. The sibling test above supplies a userId and
     // asserts the tick DOES appear, so the two pin both halves.
-    for (final String word in <String>['Sending', 'Sent', 'Delivered', 'Read']) {
+    for (final String word in <String>[
+      'Sending',
+      'Sent',
+      'Delivered',
+      'Read'
+    ]) {
       expect(find.text(word), findsNothing);
     }
   });
@@ -174,7 +195,8 @@ void main() {
     // The fake refuses by default, and `onRetry` reports a refusal through
     // `FlutterError.reportError` — which a widget test counts as a failure.
     // That is the wiring working: a refusal is not allowed to be silent.
-    client.retryOutcome = RetryRetried(testMessage(id: 'm1', senderType: SenderType.customer));
+    client.retryOutcome =
+        RetryRetried(testMessage(id: 'm1', senderType: SenderType.customer));
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
 
@@ -182,7 +204,8 @@ void main() {
       testMessage(
         id: 'm1',
         senderType: SenderType.customer,
-        delivery: const MessageFailed(reason: SendFailureReason.rejected, retryable: true),
+        delivery: const MessageFailed(
+            reason: SendFailureReason.rejected, retryable: true),
       ),
     );
     await flush(tester);
@@ -200,7 +223,8 @@ void main() {
     expect(client.retriedIds, <String>['m1']);
   });
 
-  testWidgets('a non-retryable failure gets its reason and no button', (tester) async {
+  testWidgets('a non-retryable failure gets its reason and no button',
+      (tester) async {
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
 
@@ -208,19 +232,23 @@ void main() {
       testMessage(
         id: 'm1',
         senderType: SenderType.customer,
-        delivery: const MessageFailed(reason: SendFailureReason.sessionClosed, retryable: false),
+        delivery: const MessageFailed(
+            reason: SendFailureReason.sessionClosed, retryable: false),
       ),
     );
     await flush(tester);
     await tester.pump();
 
-    expect(find.text('This conversation ended before this message could send.'), findsOneWidget);
+    expect(find.text('This conversation ended before this message could send.'),
+        findsOneWidget);
     // Absent from the tree, not merely styled away: retrying a send the
     // server already refused is refused identically every time.
     expect(find.text('Retry'), findsNothing);
   });
 
-  testWidgets('quick replies show under the newest incoming message and send on tap', (tester) async {
+  testWidgets(
+      'quick replies show under the newest incoming message and send on tap',
+      (tester) async {
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
 
@@ -228,7 +256,9 @@ void main() {
       testMessage(
         id: 'm1',
         content: 'Want to track your order?',
-        metadata: {'options': <Object?>['Track my order', 'Talk to a human']},
+        metadata: {
+          'options': <Object?>['Track my order', 'Talk to a human']
+        },
       ),
     );
     await flush(tester);
@@ -246,7 +276,8 @@ void main() {
   // idea a draft exists. Only a chip routed through the composer's own
   // submit can see it — which is the same reason a chip cannot get past the
   // consent gate that lives on the composer's `enabled`.
-  testWidgets('a quick reply goes through the composer, so it will not '
+  testWidgets(
+      'a quick reply goes through the composer, so it will not '
       'overwrite a draft the customer is typing', (tester) async {
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
@@ -255,13 +286,16 @@ void main() {
       testMessage(
         id: 'm1',
         content: 'Want to track your order?',
-        metadata: {'options': <Object?>['Track my order']},
+        metadata: {
+          'options': <Object?>['Track my order']
+        },
       ),
     );
     await flush(tester);
     await tester.pump();
 
-    await tester.enterText(find.byKey(const Key('composer.message')), 'my order was ');
+    await tester.enterText(
+        find.byKey(const Key('composer.message')), 'my order was ');
     await tester.pump();
 
     await tester.tap(find.text('Track my order'));
@@ -269,23 +303,31 @@ void main() {
 
     expect(client.sentContent, isEmpty);
     expect(
-      tester.widget<TextField>(find.byKey(const Key('composer.message'))).controller!.text,
+      tester
+          .widget<TextField>(find.byKey(const Key('composer.message')))
+          .controller!
+          .text,
       'my order was ',
     );
   });
 
-  testWidgets('quick replies disappear once the customer sends their own message', (tester) async {
+  testWidgets(
+      'quick replies disappear once the customer sends their own message',
+      (tester) async {
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
 
     client.emitMessage(
-      testMessage(id: 'm1', metadata: {'options': <Object?>['Yes']}),
+      testMessage(id: 'm1', metadata: {
+        'options': <Object?>['Yes']
+      }),
     );
     await flush(tester);
     await tester.pump();
     expect(find.text('Yes'), findsOneWidget);
 
-    client.emitMessage(testMessage(id: 'm2', senderType: SenderType.customer, content: 'ok'));
+    client.emitMessage(
+        testMessage(id: 'm2', senderType: SenderType.customer, content: 'ok'));
     await flush(tester);
     await tester.pump();
 
@@ -308,7 +350,8 @@ void main() {
     expect(find.text('…'), findsNothing);
   });
 
-  testWidgets('the composer is present and sends through the Cubit', (tester) async {
+  testWidgets('the composer is present and sends through the Cubit',
+      (tester) async {
     cubit.openConversation('past-session-1');
     await tester.pumpWidget(_wrap(cubit));
 

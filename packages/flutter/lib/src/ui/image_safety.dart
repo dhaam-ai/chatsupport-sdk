@@ -28,7 +28,9 @@ String? safeImageUrl(String? value) {
   final String url = value.trim();
   if (url.isEmpty) return null;
   if (RegExp(r'^https?://', caseSensitive: false).hasMatch(url)) return url;
-  if (RegExp(r'^data:image/(png|jpeg|jpg|gif|webp|svg\+xml);', caseSensitive: false).hasMatch(url)) {
+  if (RegExp(r'^data:image/(png|jpeg|jpg|gif|webp|svg\+xml);',
+          caseSensitive: false)
+      .hasMatch(url)) {
     return url;
   }
   return null;

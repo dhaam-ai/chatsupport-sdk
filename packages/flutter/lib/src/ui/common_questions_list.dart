@@ -16,7 +16,8 @@ import 'package:flutter/material.dart';
 import '../config/remote_config.dart';
 
 class CommonQuestionsList extends StatelessWidget {
-  const CommonQuestionsList({super.key, required this.questions, required this.onSelect});
+  const CommonQuestionsList(
+      {super.key, required this.questions, required this.onSelect});
 
   final List<CommonQuestion> questions;
 
@@ -46,7 +47,9 @@ class CommonQuestionsList extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               for (int i = 0; i < questions.length; i++) ...<Widget>[
-                if (i > 0) Divider(height: 1, thickness: 1, color: scheme.outlineVariant),
+                if (i > 0)
+                  Divider(
+                      height: 1, thickness: 1, color: scheme.outlineVariant),
                 ListTile(
                   title: Text(questions[i].label),
                   trailing: const Icon(Icons.chevron_right),

@@ -10,11 +10,16 @@ import 'package:dhaam_chat/dhaam_chat.dart';
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 
 class FakeWidgetChatClient implements WidgetChatClient {
-  final StreamController<ConnectionState> _connectionStates = StreamController<ConnectionState>.broadcast();
-  final StreamController<ChatMessage> _messages = StreamController<ChatMessage>.broadcast();
-  final StreamController<SessionSnapshot> _sessions = StreamController<SessionSnapshot>.broadcast();
-  final StreamController<TypingEvent> _typing = StreamController<TypingEvent>.broadcast();
-  final StreamController<ReconnectingEvent> _reconnecting = StreamController<ReconnectingEvent>.broadcast();
+  final StreamController<ConnectionState> _connectionStates =
+      StreamController<ConnectionState>.broadcast();
+  final StreamController<ChatMessage> _messages =
+      StreamController<ChatMessage>.broadcast();
+  final StreamController<SessionSnapshot> _sessions =
+      StreamController<SessionSnapshot>.broadcast();
+  final StreamController<TypingEvent> _typing =
+      StreamController<TypingEvent>.broadcast();
+  final StreamController<ReconnectingEvent> _reconnecting =
+      StreamController<ReconnectingEvent>.broadcast();
 
   ConnectionState _state = ConnectionState.idle;
   int connectCalls = 0;
@@ -178,10 +183,13 @@ class FakeWidgetChatClient implements WidgetChatClient {
 
   void emitSession(SessionSnapshot session) => _sessions.add(session);
 
-  void emitTyping(bool isTyping) => _typing.add(TypingEvent(isTyping: isTyping));
+  void emitTyping(bool isTyping) =>
+      _typing.add(TypingEvent(isTyping: isTyping));
 
   /// One scheduled-retry event, as `ChatClient` emits per backoff arming.
-  void emitReconnecting({int attempt = 0, Duration delay = const Duration(milliseconds: 500)}) =>
+  void emitReconnecting(
+          {int attempt = 0,
+          Duration delay = const Duration(milliseconds: 500)}) =>
       _reconnecting.add(ReconnectingEvent(attempt: attempt, delay: delay));
 
   /// One `session.closed` push, as `ChatClient.sessionClosed` emits.
@@ -231,7 +239,8 @@ ChatMessage testMessage({
 }
 
 /// A minimal SessionSnapshot for tests.
-SessionSnapshot testSession({String id = 's1', ChatStatus status = ChatStatus.open}) {
+SessionSnapshot testSession(
+    {String id = 's1', ChatStatus status = ChatStatus.open}) {
   return SessionSnapshot(
     sessionId: id,
     status: status,

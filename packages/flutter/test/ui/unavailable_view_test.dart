@@ -26,17 +26,21 @@ class _FakeUrlLauncher extends UrlLauncherPlatform {
 }
 
 Widget _wrap(RemoteConfig config, VoidCallback onTryAgain) {
-  return MaterialApp(home: Scaffold(body: UnavailableView(config: config, onTryAgain: onTryAgain)));
+  return MaterialApp(
+      home: Scaffold(
+          body: UnavailableView(config: config, onTryAgain: onTryAgain)));
 }
 
 void main() {
   group('safeMailtoUri', () {
     test('a plain address becomes a mailto: URI', () {
-      expect(safeMailtoUri('help@example.com'), Uri(scheme: 'mailto', path: 'help@example.com'));
+      expect(safeMailtoUri('help@example.com'),
+          Uri(scheme: 'mailto', path: 'help@example.com'));
     });
 
     test('trims surrounding whitespace', () {
-      expect(safeMailtoUri('  help@example.com  '), Uri(scheme: 'mailto', path: 'help@example.com'));
+      expect(safeMailtoUri('  help@example.com  '),
+          Uri(scheme: 'mailto', path: 'help@example.com'));
     });
 
     test('null -> null, matching an unset console field', () {
@@ -55,7 +59,8 @@ void main() {
       expect(safeMailtoUri('help@localhost'), isNull);
     });
 
-    test('a header-injection attempt is refused outright, not encoded away', () {
+    test('a header-injection attempt is refused outright, not encoded away',
+        () {
       expect(safeMailtoUri('help@example.com\nBcc:evil@example.com'), isNull);
     });
 
@@ -66,7 +71,8 @@ void main() {
   });
 
   group('UnavailableView', () {
-    testWidgets('always renders the icon, heading and body copy', (tester) async {
+    testWidgets('always renders the icon, heading and body copy',
+        (tester) async {
       await tester.pumpWidget(_wrap(testRemoteConfig(), () {}));
       expect(find.byIcon(Icons.error_outline), findsOneWidget);
       expect(find.text('Chat is temporarily unavailable'), findsOneWidget);
@@ -88,23 +94,27 @@ void main() {
       expect(calls, 1);
     });
 
-    testWidgets('no email link when the console never set supportEmail', (tester) async {
+    testWidgets('no email link when the console never set supportEmail',
+        (tester) async {
       await tester.pumpWidget(_wrap(testRemoteConfig(), () {}));
       expect(find.textContaining('Email '), findsNothing);
     });
 
     testWidgets('no email link for a malformed supportEmail', (tester) async {
-      await tester.pumpWidget(_wrap(testRemoteConfig(supportEmail: 'not-an-email'), () {}));
+      await tester.pumpWidget(
+          _wrap(testRemoteConfig(supportEmail: 'not-an-email'), () {}));
       expect(find.textContaining('Email '), findsNothing);
     });
 
-    testWidgets('shows the merchant address and launches it when tapped', (tester) async {
+    testWidgets('shows the merchant address and launches it when tapped',
+        (tester) async {
       final _FakeUrlLauncher fake = _FakeUrlLauncher();
       final UrlLauncherPlatform original = UrlLauncherPlatform.instance;
       UrlLauncherPlatform.instance = fake;
       addTearDown(() => UrlLauncherPlatform.instance = original);
 
-      await tester.pumpWidget(_wrap(testRemoteConfig(supportEmail: 'help@example.com'), () {}));
+      await tester.pumpWidget(
+          _wrap(testRemoteConfig(supportEmail: 'help@example.com'), () {}));
       expect(find.text('Email help@example.com'), findsOneWidget);
 
       await tester.tap(find.text('Email help@example.com'));

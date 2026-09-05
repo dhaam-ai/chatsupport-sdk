@@ -31,7 +31,8 @@ class HomeScreen extends StatelessWidget {
       builder: (BuildContext context, ChatWidgetState state) {
         final ChatWidgetCubit cubit = context.read<ChatWidgetCubit>();
         final RemoteConfig config = state.config;
-        final ChatSessionSummary? recent = mostRecentSummary(state.sessionSummaries);
+        final ChatSessionSummary? recent =
+            mostRecentSummary(state.sessionSummaries);
         final double radius = chatCornerRadius(config);
 
         // ── The hero is pinned ABOVE the scroll view, not inside it ──
@@ -118,7 +119,8 @@ class _SectionHeading extends StatelessWidget {
 }
 
 class _SendMessageCta extends StatelessWidget {
-  const _SendMessageCta({required this.subtitle, required this.radius, required this.onTap});
+  const _SendMessageCta(
+      {required this.subtitle, required this.radius, required this.onTap});
 
   /// `config.header.ctaSubtitle` — hidden when the merchant left it unset,
   /// matching `home-screen.ts`'s own `ctaSubtitle.hidden = subtitle === ''`.
@@ -152,7 +154,8 @@ class _SendMessageCta extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Text('Send us a message', style: Theme.of(context).textTheme.titleSmall),
+                    Text('Send us a message',
+                        style: Theme.of(context).textTheme.titleSmall),
                     if (subtitle != null && subtitle!.isNotEmpty)
                       Text(
                         subtitle!,
@@ -233,7 +236,8 @@ class _RecentConversationSection extends StatelessWidget {
                                 // context Messages uses; this is the row's own
                                 // heading, so the bare name is what home-screen.ts
                                 // itself renders here.
-                                summary.handledBy?.displayName ?? 'Conversation',
+                                summary.handledBy?.displayName ??
+                                    'Conversation',
                                 overflow: TextOverflow.ellipsis,
                                 style: Theme.of(context).textTheme.titleSmall,
                               ),
@@ -258,7 +262,8 @@ class _RecentConversationSection extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
-                            relativeTimeLabel(summary.lastMessageAt ?? summary.createdAt),
+                            relativeTimeLabel(
+                                summary.lastMessageAt ?? summary.createdAt),
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall
@@ -289,8 +294,14 @@ class _StatusPill extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(color: scheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(999)),
-      child: Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant)),
+      decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(999)),
+      child: Text(label,
+          style: Theme.of(context)
+              .textTheme
+              .labelSmall
+              ?.copyWith(color: scheme.onSurfaceVariant)),
     );
   }
 }

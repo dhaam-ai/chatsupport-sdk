@@ -93,7 +93,12 @@ void main() {
 
     test('an empty list zeroes the badge back out', () {
       cubit.updateSessionSummaries([
-        ChatSessionSummary(id: 'a', status: ChatStatus.open, mode: ChatMode.human, createdAt: DateTime.utc(2026, 1, 1), unreadCount: 4),
+        ChatSessionSummary(
+            id: 'a',
+            status: ChatStatus.open,
+            mode: ChatMode.human,
+            createdAt: DateTime.utc(2026, 1, 1),
+            unreadCount: 4),
       ]);
       expect(cubit.state.unreadCount, 4);
 
@@ -122,7 +127,9 @@ void main() {
       expect(cubit.state.canGoBack, isTrue);
     });
 
-    test('openConversation joins the session and goes to conversation, not composing', () {
+    test(
+        'openConversation joins the session and goes to conversation, not composing',
+        () {
       cubit.openConversation('past-session-1');
       expect(fakeClient.joinedSessionIds, ['past-session-1']);
       expect(cubit.state.screen, ScreenName.conversation);
@@ -144,16 +151,21 @@ void main() {
       expect(cubit.state.screen, ScreenName.messages);
     });
 
-    test('back() with nothing to go back to answers false and leaves state alone', () {
+    test(
+        'back() with nothing to go back to answers false and leaves state alone',
+        () {
       final before = cubit.state;
       final moved = cubit.back();
       expect(moved, isFalse);
       expect(cubit.state, same(before));
     });
 
-    test('startNewConversation clears a topic left selected from a compose that never sent', () {
+    test(
+        'startNewConversation clears a topic left selected from a compose that never sent',
+        () {
       cubit.startNewConversation();
-      cubit.selectTopic(const ConversationTopic(id: 't1', label: 'Delivery issue'));
+      cubit.selectTopic(
+          const ConversationTopic(id: 't1', label: 'Delivery issue'));
       expect(cubit.state.selectedTopic, isNotNull);
 
       cubit.startNewConversation();
@@ -161,9 +173,12 @@ void main() {
       expect(cubit.state.selectedTopic, isNull);
     });
 
-    test('openConversation clears a selected topic — it belongs to a prospective new conversation', () {
+    test(
+        'openConversation clears a selected topic — it belongs to a prospective new conversation',
+        () {
       cubit.startNewConversation();
-      cubit.selectTopic(const ConversationTopic(id: 't1', label: 'Delivery issue'));
+      cubit.selectTopic(
+          const ConversationTopic(id: 't1', label: 'Delivery issue'));
 
       cubit.openConversation('past-session-1');
 
@@ -186,7 +201,8 @@ void main() {
       expect(cubit.state.selectedTopic, otherTopic);
     });
 
-    test('selecting the SAME topic again un-picks it — a single-select toggle', () {
+    test('selecting the SAME topic again un-picks it — a single-select toggle',
+        () {
       cubit.selectTopic(topic);
       cubit.selectTopic(topic);
       expect(cubit.state.selectedTopic, isNull);
@@ -199,7 +215,8 @@ void main() {
       expect(fakeClient.sentContent, ['hello there']);
     });
 
-    test('sendMessage while composing a new conversation clears composingNew', () {
+    test('sendMessage while composing a new conversation clears composingNew',
+        () {
       cubit.startNewConversation();
       expect(cubit.state.composingNew, isTrue);
 
@@ -212,16 +229,21 @@ void main() {
       expect(cubit.state.screen, ScreenName.conversation);
     });
 
-    test('sendMessage while composing also clears a selected topic — its job for this compose is done', () {
+    test(
+        'sendMessage while composing also clears a selected topic — its job for this compose is done',
+        () {
       cubit.startNewConversation();
-      cubit.selectTopic(const ConversationTopic(id: 't1', label: 'Delivery issue'));
+      cubit.selectTopic(
+          const ConversationTopic(id: 't1', label: 'Delivery issue'));
 
       cubit.sendMessage('my order never arrived');
 
       expect(cubit.state.selectedTopic, isNull);
     });
 
-    test('sendMessage NOT composing (an existing conversation) leaves no topic to clear either way', () {
+    test(
+        'sendMessage NOT composing (an existing conversation) leaves no topic to clear either way',
+        () {
       cubit.openConversation('past-session-1');
       cubit.sendMessage('a follow-up message');
       expect(cubit.state.selectedTopic, isNull);
@@ -241,13 +263,16 @@ void main() {
       expect(cubit.state.messages.single.content, 'Hi!');
     });
 
-    test('a second frame with the SAME id replaces rather than duplicates', () async {
+    test('a second frame with the SAME id replaces rather than duplicates',
+        () async {
       // Mirrors ChatClient.sendMessage's own contract: a message this
       // client sent appears twice with the same id — pending, then
       // confirmed — and a host keys its list on it.
-      fakeClient.emitMessage(testMessage(id: 'm1', delivery: MessageDelivery.pending, seq: null));
+      fakeClient.emitMessage(
+          testMessage(id: 'm1', delivery: MessageDelivery.pending, seq: null));
       await flush();
-      fakeClient.emitMessage(testMessage(id: 'm1', delivery: MessageDelivery.confirmed, seq: 42));
+      fakeClient.emitMessage(
+          testMessage(id: 'm1', delivery: MessageDelivery.confirmed, seq: 42));
       await flush();
 
       expect(cubit.state.messages, hasLength(1));
@@ -255,7 +280,8 @@ void main() {
       expect(cubit.state.messages.single.seq, 42);
     });
 
-    test('arrival order is preserved even though the map is keyed by id', () async {
+    test('arrival order is preserved even though the map is keyed by id',
+        () async {
       fakeClient.emitMessage(testMessage(id: 'm1', content: 'first'));
       await flush();
       fakeClient.emitMessage(testMessage(id: 'm2', content: 'second'));
@@ -270,7 +296,8 @@ void main() {
 
   group('inbound session/typing/connection', () {
     test('a session snapshot updates state.session', () async {
-      final session = testSession(id: 's42', status: ChatStatus.waitingForAgent);
+      final session =
+          testSession(id: 's42', status: ChatStatus.waitingForAgent);
       fakeClient.emitSession(session);
       await flush();
       expect(cubit.state.session, session);

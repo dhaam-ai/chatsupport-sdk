@@ -93,7 +93,8 @@ enum LauncherIconSource implements WireEnum {
   @override
   final String wire;
 
-  static LauncherIconSource? fromWire(String value) => lookupWire(values, value);
+  static LauncherIconSource? fromWire(String value) =>
+      lookupWire(values, value);
 }
 
 /// How the hero header's background is painted.
@@ -262,6 +263,7 @@ class HeaderAppearance extends Equatable {
   final bool? showLogo;
   final String? logoUrl;
   final bool? showAvatars;
+
   /// Up to three, rendered overlapping in order — the Home screen's avatar
   /// stack. Beyond that they are dropped, same as the console's own hero.
   final List<String>? avatars;

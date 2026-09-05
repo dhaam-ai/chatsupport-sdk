@@ -42,9 +42,8 @@ Color? parseHexColor(String? value) {
   final String hex = value.trim().replaceFirst('#', '');
   if (!RegExp(r'^([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$').hasMatch(hex)) return null;
 
-  final String rrggbb = hex.length == 3
-      ? hex.split('').map((String c) => '$c$c').join()
-      : hex;
+  final String rrggbb =
+      hex.length == 3 ? hex.split('').map((String c) => '$c$c').join() : hex;
   final int? rgb = int.tryParse(rrggbb, radix: 16);
   return rgb == null ? null : Color(0xFF000000 | rgb);
 }

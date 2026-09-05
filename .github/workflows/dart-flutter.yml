@@ -19,9 +19,9 @@ env:
   # These catch regressions that DELETE tests. Counts verified by filtering out
   # synthetic "loading <file>" testStart entries from --reporter json output,
   # then comparing against --reporter compact final count (+N).
-  DART_TEST_FLOOR: '277'
+  DART_TEST_FLOOR: '331'
   DART_REST_TEST_FLOOR: '464'
-  FLUTTER_TEST_FLOOR: '930'
+  FLUTTER_TEST_FLOOR: '1241'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -106,18 +106,8 @@ jobs:
       - name: packages/flutter - analyze --fatal-infos
         run: cd packages/flutter && flutter analyze --fatal-infos
 
-      # NO format gate here yet, deliberately. `dart format` rewrites 44 of this
-      # package's 49 files at the commit this job was written against, before any
-      # parity work touched them: the package is hand-formatted wider than
-      # `dart format`'s fixed 80 columns, and Dart 3.5.4 has no `page_width`
-      # setting (that arrived in 3.7). No `--line-length` value formats it clean
-      # either -- measured 90 -> 38 files changed, 100 -> 35, 110 -> 27, 120 -> 22.
-      #
-      # So adopting the gate means one mechanical reformat of the whole package,
-      # which would collide with every parity node still in flight. Node T16 does
-      # that reformat as its own isolated commit and re-adds this step in the
-      # same commit. `packages/dart` and `packages/dart_rest` are both clean and
-      # DO gate above -- this exemption is one package wide, not a policy.
+      - name: packages/flutter - format --set-exit-if-changed
+        run: cd packages/flutter && dart format --set-exit-if-changed .
 
       - name: packages/flutter - test
         run: cd packages/flutter && flutter test --reporter json 2>&1 | tee /tmp/flutter-test.json

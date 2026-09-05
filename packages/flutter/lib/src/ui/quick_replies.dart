@@ -20,7 +20,8 @@ export 'message_list/quick_reply_options.dart'
         readQuickReplies;
 
 class QuickReplies extends StatelessWidget {
-  const QuickReplies({super.key, required this.options, required this.onSelect});
+  const QuickReplies(
+      {super.key, required this.options, required this.onSelect});
 
   final List<String> options;
 

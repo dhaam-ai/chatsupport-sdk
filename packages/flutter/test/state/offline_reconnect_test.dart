@@ -97,7 +97,8 @@ void main() {
   });
 
   group('the three inputs the banner needs', () {
-    test('failedAttempts counts scheduled retries and resets on connected', () async {
+    test('failedAttempts counts scheduled retries and resets on connected',
+        () async {
       // Neither number is in any state snapshot — `connectionState` cycles
       // `connecting → reconnecting → connecting` forever and never says how
       // many attempts have already failed. That gap is the whole reason this
@@ -118,7 +119,8 @@ void main() {
       expect(cubit.state.failedAttempts, 0);
     });
 
-    test('queuedCount follows the client, on messages and on transitions', () async {
+    test('queuedCount follows the client, on messages and on transitions',
+        () async {
       client.queued = 2;
       client.emitMessage(testMessage(id: 'm1'));
       await Future<void>.delayed(Duration.zero);
@@ -151,7 +153,8 @@ void main() {
       expect(client.retryNowCalls, isEmpty);
 
       cubit.setOnline(true);
-      expect(client.retryNowCalls, <ConnectionState>[ConnectionState.reconnecting]);
+      expect(client.retryNowCalls,
+          <ConnectionState>[ConnectionState.reconnecting]);
     });
 
     test('an unchanged value is not a signal', () async {
@@ -186,7 +189,8 @@ void main() {
 
       scheduler.advance(kReconnectInterval);
 
-      expect(client.retryNowCalls, <ConnectionState>[ConnectionState.reconnecting]);
+      expect(client.retryNowCalls,
+          <ConnectionState>[ConnectionState.reconnecting]);
     });
 
     test('a tick that fires after the state moved does nothing', () async {

@@ -75,7 +75,8 @@ class HeroHeader extends StatelessWidget {
     final String greeting = header.greeting ?? '';
     final String subGreeting = header.subGreeting ?? '';
 
-    final bool isEmpty = !showLogo && avatars.isEmpty && greeting.isEmpty && subGreeting.isEmpty;
+    final bool isEmpty =
+        !showLogo && avatars.isEmpty && greeting.isEmpty && subGreeting.isEmpty;
     if (isEmpty) return const SizedBox.shrink();
 
     final Color accent = Theme.of(context).colorScheme.primary;
@@ -89,8 +90,10 @@ class HeroHeader extends StatelessWidget {
       decoration: BoxDecoration(color: backgroundColor),
       child: Stack(
         children: <Widget>[
-          if (overlay is HeaderImageOverlay) _HeroBackgroundImage(overlay: overlay),
-          if (overlay is HeaderGradientOverlay) DecoratedBox(decoration: BoxDecoration(gradient: overlay.gradient)),
+          if (overlay is HeaderImageOverlay)
+            _HeroBackgroundImage(overlay: overlay),
+          if (overlay is HeaderGradientOverlay)
+            DecoratedBox(decoration: BoxDecoration(gradient: overlay.gradient)),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -110,22 +113,25 @@ class HeroHeader extends StatelessWidget {
               if (avatars.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: _AvatarStack(avatars: avatars, showPresence: header.showPresence ?? false),
+                  child: _AvatarStack(
+                      avatars: avatars,
+                      showPresence: header.showPresence ?? false),
                 ),
               if (greeting.isNotEmpty)
                 Text(
                   greeting,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(color: foregroundColor, fontWeight: FontWeight.w600),
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: foregroundColor, fontWeight: FontWeight.w600),
                 ),
               if (subGreeting.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     subGreeting,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: foregroundColor.withOpacity(0.85)),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: foregroundColor.withOpacity(0.85)),
                   ),
                 ),
             ],
@@ -354,7 +360,9 @@ class _HeroBackgroundImage extends StatelessWidget {
             // decode — the base colour alone, never Flutter's red error box.
             errorBuilder: (_, __, ___) => const SizedBox.shrink(),
           ),
-          DecoratedBox(decoration: BoxDecoration(color: Colors.black.withOpacity(overlay.scrimAlpha))),
+          DecoratedBox(
+              decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(overlay.scrimAlpha))),
         ],
       ),
     );

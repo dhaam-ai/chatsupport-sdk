@@ -40,8 +40,9 @@ double _percent(double? value, double fallback) {
 /// to fall back from: every colour reaching this function has already gone
 /// through [parseHexColor] (or its default) once, upstream.
 double _relativeLuminance(Color color) {
-  double channel(double srgb) =>
-      srgb <= 0.03928 ? srgb / 12.92 : math.pow((srgb + 0.055) / 1.055, 2.4).toDouble();
+  double channel(double srgb) => srgb <= 0.03928
+      ? srgb / 12.92
+      : math.pow((srgb + 0.055) / 1.055, 2.4).toDouble();
   return 0.2126 * channel(color.red / 255) +
       0.7152 * channel(color.green / 255) +
       0.0722 * channel(color.blue / 255);
@@ -49,8 +50,9 @@ double _relativeLuminance(Color color) {
 
 /// A foreground that stays readable on [color] — mirrors `styles.ts`'s
 /// `readableOn`: white unless the background is light enough to wash it out.
-Color readableOn(Color color) =>
-    _relativeLuminance(color) > 0.55 ? const Color(0xFF1A1A1A) : const Color(0xFFFFFFFF);
+Color readableOn(Color color) => _relativeLuminance(color) > 0.55
+    ? const Color(0xFF1A1A1A)
+    : const Color(0xFFFFFFFF);
 
 /// The hero header's background colour, before any gradient/image overlay.
 ///
@@ -110,7 +112,8 @@ HeaderOverlay? headerOverlay(HeaderAppearance header) {
   if (header.background == HeaderBackground.image) {
     final String? url = safeImageUrl(header.backgroundImageUrl);
     if (url == null) return null;
-    return HeaderImageOverlay(imageUrl: url, scrimAlpha: _percent(header.imageOverlay, 45));
+    return HeaderImageOverlay(
+        imageUrl: url, scrimAlpha: _percent(header.imageOverlay, 45));
   }
 
   return null;

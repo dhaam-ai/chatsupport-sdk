@@ -50,7 +50,8 @@ void main() {
     await client.dispose();
   });
 
-  testWidgets('the empty state shows before any summaries arrive', (tester) async {
+  testWidgets('the empty state shows before any summaries arrive',
+      (tester) async {
     await tester.pumpWidget(_wrap(cubit));
     expect(find.text('No previous conversations yet.'), findsOneWidget);
   });
@@ -64,43 +65,59 @@ void main() {
     expect(cubit.state.activeSurface, isA<ComposingNewSurface>());
   });
 
-  group('row heading resolution — subject, then topic, then handledBy, then a generic fallback', () {
+  group(
+      'row heading resolution — subject, then topic, then handledBy, then a generic fallback',
+      () {
     testWidgets('subject wins when present', (tester) async {
       cubit.updateSessionSummaries([
-        _summary(id: 'a', subject: 'Order never arrived', topic: 'Delivery issue', handledBy: const HandledBy(kind: HandledByKind.agent, id: 'x', displayName: 'Priya')),
+        _summary(
+            id: 'a',
+            subject: 'Order never arrived',
+            topic: 'Delivery issue',
+            handledBy: const HandledBy(
+                kind: HandledByKind.agent, id: 'x', displayName: 'Priya')),
       ]);
       await tester.pumpWidget(_wrap(cubit));
       expect(find.text('Order never arrived'), findsOneWidget);
     });
 
     testWidgets('topic is used when there is no subject', (tester) async {
-      cubit.updateSessionSummaries([_summary(id: 'a', topic: 'Delivery issue')]);
+      cubit
+          .updateSessionSummaries([_summary(id: 'a', topic: 'Delivery issue')]);
       await tester.pumpWidget(_wrap(cubit));
       expect(find.text('Delivery issue'), findsOneWidget);
     });
 
-    testWidgets('falls back to who handled it when neither is set', (tester) async {
+    testWidgets('falls back to who handled it when neither is set',
+        (tester) async {
       cubit.updateSessionSummaries([
-        _summary(id: 'a', handledBy: const HandledBy(kind: HandledByKind.bot, id: 'b', displayName: 'Assistant')),
+        _summary(
+            id: 'a',
+            handledBy: const HandledBy(
+                kind: HandledByKind.bot, id: 'b', displayName: 'Assistant')),
       ]);
       await tester.pumpWidget(_wrap(cubit));
       expect(find.text('Assistant'), findsOneWidget);
     });
 
-    testWidgets('falls back to a generic label rather than inventing a title', (tester) async {
+    testWidgets('falls back to a generic label rather than inventing a title',
+        (tester) async {
       cubit.updateSessionSummaries([_summary(id: 'a')]);
       await tester.pumpWidget(_wrap(cubit));
       expect(find.text('Conversation'), findsOneWidget);
     });
   });
 
-  testWidgets('renders status, preview, handledBy text, and a capped unread badge', (tester) async {
+  testWidgets(
+      'renders status, preview, handledBy text, and a capped unread badge',
+      (tester) async {
     cubit.updateSessionSummaries([
       _summary(
         id: 'a',
         subject: 'Refund request',
         preview: 'I would like a refund please',
-        handledBy: const HandledBy(kind: HandledByKind.agent, id: 'x', displayName: 'Priya'),
+        handledBy: const HandledBy(
+            kind: HandledByKind.agent, id: 'x', displayName: 'Priya'),
         unreadCount: 250,
         status: ChatStatus.waitingForAgent,
       ),
@@ -114,7 +131,8 @@ void main() {
   });
 
   testWidgets('tapping a row opens that conversation', (tester) async {
-    cubit.updateSessionSummaries([_summary(id: 'session-42', subject: 'Refund request')]);
+    cubit.updateSessionSummaries(
+        [_summary(id: 'session-42', subject: 'Refund request')]);
     await tester.pumpWidget(_wrap(cubit));
 
     await tester.tap(find.text('Refund request'));
@@ -126,12 +144,19 @@ void main() {
   group('search', () {
     setUp(() {
       cubit.updateSessionSummaries([
-        _summary(id: 'a', subject: 'Refund request', preview: 'Please refund my order'),
-        _summary(id: 'b', topic: 'Delivery issue', preview: 'Package never showed up'),
+        _summary(
+            id: 'a',
+            subject: 'Refund request',
+            preview: 'Please refund my order'),
+        _summary(
+            id: 'b',
+            topic: 'Delivery issue',
+            preview: 'Package never showed up'),
       ]);
     });
 
-    testWidgets('filters by subject/topic/preview, case-insensitively', (tester) async {
+    testWidgets('filters by subject/topic/preview, case-insensitively',
+        (tester) async {
       await tester.pumpWidget(_wrap(cubit));
 
       await tester.enterText(find.byType(TextField), 'delivery');
@@ -141,7 +166,8 @@ void main() {
       expect(find.text('Refund request'), findsNothing);
     });
 
-    testWidgets('matches on the status label as well as the preview text', (tester) async {
+    testWidgets('matches on the status label as well as the preview text',
+        (tester) async {
       // The rule `messages-screen.ts` states for its own filter: nothing is
       // searchable that is not on screen, so a match is always explainable
       // by looking at the row that produced it. The status is the most
@@ -161,7 +187,8 @@ void main() {
       expect(find.text('y'), findsNothing);
     });
 
-    testWidgets('matches the words on screen, never the enum name', (tester) async {
+    testWidgets('matches the words on screen, never the enum name',
+        (tester) async {
       // "With an agent" is what ASSIGNED renders as; "assigned" is a queue
       // fact the customer never sees, so it is not what they can type.
       cubit.updateSessionSummaries([
@@ -178,7 +205,8 @@ void main() {
       expect(find.text('No conversations match your search.'), findsOneWidget);
     });
 
-    testWidgets('an unmatched query shows the search-specific empty state', (tester) async {
+    testWidgets('an unmatched query shows the search-specific empty state',
+        (tester) async {
       await tester.pumpWidget(_wrap(cubit));
 
       await tester.enterText(find.byType(TextField), 'nothing matches this');

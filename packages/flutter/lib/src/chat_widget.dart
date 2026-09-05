@@ -142,7 +142,8 @@ class _ChatWidgetState extends State<ChatWidget> {
           muted: state.muted,
         ),
         builder: (BuildContext context, ChatWidgetState state) {
-          final ThemeData theme = chatThemeData(state.config, MediaQuery.platformBrightnessOf(context));
+          final ThemeData theme = chatThemeData(
+              state.config, MediaQuery.platformBrightnessOf(context));
 
           return Theme(
             data: theme,
@@ -164,7 +165,9 @@ class _ChatWidgetState extends State<ChatWidget> {
                 // drill-downs, and Home already greets the customer via its
                 // own HeroHeader — a second, generic bar above it would be
                 // a redundant header, not a helpful one.
-                appBar: state.canGoBack ? _ConversationAppBar(state: state, cubit: widget.cubit) : null,
+                appBar: state.canGoBack
+                    ? _ConversationAppBar(state: state, cubit: widget.cubit)
+                    : null,
                 // The unavailable panel takes over the whole body, in place
                 // of whichever screen was active, the moment the connection
                 // has genuinely given up (see kTerminalConnectionStates) —
@@ -172,7 +175,8 @@ class _ChatWidgetState extends State<ChatWidget> {
                 // no composer left underneath it for a customer to type into
                 // a conversation that has nowhere to go.
                 body: kTerminalConnectionStates.contains(state.connectionState)
-                    ? UnavailableView(config: state.config, onTryAgain: widget.cubit.connect)
+                    ? UnavailableView(
+                        config: state.config, onTryAgain: widget.cubit.connect)
                     // The bar sits ABOVE whichever screen is active and
                     // outside it, because it is not a fact about any one
                     // screen: it survives every move between Home, Messages
@@ -201,7 +205,8 @@ class _ChatWidgetState extends State<ChatWidget> {
                             child: switch (state.screen) {
                               ScreenName.home => const HomeScreen(),
                               ScreenName.messages => const MessagesScreen(),
-                              ScreenName.conversation => const ConversationScreen(),
+                              ScreenName.conversation =>
+                                const ConversationScreen(),
                             },
                           ),
                         ],
@@ -220,7 +225,8 @@ class _ChatWidgetState extends State<ChatWidget> {
   }
 }
 
-class _ConversationAppBar extends StatelessWidget implements PreferredSizeWidget {
+class _ConversationAppBar extends StatelessWidget
+    implements PreferredSizeWidget {
   const _ConversationAppBar({required this.state, required this.cubit});
 
   final ChatWidgetState state;
@@ -246,7 +252,9 @@ class _ConversationAppBar extends StatelessWidget implements PreferredSizeWidget
         // `config.title` is the merchant's; 'Conversation' stays the last
         // resort for a tenant that published none. Composing a new
         // conversation outranks both — there is nobody to name yet.
-        fallbackTitle: state.composingNew ? 'New conversation' : (state.config.title ?? 'Conversation'),
+        fallbackTitle: state.composingNew
+            ? 'New conversation'
+            : (state.config.title ?? 'Conversation'),
       ),
       leading: BackButton(onPressed: cubit.back),
       actions: <Widget>[

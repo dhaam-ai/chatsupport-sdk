@@ -22,7 +22,8 @@ void main() {
     await client.dispose();
   });
 
-  testWidgets('no topic section when the console configured none', (tester) async {
+  testWidgets('no topic section when the console configured none',
+      (tester) async {
     client = FakeWidgetChatClient();
     cubit = ChatWidgetCubit(client: client);
     cubit.startNewConversation();
@@ -30,12 +31,15 @@ void main() {
     expect(find.byType(ChoiceChip), findsNothing);
   });
 
-  testWidgets('renders topic chips and selecting one calls the Cubit', (tester) async {
+  testWidgets('renders topic chips and selecting one calls the Cubit',
+      (tester) async {
     client = FakeWidgetChatClient();
     cubit = ChatWidgetCubit(
       client: client,
       initialConfig: testRemoteConfig(
-        conversationTopics: const <ConversationTopic>[ConversationTopic(id: 't1', label: 'Delivery issue')],
+        conversationTopics: const <ConversationTopic>[
+          ConversationTopic(id: 't1', label: 'Delivery issue')
+        ],
       ),
     );
     cubit.startNewConversation();
@@ -45,24 +49,28 @@ void main() {
     await tester.tap(find.text('Delivery issue'));
     await tester.pump();
 
-    expect(cubit.state.selectedTopic, const ConversationTopic(id: 't1', label: 'Delivery issue'));
+    expect(cubit.state.selectedTopic,
+        const ConversationTopic(id: 't1', label: 'Delivery issue'));
     // The chip's own visual state follows the Cubit, not local widget state.
     final ChoiceChip chip = tester.widget(find.byType(ChoiceChip));
     expect(chip.selected, isTrue);
   });
 
-  testWidgets('Start is disabled until the textarea has non-blank content', (tester) async {
+  testWidgets('Start is disabled until the textarea has non-blank content',
+      (tester) async {
     client = FakeWidgetChatClient();
     cubit = ChatWidgetCubit(client: client);
     cubit.startNewConversation();
     await tester.pumpWidget(_wrap(cubit));
 
-    FilledButton start() => tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Start'));
+    FilledButton start() =>
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Start'));
     expect(start().onPressed, isNull);
 
     await tester.enterText(find.byType(TextField), '   ');
     await tester.pump();
-    expect(start().onPressed, isNull, reason: 'whitespace-only is not real content');
+    expect(start().onPressed, isNull,
+        reason: 'whitespace-only is not real content');
 
     await tester.enterText(find.byType(TextField), 'My order never arrived');
     await tester.pump();
@@ -75,7 +83,8 @@ void main() {
     cubit.startNewConversation();
     await tester.pumpWidget(_wrap(cubit));
 
-    await tester.enterText(find.byType(TextField), '  My order never arrived  ');
+    await tester.enterText(
+        find.byType(TextField), '  My order never arrived  ');
     await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, 'Start'));
     await tester.pump();

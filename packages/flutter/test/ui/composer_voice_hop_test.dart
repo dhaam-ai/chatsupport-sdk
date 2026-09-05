@@ -227,8 +227,7 @@ void main() {
       final AttachmentDraftController attachments = draftController();
       addTearDown(attachments.dispose);
       final VoiceCaptureController voice = VoiceCaptureController(
-        createDevice: () =>
-            _FakeDevice(audio: _audio(kMaxAttachmentBytes + 1)),
+        createDevice: () => _FakeDevice(audio: _audio(kMaxAttachmentBytes + 1)),
       );
       addTearDown(voice.dispose);
       await tester.pumpWidget(host(attachments: attachments, voice: voice));

@@ -33,10 +33,14 @@ void main() {
     expect(find.text('Send us a message'), findsOneWidget);
   });
 
-  testWidgets('the CTA subtitle is the header\'s ctaSubtitle, hidden when unset', (tester) async {
+  testWidgets(
+      'the CTA subtitle is the header\'s ctaSubtitle, hidden when unset',
+      (tester) async {
     cubit = ChatWidgetCubit(
       client: client,
-      initialConfig: testRemoteConfig(header: const HeaderAppearance(ctaSubtitle: 'We reply within an hour')),
+      initialConfig: testRemoteConfig(
+          header:
+              const HeaderAppearance(ctaSubtitle: 'We reply within an hour')),
     );
     await tester.pumpWidget(_wrap(cubit));
     expect(find.text('We reply within an hour'), findsOneWidget);
@@ -59,14 +63,16 @@ void main() {
     expect(cubit.state.conversationOpened, isFalse);
   });
 
-  testWidgets('no Recent conversation section when there are no summaries', (tester) async {
+  testWidgets('no Recent conversation section when there are no summaries',
+      (tester) async {
     cubit = ChatWidgetCubit(client: client);
     await tester.pumpWidget(_wrap(cubit));
     // _SectionHeading renders its text upper-cased.
     expect(find.text('RECENT CONVERSATION'), findsNothing);
   });
 
-  testWidgets('shows the most recent conversation, and opens it on tap', (tester) async {
+  testWidgets('shows the most recent conversation, and opens it on tap',
+      (tester) async {
     cubit = ChatWidgetCubit(client: client);
     cubit.updateSessionSummaries(<ChatSessionSummary>[
       ChatSessionSummary(
@@ -83,7 +89,8 @@ void main() {
         createdAt: DateTime.utc(2026, 1, 1),
         lastMessageAt: DateTime.utc(2026, 6, 1),
         lastMessagePreview: 'Thanks for your help!',
-        handledBy: const HandledBy(kind: HandledByKind.agent, id: 'a1', displayName: 'Priya'),
+        handledBy: const HandledBy(
+            kind: HandledByKind.agent, id: 'a1', displayName: 'Priya'),
       ),
     ]);
     await tester.pumpWidget(_wrap(cubit));
@@ -99,10 +106,16 @@ void main() {
     expect(cubit.state.composingNew, isFalse);
   });
 
-  testWidgets('a recent conversation nobody has picked up still says where it stands', (tester) async {
+  testWidgets(
+      'a recent conversation nobody has picked up still says where it stands',
+      (tester) async {
     cubit = ChatWidgetCubit(client: client);
     cubit.updateSessionSummaries(<ChatSessionSummary>[
-      ChatSessionSummary(id: 'x', status: ChatStatus.open, mode: ChatMode.bot, createdAt: DateTime.utc(2026, 1, 1)),
+      ChatSessionSummary(
+          id: 'x',
+          status: ChatStatus.open,
+          mode: ChatMode.bot,
+          createdAt: DateTime.utc(2026, 1, 1)),
     ]);
     await tester.pumpWidget(_wrap(cubit));
 
@@ -117,7 +130,11 @@ void main() {
   testWidgets('See all switches to the Messages tab', (tester) async {
     cubit = ChatWidgetCubit(client: client);
     cubit.updateSessionSummaries(<ChatSessionSummary>[
-      ChatSessionSummary(id: 'x', status: ChatStatus.open, mode: ChatMode.bot, createdAt: DateTime.utc(2026, 1, 1)),
+      ChatSessionSummary(
+          id: 'x',
+          status: ChatStatus.open,
+          mode: ChatMode.bot,
+          createdAt: DateTime.utc(2026, 1, 1)),
     ]);
     await tester.pumpWidget(_wrap(cubit));
 
@@ -125,18 +142,24 @@ void main() {
     expect(cubit.state.screen, ScreenName.messages);
   });
 
-  testWidgets('no Common Questions section when the console configured none', (tester) async {
+  testWidgets('no Common Questions section when the console configured none',
+      (tester) async {
     cubit = ChatWidgetCubit(client: client);
     await tester.pumpWidget(_wrap(cubit));
     expect(find.text('COMMON QUESTIONS'), findsNothing);
   });
 
-  testWidgets('tapping a common question starts a new conversation and sends its PROMPT, not its label', (tester) async {
+  testWidgets(
+      'tapping a common question starts a new conversation and sends its PROMPT, not its label',
+      (tester) async {
     cubit = ChatWidgetCubit(
       client: client,
       initialConfig: testRemoteConfig(
         commonQuestions: const <CommonQuestion>[
-          CommonQuestion(id: 'q1', label: 'Shipping?', prompt: 'How long does shipping take?'),
+          CommonQuestion(
+              id: 'q1',
+              label: 'Shipping?',
+              prompt: 'How long does shipping take?'),
         ],
       ),
     );
