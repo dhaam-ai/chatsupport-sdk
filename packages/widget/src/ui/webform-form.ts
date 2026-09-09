@@ -40,6 +40,7 @@ import {
   submitOnce,
 } from './forms.js';
 import type { FieldSpec } from './forms.js';
+import { dedupeAgainstRendered } from './field-dedup.js';
 import { WEBFORM_MESSAGE_MAX, WebformError, newSubmissionId, visitorMessage } from '../webform.js';
 import type { WebformDraft, WebformReceipt } from '../webform.js';
 
@@ -91,14 +92,6 @@ const EMAIL_FIELD: FieldSpec = { id: 'email', label: 'Email', type: 'email', req
 const PHONE_FIELD: FieldSpec = { id: 'phone', label: 'Phone', type: 'phone', required: false };
 const FIELDS: readonly FieldSpec[] = [NAME_FIELD, EMAIL_FIELD, PHONE_FIELD];
 
-/**
- * Console fields that duplicate the three built-ins above — same dedup rule
- * `ui/offline-form.ts` applies for the same reason: the console seeds every
- * workspace with "Your name" and "Email address", so without this a merchant
- * who never touched pre-chat settings gets a field asking twice.
- */
-const BUILT_IN_LABEL = /^(name|your name|email|email address|phone|contact|contact details)$/i;
-
 export function createWebformForm(
   options: WebformFormOptions,
   callbacks: WebformFormCallbacks,
@@ -121,10 +114,19 @@ export function createWebformForm(
     ],
   });
 
-  const views = FIELDS.map((spec) => ({ spec, view: createField(spec, 'dh-webform') }));
-  const custom = options.extraFields
-    .filter((spec) => !BUILT_IN_LABEL.test(spec.label.trim()))
-    .map((spec) => ({ spec, view: createField(spec, 'dh-webform') }));
+  // Deduped against `FIELDS` — the specs this form actually renders — and not
+  // against a list of labels. "Phone number" is dropped because THIS form
+  // shows a Phone box; "Contact" is kept because it does not. `ui/field-
+  // dedup.ts` owns the rule, and the offline form applies the same one to its
+  // own, different built-ins.
+  //
+  // `built` rather than `FIELDS` below, and that is load-bearing: a dropped
+  // REQUIRED duplicate promotes the built-in it repeated, and Name and Phone
+  // here are optional, so rendering the constant instead would submit without
+  // the answer the merchant made mandatory.
+  const { rendered: built, extra } = dedupeAgainstRendered(FIELDS, options.extraFields);
+  const views = built.map((spec) => ({ spec, view: createField(spec, 'dh-webform') }));
+  const custom = extra.map((spec) => ({ spec, view: createField(spec, 'dh-webform') }));
 
   const messageLabel = el('label', {
     attrs: { class: 'dh-field-label', for: 'dh-webform-message' },
