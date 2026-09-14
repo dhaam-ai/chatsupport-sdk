@@ -150,7 +150,10 @@ const formResult = await build({
   stdin: {
     contents: "import { installFormGlobal } from './src/form.ts';\ninstallFormGlobal();\n",
     resolveDir: packageRoot,
-    sourcefile: 'form-embed.ts',
+    // `form-entry.ts`, not `form-embed.ts`: the latter is now a real module
+    // with its own bundle below, and a composition table naming this entry
+    // after it would point at the wrong file.
+    sourcefile: 'form-entry.ts',
     loader: 'ts',
   },
   outfile: formOutfile,
@@ -174,14 +177,19 @@ console.log('');
 // A build failure, not a review comment — the same contract as
 // WIDGET_GZIP_BUDGET above, sized for a much smaller artifact.
 //
-// 12 KiB against a measured 9,738 B gzip: 2,550 B of headroom. Measured
+// 12 KiB against a measured 9,984 B gzip: 2,304 B of headroom. Measured
 // 2026-09-14 by `formGzip` above, on this build, and stated ONCE — earlier
 // drafts of this comment quoted three different numbers from three sources.
 // To reproduce, after `pnpm build`, from `packages/widget`:
 //
 //   node -e "const {gzipSync}=require('node:zlib');const {readFileSync}=require('node:fs');\
 //   const b=readFileSync('dist/form.js');console.log(b.length, gzipSync(b,{level:9}).length)"
-//   → 24369 9738
+//   → 24932 9984
+//
+// It read 24,369 / 9,738 when this budget was set, before the resize
+// protocol's frame half (`parentOrigin`, `parentOriginFromLocation`) landed
+// in form.ts: +563 raw, +246 gzip. The budget itself is unchanged — that is
+// what the headroom was for.
 //
 // Chosen as a proportion of THIS bundle rather than by copying the widget's
 // ~6%, which would be ~600 B here and would fail on a single added sentence
@@ -232,6 +240,139 @@ const strays = [...formGroups.keys()].filter((origin) => !FORM_ALLOWED_ORIGINS.h
 if (strays.length > 0) {
   console.error(
     `  ERROR: ${strays.join(', ')} reached dist/form.js. The form has no client in it.`,
+  );
+  console.error('  Either drop the import or state here why this bundle now carries it.');
+  process.exitCode = 1;
+}
+console.log('');
+
+// ════════════════════════════════════════════════════════════════════════
+// dist/form-embed.js — the iframe embed's HOST half, and nothing else
+// ════════════════════════════════════════════════════════════════════════
+//
+// A FOURTH artifact. It runs on the merchant's own page, creates one
+// `<iframe>` pointing at the console's hosted form page, and applies the
+// heights that page posts up. It renders no form: the form is inside the
+// frame, on another origin, served by `dist/form.js`'s module.
+//
+// So the claim this bundle makes is narrower than `dist/form.js`'s, and the
+// allowlist below is correspondingly narrower — `src/ui` is a STRAY here. A
+// merchant paying for a whole form's UI on a page that only holds an iframe
+// would be paying for nothing, and the import that did it would be invisible
+// in a size budget (the form UI is only ~16 KB of source) until someone read
+// the table.
+const embedOutfile = join(packageRoot, 'dist', 'form-embed.js');
+
+const embedResult = await build({
+  stdin: {
+    contents: "import { installFormEmbedGlobal } from './src/form-embed.ts';\ninstallFormEmbedGlobal();\n",
+    resolveDir: packageRoot,
+    sourcefile: 'form-embed-entry.ts',
+    loader: 'ts',
+  },
+  outfile: embedOutfile,
+  bundle: true,
+  minify: true,
+  format: 'iife',
+  target: ['es2020'],
+  platform: 'browser',
+  sourcemap: 'linked',
+  legalComments: 'none',
+  metafile: true,
+  logLevel: 'warning',
+});
+
+const embedBytes = readFileSync(embedOutfile);
+const embedGzip = gzipSync(embedBytes, { level: 9 });
+
+console.log(`  dist/form-embed.js   ${fmt(embedBytes.length)} raw   ${fmt(embedGzip.length)} gzip`);
+console.log('');
+
+// A build failure, not a review comment — the same contract as the two
+// budgets above, sized for by far the smallest artifact of the four.
+//
+// 3 KiB against a measured 1,547 B gzip: 1,525 B of headroom, roughly the
+// size of the file itself. Generous ON PURPOSE and stated as such: at this
+// size a budget proportional to the others (~6%, i.e. 92 B) would fail on a
+// single added comment block, and a budget that fails for no reason gets
+// raised without being read.
+//
+// ── WHAT THIS PAIR OF GUARDS DOES NOT CATCH ─────────────────────────────
+//
+// An earlier draft of this comment justified that headroom by claiming "the
+// smallest thing this file could accidentally import is larger than 1.6 KB".
+// That is FALSE, and measuring it is cheap. Import and use `asksForAHuman`
+// from `./handoff-keywords.js` — 4,319 B of source, a whole real module — and
+// this script prints
+//
+//   dist/form-embed.js   3.7 KB raw   1.7 KB gzip     (3,781 / 1,781 exactly)
+//   dist/form-embed.js composition:
+//        3.6 KB  widget wiring (src)
+//
+// and exits 0. No budget error: ~240 B of gzip against ~1,525 of headroom. No
+// allowlist error either, and that is the more interesting half — `originOf`
+// buckets EVERY non-`src/ui` file under `packages/widget/src/` into the single
+// allowed bucket, `'widget wiring (src)'`, so a sibling module is
+// indistinguishable here from this file's own code.
+//
+// So state the real boundary instead. The two guards catch:
+//
+//   - @dhaam-ccrm/core, a workspace sibling, or anything from node_modules
+//     (named buckets, any size);
+//   - `src/ui/**` — the form UI landing on a page that only holds an iframe
+//     (named bucket, any size);
+//   - anything, from anywhere, that adds more than ~1.5 KB gzip.
+//
+// They do NOT catch a self-contained `src/*.ts` sibling under that size.
+// `handoff-keywords.ts`, `attributes.ts` (5,972 B) and `singleton.ts`
+// (2,262 B) are each in that class today. Closing it means bucketing per FILE
+// rather than per directory, which changes `originOf` and therefore all three
+// composition tables above — out of scope here, and written down rather than
+// left as a reassurance that does not hold. A guard carrying a false claim is
+// worse than one that states its limit, because the false claim is what stops
+// the next person looking.
+//
+// Measured 2026-09-14 by `embedGzip` above, on this build. To reproduce,
+// after `pnpm build`, from `packages/widget`:
+//
+//   node -e "const {gzipSync}=require('node:zlib');const {readFileSync}=require('node:fs');\
+//   const b=readFileSync('dist/form-embed.js');console.log(b.length, gzipSync(b,{level:9}).length)"
+//   → 3287 1547
+//
+// It read 3065 / 1435 before this round's additions — the `http:`/`https:`
+// scheme test on `hostedOrigin` and the `onUnreachable` deadline: +222 raw,
+// +112 gzip. The budget itself is unchanged.
+const FORM_EMBED_GZIP_BUDGET = 3_072;
+if (embedGzip.length > FORM_EMBED_GZIP_BUDGET) {
+  console.error(
+    `  ERROR: dist/form-embed.js is ${fmt(embedGzip.length)} gzip, over the ${fmt(FORM_EMBED_GZIP_BUDGET)} budget.`,
+  );
+  console.error('  Either trim the addition or raise FORM_EMBED_GZIP_BUDGET with a reason, not silently.');
+  console.log('');
+  process.exitCode = 1;
+}
+
+const embedOutput = Object.entries(embedResult.metafile.outputs).find(([file]) => file.endsWith('.js'));
+const embedInputs = embedOutput?.[1]?.inputs ?? {};
+const embedGroups = new Map();
+for (const [file, meta] of Object.entries(embedInputs)) {
+  embedGroups.set(originOf(file), (embedGroups.get(originOf(file)) ?? 0) + meta.bytesInOutput);
+}
+console.log('  dist/form-embed.js composition:');
+for (const [origin, size] of [...embedGroups.entries()].sort((a, b) => b[1] - a[1])) {
+  console.log(`    ${fmt(size).padStart(9)}  ${origin}`);
+}
+
+// ONE bucket is legitimate here, against `dist/form.js`'s two. `src/ui` in
+// this bundle means the form itself has been pulled onto the merchant's page
+// — the exact thing the iframe surface exists to avoid — and
+// `@dhaam-ccrm/core`, `node_modules` or `unknown origin` each mean this file
+// stopped being the standalone, import-free module its header claims.
+const FORM_EMBED_ALLOWED_ORIGINS = new Set(['widget wiring (src)']);
+const embedStrays = [...embedGroups.keys()].filter((origin) => !FORM_EMBED_ALLOWED_ORIGINS.has(origin));
+if (embedStrays.length > 0) {
+  console.error(
+    `  ERROR: ${embedStrays.join(', ')} reached dist/form-embed.js. It embeds a frame; it does not render a form.`,
   );
   console.error('  Either drop the import or state here why this bundle now carries it.');
   process.exitCode = 1;

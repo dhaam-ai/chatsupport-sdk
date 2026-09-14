@@ -208,6 +208,209 @@ Rendered from core's `deriveTickState` and nothing else. This package computes
 no delivery state of its own — v1 drew the double tick from *presence*, and
 connectivity is not delivery: a participant can be online and not caught up.
 
+## Embedding the web form
+
+The **web form** is the chat widget's offline path on its own: no launcher, no
+panel, no socket, no session, no token mint. One publishable key serves every
+surface below, and all of them render the same form and POST to the same
+endpoint, so two surfaces on one tenant cannot disagree about what a
+submission means.
+
+### Three origins, and they are not the same thing
+
+The single most common integration mistake here is collapsing these:
+
+| Origin | What it is | Where it appears |
+|---|---|---|
+| **SDK CDN** — `https://cdn.dhaamdesk.com/` | Where our script files are served from, alongside `widget.js` | `<script src>` |
+| **chat-service** — e.g. `https://chat.example.com` | Reads the form's config, receives the submission | `data-api-url` / `apiUrl` |
+| **console host** — e.g. `https://console.dhaamdesk.com` | Serves the hosted page `/f/<publishableKey>` that the iframe points at | `data-hosted-origin` / `hostedOrigin` |
+
+`hostedOrigin` has **no default**. This package has no canonical console origin
+baked into it, and guessing one would point a merchant's contact page at
+someone else's deployment — so it is required, explicit, and validated.
+
+### 1. Script tag, form rendered inline
+
+```html
+<script src="https://cdn.dhaamdesk.com/form.js"
+        data-publishable-key="dhp_live_…"
+        data-api-url="https://chat.example.com"></script>
+
+<div data-dhaam-form></div>
+```
+
+Every element matching `[data-dhaam-form]` gets a form. `data-target` picks a
+different selector; `data-auto="false"` installs the API without mounting
+anything. The API is `window.DhaamForm`:
+
+| Method | What it does |
+|---|---|
+| `mount(target, options)` | Mounts a form into `target` and returns it. One form per element — a second call returns the first. |
+| `get(target)` | The form mounted in `target`, or `null`. |
+
+One element of ours enters your page — `<dh-web-form>` — and everything else
+lives in an **open** shadow root, so your CSS and ours cannot reach each other
+but an accessibility audit can still walk the tree.
+
+### 2. Bundler / framework, same form
+
+```js
+import { mountForm } from '@dhaam-ccrm/widget';
+
+const form = mountForm(document.querySelector('#contact'), {
+  apiUrl: 'https://chat.example.com',
+  publishableKey: 'dhp_live_…',
+  onSubmitted: (receipt) => console.log(receipt.receiptId),
+});
+// form.focus() moves keyboard focus into it; form.destroy() removes it.
+```
+
+Importing from the package installs **no** global and scans **no** document —
+those are properties of the script-tag artifact, not of the module.
+
+### 3. iframe embed, for full style isolation
+
+When a shadow root is not enough — a host stylesheet with `!important`
+everywhere, a CSP that forbids the form's own styles, a compliance rule that
+wants the form on its own origin — embed the hosted page instead:
+
+```html
+<script src="https://cdn.dhaamdesk.com/form-embed.js"
+        data-publishable-key="dhp_live_…"
+        data-hosted-origin="https://console.dhaamdesk.com"></script>
+
+<div data-dhaam-form></div>
+```
+
+or from a bundler:
+
+```js
+import { embedForm } from '@dhaam-ccrm/widget';
+
+const embed = embedForm(document.querySelector('#contact'), {
+  publishableKey: 'dhp_live_…',
+  hostedOrigin: 'https://console.dhaamdesk.com',
+  title: 'Contact form',          // the iframe's accessible name
+  signal: controller.signal,      // optional; aborting tears the embed down
+  onUnreachable: () => showEmailFallback(),   // optional; see below
+});
+// embed.iframe is the one element added to your page; embed.destroy() removes it.
+```
+
+**The frame resizes itself.** The page inside measures its own content and
+posts its height up; the embed applies it, so the iframe never shows a
+scrollbar of its own and your page never has to guess a height. Heights are
+accepted only from `hostedOrigin` **and** only from that exact frame —
+everything else on the `message` channel is ignored silently, because a page
+with two embeds on it sees both of their traffic and that is not an error.
+
+**When the frame never loads.** A typo in `hostedOrigin`, a hosted page served
+with `X-Frame-Options: SAMEORIGIN`, a console that is down — from your page all
+three look the same, and the browser gives us nothing to detect them with: a
+refused frame fires no `onerror`, `onload` fires for the browser's own error
+document, and reading into a cross-origin frame is forbidden. So the only fact
+available is that no height ever arrived. `onUnreachable` reports exactly that,
+once, `EMBED_UNREACHABLE_TIMEOUT_MS` (10 seconds) after the embed goes onto the
+page. It removes nothing and resizes nothing, and a frame that turns up late
+still resizes normally.
+
+Its default is **nothing at all** — no console output and no timer for a caller
+who did not ask. What to do about an unreachable console is your call: a
+fallback block, a `mailto:` link, your own error reporting.
+
+**Under a strict Content-Security-Policy** this adds exactly one directive:
+
+```
+frame-src https://console.dhaamdesk.com;
+```
+
+That is the only directive the embed itself **adds**. In particular **no
+`style-src 'unsafe-inline'`**: every style is assigned through the CSSOM
+(`iframe.style.height = …`), never as a `style` attribute string and never as an
+injected `<style>` element. No `script-src 'unsafe-inline'` either — nothing is
+evaluated — and no `connect-src`, because this side makes no request at all. The
+page inside the frame does its own reading, under the console host's policy
+rather than yours.
+
+One qualifier, because it is the thing that will actually bite: if you load
+`form-embed.js` from our CDN, your `script-src` still has to admit that file,
+exactly as it already does for `widget.js` or `form.js`. The claim here is that
+this bundle needs no *new* `script-src`, `style-src` or `connect-src` grant —
+not that `frame-src` is the only directive your page ends up with.
+
+**Serving the hosted page.** `/f/<publishableKey>?embed=1&origin=<embedder>`
+is the contract; the full protocol — URL shape, message shape, origin rules —
+is written out in the header of `src/form-embed.ts`. A page joins it in one
+line:
+
+```js
+import { mountForm, parentOriginFromLocation } from '@dhaam-ccrm/widget';
+
+mountForm(document.querySelector('#form'), {
+  apiUrl: 'https://chat.example.com',
+  publishableKey,
+  parentOrigin: parentOriginFromLocation(location.search),
+});
+```
+
+`parentOrigin` is what turns the height reporting on. Given an origin it
+cannot validate — absent, `"null"` from a sandboxed embedder, a wildcard — it
+posts **nothing**, and never falls back to `'*'`.
+
+Three obligations come with serving that page, and none of them is optional in
+practice. The header of `src/form-embed.ts` is the spec of record; this is the
+short version.
+
+**1. Do not send `X-Frame-Options: DENY` or `SAMEORIGIN`.** This is the one that
+will happen to you, because nobody chooses it: helmet, Django's
+`XFrameOptionsMiddleware`, Rails' default headers and most nginx hardening
+snippets all send `SAMEORIGIN` on their own. The browser then refuses the frame
+outright — nothing inside it runs, no height is ever posted — and the merchant
+sees an empty 320px box. Use `Content-Security-Policy: frame-ancestors` instead
+— but build it from the `?origin=` **only after checking that origin against the
+tenant's registered origins**, and refuse (or send `frame-ancestors 'none'`) when
+it does not match.
+
+> ⚠️ Reflecting `?origin=` back unchecked is a security no-op that reads like
+> access control. The framing page supplies that parameter, so a hostile page
+> frames with `?origin=https://evil.example` and a page that only checks its
+> *syntax* answers `frame-ancestors https://evil.example` — permitting exactly
+> the page that asked. The list to check against already exists and is already
+> enforced by `GET /widget/form`, which answers 403 `ORIGIN_NOT_ALLOWED` to an
+> origin that is not on the tenant's list. An empty list means unrestricted
+> there, so degrade the same way rather than locking out tenants who have not
+> filled it in.
+
+It is not the same thing as the merchant's `frame-src` — that is the embedder's
+policy about what it will load, `frame-ancestors` is yours about who may frame
+you — and neither substitutes for the other. Nor does the SDK's own origin check
+help you here: that runs as JavaScript on the embedder's page, so it protects an
+honest embedder from a third party and can never protect you from the embedder.
+
+**2. Every response must post a height, error pages included.** A 401 for a
+revoked key, a 404 for an unknown one, a 429, a 500, the edge's own error page:
+each is a document inside somebody's contact page, and one that posts no height
+is not a frame at its natural size. `scrolling="no"` and `overflow: hidden` are
+both set unconditionally, so it is a **320px clipping of itself with no
+scrollbar** — on anything taller, the submit button cannot be reached and no
+scroll gesture will reveal it. One inline script on the error template, posting
+`{ type: 'dhaam-form:resize', height }` to the validated `?origin=`, discharges
+this; it needs none of the SDK.
+
+**3. What gets measured is the form element's border box — and nothing around
+it.** The `ResizeObserver` watches `root.host`, so a logo, your branding, a
+wrapper's padding or a cookie bar above the form is **not** in the number, and
+under `overflow: hidden` it is clipped by exactly its own height. A branded
+hosted page is the likeliest thing to build here and the likeliest way to get
+this wrong, because it looks right locally: opening `/f/<key>` directly shows it
+at full window height, where nothing is clipped. Either put the chrome inside
+the measured element, or add its height to what you post.
+
+### 4. React
+
+*(added by the React binding — see its own README.)*
+
 ## Development
 
 ```bash

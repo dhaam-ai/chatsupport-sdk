@@ -94,7 +94,11 @@ export type { WebformDraft, WebformReceipt, WebformFailureKind } from './webform
 // need the answer BEFORE they have an element to render into — a hosted page
 // deciding whether to render a form at all, say — and a second implementation
 // of that read is how the two would come to disagree about one tenant.
-export { mountForm, getMountedForm, readFormBoot, FormConfigError, FORM_BOOT_PATH, FORM_BOOT_TIMEOUT_MS } from './form.js';
+//
+// `parentOriginFromLocation` is the frame side's one line: a hosted page
+// reads `?origin=` with it and passes the result straight to `mountForm` as
+// `parentOrigin`, which is what makes the iframe embed resize.
+export { mountForm, getMountedForm, readFormBoot, parentOriginFromLocation, FormConfigError, FORM_BOOT_PATH, FORM_BOOT_TIMEOUT_MS } from './form.js';
 export type {
   MountFormOptions,
   MountedForm,
@@ -104,6 +108,28 @@ export type {
   ContactRequirement,
   DhaamFormGlobal,
 } from './form.js';
+
+// The iframe embed's HOST half — the merchant's own page, which creates the
+// frame and applies the heights the page inside posts up. Its counterpart on
+// the frame side is `mountForm`'s `parentOrigin` option, and the protocol
+// both are written against is the header of `src/form-embed.ts`.
+//
+// `hostedOrigin` is required there and has no default: this package has no
+// canonical console origin to bake in, and guessing one would point a
+// merchant's contact page at someone else's deployment.
+//
+// `EMBED_UNREACHABLE_TIMEOUT_MS` is exported for the same reason
+// `FORM_BOOT_TIMEOUT_MS` above is: it is the deadline behind an
+// `onUnreachable` callback, and a caller rendering their own fallback needs
+// to know how long they waited for it.
+export {
+  embedForm,
+  FormEmbedError,
+  EMBED_MIN_HEIGHT_PX,
+  EMBED_UNREACHABLE_TIMEOUT_MS,
+  FORM_RESIZE_MESSAGE_TYPE,
+} from './form-embed.js';
+export type { EmbedFormOptions, EmbedHandle, DhaamFormEmbedGlobal } from './form-embed.js';
 
 export type { ChatWidget } from './widget.js';
 export type { WidgetConfig, WidgetAuth, WidgetIdentity, ResolvedConfig } from './config.js';
