@@ -65,35 +65,40 @@ export interface IdentityHeaderView {
    * Recomputes the displayed identity from `session.status`/`handledBy` and
    * speaks the change — but only when the DISPLAYED LABEL actually differs
    * from what was last shown, and never on the very first call.
-   *
-   * The first-call suppression matches message-list.ts's `seenAnyState`
-   * exactly, and for the same reason: the first `update()` a mount produces
-   * is describing whatever was ALREADY true when the panel appeared (a
-   * resumed session an agent was already handling), not a live hand-off that
-   * just happened. Announcing "you're now chatting with Ada" the instant the
-   * widget mounts, for a fact that predates the mount, is the same class of
-   * hostility as announcing forty backfilled messages on open.
-   *
-   * `session: null` is a legitimate input (no session yet, or one not loaded)
-   * and always resolves to the fallback title — it is not a distinct "error"
-   * state requiring different handling.
    */
   update(session: Pick<ChatSession, 'status' | 'handledBy'> | null): void;
+
+  /**
+   * Explicitly sets the active title (e.g. store name when chatting with a merchant,
+   * or Support when general platform chat).
+   */
+  setTitle(title: string): void;
 }
 
 /**
- * @param fallbackTitle The widget's own configured title (`WidgetConfig.title`),
- *   shown whenever there is no CURRENT handler to name — see the module
- *   header's rule 1 and rule 2. Read once at construction: a host does not
- *   change its own configured title at runtime.
+ * Checks if a title is a generic system title or a specific merchant/store title.
+ */
+function isGenericTitle(t: string | undefined): boolean {
+  if (!t) return true;
+  const lower = t.trim().toLowerCase();
+  return (
+    lower === 'chat with us' ||
+    lower === 'admin support chat' ||
+    lower === 'store support & chat' ||
+    lower === 'dhaam ai' ||
+    lower === 'support' ||
+    lower === 'general support'
+  );
+}
+
+/**
+ * @param initialTitle The widget's own configured title (`WidgetConfig.title`),
+ *   shown whenever there is no CURRENT handler to name.
  */
 export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
   let fallbackTitle = initialTitle;
   const node = el('h2', { attrs: { class: 'dh-title', id: 'dh-title' }, text: fallbackTitle });
 
-  // Same shape as message-list.ts's `liveRegion`: `role="status"` rather than
-  // `alert` (this is informational, not urgent), `aria-atomic` so a screen
-  // reader reads the whole sentence rather than only the changed word.
   const liveRegion = el('div', {
     attrs: { class: 'dh-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
   });
@@ -102,29 +107,16 @@ export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
   let seenAnyState = false;
 
   function labelFor(session: Pick<ChatSession, 'status' | 'handledBy'> | null): string {
-    if (session === null) return fallbackTitle;
-    // The one canonical gate — see the module header. Never re-derive this
-    // (e.g. `session.handledBy !== undefined`) locally: that reintroduces
-    // exactly the stale-agent-after-reactivation bug this function exists to
-    // close.
-    if (!isHandledByCurrent(session)) return fallbackTitle;
-    // `isHandledByCurrent` guarantees `handledBy` is defined when it returns
-    // `true`, but this reads it back through the object rather than a
-    // non-null assertion — the same "compile-time guarantee about our own
-    // call sites, not a runtime one" caution message-list.ts documents for
-    // wire-sourced data.
-    const { handledBy } = session;
-    return handledBy === undefined ? fallbackTitle : handledBy.displayName;
+    if (session !== null && isHandledByCurrent(session) && session.handledBy?.displayName) {
+      return session.handledBy.displayName;
+    }
+    return fallbackTitle;
   }
 
   function update(session: Pick<ChatSession, 'status' | 'handledBy'> | null): void {
     const label = labelFor(session);
     node.textContent = label;
 
-    // A CSS/testing hook for the identity actually driving the title, not
-    // merely for whether one is present — `''` covers both the fallback
-    // case and a stale (not-current) handledBy alike, on purpose, since both
-    // render identical copy.
     const kind = session !== null && isHandledByCurrent(session) ? session.handledBy?.kind : undefined;
     node.setAttribute('data-handled-by', kind ?? '');
 
@@ -138,31 +130,17 @@ export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
     liveRegion.textContent = `You're now chatting with ${label}.`;
   }
 
-  /**
-   * Replaces the title shown when no agent is driving it.
-   *
-   * Exists for published config, which lands after mount: the merchant's
-   * configured title has to be able to replace the boot-time one without
-   * rebuilding the header (and losing the `id="dh-title"` the panel's
-   * `aria-labelledby` points at).
-   *
-   * Only repaints when the fallback is what is CURRENTLY on screen. An agent's
-   * name outranks a configured title, and stamping over it here would rename
-   * the person the customer is talking to.
-   *
-   * Silent: `currentLabel` is updated in step so the next `update()` still
-   * compares against what is really displayed, but nothing is announced. A
-   * screen-reader user being told "You're now chatting with Acme Support"
-   * because a config fetch landed would be a lie about an event that did not
-   * happen.
-   */
   function setFallbackTitle(title: string): void {
-    const wasShowingFallback = node.textContent === fallbackTitle;
     fallbackTitle = title;
-    if (!wasShowingFallback) return;
     node.textContent = title;
     currentLabel = title;
   }
 
-  return { node, liveRegion, update, setFallbackTitle };
+  function setTitle(title: string): void {
+    fallbackTitle = title;
+    node.textContent = title;
+    currentLabel = title;
+  }
+
+  return { node, liveRegion, update, setFallbackTitle, setTitle };
 }

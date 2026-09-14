@@ -204,6 +204,37 @@ export function safeImageUrl(value: string): string | null {
 }
 
 /**
+ * The fallback source for a logo/avatar `<img>` whose configured URL passed
+ * {@link safeImageUrl} but the BROWSER still could not load — most commonly
+ * the documented relative-path risk above: a merchant's `/assets/...` path
+ * resolves against whichever origin embeds the widget, and a tenant whose
+ * config was written for a different origin (or whose asset was since
+ * deleted) 404s there forever, not just once. A `<img>` with no `onerror`
+ * handler just sits there as the browser's broken-image glyph, which reads
+ * as this widget being broken rather than as one tenant's stale asset.
+ *
+ * An inline `data:` URI, deliberately — never a same-origin request, so it
+ * cannot itself 404, and callers wire it up with `{ once: true }` so a
+ * transient network blip does not retry into a loop against a URL that is
+ * never coming back.
+ */
+import { AGENT_1_IMAGE, DEFAULT_AGENT_AVATARS } from './agent-avatars.js';
+export { DEFAULT_AGENT_AVATARS };
+
+export const DEFAULT_AVATAR_IMAGE: string = AGENT_1_IMAGE;
+
+/**
+ * The Dhaam AI wordmark, used as the fallback in place of {@link
+ * DEFAULT_AVATAR_IMAGE} everywhere a *brand logo* 404s (header avatar in
+ * `'logo'` mode, launcher bubble, hero banner) — as opposed to an *agent
+ * photo* 404ing, which still falls back to the generic silhouette above.
+ *
+ * `fill="white"` throughout, same as the source asset: only safe to place on
+ * the widget's own colored surfaces (header/launcher/hero backgrounds).
+ */
+export { DEFAULT_LOGO_IMAGE } from './default-logo-data.js';
+
+/**
  * The same allowlist for a value going into an `href`, where the stakes are
  * higher than in a `src`.
  *

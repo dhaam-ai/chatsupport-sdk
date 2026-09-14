@@ -117,7 +117,24 @@
 
 import type { HeaderAppearance } from '../config.js';
 
-import { el, safeImageUrl } from './dom.js';
+import { DEFAULT_AGENT_AVATARS, DEFAULT_AVATAR_IMAGE, DEFAULT_LOGO_IMAGE, el, safeImageUrl } from './dom.js';
+
+/**
+ * A logo/avatar `<img>` that swaps to `fallback` instead of sitting as a
+ * broken-image glyph when the browser cannot actually load `src` — see
+ * DEFAULT_AVATAR_IMAGE/DEFAULT_LOGO_IMAGE's own docs in dom.ts for why this
+ * can happen even though `src` already passed `safeImageUrl`. Callers pass
+ * the agent silhouette for a person's photo and the Dhaam AI wordmark for a
+ * brand logo — the two 404 cases read very differently.
+ */
+function imgWithFallback(
+  attrs: Record<string, string | number | boolean | null | undefined>,
+  fallback: string = DEFAULT_AVATAR_IMAGE,
+): HTMLImageElement {
+  const img = el('img', { attrs });
+  img.addEventListener('error', () => { img.src = fallback; }, { once: true });
+  return img;
+}
 
 export interface HeroContent {
   readonly showLogo: boolean;
@@ -131,6 +148,8 @@ export interface HeroContent {
 
 export interface HeroHeaderView {
   readonly node: HTMLElement;
+  /** Avatars displayed inside the top header row when the hero is collapsed on scroll. */
+  readonly headerAvatars: HTMLElement;
   /** Rebuilds the hero from a new appearance. Cheap; runs at most once per publish. */
   render(content: HeroContent): void;
   /**
@@ -176,24 +195,27 @@ const COLLAPSE_SLACK_PX = 32;
  * per publish, so which faces survived the allowlist (`safeImageUrl`) and the
  * cap (`MAX_AVATARS`) is decided in one place.
  */
-function buildAvatarRow(faces: readonly string[], showPresence: boolean): HTMLElement | null {
+function buildAvatarRow(faces: readonly string[], showPresence: boolean, isHeader = false): HTMLElement | null {
   if (faces.length === 0) return null;
+  const avatarClass = isHeader ? 'dh-header-hero-avatar' : 'dh-hero-avatar';
   return el('div', {
-    attrs: { class: 'dh-hero-avatars' },
-    children: faces.map((src, index) =>
-      el('span', {
-        attrs: { class: 'dh-hero-avatar' },
+    attrs: { class: isHeader ? 'dh-header-hero-avatars-row' : 'dh-hero-avatars' },
+    children: faces.map((src, index) => {
+      const fallback = DEFAULT_AGENT_AVATARS[index % DEFAULT_AGENT_AVATARS.length] || DEFAULT_AVATAR_IMAGE;
+      const effectiveSrc = (!src || src.includes('/assets/chat/agent-')) ? fallback : src;
+      return el('span', {
+        attrs: { class: avatarClass },
         children: [
-          el('img', { attrs: { src, alt: '' } }),
+          imgWithFallback({ src: effectiveSrc, alt: '' }, fallback),
           // The presence dot rides the LAST face only — it says "someone
           // is here", not "this particular person is", so one is the
           // honest number regardless of how many faces are shown.
           ...(showPresence && index === faces.length - 1
-            ? [el('span', { attrs: { class: 'dh-hero-presence' } })]
+            ? [el('span', { attrs: { class: isHeader ? 'dh-header-hero-presence' : 'dh-hero-presence' } })]
             : []),
         ],
-      }),
-    ),
+      });
+    }),
   });
 }
 
@@ -202,6 +224,7 @@ function buildAvatarRow(faces: readonly string[], showPresence: boolean): HTMLEl
 // nothing can press.
 export function createHeroHeader(): HeroHeaderView {
   const full = el('div', { attrs: { class: 'dh-hero-full' } });
+  const headerAvatars = el('div', { attrs: { class: 'dh-header-hero-avatars', 'aria-hidden': 'true' } });
 
   // `aria-hidden` on the whole block, and this is deliberate rather than
   // careless. Every string in it is decoration that the panel already conveys:
@@ -221,21 +244,26 @@ export function createHeroHeader(): HeroHeaderView {
 
   function render(content: HeroContent): void {
     const logo = content.showLogo ? safeImageUrl(content.logoUrl) : null;
-    const faces = content.showAvatars
+    const rawFaces = content.showAvatars
       ? content.avatars
           .map((url) => safeImageUrl(url))
           .filter((url): url is string => url !== null)
           .slice(0, MAX_AVATARS)
       : [];
+    const faces = content.showAvatars && rawFaces.length === 0 ? DEFAULT_AGENT_AVATARS : rawFaces;
 
     const fullChildren: Node[] = [];
 
     if (logo !== null) {
-      fullChildren.push(el('img', { attrs: { class: 'dh-hero-logo', src: logo, alt: '' } }));
+      fullChildren.push(imgWithFallback({ class: 'dh-hero-logo', src: logo, alt: '' }, DEFAULT_LOGO_IMAGE));
     }
 
     const avatars = buildAvatarRow(faces, content.showPresence);
     if (avatars !== null) fullChildren.push(avatars);
+
+    // Also populate the compact header avatars row for collapsed state
+    const headerAvatarRow = buildAvatarRow(faces, content.showPresence, true);
+    headerAvatars.replaceChildren(...(headerAvatarRow !== null ? [headerAvatarRow] : []));
 
     if (content.greeting !== '') {
       fullChildren.push(el('p', { attrs: { class: 'dh-hero-greeting' }, text: content.greeting }));
@@ -342,7 +370,7 @@ export function createHeroHeader(): HeroHeaderView {
     sentinel = null;
   }
 
-  return { node, render, watchScroll, destroy };
+  return { node, headerAvatars, render, watchScroll, destroy };
 }
 
 /**
@@ -375,12 +403,15 @@ export function heroContentFrom(
   header: HeaderAppearance,
   fallbackLogoUrl: string,
 ): HeroContent {
+  const avatars = (header.avatars && header.avatars.length > 0)
+    ? header.avatars
+    : DEFAULT_AGENT_AVATARS;
   return {
     showLogo: header.showLogo,
     logoUrl: header.logoUrl.trim() === '' ? fallbackLogoUrl : header.logoUrl,
     showAvatars: header.showAvatars,
     showPresence: header.showPresence,
-    avatars: header.avatars,
+    avatars,
     greeting: header.greeting,
     subGreeting: header.subGreeting,
   };
