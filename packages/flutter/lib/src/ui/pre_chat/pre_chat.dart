@@ -13,6 +13,10 @@
 ///  * `pre_chat_form.dart` — the shared field block, plus the details
 ///    message the answers become.
 ///  * `pre_chat_gate.dart` — the standalone surface, for `PreChatSurface`.
+///
+/// `guest_pre_chat_warning.dart` is the fifth file and is deliberately NOT
+/// exported: it is the debug-only line the package prints when the gate above
+/// is about to ask a guest for details, not a control a host calls.
 library;
 
 export 'chat_identity.dart';

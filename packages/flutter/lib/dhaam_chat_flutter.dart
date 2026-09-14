@@ -19,6 +19,12 @@ export 'src/config/remote_config_client.dart';
 export 'src/forms/forms.dart';
 export 'src/nav/chat_screens.dart';
 export 'src/session/chat_session_summary.dart';
+// `toChatSessionSummary` and `restSessionSource` — the field copy and the
+// REST-backed fetch that `ChatWidgetCubit(rest: ...)` builds for itself.
+// Exported because a host writing its own `sessionSource` over the same
+// routes was previously told to copy the mapper out of the example app, in a
+// snippet that did not compile because it was never exported.
+export 'src/session/rest_session_source.dart';
 export 'src/session/session_display.dart';
 export 'src/state/chat_widget_cubit.dart';
 export 'src/state/chat_widget_state.dart';

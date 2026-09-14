@@ -36,8 +36,6 @@ import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart'
     show
         ChatClientAdapter,
         ChatIdentity,
-        ChatSessionSummary,
-        SessionListRefresher,
         ChatWidget,
         ChatWidgetState,
         ChatWidgetCubit,
@@ -582,28 +580,11 @@ class _ChatPanelPageState extends State<_ChatPanelPage> {
   /// re-announce or go silent depending on which way the count moved.
   final Chime _chime = exampleChime();
 
-  /// The session-list fetch, serialised.
-  ///
-  /// Owned by the PANEL and not by the host screen, because it writes into
-  /// this Cubit: `dispose` is what stops a page landing in a state layer that
-  /// has been torn down, which is the refresher's own documented reason for
-  /// having one.
-  late final SessionListRefresher _sessions;
-
   /// Detached in [dispose]; the notifier outlives this route.
   VoidCallback? _contactListener;
 
-  /// The four methods the end-of-conversation surfaces need, plus the hook
-  /// that refreshes the list when one of them lands. Built here rather than
-  /// on the host screen for the same reason [_sessions] is: the hook it
-  /// carries drives an object that dies with this route.
+  /// The four methods the end-of-conversation surfaces need.
   late final RestSessionActions _sessionActions;
-
-  /// What the last settled fetch was, for the developer strip.
-  ExampleSessionListView _sessionsView = ExampleSessionListView.pending;
-
-  /// The last fetch failure, if the most recent one failed.
-  String? _sessionsError;
 
   @override
   void initState() {
@@ -662,44 +643,13 @@ class _ChatPanelPageState extends State<_ChatPanelPage> {
     widget.contact.addListener(pushContact);
     _contactListener = pushContact;
 
-    // Built before the Cubit because the Cubit takes the actions, and the
-    // actions take the refresh hook. `late final _sessions` is what lets the
-    // hook name the refresher it is being wired into — safe because nothing
-    // fires during construction.
-    // Wired through `sessionListFor` rather than inline: while these four
-    // lines lived in this closure no test could reach them, and this is the
-    // exact hop that was missing when "no conversations list" was reported.
-    _sessions = sessionListFor(
-      cubit: _cubit,
-      rest: widget.rest,
-      isStale: () => !mounted,
-      onLoaded: (List<ChatSessionSummary> sessions) => setState(() {
-        // An empty page is a SUCCESS and is the guest signal — never an
-        // error, and never a reason to keep saying "loading". Reporting it as
-        // a failure is the mistake `listSessions` documents at length: it
-        // makes "not identified" indistinguishable from "the lookup failed".
-        _sessionsView = sessions.isEmpty
-            ? ExampleSessionListView.empty
-            : ExampleSessionListView.loaded;
-        _sessionsError = null;
-      }),
-      onError: (Object error, StackTrace stackTrace) {
-        if (!mounted) return;
-        setState(() {
-          _sessionsView = ExampleSessionListView.failed;
-          _sessionsError = describeSessionListError(error);
-        });
-      },
-    );
-
-    _sessionActions = RestSessionActions(
-      widget.rest,
-      // A close or a reopen changes a row the picker is already showing, and
-      // nothing else tells it so. Asking DURING a flight is not dropped —
-      // the refresher re-issues once the flight lands, and a burst collapses
-      // into one re-issue.
-      onSessionChanged: () => unawaited(_sessions.refresh()),
-    );
+    // No `onSessionChanged` hook any more, and nothing for it to poke. A
+    // close or a reopen reaches the Cubit as a session snapshot, and the
+    // Cubit refetches the list itself when a snapshot changes a field a row
+    // is drawn from — see `_listedSessionKey` in `chat_widget_cubit.dart`.
+    // Pushing a second trigger in from here would be re-deriving a rule the
+    // SDK already owns, in the app whose job is to show that it does.
+    _sessionActions = RestSessionActions(widget.rest);
 
     _cubit = ChatWidgetCubit(
       // `ChatClientAdapter` is the package's own bridge from `dhaam_chat`'s
@@ -714,6 +664,19 @@ class _ChatPanelPageState extends State<_ChatPanelPage> {
       // so an app that never passes one has no logged-in path at all — every
       // visitor is a guest and every visitor is asked.
       identity: widget.identity,
+      // The whole session list, in one argument. The Cubit builds
+      // `restSessionSource(rest: rest)` for itself — the fetch, the field
+      // copy and the page size — and drives it with the refresher that
+      // serialises concurrent fetches.
+      //
+      // This app used to do all of that by hand, in a closure no test could
+      // reach, and the integration note told every other host to copy it.
+      // That is what "conversation list not appearing" kept being.
+      //
+      // A host proxying chat through its own backend passes `sessionSource:`
+      // instead and never holds a `RestClient`; passing both would resolve to
+      // the closure, not to this.
+      rest: widget.rest,
       // The seam that turns the end-of-conversation surfaces on. Absent means
       // OFF, not broken: no rating card, no ended footer, no way to end a
       // conversation — which is the correct outcome for a host that wired no
@@ -744,9 +707,10 @@ class _ChatPanelPageState extends State<_ChatPanelPage> {
       ),
     );
 
-    // The panel-open fetch — the first of the two asks the refresher exists
-    // to serialise. After the Cubit, because `onSessions` writes into it.
-    unawaited(_sessions.refresh());
+    // No panel-open fetch here either. `ChatWidget.initState` calls
+    // `connect()`, and `connect()` is the trigger — the widget's own "we are
+    // open now" hop, so the host does not wire a second thing to the same
+    // moment.
   }
 
   @override
@@ -763,11 +727,11 @@ class _ChatPanelPageState extends State<_ChatPanelPage> {
     //
     // Order matters: the Cubit holds subscriptions to the client's streams, so
     // it is closed before the client that feeds them.
-    // Before the Cubit it writes into: a page landing after `close()` would
-    // be an emit on a closed Cubit. Disposal does not cancel a fetch already
-    // out — `SessionListFetch` is a plain future and this did not open the
-    // connection — so the answer is dropped on arrival instead.
-    _sessions.dispose();
+    //
+    // Nothing to dispose for the session list. The Cubit owns the refresher
+    // now and tears it down in its own `close()`, which is one more thing a
+    // host cannot forget — and forgetting it meant a page landing in a state
+    // layer that was already gone.
     _cubit.close();
     unawaited(_client.dispose());
     super.dispose();
@@ -776,31 +740,15 @@ class _ChatPanelPageState extends State<_ChatPanelPage> {
   /// What the strip says about the session list, or null when there is
   /// nothing worth saying.
   ///
-  /// Silent on [ExampleSessionListView.loaded]: rows are on screen and the
-  /// list is speaking for itself. The other three all get a line, because
-  /// each is a state somebody would otherwise misread — an empty picker in
-  /// particular reads as "this is still broken" when it is the correct answer
-  /// for a visitor with no conversations of their own.
-  String? _sessionListLine(ChatWidgetState state) {
-    switch (_sessionsView) {
-      case ExampleSessionListView.loaded:
-        return null;
-      case ExampleSessionListView.pending:
-        return 'sessions: GET /chat/sessions/customer '
-            '(limit $kExampleSessionLimit) in flight…';
-      case ExampleSessionListView.empty:
-        // Named as success in the first four words, because the whole reason
-        // the adapter refuses to raise here is that a guest's empty page and
-        // a failed lookup are different facts.
-        return 'sessions: 0 — an ordinary 200 with an empty page, not an '
-            'error. This IS the guest signal'
-            '${state.isGuest ? "" : ", though this visitor is identified: "
-                "the server has no conversations for them yet"}.';
-      case ExampleSessionListView.failed:
-        return 'sessions: fetch failed — the previous page is still on '
-            'screen.\n${_sessionsError ?? ""}';
-    }
-  }
+  /// Read straight off the Cubit's state now, because the Cubit owns the
+  /// fetch and this app no longer sees the outcome of one. That is a real
+  /// loss of resolution — "in flight" and "failed" were separate lines and
+  /// cannot be, from here — and [exampleSessionListLine] is written to say
+  /// only what state can actually support rather than guess at the rest.
+  String? _sessionListLine(ChatWidgetState state) => exampleSessionListLine(
+        hasRows: state.sessionSummaries.isNotEmpty,
+        isGuest: state.isGuest,
+      );
 
   @override
   Widget build(BuildContext context) {

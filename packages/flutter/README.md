@@ -158,15 +158,37 @@ ChatWidgetCubit(
 );
 ```
 
-Since it could not be detected, it is at least now **said out loud**: in debug
-builds, the first time the pre-chat form is about to ask a visitor this widget
-considers a guest, the package prints a short explanation of the above to the
-console (`_warnIfAskingAGuestForDetails`, in
-`lib/src/state/chat_widget_cubit.dart`). It fires once per
-widget, never in release, carries nothing about the visitor or the credential,
-and is silent for a host that passed a profile. A genuinely guest-only
-deployment can ignore it — the line names the fix rather than a fault, and it
-does not appear at all until the form actually comes up.
+Since it could not be detected, it is at least now **said out loud**: the first
+time the widget is about to put the merchant's pre-chat questions in front of a
+visitor it considers a guest, it prints a short explanation of the above to the
+console (`warnIfAskingAGuestForDetails`, in
+`lib/src/ui/pre_chat/guest_pre_chat_warning.dart`).
+
+**All three places those questions can appear are covered**, because the line
+hangs off `preChatFieldsToAsk` — the one function that decides which fields to
+draw, and the only way any of them can draw any:
+
+* the standalone pre-chat gate, in front of an empty conversation;
+* the **new-conversation form**, where the questions are folded in above the
+  message box (this is where `startNewConversation()` lands, so it is the
+  likeliest one to meet);
+* the **out-of-hours offline form**.
+
+The exact terms:
+
+* **Debug builds only.** Not release — and not profile either; the check is
+  `kDebugMode`, which is false in both.
+* **Once per app run.** Not once per widget and not once per Cubit: three
+  surfaces can each ask, a rebuilt `BlocProvider` would ask again, and two of
+  the three re-run the gate on every repaint. One line says it once.
+* **Nothing about the visitor or the credential.** The message is a `const`
+  with no interpolation in it; the package cannot see the token at all.
+* **Silent for a host that passed a profile**, and silent for a guest nobody
+  asks anything — a merchant who never switched pre-chat on never sees it.
+
+A genuinely guest-only deployment can ignore it: the line names the fix rather
+than a fault, and it does not appear at all until the questions actually come
+up.
 
 
 ## Running the example
@@ -363,42 +385,74 @@ Home and Messages read `state.sessionSummaries` directly, expressing the same
 `sessions.length > 0` gate as rows rather than as a surface.
 
 `state.sessionSummaries` itself is no longer always empty, and there are now
-**two** ways to fill it. The page still comes from outside either way —
-`WidgetChatClient` is the WebSocket slice and `dhaam_chat` cannot list
-sessions at all — but who remembers to ask for it has changed.
+**three** ways to fill it, each one step more explicit than the last. The page
+still comes from outside the socket whichever you pick — `WidgetChatClient` is
+the WebSocket slice and `dhaam_chat` cannot list sessions at all — but who
+remembers to ask for it has changed.
 
-**Hand the fetch over (recommended).** `ChatWidgetCubit` takes an optional
-`sessionSource`, a `SessionListFetch` — one call, one page — and owns the
-triggers itself:
+**Hand over the REST client (recommended).** If you already build a
+`dhaam_chat_rest` `RestClient` — for uploads, transcripts, CSAT or
+close/reopen — pass it, and the list fills itself:
+
+```dart
+ChatWidgetCubit(client: client, rest: rest);
+```
+
+That is the entire wiring. The Cubit builds `restSessionSource(rest: rest)`
+for itself: the `GET /chat/sessions/customer` call, the field copy from
+`RestChatSessionSummary` to `ChatSessionSummary`, and the page size. It adds
+nothing to your dependency graph — this package already depends on
+`dhaam_chat_rest` directly. `packages/flutter/example/lib/main.dart` is this
+route, and it is now the only session-list code that app contains.
+
+**The page size is the route's maximum, deliberately.**
+`kSessionListPageSize` is `kSessionSummaryLimitMax`, because this widget
+cannot page: Messages renders `state.sessionSummaries` in full and there is no
+"load more" behind it, so whatever it asks for is the ceiling on the
+conversations a customer can ever reach. Too few silently hides one of their
+own conversations with nothing on screen to say so; too many costs a few
+kilobytes. To change it, go through `sessionSource` and say so —
+`sessionSource: restSessionSource(rest: rest, limit: 5)`. An out-of-range
+value is refused with an `ArgumentError` at that call rather than inside the
+fetch, because `listSessions` raises `RestValidationException` before sending
+anything and routing a caller bug through the error channel would dress it up
+as a network failure.
+
+**Or hand over just the fetch.** A host that proxies chat through its own
+backend has no `dhaam_chat_rest` client to give, so `sessionSource` takes the
+function instead — a `SessionListFetch`, one call, one page:
 
 ```dart
 ChatWidgetCubit(
   client: client,
-  // `RestChatSessionSummary` and `ChatSessionSummary` share dhaam_chat's own
-  // ChatStatus/ChatMode/HandledBy, so there is no vocabulary to translate --
-  // only a field copy. `packages/flutter/example/lib/session_list.dart`'s
-  // `toChatSessionSummary` is one; it lives in the example rather than this
-  // package because a host proxying chat through its own backend maps from
-  // something that is not `RestChatSessionSummary` at all.
-  sessionSource: () async =>
-      (await rest.listSessions(limit: 10)).map((RestChatSessionSummary r) =>
-          ChatSessionSummary(
-            id: r.id,
-            status: r.status,
-            mode: r.mode,
-            createdAt: r.createdAt,
-            closedAt: r.closedAt,
-            lastMessageAt: r.lastMessageAt,
-            lastMessagePreview: r.lastMessagePreview,
-            unreadCount: r.unreadCount,
-            handledBy: r.handledBy,
-            subject: r.subject,
-            topic: r.topic,
-          )).toList(growable: false),
+  sessionSource: () async => myBackend.conversations(),
 );
 ```
 
-That is the whole wiring. The page is fetched when the widget opens (inside
+`toChatSessionSummary` is exported from this package for a host still mapping
+`RestChatSessionSummary` rows but doing its own fetching. `RestChatSessionSummary`
+and `ChatSessionSummary` share `dhaam_chat`'s own ChatStatus/ChatMode/HandledBy,
+so it is a field copy with no vocabulary to translate:
+
+```dart
+ChatWidgetCubit(
+  client: client,
+  sessionSource: () async => (await rest.listSessions(limit: 10))
+      .map(toChatSessionSummary)
+      .toList(growable: false),
+);
+```
+
+**Passing both `rest` and `sessionSource` is not two fetches.** Exactly one
+source is ever built, and `sessionSource` wins. The closure is the more
+specific instruction — it says precisely where the conversations come from —
+while `rest` is a convenience default for a client you may be holding for
+other reasons entirely. Resolving it the other way would let a generic
+parameter silently discard hand-written intent and fill the list from the
+wrong place, and wrong rows are far harder to notice than no rows.
+
+Both routes get the same triggers, because both end up in the same refresher.
+The page is fetched when the widget opens (inside
 `connect()`, which `ChatWidget.initState` already calls) and refetched
 whenever a session snapshot changes something a list **row** is drawn from —
 its id, its status, or the name in its `handledBy`. Routine
@@ -415,22 +469,23 @@ never an error — `listSessions` answers a guest with `[]`, never a 403, and
 turning that into a failure would make "not identified" indistinguishable
 from "the lookup failed".
 
-It is a function rather than a REST client on purpose: a host that proxies
-chat through its own backend fills this list from something that is not
-`dhaam_chat_rest`, and a closure is also what keeps these paths testable
-without a network. It is the same shape as `AttachmentUploader`,
-`TranscriptEmailer` and `IssueReporter`.
+`sessionSource` stays a function rather than becoming a second client
+parameter: a host that proxies chat through its own backend fills this list
+from something that is not `dhaam_chat_rest` and has no client-shaped thing to
+pass, and a closure is also what keeps these paths testable without a network.
+It is the same shape as `AttachmentUploader`, `TranscriptEmailer` and
+`IssueReporter`.
 
 **Or push your own page.** `ChatWidgetCubit.updateSessionSummaries` is
 unchanged and still public, for a host that already fetches this list and
-wants to decide when. `packages/flutter/example/lib/session_list.dart` is a
-worked example of that route — it predates `sessionSource` and drives the
-package's own `SessionListRefresher` directly, which is exactly what
-`sessionSource` now does for you.
+wants to decide when — including as a pull-to-refresh over either of the two
+routes above.
 
-A host that wires **neither** has a Messages screen with nothing to draw.
-That was two integrators' bug report, and `sessionSource` exists because a
-silently empty list is indistinguishable from a customer who has never
+A host that wires **none** of the three has a Messages screen with nothing to
+draw. That was two integrators' bug report; `sessionSource` was the first
+answer to it and `rest` is the second, because a seam nobody fills is
+indistinguishable — from the customer's side — from the bug it was added to
+fix. A silently empty list looks exactly like a customer who has never
 started a conversation.
 
 **The inline report-issue entry point is not ported.** `widget.ts` opens the

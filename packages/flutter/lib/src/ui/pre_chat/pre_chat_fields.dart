@@ -18,6 +18,12 @@
 /// itself. A fourth surface added later gets the same answer by calling the
 /// same function, and gets it wrong only by not calling it.
 ///
+/// That is also why the guest diagnostic hangs off this function rather than
+/// off a surface — see `guest_pre_chat_warning.dart`. Its first home keyed on
+/// `PreChatSurface`, which the other two surfaces cannot raise, so it warned
+/// about the one case a host is least likely to meet and stayed silent on the
+/// two they reported.
+///
 /// ── What this function does NOT decide ────────────────────────────────
 ///
 /// It does not decide whether the visitor is a guest. [preChatFieldsToAsk]
@@ -36,6 +42,7 @@ library;
 
 import '../../config/remote_config.dart';
 import '../../forms/forms.dart';
+import 'guest_pre_chat_warning.dart';
 
 /// The pre-chat questions to put in front of this visitor, or an empty list.
 ///
@@ -58,6 +65,16 @@ import '../../forms/forms.dart';
 ///  * **[alreadyAnswered]** — asked once per conversation, not once per
 ///    repaint. Every rebuild of these surfaces re-runs this function, so
 ///    without it the form returns the instant it is dismissed.
+///
+/// ── The one side effect, and why it is here ───────────────────────────
+///
+/// A NON-EMPTY answer is the single fact behind "this widget is about to ask
+/// a visitor it considers a guest for their details", so it is where the
+/// debug-only diagnostic for that fires — [warnIfAskingAGuestForDetails], one
+/// line per app run, silent in profile and release, and carrying nothing
+/// about the visitor. The return value does not depend on it and is fully
+/// computed before it runs; two of the three call sites are inside a `build`,
+/// which the latch is what makes safe.
 List<FieldSpec> preChatFieldsToAsk({
   required RemoteConfig config,
   required bool isGuest,
@@ -66,7 +83,12 @@ List<FieldSpec> preChatFieldsToAsk({
   if (!isGuest) return const <FieldSpec>[];
   if (!config.preChatEnabled) return const <FieldSpec>[];
   if (alreadyAnswered) return const <FieldSpec>[];
-  return config.preChatFields.map(toFieldSpec).toList(growable: false);
+  final List<FieldSpec> asking =
+      config.preChatFields.map(toFieldSpec).toList(growable: false);
+  // A merchant with the toggle on and no fields behind it asks nothing, and
+  // there is nothing to warn a host about.
+  if (asking.isNotEmpty) warnIfAskingAGuestForDetails();
+  return asking;
 }
 
 /// Translates one wire-shaped [PreChatField] into the form substrate's

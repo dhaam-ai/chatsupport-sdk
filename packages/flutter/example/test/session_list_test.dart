@@ -1,308 +1,94 @@
-/// The host half of the session picker, tested without a network.
+/// The one thing this app still decides about the session list: what its
+/// developer strip says when there are no rows.
 ///
-/// `SessionListRefresher` takes a `SessionListFetch` — a plain
-/// `Future<List<ChatSessionSummary>> Function()` — which is exactly why it can
-/// be driven here with a closure. That seam is the package's, and this file is
-/// the proof that the example is on the right side of it: everything below
-/// asserts what THIS app does with a page, not what the refresher does with
-/// one.
+/// ── What this file used to test, and where that went ─────────────────────
+///
+/// A `toChatSessionSummary` field copy, an `exampleSessionListRefresher`
+/// limit guard, and five tests driving `SessionListRefresher` directly. All
+/// of that host code moved into the package, so its tests did too:
+///
+///  * the mapper and the limit guard are now
+///    `test/state/rest_session_source_test.dart` in the package, where
+///    `toChatSessionSummary` and `restSessionSource` live;
+///  * the five refresher tests were already duplicates of the package's own
+///    `test/ui/session_picker/session_list_refresher_test.dart`, which covers
+///    each of them and four cases besides — they asserted the refresher's
+///    behaviour, never this app's.
+///
+/// What is left below is the only session-list decision this app still makes
+/// on its own, and it is the one that is easy to get wrong: refusing to call
+/// an empty page a failure.
 library;
 
-import 'package:dhaam_chat/dhaam_chat.dart'
-    show ChatMode, ChatStatus, HandledBy, HandledByKind, PublishableKey;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart'
-    show ChatSessionSummary, SessionListRefresher;
+    show kSessionListPageSize;
 import 'package:dhaam_chat_flutter_example/session_list.dart';
-import 'package:dhaam_chat_rest/dhaam_chat_rest.dart'
-    show
-        RestChatSessionSummary,
-        RestClient,
-        RestValidationException,
-        kSessionSummaryLimitMax,
-        kSessionSummaryLimitMin;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('toChatSessionSummary', () {
-    test('carries every field across', () {
-      final DateTime created = DateTime.utc(2026, 9, 1, 10);
-      final DateTime lastMessage = DateTime.utc(2026, 9, 1, 11);
-      final DateTime closed = DateTime.utc(2026, 9, 1, 12);
-      const HandledBy handledBy = HandledBy(
-        kind: HandledByKind.agent,
-        id: 'agent-1',
-        displayName: 'Grace',
+  group('exampleSessionListLine', () {
+    test('says nothing once there are rows', () {
+      // The list is on screen and speaking for itself; a strip repeating it
+      // would be noise over the UI it is meant to help debug.
+      expect(
+        exampleSessionListLine(hasRows: true, isGuest: false),
+        isNull,
       );
-
-      final ChatSessionSummary mapped = toChatSessionSummary(
-        RestChatSessionSummary(
-          id: 'session-1',
-          status: ChatStatus.closed,
-          mode: ChatMode.human,
-          createdAt: created,
-          closedAt: closed,
-          lastMessageAt: lastMessage,
-          lastMessagePreview: 'Thanks for your help',
-          unreadCount: 3,
-          subject: 'Order #1234',
-          topic: 'billing',
-          handledBy: handledBy,
-        ),
+      expect(
+        exampleSessionListLine(hasRows: true, isGuest: true),
+        isNull,
       );
-
-      expect(mapped.id, 'session-1');
-      expect(mapped.status, ChatStatus.closed);
-      expect(mapped.mode, ChatMode.human);
-      expect(mapped.createdAt, created);
-      expect(mapped.closedAt, closed);
-      expect(mapped.lastMessageAt, lastMessage);
-      expect(mapped.lastMessagePreview, 'Thanks for your help');
-      expect(mapped.unreadCount, 3);
-      expect(mapped.subject, 'Order #1234');
-      expect(mapped.topic, 'billing');
-      expect(mapped.handledBy, handledBy);
     });
 
-    test('keeps an open session’s nulls as nulls', () {
-      // A row with no closedAt, no message yet and nobody assigned. Inventing
-      // anything here — a title from the first message, a placeholder agent —
-      // is what `ChatSessionSummary`'s own doc forbids.
-      final ChatSessionSummary mapped = toChatSessionSummary(
-        RestChatSessionSummary(
-          id: 'session-2',
-          status: ChatStatus.open,
-          mode: ChatMode.bot,
-          createdAt: DateTime.utc(2026, 9, 2),
-          closedAt: null,
-          lastMessageAt: null,
-        ),
+    test('never calls an empty page an error', () {
+      // The mistake `listSessions` documents at length: an empty page is a
+      // 200, and reporting it as a failure makes "not identified"
+      // indistinguishable from "the lookup failed".
+      final String line =
+          exampleSessionListLine(hasRows: false, isGuest: true)!;
+
+      expect(line, contains('not an error'));
+      expect(line.toLowerCase(), isNot(contains('failed to')));
+    });
+
+    test('names the empty page as the guest signal for a guest', () {
+      final String line =
+          exampleSessionListLine(hasRows: false, isGuest: true)!;
+
+      expect(line, contains('guest signal'));
+    });
+
+    test('says something different for an identified visitor', () {
+      // An empty page for someone holding a token is also fine, and worth
+      // naming separately so nobody reads it as "the token was ignored" —
+      // which is exactly what the two reporters concluded.
+      final String line =
+          exampleSessionListLine(hasRows: false, isGuest: false)!;
+
+      expect(line, contains('identified visitor'));
+      expect(line, isNot(contains('guest signal')));
+    });
+
+    test('quotes the page size the SDK actually asks for', () {
+      // Not a number of this app's own any more. If the package changed its
+      // default, a strip still quoting the old one would send an integrator
+      // looking at the wrong request.
+      expect(
+        exampleSessionListLine(hasRows: false, isGuest: true),
+        contains('limit $kSessionListPageSize'),
       );
-
-      expect(mapped.closedAt, isNull);
-      expect(mapped.lastMessageAt, isNull);
-      expect(mapped.lastMessagePreview, isNull);
-      expect(mapped.handledBy, isNull);
-      expect(mapped.subject, isNull);
-      expect(mapped.topic, isNull);
-      expect(mapped.unreadCount, 0);
-    });
-  });
-
-  group('exampleSessionListRefresher limit', () {
-    test('the example’s own limit is inside the adapter’s range', () {
-      // The constant and the bound come from the same place, so this cannot
-      // drift into a value that would raise before any request.
-      expect(kExampleSessionLimit,
-          inInclusiveRange(kSessionSummaryLimitMin, kSessionSummaryLimitMax));
     });
 
-    test('an out-of-range limit is refused at construction, not at fetch', () {
-      // The point of the guard. `listSessions` would raise
-      // `RestValidationException` before sending anything — but inside the
-      // refresher that lands on `onError`, the callback a caller reads as
-      // "the network failed". Refusing here keeps a caller bug looking like
-      // a caller bug.
-      //
-      // The client is real and never used: constructing one opens no
-      // connection, and the guard throws before anything reaches it. That the
-      // endpoint is unroutable is the assertion restated — a fetch would have
-      // had to happen for it to matter.
-      final RestClient rest = _client();
-      addTearDown(rest.close);
+    test('does not claim a fetch has settled', () {
+      // This app cannot know that any more — the Cubit owns the fetch and
+      // reports a failure to FlutterError, not to a host callback. A line
+      // asserting "0 results" would be a guess dressed as a fact.
+      final String line =
+          exampleSessionListLine(hasRows: false, isGuest: true)!;
 
-      for (final int bad in <int>[0, -1, kSessionSummaryLimitMax + 1]) {
-        expect(
-          () => exampleSessionListRefresher(
-            rest: rest,
-            onSessions: (_) {},
-            onError: (_, __) {},
-            limit: bad,
-          ),
-          throwsA(isA<ArgumentError>()),
-          reason: 'limit $bad should never reach a fetch',
-        );
-      }
-    });
-
-    test('an in-range limit builds a refresher that has not fetched', () {
-      final RestClient rest = _client();
-      addTearDown(rest.close);
-
-      final SessionListRefresher refresher = exampleSessionListRefresher(
-        rest: rest,
-        onSessions: (_) {},
-        onError: (_, __) {},
-      );
-      addTearDown(refresher.dispose);
-
-      // Constructing is not fetching: the panel builds this before the Cubit
-      // exists and asks for the first page afterwards, because `onSessions`
-      // writes into that Cubit.
-      expect(refresher.isRefreshing, isFalse);
-      expect(refresher.isRefreshQueued, isFalse);
-    });
-  });
-
-  group('describeSessionListError', () {
-    test('names a validation failure as a caller bug', () {
-      final String described = describeSessionListError(
-        const RestValidationException('limit must be between 1 and 20, got 0'),
-      );
-
-      expect(described, contains('caller bug'));
-      expect(described, contains('nothing was sent'));
-    });
-
-    test('passes an ordinary failure through as itself', () {
-      final String described =
-          describeSessionListError(StateError('connection reset'));
-
-      expect(described, contains('connection reset'));
-      expect(described, isNot(contains('caller bug')));
-    });
-  });
-
-  /// The behaviours the panel depends on, driven through the same seam the
-  /// panel drives — a fetch closure and a writer callback.
-  group('the refresher, as this app drives it', () {
-    test('one refresh produces one page and one write', () async {
-      int fetches = 0;
-      final List<List<ChatSessionSummary>> writes =
-          <List<ChatSessionSummary>>[];
-
-      final SessionListRefresher refresher = SessionListRefresher(
-        fetch: () async {
-          fetches++;
-          return <ChatSessionSummary>[_summary('a')];
-        },
-        onSessions: writes.add,
-      );
-
-      await refresher.refresh();
-
-      expect(fetches, 1);
-      expect(writes, hasLength(1));
-      expect(writes.single.single.id, 'a');
-    });
-
-    test('an empty page is written, not swallowed', () async {
-      // The guest path. If this app treated empty as "nothing to do" the
-      // Cubit would keep whatever it had, and a customer who signed out would
-      // go on seeing somebody else's conversations.
-      final List<List<ChatSessionSummary>> writes =
-          <List<ChatSessionSummary>>[];
-
-      final SessionListRefresher refresher = SessionListRefresher(
-        fetch: () async => const <ChatSessionSummary>[],
-        onSessions: writes.add,
-      );
-
-      await refresher.refresh();
-
-      expect(writes, hasLength(1));
-      expect(writes.single, isEmpty);
-    });
-
-    test('a close during a flight is re-issued, not dropped', () async {
-      // The cadence `RestSessionActions.onSessionChanged` relies on. Ending a
-      // conversation while the panel-open fetch is still out must not settle
-      // the list on a page fetched before the close.
-      int fetches = 0;
-      final List<List<ChatSessionSummary>> writes =
-          <List<ChatSessionSummary>>[];
-      late SessionListRefresher refresher;
-
-      refresher = SessionListRefresher(
-        fetch: () async {
-          fetches++;
-          if (fetches == 1) {
-            // Somebody closes a conversation while this one is in flight.
-            unawaitedRefresh(refresher);
-          }
-          return <ChatSessionSummary>[_summary('page$fetches')];
-        },
-        onSessions: writes.add,
-      );
-
-      await refresher.refresh();
-
-      expect(fetches, 2,
-          reason: 'the ask during the flight is owed a re-issue');
-      expect(writes.last.single.id, 'page2',
-          reason: 'the newer page must land last');
-    });
-
-    test('a failed fetch leaves the previous page alone', () async {
-      // Why `_sessionsView` becomes `failed` rather than `empty`: an emptied
-      // list claims the conversations do not exist, while a stale one still
-      // describes conversations that do.
-      int fetches = 0;
-      final List<List<ChatSessionSummary>> writes =
-          <List<ChatSessionSummary>>[];
-      final List<Object> errors = <Object>[];
-
-      final SessionListRefresher refresher = SessionListRefresher(
-        fetch: () async {
-          fetches++;
-          if (fetches == 2) throw StateError('connection reset');
-          return <ChatSessionSummary>[_summary('a')];
-        },
-        onSessions: writes.add,
-        onError: (Object error, StackTrace _) => errors.add(error),
-      );
-
-      await refresher.refresh();
-      await refresher.refresh();
-
-      expect(errors, hasLength(1));
-      // One write, from the successful first fetch. The failure wrote nothing.
-      expect(writes, hasLength(1));
-      expect(writes.single.single.id, 'a');
-    });
-
-    test('a disposed refresher writes nothing further', () async {
-      // What `_ChatPanelPageState.dispose` buys: a page landing after the
-      // Cubit is closed would be an emit on a closed Cubit.
-      final List<List<ChatSessionSummary>> writes =
-          <List<ChatSessionSummary>>[];
-
-      final SessionListRefresher refresher = SessionListRefresher(
-        fetch: () async => <ChatSessionSummary>[_summary('a')],
-        onSessions: writes.add,
-      );
-
-      refresher.dispose();
-      await refresher.refresh();
-
-      expect(writes, isEmpty);
+      expect(line, contains('0 rows'));
+      expect(line, contains('FlutterError'),
+          reason: 'the strip has to say where a failure actually goes');
     });
   });
 }
-
-/// Asks for a refresh from inside a fetch, ignoring the returned future.
-///
-/// A named helper rather than an inline `unawaited`, so the test above reads
-/// as the event it stands for — somebody closing a conversation — rather than
-/// as future plumbing.
-void unawaitedRefresh(SessionListRefresher refresher) {
-  refresher.refresh();
-}
-
-ChatSessionSummary _summary(String id) => ChatSessionSummary(
-      id: id,
-      status: ChatStatus.open,
-      mode: ChatMode.bot,
-      createdAt: DateTime.utc(2026, 9, 1),
-    );
-
-/// A client that is constructed and never sends anything.
-///
-/// `RestClient`'s constructor opens no connection, so this costs a couple of
-/// field assignments. The endpoint is deliberately unroutable: every test
-/// using it asserts that no request is made, and an unroutable host is what
-/// turns a broken such assertion into a failure rather than a live call.
-RestClient _client() => RestClient(
-      apiUrl: 'https://api.invalid',
-      publishableKey: PublishableKey.parse('dhp_test_examplekey123456'),
-      getAccessToken: () async => 'header.payload.signature',
-    );

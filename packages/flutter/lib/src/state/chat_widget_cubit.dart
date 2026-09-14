@@ -19,6 +19,10 @@ library;
 import 'dart:async';
 
 import 'package:dhaam_chat/dhaam_chat.dart';
+// Only for the [rest] parameter's TYPE. The fetch itself is built by
+// `restSessionSource` in the session module, which is the one file that talks
+// to this package's routes — see the import of it below.
+import 'package:dhaam_chat_rest/dhaam_chat_rest.dart' show RestClient;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -28,6 +32,12 @@ import '../config/remote_config.dart';
 import '../config/remote_config_client.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
+// For `restSessionSource` — the REST-backed `SessionListFetch` this class
+// builds for itself when a host hands over a client instead of a closure.
+// Importing `dhaam_chat_rest` for `RestClient` adds nothing to anyone's
+// graph: this package already declares it as a direct runtime dependency
+// (`pubspec.yaml`, decision D22). See [rest].
+import '../session/rest_session_source.dart';
 import '../surfaces/product_surface_slot.dart';
 import '../ui/attachments/attachments.dart';
 import '../ui/voice/voice.dart';
@@ -70,31 +80,6 @@ import 'widget_chat_client.dart';
 /// The same number as `DEFAULT_RECONNECT_INTERVAL_MS` in `@dhaam-ccrm/browser`.
 const Duration kReconnectInterval = Duration(seconds: 3);
 
-/// What a host reads in its debug console when the pre-chat gate is about to
-/// ask a visitor this widget considers a guest for their details.
-///
-/// A constant, and deliberately nothing but a constant: see
-/// [ChatWidgetCubit._warnIfAskingAGuestForDetails] for when it is printed,
-/// why not sooner, and why nothing about the visitor is interpolated into it.
-const String _kGuestPreChatWarning = '''
-dhaam_chat_flutter: about to show the pre-chat form, because this visitor is
-being treated as a GUEST. If you believe this customer is signed in, the widget
-disagrees, and here is why:
-
-  * `identity.profile` is what makes a visitor identified, and it is the ONLY
-    thing that does. Pass one — `ChatIdentity(userId: ..., profile:
-    ChatParticipantProfile(name: ..., email: ...))` — and the form stops
-    asking. An empty `ChatParticipantProfile()` is enough if that is all you
-    know; presence is the fact, not the fields inside it.
-  * `identity.userId` alone does NOT identify anybody. Every anonymous visitor
-    is issued one too, so a widget gating on it would ask nobody.
-  * A customer token does not identify anybody either. Guest sessions need a
-    token as well, and this package cannot read what is inside one, so holding
-    a valid token tells the widget nothing about who is holding it.
-
-If this visitor really is a guest, nothing is wrong and you can ignore this.
-Printed once per widget, in debug builds only.''';
-
 class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// [sessionId] names a conversation the HOST wants this widget to open on.
   ///
@@ -115,8 +100,10 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// the only thing that can say otherwise. Left as a default rather than made
   /// required — that would break every existing caller for the sake of the
   /// ones getting it wrong — so the wrong answer is instead said out loud in
-  /// debug builds by [_warnIfAskingAGuestForDetails], at the moment it starts
-  /// costing the customer something.
+  /// debug builds by `warnIfAskingAGuestForDetails`
+  /// (`ui/pre_chat/guest_pre_chat_warning.dart`), at the moment it starts
+  /// costing the customer something: when one of the three surfaces that ask
+  /// these questions is about to ask them.
   ///
   /// [sessionSource] is the OPTIONAL seam that fills the Messages and Home
   /// session lists.
@@ -179,6 +166,49 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// `FlutterError`, leaves whatever page is already on screen alone, and
   /// does NOT consume the trigger that asked for it: the next snapshot tries
   /// again. See [_listedSessionKey].
+  ///
+  /// [rest] is the SAME list, for a host that would rather not write even
+  /// that closure — and it is the recommended way in.
+  ///
+  /// ── Why this exists on top of [sessionSource] ──────────────────────────
+  ///
+  /// Because the report came back. "Conversation list not appearing", twice
+  /// again, from two more people, both holding a valid signed-in customer
+  /// token — and [sessionSource] does not help anyone who never writes it.
+  /// A seam nobody fills is indistinguishable, from the customer's side, from
+  /// the bug it was added to fix.
+  ///
+  /// So a host that already holds a `RestClient` passes it and writes
+  /// nothing:
+  ///
+  /// ```dart
+  /// ChatWidgetCubit(client: client, rest: rest);
+  /// ```
+  ///
+  /// This Cubit then builds `restSessionSource(rest: rest)` itself — the
+  /// fetch, the field copy ([toChatSessionSummary]) and the page size
+  /// ([kSessionListPageSize]) all included. Nothing else about the list
+  /// changes: the same `SessionListRefresher` serialises it and the same two
+  /// triggers ask for it.
+  ///
+  /// Costs nothing in dependency terms — `dhaam_chat_rest` is already a
+  /// direct dependency of this package (`pubspec.yaml`, decision D22), so
+  /// naming its client here adds nothing to any host's graph.
+  ///
+  /// ── When both are supplied, [sessionSource] wins ───────────────────────
+  ///
+  /// Exactly one source is ever built, so the list is never fetched twice.
+  /// The closure wins because it is the MORE SPECIFIC instruction: a host
+  /// that wrote one said precisely where its conversations come from, while
+  /// [rest] is a convenience default for a client it may be holding for
+  /// uploads or transcripts anyway. Resolving it the other way would let a
+  /// generic parameter silently discard hand-written intent and fill the list
+  /// from the wrong place, which is a worse failure than ignoring a default —
+  /// and the wrong rows are far harder to notice than no rows.
+  ///
+  /// To keep the REST fetch but change the page size, go through
+  /// [sessionSource] and say so:
+  /// `sessionSource: restSessionSource(rest: rest, limit: 5)`.
   ChatWidgetCubit({
     required WidgetChatClient client,
     RemoteConfig initialConfig = defaultRemoteConfig,
@@ -189,6 +219,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     Duration reconnectInterval = kReconnectInterval,
     ChatSessionActions? sessionActions,
     SessionListFetch? sessionSource,
+    RestClient? rest,
     ConsentGate? consent,
     IssueReporter? issueReporter,
     AttachmentUploader? attachmentUploader,
@@ -258,7 +289,15 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     // appearing". Built here rather than in the initializer list because its
     // writer is this Cubit's own [updateSessionSummaries] — see
     // [sessionSource].
-    final SessionListFetch? source = sessionSource;
+    //
+    // ONE source, resolved once: `??` is what makes "both supplied" mean one
+    // fetch rather than two of the same page. The closure wins because it is
+    // the more specific instruction — see the [rest] section of this
+    // constructor's doc. A host that supplied neither gets null here and this
+    // class behaves exactly as it did before either parameter existed.
+    final RestClient? restClient = rest;
+    final SessionListFetch? source = sessionSource ??
+        (restClient == null ? null : restSessionSource(rest: restClient));
     if (source != null) {
       _sessionList = SessionListRefresher(
         fetch: source,
@@ -564,12 +603,6 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// neither the state nor the slot still emits nothing.
   @override
   void emit(ChatWidgetState state) {
-    // The one funnel every surface change already passes through, which is
-    // why the diagnostic hangs off it rather than off `_syncSurfaces`:
-    // `release` and `cancel` re-run the slot's own sync and would each need
-    // their own call. Reads the INCOMING state because that is the one whose
-    // identity is about to be on screen.
-    _warnIfAskingAGuestForDetails(state);
     super.emit(
       state.copyWith(
         activeSurface: _surfaces.active,
@@ -581,64 +614,6 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         csatBySession: Map<String, CsatLookup>.unmodifiable(_csatBySession),
       ),
     );
-  }
-
-  /// Whether [_warnIfAskingAGuestForDetails] has already said its piece.
-  ///
-  /// One line per Cubit. The gate stays up across many ticks and every one of
-  /// them re-emits, so without this the console fills with the same paragraph
-  /// and the paragraph stops being read.
-  bool _warnedAboutGuestPreChat = false;
-
-  /// Tells an integrator, in debug builds only, that the widget is about to
-  /// ask a visitor it considers a GUEST for their details.
-  ///
-  /// ── The report this exists for ─────────────────────────────────────────
-  ///
-  /// "My signed-in customer is being asked to type their name in", twice,
-  /// from two different integrators. Both had authenticated the customer,
-  /// both passed a real customer token, and both were treated as guests —
-  /// correctly, by the rule `chat_identity.dart` states at length: a guest is
-  /// a visitor whose [ChatIdentity.profile] is ABSENT. The token cannot be
-  /// the discriminator (this package cannot read it, by design, and a guest
-  /// session carries one too) and `userId` cannot be either (chat-service
-  /// mints one for every visitor). So a host that authenticates perfectly and
-  /// omits `profile` gets a guest, and — until this — got one SILENTLY.
-  ///
-  /// ── Why here, and not at construction ──────────────────────────────────
-  ///
-  /// A guest-only deployment is an ordinary deployment; warning every host
-  /// that builds a Cubit with the default identity would print a paragraph on
-  /// every launch of an app that has nothing to fix, and a warning that cries
-  /// wolf on every launch is the one nobody reads on the day it matters.
-  ///
-  /// This fires at the moment the consequence becomes VISIBLE instead: the
-  /// pre-chat gate going up in front of a guest is precisely the moment a
-  /// host who believed their customer was signed in is being contradicted on
-  /// screen. A guest deployment whose merchant never switched pre-chat on
-  /// never reaches it and never hears from this at all.
-  ///
-  /// ── What it must never carry ───────────────────────────────────────────
-  ///
-  /// No token, no prefix of one, not even its length — `cognito-verifier.ts`
-  /// in the backend spells out why a prefix alone is enough to correlate a
-  /// credential — and no profile contents. There is nothing to redact here
-  /// because nothing identifying is read: the message is a constant, the
-  /// condition is two booleans, and the token is not something this class can
-  /// see in the first place. The same rule `voice_recorder.dart` states for
-  /// audio.
-  ///
-  /// Debug only, and through [debugPrint] rather than
-  /// `FlutterError.reportError`: this is advice, not a fault. Reporting it as
-  /// an error would fail the widget tests of every host with a legitimate
-  /// guest-only deployment and put a non-error in whatever crash reporter
-  /// they wired `FlutterError.onError` to.
-  void _warnIfAskingAGuestForDetails(ChatWidgetState next) {
-    if (_warnedAboutGuestPreChat) return;
-    if (!kDebugMode) return;
-    if (_surfaces.active is! PreChatSurface || !next.isGuest) return;
-    _warnedAboutGuestPreChat = true;
-    debugPrint(_kGuestPreChatWarning);
   }
 
   /// The facts [ProductSurfaceSlot.sync] judges, gathered from their owners.
