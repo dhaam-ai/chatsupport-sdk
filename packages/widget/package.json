@@ -36,6 +36,7 @@
       }
     },
     "./widget.js": "./dist/widget.js",
+    "./form.js": "./dist/form.js",
     "./package.json": "./package.json"
   },
   "files": [
@@ -43,7 +44,8 @@
     "CHANGELOG.md"
   ],
   "sideEffects": [
-    "./dist/widget.js"
+    "./dist/widget.js",
+    "./dist/form.js"
   ],
   "engines": {
     "node": ">=18"
