@@ -261,6 +261,9 @@ class _FakeClient implements WidgetChatClient {
 
   @override
   Future<void> connect() async {}
+
+  @override
+  Future<void> startNewSession({String? topic, String? subject}) async {}
   @override
   bool retryNow() => false;
   @override

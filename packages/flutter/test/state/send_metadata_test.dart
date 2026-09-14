@@ -66,11 +66,11 @@ void main() {
     });
 
     test('carries the FULL answers map, not just the fields it wrote lines for',
-        () {
+        () async {
       // The prose is the human-readable filter; the structured copy is the
       // raw record, and `widget.ts` passes `answers` whole for exactly that
       // reason.
-      cubit.startConversationFrom(
+      await cubit.startConversationFrom(
         message: 'My order is late',
         answers: <String, String>{'name': 'Jordan', 'unknown_id': 'kept'},
       );
@@ -83,8 +83,8 @@ void main() {
     });
 
     test('the opening line itself carries no metadata — it is not an answer',
-        () {
-      cubit.startConversationFrom(
+        () async {
+      await cubit.startConversationFrom(
         message: 'My order is late',
         answers: <String, String>{'name': 'Jordan'},
       );

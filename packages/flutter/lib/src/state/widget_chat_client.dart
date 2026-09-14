@@ -219,6 +219,31 @@ abstract interface class WidgetChatClient {
   /// [MessagePending] on [messages], so the transcript's failure line and
   /// Retry button both clear by themselves.
   RetryOutcome retry(String messageId);
+
+  /// Abandons the current conversation and opens a brand-new one (§6.2).
+  ///
+  /// What "Start a new conversation" has to call, and the one thing this
+  /// interface did not expose. Without it a start from INSIDE a conversation
+  /// had nowhere to go but [sendMessage], which addresses the conversation
+  /// the customer is trying to leave — the reported "it takes the user back
+  /// to the same chat". From Home it merely LOOKED right: no session existed,
+  /// so the server minted one on the hello and the opening line landed in it.
+  ///
+  /// Not [joinSession], which joins a session that already exists, and not a
+  /// disconnect/connect pair, which reconnects into the SAME conversation
+  /// twice over — see `ChatClient.startNewSession`, which is where the
+  /// `newSession: true` latch, the resume-anchor teardown and the
+  /// abandonment of undelivered sends all live. This is a route to that, not
+  /// a reimplementation of it.
+  ///
+  /// [topic] and [subject] ride on the handshake that mints the session and
+  /// can be carried by nothing else — a later frame is too late, because the
+  /// session it would describe has already been created without them.
+  ///
+  /// The `Future` resolves on the new session's `connection.ack`, so a caller
+  /// that awaits it knows [sessions] has already pushed the new snapshot and
+  /// that a [sendMessage] after it is addressed to the new conversation.
+  Future<void> startNewSession({String? topic, String? subject});
 }
 
 /// Wraps a real [ChatClient] to satisfy [WidgetChatClient] by delegation.
@@ -301,4 +326,8 @@ class ChatClientAdapter implements WidgetChatClient {
 
   @override
   RetryOutcome retry(String messageId) => _client.retry(messageId);
+
+  @override
+  Future<void> startNewSession({String? topic, String? subject}) =>
+      _client.startNewSession(topic: topic, subject: subject);
 }

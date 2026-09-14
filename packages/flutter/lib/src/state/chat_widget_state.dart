@@ -195,10 +195,12 @@ class ChatWidgetState extends Equatable {
   /// customer is still filling in and is cleared the moment they start: this
   /// records what the start actually carried.
   ///
-  /// Held here rather than sent, because the wire hop for it is
-  /// `startNewSession({topic, subject})` and [WidgetChatClient] does not
-  /// expose that yet. The value is resolved correctly and waiting; the node
-  /// that widens that interface passes this straight through.
+  /// A RECORD of what was sent, not the thing that sends it. The wire hop is
+  /// `WidgetChatClient.startNewSession({topic, subject})`, which
+  /// [ChatWidgetCubit.startConversationFrom] calls with the same label one
+  /// statement before it writes this field — the topic rides the handshake
+  /// that MINTS the session and can travel on no later frame, so it cannot
+  /// be read back off here and sent afterwards.
   final String? startedTopicLabel;
 
   /// Which participant WE are, for deciding whose messages are our own.

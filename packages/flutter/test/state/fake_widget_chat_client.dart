@@ -193,6 +193,35 @@ class FakeWidgetChatClient implements WidgetChatClient {
     startTypingCalls += 1;
   }
 
+  /// The `topic` each `startNewSession` call carried, oldest first — so its
+  /// LENGTH is the number of times a new conversation was actually asked
+  /// for, and a start that sent into the existing session records nothing.
+  ///
+  /// Recorded rather than counted, for the reason [sentMetadata] is: `topic`
+  /// rides on the handshake that mints the session and can go on no later
+  /// frame, so a call that dropped it would otherwise look identical to a
+  /// correct one in every assertion.
+  final List<String?> newSessionTopics = <String?>[];
+
+  /// The `subject` each call carried, index-aligned with [newSessionTopics].
+  final List<String?> newSessionSubjects = <String?>[];
+
+  /// Held open by a test that needs the window between asking for a new
+  /// session and its `connection.ack` — the window the opening-line latch
+  /// exists to cover. Null completes on the next microtask, which is still
+  /// asynchronous: the real call cannot resolve before the server answers,
+  /// and a fake that returned a completed future synchronously would let a
+  /// caller that forgot to await pass.
+  Completer<void>? newSessionGate;
+
+  @override
+  Future<void> startNewSession({String? topic, String? subject}) async {
+    newSessionTopics.add(topic);
+    newSessionSubjects.add(subject);
+    final Completer<void>? gate = newSessionGate;
+    if (gate != null) await gate.future;
+  }
+
   // ── Test-only inbound simulation ─────────────────────────────────────
 
   void emitConnectionState(ConnectionState next) {

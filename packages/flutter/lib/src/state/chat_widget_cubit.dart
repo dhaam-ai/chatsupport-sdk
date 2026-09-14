@@ -1257,13 +1257,59 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// first, and the latch holds the pre-chat gate down across the whole
   /// exchange: the first send lands with an empty transcript, which is
   /// precisely the window the gate would otherwise flash in.
-  void startConversationFrom({
+  ///
+  /// ── Why this returns a Future now ─────────────────────────────────────
+  ///
+  /// Because minting a session is a round trip, and everything below it has
+  /// to happen on the far side. `WidgetChatClient.startNewSession` resolves
+  /// on the new session's `connection.ack`, so awaiting it is what makes the
+  /// sends that follow addressed to the NEW conversation rather than racing
+  /// the handshake. The latch is taken before that await and released in the
+  /// `finally` after it, so it spans the whole mint — releasing it any
+  /// earlier would re-arm the pre-chat gate in exactly the window the ack
+  /// lands in, which is the window the latch exists for.
+  ///
+  /// Callers need not await it: the form's Start handler is synchronous and
+  /// stays that way, the surface it is holding is handed back from in here,
+  /// and a customer is not made to watch a spinner for a handshake.
+  Future<void> startConversationFrom({
     required String message,
     String? topic,
     Map<String, String>? answers,
-  }) {
+  }) async {
     final OpeningLineLatch latch = _surfaces.beginOpeningLine();
     try {
+      // ── The conversation this one replaces ────────────────────────────
+      //
+      // The reported bug: "when we try to start a new conversation from
+      // inside a chat, it takes the user back to the same chat." Sending was
+      // the whole of this method, and a send is addressed to whatever session
+      // this client is in — so from inside a conversation the opening line
+      // landed in the conversation the customer was asking to leave.
+      // `ChatClient.startNewSession` is the half that closes it (SWITCHED)
+      // and mints a fresh one; see it for why a disconnect/connect pair is
+      // not the same thing.
+      //
+      // Conditional on there BEING a session, because this is a teardown. It
+      // fails every undelivered send, drops the resume anchor and cycles the
+      // socket — a price worth paying to leave a conversation, and pure cost
+      // when there is none to leave. From Home before any snapshot has
+      // landed this client is in no session: the server mints one on the
+      // hello and the opening line lands in it, which is the path that
+      // always worked and is left exactly as it was.
+      //
+      // The topic is the PARAMETER, not `state.startedTopicLabel` — that
+      // field still holds the label of the conversation being left, because
+      // the emit below is what writes this start's own. They are the same
+      // value one statement apart, and reading the stale one here would
+      // stamp the previous conversation's topic onto the new one.
+      //
+      // No `subject`: `startNewSession` takes one and this screen collects
+      // nothing that is a subject — a topic chip and an opening line are not
+      // one under another name — so it is left absent rather than invented.
+      if (state.session != null) {
+        await _client.startNewSession(topic: topic);
+      }
       if (answers != null) {
         final String? details = preChatDetailsMessage(
           fields: preChatFieldsToAsk(
