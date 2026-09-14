@@ -10,7 +10,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FORM_BOOT_PATH, looksLikeSecretKeyLocal, mountForm, readFormBoot } from '../src/form.js';
+import {
+  FORM_BOOT_PATH,
+  looksLikeSecretKeyLocal,
+  mountForm,
+  parentOriginFromLocation,
+  readFormBoot,
+} from '../src/form.js';
+import { FORM_RESIZE_MESSAGE_TYPE } from '../src/form-embed.js';
 import { looksLikeSecretKey } from '../src/auth.js';
 import { WEBFORM_PATH } from '../src/webform.js';
 
@@ -638,5 +645,247 @@ describe('mountForm — the caller who got it wrong', () => {
       /publishableKey is required/,
     );
     expect(target.children.length).toBe(0);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// The FRAME side of the iframe embed's height protocol.
+//
+// This is the half that runs on the console host's hosted page
+// (`GET /f/<publishableKey>`), inside the frame `embedForm` created. Its one
+// job is to tell the embedder how tall it is, to exactly one origin. The
+// matching host-side rules are in `test/form-embed.test.ts`; the contract
+// both are written against is the header of `src/form-embed.ts`.
+//
+// jsdom computes no layout, so every height here is either 0 (the honest
+// measurement of an unlaid-out element) or one stubbed onto the element. What
+// is proved is the protocol — who is posted to, when, and what is sent —
+// never the pixels.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** jsdom has no `ResizeObserver`. This one is driven by hand. */
+class StubResizeObserver {
+  static instances: StubResizeObserver[] = [];
+  readonly observed: Element[] = [];
+  disconnected = false;
+
+  constructor(private readonly callback: () => void) {
+    StubResizeObserver.instances.push(this);
+  }
+
+  observe(target: Element): void {
+    this.observed.push(target);
+  }
+
+  unobserve(): void {}
+
+  disconnect(): void {
+    this.disconnected = true;
+  }
+
+  /** One delivery, as the browser would make at the end of a frame. */
+  fire(): void {
+    this.callback();
+  }
+}
+
+const EMBEDDER = 'https://shop.example.com';
+
+type PostedMessage = { readonly type?: unknown; readonly height?: unknown };
+
+function installFrameStubs(): { posts: Array<[PostedMessage, string]> } {
+  StubResizeObserver.instances = [];
+  vi.stubGlobal('ResizeObserver', StubResizeObserver);
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(bootWithoutFormBlock()));
+
+  const posts: Array<[PostedMessage, string]> = [];
+  // `window.parent` IS `window` in jsdom's top-level document, so this spy
+  // catches what the form posts upward.
+  vi.spyOn(window.parent, 'postMessage').mockImplementation(
+    ((message: unknown, targetOrigin: string) => {
+      posts.push([message as PostedMessage, targetOrigin]);
+    }) as typeof window.postMessage,
+  );
+  return { posts };
+}
+
+/** The observer watching `host`, or `undefined`. */
+function observerFor(host: HTMLElement): StubResizeObserver | undefined {
+  return StubResizeObserver.instances.find((instance) => instance.observed.includes(host));
+}
+
+describe('parentOriginFromLocation — one line for the hosted page', () => {
+  it('reads and returns a canonical origin', () => {
+    expect(parentOriginFromLocation('?embed=1&origin=https%3A%2F%2Fshop.example.com')).toBe(EMBEDDER);
+    // With and without the leading `?`, because `location.search` has one and
+    // a hand-built string usually does not.
+    expect(parentOriginFromLocation('embed=1&origin=https%3A%2F%2Fshop.example.com')).toBe(EMBEDDER);
+    expect(parentOriginFromLocation('?origin=http%3A%2F%2Flocalhost%3A4599')).toBe('http://localhost:4599');
+  });
+
+  it.each([
+    ['nothing at all', ''],
+    ['no origin param', '?embed=1'],
+    ['an empty origin', '?origin='],
+    ['an opaque origin — a file: or sandboxed embedder', '?origin=null'],
+    ['a wildcard', '?origin=*'],
+    ['an origin with a path', '?origin=https%3A%2F%2Fshop.example.com%2Fcontact'],
+    ['an origin with a trailing slash', '?origin=https%3A%2F%2Fshop.example.com%2F'],
+    ['a bare host', '?origin=shop.example.com'],
+    ['a javascript: URL', '?origin=javascript%3Aalert(1)'],
+  ])('returns undefined for %s, so the page has nothing to post to', (_label, search) => {
+    expect(parentOriginFromLocation(search)).toBeUndefined();
+  });
+});
+
+describe('mountForm — reporting height to the embedder', () => {
+  it('posts its height once after mount, to exactly the given origin', () => {
+    const { posts } = installFrameStubs();
+
+    const mounted = mountForm(target, {
+      apiUrl: API_URL,
+      publishableKey: PUBLISHABLE,
+      parentOrigin: EMBEDDER,
+    });
+
+    expect(posts.length).toBe(1);
+    const [message, targetOrigin] = posts[0]!;
+    expect(message.type).toBe(FORM_RESIZE_MESSAGE_TYPE);
+    // jsdom lays nothing out, so 0 is the honest measurement of this element
+    // here; that it is a finite number ≥ 0 is the part of the contract a unit
+    // test can hold, and the host side refuses anything else.
+    expect(typeof message.height).toBe('number');
+    expect(Number.isFinite(message.height as number)).toBe(true);
+    expect(message.height as number).toBeGreaterThanOrEqual(0);
+    expect(targetOrigin).toBe(EMBEDDER);
+
+    mounted.destroy();
+  });
+
+  it('never posts to "*", whatever else it does', () => {
+    const { posts } = installFrameStubs();
+
+    const mounted = mountForm(target, {
+      apiUrl: API_URL,
+      publishableKey: PUBLISHABLE,
+      parentOrigin: EMBEDDER,
+    });
+    vi.spyOn(mounted.host, 'getBoundingClientRect').mockReturnValue({ height: 512 } as DOMRect);
+    observerFor(mounted.host)?.fire();
+
+    expect(posts.length).toBeGreaterThan(0);
+    // The one rule that cannot be relaxed: a wildcard target hands the form's
+    // dimensions, and any future field of this message, to whatever document
+    // happens to be framing the page.
+    for (const [, targetOrigin] of posts) expect(targetOrigin).toBe(EMBEDDER);
+
+    mounted.destroy();
+  });
+
+  it('observes its own host element and posts again on every size change', () => {
+    const { posts } = installFrameStubs();
+
+    const mounted = mountForm(target, {
+      apiUrl: API_URL,
+      publishableKey: PUBLISHABLE,
+      parentOrigin: EMBEDDER,
+    });
+
+    // The element the host document actually contains — not the document and
+    // not the shadow root. A document-level `scrollHeight` under a
+    // `height: 100%` rule can only grow, which is the feedback loop this
+    // protocol is usually got wrong by.
+    const observer = observerFor(mounted.host);
+    expect(observer).toBeDefined();
+    expect(observer!.observed).toEqual([mounted.host]);
+
+    const rect = vi.spyOn(mounted.host, 'getBoundingClientRect');
+    rect.mockReturnValue({ height: 512 } as DOMRect);
+    observer!.fire();
+    rect.mockReturnValue({ height: 344.2 } as DOMRect);
+    observer!.fire();
+
+    expect(posts.length).toBe(3);
+    expect(posts[1]![0].height).toBe(512);
+    // Reported UP: a fraction rounded down is a frame one pixel short of its
+    // content, which is the scrollbar the whole protocol exists to remove.
+    expect(posts[2]![0].height).toBe(345);
+
+    mounted.destroy();
+  });
+
+  it('stops on destroy — disconnected, and silent even if a queued delivery lands', () => {
+    const { posts } = installFrameStubs();
+
+    const mounted = mountForm(target, {
+      apiUrl: API_URL,
+      publishableKey: PUBLISHABLE,
+      parentOrigin: EMBEDDER,
+    });
+    const observer = observerFor(mounted.host)!;
+    mounted.destroy();
+
+    expect(observer.disconnected).toBe(true);
+
+    const before = posts.length;
+    observer.fire();
+    expect(posts.length).toBe(before);
+  });
+
+  it.each([
+    ['an opaque origin', 'null'],
+    ['a wildcard', '*'],
+    ['an origin with a path', 'https://shop.example.com/contact'],
+    ['a trailing slash', 'https://shop.example.com/'],
+    ['a bare host', 'shop.example.com'],
+    ['the empty string', ''],
+  ])('posts NOTHING when parentOrigin is %s', (_label, parentOrigin) => {
+    const { posts } = installFrameStubs();
+
+    const mounted = mountForm(target, {
+      apiUrl: API_URL,
+      publishableKey: PUBLISHABLE,
+      parentOrigin,
+    });
+
+    // Silently, and with the form still fully rendered: a page framed by an
+    // embedder we cannot name is a page that must still work for the visitor
+    // in front of it. What it must NOT do is fall back to '*'.
+    expect(posts).toEqual([]);
+    expect(shadowOf(mounted.host).querySelector('form')).not.toBeNull();
+    expect(observerFor(mounted.host)).toBeUndefined();
+
+    mounted.destroy();
+  });
+
+  it('posts nothing at all when no parentOrigin is given — the inline embed is unchanged', () => {
+    const { posts } = installFrameStubs();
+
+    const mounted = mountForm(target, { apiUrl: API_URL, publishableKey: PUBLISHABLE });
+
+    expect(posts).toEqual([]);
+    expect(StubResizeObserver.instances).toEqual([]);
+
+    mounted.destroy();
+  });
+
+  it('still mounts, and still posts once, where ResizeObserver does not exist', () => {
+    const { posts } = installFrameStubs();
+    // Safari before 13.1, and every jsdom. The form must not fail to mount
+    // over a reporting channel, so the initial post is made directly and the
+    // observer is an enhancement on top of it.
+    vi.stubGlobal('ResizeObserver', undefined);
+
+    const mounted = mountForm(target, {
+      apiUrl: API_URL,
+      publishableKey: PUBLISHABLE,
+      parentOrigin: EMBEDDER,
+    });
+
+    expect(shadowOf(mounted.host).querySelector('form')).not.toBeNull();
+    expect(posts.length).toBe(1);
+    expect(posts[0]![1]).toBe(EMBEDDER);
+
+    mounted.destroy();
   });
 });

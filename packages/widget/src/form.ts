@@ -282,6 +282,28 @@ export interface MountFormOptions {
   readonly onError?: (error: unknown) => void;
   /** Fired once, after an accepted submission. */
   readonly onSubmitted?: (receipt: WebformReceipt) => void;
+  /**
+   * The EMBEDDER's origin, when this form is rendered inside an iframe.
+   *
+   * Set ONLY by the hosted page (`GET /f/<publishableKey>?embed=1&origin=…`),
+   * which reads it with `parentOriginFromLocation(location.search)` below.
+   * Given it, the form reports its height upward on every size change so the
+   * frame around it never shows a scrollbar of its own — see the protocol
+   * block in `src/form-embed.ts`, which is the host half of the same
+   * contract and the thing a hosted page is built against.
+   *
+   * Absent, nothing is posted and nothing is observed: the inline embed and
+   * the route component are unchanged by this option existing.
+   *
+   * A value that is not a canonical origin is IGNORED and nothing is ever
+   * posted — never a fallback to `'*'`, which would hand the form's
+   * dimensions to whatever document happens to be framing the page.
+   *
+   * Typed `| undefined` deliberately, under `exactOptionalPropertyTypes`, so
+   * that `{ parentOrigin: parentOriginFromLocation(location.search) }` — the
+   * one line the hosted page exists to write — type-checks.
+   */
+  readonly parentOrigin?: string | undefined;
 }
 
 export interface MountedForm {
@@ -361,6 +383,137 @@ function requireString(value: unknown, field: string): string {
     throw new FormConfigError(`${field} is required`);
   }
   return value.trim();
+}
+
+// ── The iframe embed's frame half ─────────────────────────────────────────
+//
+// The host half is `src/form-embed.ts`, and its header holds the protocol
+// both sides are written against. Nothing is imported across that boundary in
+// either direction: `dist/form.js` must not carry the embed's script-tag
+// code, and `dist/form-embed.js` must not carry this form. The two things
+// they would otherwise share are a message name and an origin test, and both
+// are pinned by test rather than by an import — `test/mount-form.test.ts`
+// asserts what this posts against the constant the HOST side exports, so a
+// rename on one side is a failing test rather than a form that silently
+// stops resizing.
+
+/** Frame → host. Must equal `form-embed.ts`'s `FORM_RESIZE_MESSAGE_TYPE`. */
+const RESIZE_MESSAGE_TYPE = 'dhaam-form:resize';
+
+/**
+ * Whether `value` is a canonical origin — `new URL(value).origin === value`.
+ *
+ * The same three lines as `form-embed.ts`'s, for the reason above. Canonical
+ * is what matters: `https://shop.example.com/` and
+ * `https://shop.example.com:443` both denote the right origin and neither is
+ * what `postMessage` will compare against, so both are refused here rather
+ * than silently repaired into something that never matches.
+ */
+function isOrigin(value: string): boolean {
+  try {
+    return new URL(value).origin === value;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The embedder's origin out of a hosted page's query string, validated.
+ *
+ * The whole of what `GET /f/<publishableKey>?embed=1&origin=…` has to do to
+ * join the protocol:
+ *
+ *     mountForm(el, { apiUrl, publishableKey, parentOrigin: parentOriginFromLocation(location.search) });
+ *
+ * `undefined` for anything that is not a canonical origin — absent, empty,
+ * `"null"` (what a `file:` or sandboxed embedder reports), a wildcard, or an
+ * origin with a path on it. The caller then posts nothing, which is the only
+ * safe reading: there is no origin to name, and the alternative a page would
+ * otherwise reach for is `'*'`.
+ */
+export function parentOriginFromLocation(search: string): string | undefined {
+  try {
+    const value = new URLSearchParams(search).get('origin');
+    if (value === null) return undefined;
+    return isOrigin(value) ? value : undefined;
+  } catch {
+    // `URLSearchParams` does not throw on any string, but this runs on the
+    // first line of a page inside someone else's frame and is not the place
+    // to find out otherwise.
+    return undefined;
+  }
+}
+
+/** Whatever has to be torn down when the form goes away. */
+interface ResizeReporter {
+  stop(): void;
+}
+
+const NO_REPORTER: ResizeReporter = { stop() {} };
+
+/**
+ * Reports `host`'s height to `parentOrigin`, now and on every size change.
+ *
+ * ── Why the HOST ELEMENT and not the document ─────────────────────────────
+ *
+ * The obvious implementation posts `document.documentElement.scrollHeight`.
+ * It is also the one that oscillates: the frame is resized to that height,
+ * which changes the layout viewport, which changes the scroll height, which
+ * posts again. Observing the element the form is actually in makes the
+ * measurement content-driven and independent of the frame it sits in, so a
+ * height the host applies cannot feed back into the next measurement. The
+ * hosted page therefore gives that element no outside margin — a margin is
+ * outside the border box and would simply not be counted.
+ *
+ * Nothing here may reach the page as an exception. A `postMessage` can throw
+ * — a structured-clone failure, a detached parent — and this runs on a
+ * merchant's contact form.
+ */
+function installResizeReporter(host: HTMLElement, parentOrigin: string | undefined): ResizeReporter {
+  // Two gates, and the second is the security-relevant one: an origin this
+  // function cannot name is an origin it does not post to. There is
+  // deliberately no `'*'` path anywhere in this file.
+  if (parentOrigin === undefined || !isOrigin(parentOrigin)) return NO_REPORTER;
+
+  let stopped = false;
+  const post = (): void => {
+    if (stopped) return;
+    try {
+      const parent = window.parent;
+      if (parent === null || typeof parent.postMessage !== 'function') return;
+      // Border-box height, taken UP. A fraction rounded down is a frame one
+      // pixel short of its content, which is the scrollbar this exists to
+      // remove. The host side refuses anything that is not finite and ≥ 0,
+      // so a `NaN` from a detached element is dropped here rather than sent
+      // and ignored there.
+      const height = Math.ceil(host.getBoundingClientRect().height);
+      if (!Number.isFinite(height) || height < 0) return;
+      parent.postMessage({ type: RESIZE_MESSAGE_TYPE, height }, parentOrigin);
+    } catch {
+      // Same contract as everything else on this path: a failure to report a
+      // height is a frame that does not resize, never an exception in
+      // someone else's page.
+    }
+  };
+
+  // Once, directly, BEFORE any observer. `ResizeObserver` is absent in older
+  // Safari and in jsdom, and a form that only reported its height where that
+  // API exists would render a 320px letterbox everywhere else.
+  post();
+
+  let observer: ResizeObserver | null = null;
+  if (typeof ResizeObserver === 'function') {
+    observer = new ResizeObserver(post);
+    observer.observe(host);
+  }
+
+  return {
+    stop() {
+      stopped = true;
+      observer?.disconnect();
+      observer = null;
+    },
+  };
 }
 
 /**
@@ -526,6 +679,10 @@ export function mountForm(target: Element, options: MountFormOptions): MountedFo
     }
   }
 
+  // Installed AFTER the form is in the DOM, so the first height reported is a
+  // measurement of the rendered form rather than of an empty element.
+  const resizeReporter = installResizeReporter(root.host, options.parentOrigin);
+
   // Started AFTER the form is in the DOM, so there is no ordering in which a
   // slow read delays a render. Not awaited by anything.
   void readFormBoot({ apiUrl, publishableKey, signal: boot.signal }).then((verdict) => {
@@ -545,6 +702,7 @@ export function mountForm(target: Element, options: MountFormOptions): MountedFo
     },
     destroy() {
       boot.abort();
+      resizeReporter.stop();
       view.destroy();
       root.destroy();
       mounted.delete(target);
