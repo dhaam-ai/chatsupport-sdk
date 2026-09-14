@@ -49,6 +49,8 @@ import { createReportIssueForm } from './ui/report-issue.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
 import {
+  DEFAULT_AVATAR_IMAGE,
+  DEFAULT_LOGO_IMAGE,
   ICONS,
   LAUNCHER_ICONS,
   SOLID_LAUNCHER_ICONS,
@@ -64,7 +66,15 @@ import { createHeroHeader, heroContentFrom } from './ui/hero-header.js';
 import { createHomeScreen, homeQuestionsSlot } from './ui/home-screen.js';
 import { createIdentityHeader } from './ui/identity-header.js';
 import { createMessageList } from './ui/message-list.js';
-import { createMessagesScreen } from './ui/messages-screen.js';
+import { createMessagesScreen, getCustomerConversationTitle } from './ui/messages-screen.js';
+import { createPortalThread } from './ui/portal-thread.js';
+import {
+  createPortalConversationClient,
+  listPortalQueue,
+  PortalApiError,
+} from './portal/portal-staff-client.js';
+import type { PortalQueueRow } from './portal/portal-staff-client.js';
+import type { ConversationClient } from '@dhaam-ccrm/core';
 import { createNav } from './ui/nav.js';
 import type { NavTab } from './ui/nav.js';
 import { createNewConversationScreen } from './ui/new-conversation.js';
@@ -281,7 +291,7 @@ const CONNECTION_COLOR: Record<ConnectionState, string> = {
  * "start a new conversation" action below the fold on a phone, which is the
  * one action every customer needs to be able to reach.
  */
-const SESSION_PICKER_LIMIT = 5;
+const SESSION_PICKER_LIMIT = 50;
 
 /** Everything the connection's state implies for the UI, decided in one place. */
 interface ConnectionStatus {
@@ -393,7 +403,14 @@ function buildLauncherIcon(spec: LauncherIcon): Node {
     // `alt=""`, not the label: the launcher already carries an accessible name
     // (see `launcherName`), and naming the image too would make a screen
     // reader announce the button twice — the same rule `icon()` follows.
-    if (src !== null) return el('img', { attrs: { class: 'dh-launcher-image', src, alt: '' } });
+    if (src !== null) {
+      const img = el('img', { attrs: { class: 'dh-launcher-image', src, alt: '' } });
+      // Same gap as the header avatar and hero logo/faces: `src` passed the
+      // allowlist but the browser can still fail to fetch it — see
+      // DEFAULT_LOGO_IMAGE's doc in dom.ts.
+      img.addEventListener('error', () => { img.src = DEFAULT_LOGO_IMAGE; }, { once: true });
+      return img;
+    }
   }
 
   // `solidIcon` for the console's own glyphs, which are Heroicons SOLID
@@ -422,9 +439,17 @@ function buildLauncherIcon(spec: LauncherIcon): Node {
 function buildHeaderAvatar(mode: AvatarMode, initials: string, logoUrl: string): HTMLElement | null {
   if (mode === 'logo') {
     const src = safeImageUrl(logoUrl);
-    return src === null
-      ? null
-      : el('img', { attrs: { class: 'dh-avatar dh-avatar-image', src, alt: '', 'aria-hidden': 'true' } });
+    if (src === null) return null;
+    const img = el('img', {
+      attrs: { class: 'dh-avatar dh-avatar-image', src, alt: '', 'aria-hidden': 'true' },
+    });
+    // A configured logo the BROWSER cannot actually load (relative path
+    // resolved against the wrong origin, deleted asset) must not sit here
+    // as a broken-image glyph — see DEFAULT_LOGO_IMAGE's own doc in
+    // dom.ts. `{ once: true }`: the fallback itself never fails, so there
+    // is nothing left to listen for after the first error.
+    img.addEventListener('error', () => { img.src = DEFAULT_LOGO_IMAGE; }, { once: true });
+    return img;
   }
 
   // Two characters, because that is what fits: the console lets a merchant
@@ -586,6 +611,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   host.setAttribute('data-position', config.position);
   host.setAttribute('data-launcher', config.launcher);
   host.setAttribute('data-design', config.design);
+  if ((config as any).userRole) {
+    host.setAttribute('data-user-role', String((config as any).userRole));
+  }
 
   let presentation: ResolvedPresentation = 'bubble';
   /**
@@ -785,7 +813,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * `ui/home-screen.ts`'s own empty states, and there is no second one
    * anywhere in this package.
    */
-  const initialScreenName: ScreenName = config.sessionId === undefined ? 'home' : 'conversation';
+  const isStaffOrAdminUser = (config as any).userRole === 'admin' || (config as any).userRole === 'merchant';
+  const initialScreenName: ScreenName =
+    (config as any).initialScreen ??
+    ((config as any).target !== undefined || config.sessionId !== undefined
+      ? 'conversation'
+      : isStaffOrAdminUser
+        ? 'messages'
+        : 'home');
 
   const report = (error: unknown): void => config.onError(error);
 
@@ -1134,7 +1169,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // this page". Handled by hiding rather than by tearing the widget down:
     // the host still holds a `ChatWidget` handle and calling `open()` on a
     // destroyed one should not be the price of a merchant toggling a switch.
-    launcher.hidden = !shouldMount(next);
+    launcher.hidden = isStaffOrAdminUser ? false : !shouldMount(next);
   };
 
   /**
@@ -1203,19 +1238,21 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * (reported issue 9). Rebuilt rather than patched — see
    * {@link buildHeaderAvatar} for why the slot holds several shapes.
    */
+  let activeConversationTitle: string | null = null;
+
   function syncHeaderAvatar(): void {
     const session = store.getState().session;
     let avatar: HTMLElement | null = null;
     if (!shouldCollectOffline(remote)) {
-      avatar =
-        session !== null && isHandledByCurrent(session)
-          ? // Read back through the object, never asserted — the same caution
-            // identity-header.ts documents for wire-sourced data. The brand
-            // fallback also covers a blank display name (buildAgentAvatar
-            // returns null for it).
-            (buildAgentAvatar(session.handledBy?.displayName ?? '') ??
-            buildHeaderAvatar(brandAvatar.mode, brandAvatar.initials, brandAvatar.logoUrl))
-          : buildHeaderAvatar(brandAvatar.mode, brandAvatar.initials, brandAvatar.logoUrl);
+      if (activeConversationTitle !== null) {
+        avatar = buildAgentAvatar(activeConversationTitle);
+      } else {
+        avatar =
+          session !== null && isHandledByCurrent(session)
+            ? (buildAgentAvatar(session.handledBy?.displayName ?? '') ??
+              buildHeaderAvatar(brandAvatar.mode, brandAvatar.initials, brandAvatar.logoUrl))
+            : buildHeaderAvatar(brandAvatar.mode, brandAvatar.initials, brandAvatar.logoUrl);
+      }
     }
     avatarHost.hidden = avatar === null;
     avatarHost.replaceChildren(...(avatar === null ? [] : [avatar]));
@@ -1803,6 +1840,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // open in its surface slot — see `discardUserSurface` for why nothing
       // else would ever clear it.
       if (name !== 'conversation') discardUserSurface();
+      // Same rule for the portal thread: leaving 'conversation' means
+      // whichever customer conversation was open is no longer on screen, so
+      // a later re-render of a STALE `client.subscribe` notification (one
+      // that arrives after the admin has already navigated away) must not
+      // repaint a thread nobody is looking at.
+      if (name !== 'conversation') {
+        currentPortalSessionId = null;
+        portalConversationActive = false;
+      }
       syncScreens();
       // Focus follows navigation, same as any single-page app's route
       // change — but only while the panel is actually open and visible;
@@ -1826,17 +1872,26 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // one they are not looking at reaches this widget through nothing else.
       // Bounded by a customer action, and collapsed by `refreshSessions`'s own
       // in-flight latch, so flipping between the two tabs cannot fan out.
-      if (name === 'home' || name === 'messages') refreshSessions();
+      if (name === 'home' || name === 'messages') {
+        sessionsRequested = true;
+        refreshSessions();
+      }
+      if (name === 'messages') refreshPortalQueue();
       if (name === 'messages') messagesScreen.focus();
       else if (name === 'home') panel.focus({ preventScroll: true });
     },
   });
 
-  const nav = createNav((tab: NavTab) => screens.swap(tab));
+  const isStaffOrAdmin = (config as any).userRole === 'admin' || (config as any).userRole === 'merchant';
+  const nav = createNav((tab: NavTab) => screens.swap(tab), !isStaffOrAdmin);
 
   const homeScreen = createHomeScreen({
     onStartNew: () => openNewConversationFlow(),
-    onOpenConversation: (sessionId) => void selectSession(sessionId),
+    onOpenConversation: (sessionId) => {
+      const recent = store.getState().pastSessions.find((s) => s.id === sessionId);
+      const title = recent ? getCustomerConversationTitle(recent, config.title) : config.title;
+      void selectSession(sessionId, title);
+    },
     onSeeAll: () => screens.swap('messages'),
     onLeaveMessage: () => openWebform(),
     // Row 2's "Try live chat anyway": hand the visitor to a REAL,
@@ -1867,9 +1922,140 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   heroHeader.watchScroll(homeScreen.node);
 
   const messagesScreen = createMessagesScreen({
-    onOpenConversation: (sessionId) => void selectSession(sessionId),
+    onOpenConversation: (sessionId, displayName, subtitleText) => {
+      if (portalQueueIds.has(sessionId)) {
+        void openPortalConversation(sessionId, displayName, subtitleText);
+      } else {
+        void selectSession(sessionId, displayName, subtitleText);
+      }
+    },
     onStartNew: () => openNewConversationFlow(),
+    userRole: (config as any).userRole,
   });
+
+  // ── Portal (admin) mode: the Customers tab's real data source ───────────
+  //
+  // Only for `userRole === 'admin'` — chat-service's staff socket refuses a
+  // merchant/manager token outright (a mapping gap on the server, not
+  // something this widget can route around), so `userRole === 'merchant'`
+  // is deliberately left exactly as before: an empty Customers/Merchants
+  // tab, same as prior to this change.
+  //
+  // A second client, independent of `store` above — see
+  // `./portal/portal-staff-client.ts`'s header for why the two protocols
+  // cannot share a session model. `store`'s own connection still opens (line
+  // near the bottom of this function) and is simply unused for portal
+  // rendering; nothing about the customer flow changes for `userRole`
+  // undefined/'customer'/'merchant'.
+  const isPortalAdmin = (config as any).userRole === 'admin' && config.auth.getToken !== undefined;
+
+  async function portalToken(): Promise<string> {
+    const resolved = await config.auth.getToken!();
+    return typeof resolved === 'string' ? resolved : resolved.accessToken;
+  }
+
+  let portalClient: ConversationClient | null = null;
+  let portalUnsubscribe: (() => void) | null = null;
+  let portalQueueRows: readonly PortalQueueRow[] = [];
+  const portalQueueIds = new Set<string>();
+  let portalQueuePollTimer: ReturnType<typeof setInterval> | null = null;
+  let currentPortalSessionId: string | null = null;
+
+  function ensurePortalClient(): ConversationClient {
+    if (portalClient !== null) return portalClient;
+    const client = createPortalConversationClient({
+      apiUrl: config.apiUrl,
+      wsUrl: config.wsUrl,
+      getToken: portalToken,
+      senderId: config.identity.userId,
+    });
+    portalClient = client;
+    portalUnsubscribe = client.subscribe((state) => {
+      if (currentPortalSessionId === null) return;
+      portalThread.render(state.conversations[currentPortalSessionId] ?? null, false);
+    });
+    client.connect().catch(report);
+    return client;
+  }
+
+  /** GET /agent/queue — this tenant's real customer conversations. REST, not the socket; works before/independent of `ensurePortalClient()`. */
+  function refreshPortalQueue(): void {
+    if (!isPortalAdmin || destroyed) return;
+    listPortalQueue({ apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId })
+      .then((rows) => {
+        if (destroyed) return;
+        portalQueueRows = rows;
+        portalQueueIds.clear();
+        for (const row of rows) portalQueueIds.add(row.sessionId);
+        syncSessionSurfaces();
+      })
+      .catch((error: unknown) => {
+        // A failed queue refresh leaves the last-known list on screen rather
+        // than blanking it — same "don't discard what's still true" rule
+        // `refreshSessions` follows for the customer flow.
+        report(error instanceof PortalApiError ? new Error(`could not load the customer queue: ${error.message}`) : error);
+      });
+  }
+
+  /** Maps one real queue row onto the shape `ui/messages-screen.ts`'s portal tab already reads defensively (`chatType`/`customerName`/etc. — see `projection.ts`'s own comment on those enrichment fields). */
+  function portalQueueRowToSummary(row: PortalQueueRow): ChatSessionSummary {
+    const isMerchant = row.chatType === 'merchant' || row.targetRole === 'merchant';
+    const storeName = isMerchant ? (row.storeName ?? row.merchantName ?? undefined) : undefined;
+    return {
+      id: row.sessionId,
+      status: (row.status as ChatSessionSummary['status']) ?? 'OPEN',
+      mode: 'HUMAN',
+      createdAt: new Date().toISOString(),
+      closedAt: null,
+      lastMessageAt: undefined,
+      lastMessagePreview: row.lastMessage ?? undefined,
+      unreadCount: 0,
+      handledBy: null,
+      // Consumed by messages-screen.ts's tab-routing/display-name logic
+      chatType: isMerchant ? 'merchant' : 'customer',
+      targetRole: row.targetRole ?? (isMerchant ? 'merchant' : undefined),
+      targetId: row.targetId ?? undefined,
+      storeName,
+      merchantName: isMerchant ? (row.merchantName ?? storeName) : undefined,
+      customerName: row.customerName ?? undefined,
+      customerEmail: row.customerEmail ?? undefined,
+    } as unknown as ChatSessionSummary;
+  }
+
+  async function openPortalConversation(sessionId: string, displayName?: string, subtitleText?: string): Promise<void> {
+    currentPortalSessionId = sessionId;
+    portalConversationActive = true;
+    const resolvedTitle = displayName ?? 'Conversation';
+    activeConversationTitle = resolvedTitle;
+    identityHeader.setTitle(resolvedTitle);
+    syncHeaderAvatar();
+    subtitle = subtitleText ?? (displayName?.toLowerCase().includes('store') ? 'Merchant' : 'Customer');
+    statusText.textContent = subtitle;
+    portalThread.setError(null);
+    portalThread.render(null, true);
+    showConversation();
+    portalThread.focus();
+
+    const client = ensurePortalClient();
+    try {
+      await client.open({ conversationId: sessionId });
+      if (currentPortalSessionId === sessionId) {
+        portalThread.render(client.getState().conversations[sessionId] ?? null, false);
+      }
+    } catch (error) {
+      if (currentPortalSessionId !== sessionId) return;
+      portalThread.render(null, false);
+      portalThread.setError(error instanceof Error ? error.message : 'Could not open this conversation.');
+    }
+  }
+
+  const portalThread = createPortalThread({
+    onSend: async (text) => {
+      if (currentPortalSessionId === null || portalClient === null) return;
+      await portalClient.sendMessage(currentPortalSessionId, text);
+    },
+  });
+  let portalConversationActive = false;
 
   const backButton = el('button', {
     attrs: {
@@ -1952,7 +2138,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
               // above, which is the one place `backButton.hidden` is set.
               backButton,
               avatarHost,
-              el('div', { children: [identityHeader.node, status] }),
+              el('div', {
+                attrs: { class: 'dh-header-identity-wrap' },
+                children: [identityHeader.node, heroHeader.headerAvatars, status],
+              }),
               el('div', { attrs: { class: 'dh-header-spacer' } }),
               reconnectButton,
               headerMenu.node,
@@ -1989,6 +2178,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // showing behind it.
       unavailable.node,
       surfaceHost,
+      // Mounted only for `userRole: 'admin'` — every other widget instance
+      // (every existing customer-facing embed included) never puts this
+      // node in the DOM at all, rather than mounting-but-hiding it. Reusing
+      // `.dh-input`/`.dh-composer`/`.dh-msg` etc. for visual consistency
+      // (see portal-thread.ts's header) is only safe while there is exactly
+      // one element wearing each of those classes at a time; an ALWAYS-
+      // mounted second one is exactly what broke `widget-dom.test.ts`'s
+      // `querySelector('.dh-input')` during development of this feature.
+      ...(isPortalAdmin ? [portalThread.node] : []),
       messageList.log,
       // Above the chips and below the transcript: the greeting is the first
       // thing said, and the chips are the answers to it.
@@ -3141,7 +3339,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * so the lists have one input rather than two that could disagree.
    */
   function refreshSessions(): void {
-    if (!sessionsRequested || destroyed) return;
+    if (destroyed) return;
+    sessionsRequested = true;
     if (sessionsInFlight) {
       sessionsRefreshQueued = true;
       return;
@@ -3198,8 +3397,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   function syncSessionSurfaces(): void {
     if (destroyed) return;
     const state = store.getState();
-    homeScreen.update(mostRecentSession(state.pastSessions), subtitle ?? '', entry);
-    messagesScreen.render(state.pastSessions, state.session?.id ?? null);
+    const ctaSub = remote.header.ctaSubtitle || config.header.ctaSubtitle || 'We usually reply instantly';
+    homeScreen.update(mostRecentSession(state.pastSessions), ctaSub, entry);
+    // Portal (admin) mode: the Customers tab's real rows come from
+    // `/agent/queue`, not from `state.pastSessions` — that array is the
+    // customer-flow client's OWN session history (the widget always builds
+    // one, unused for portal rendering — see the comment above
+    // `isPortalAdmin`), and it is NOT empty for an admin identity that has
+    // ever had one: it is a leftover, irrelevant thread from before this
+    // widget had a real Customers tab, and mixing it in was inflating the
+    // Merchants tab's count with sessions that are neither real merchant
+    // conversations nor anything an admin can act on here. Swapped, not
+    // merged, for admin; every other `userRole` is unaffected.
+    const sessions = isPortalAdmin ? portalQueueRows.map(portalQueueRowToSummary) : state.pastSessions;
+    messagesScreen.render(sessions, currentPortalSessionId ?? state.session?.id ?? null);
   }
 
   /** Puts the conversation back on screen. Idempotent. */
@@ -3244,11 +3455,22 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * superseded one, so a customer clicking two rows quickly lands on the
    * second. Guarding here would instead ignore their second click.
    */
-  async function selectSession(sessionId: string): Promise<void> {
+  async function selectSession(sessionId: string, displayName?: string, subtitleText?: string): Promise<void> {
     // Asking for a different conversation ends whatever the customer had
     // open in the slot — a form abandoned on the way here must not be what
     // the picked conversation renders under.
     discardUserSurface();
+    const past = store.getState().pastSessions.find((s) => s.id === sessionId);
+    const resolvedTitle = displayName || (past ? getCustomerConversationTitle(past, config.title) : config.title);
+    if (resolvedTitle) {
+      activeConversationTitle = resolvedTitle;
+      identityHeader.setTitle(resolvedTitle);
+      syncHeaderAvatar();
+    }
+    if (subtitleText !== undefined) {
+      subtitle = subtitleText;
+      statusText.textContent = subtitle;
+    }
     showConversation();
     if (open) composer.input.focus({ preventScroll: true });
 
@@ -3683,7 +3905,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // gate, a CSAT survey, the new-conversation composer) is standing in for
     // them — the same "one at a time" rule `openSurface` always enforced,
     // now with a screen layered on top of it.
-    const showingLog = onConversation && activeSurface === null;
+    const showingLog = onConversation && activeSurface === null && !portalConversationActive;
 
     // A CLOSED/RESOLVED session with no surface standing in for it — the
     // CSAT survey already submitted, or never due — still leaves `showingLog`
@@ -3709,7 +3931,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
     setPaneVisible(homeScreen.node, onHome);
     setPaneVisible(messagesScreen.node, onMessages);
-    setPaneVisible(surfaceHost, onConversation && activeSurface !== null);
+    setPaneVisible(surfaceHost, onConversation && activeSurface !== null && !portalConversationActive);
+    // The portal thread stands in for the transcript+composer exactly the
+    // way `surfaceHost` stands in for them elsewhere — one at a time, never
+    // stacked. See `openPortalConversation`/`portalConversationActive`.
+    setPaneVisible(portalThread.node, onConversation && portalConversationActive);
     setPaneVisible(messageList.log, showingLog);
     composer.node.hidden = !showingLog || showingEndedFooter;
     endedFooter.node.hidden = !showingEndedFooter;
@@ -3718,6 +3944,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // and there is no tab for `conversation` to begin with (see nav.ts).
     setPaneVisible(nav.node, !onConversation);
     backButton.hidden = !screens.canGoBack();
+
+    // Stamp the current screen onto the host element so CSS can target it:
+    // `:host([data-screen="conversation"])` applies the purple gradient header
+    // and the pink-teal thread background (ui/styles.ts Dhaam UI section).
+    host.setAttribute('data-screen', current);
 
     // Common Questions and the hero banner are both Home furniture now —
     // see home-screen.ts's own header on why it arranges rather than owns
@@ -3732,9 +3963,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // elapsed (see `armGreeting`); without it this pane would appear
     // instantly and the merchant's configured wait would be invisible.
     const beforeFirstMessage = showingLog && state.messages.length === 0;
+    const isStaffOrAdmin = (config as any).userRole === 'admin' || (config as any).userRole === 'merchant';
     setPaneVisible(
       greetingBubble,
-      beforeFirstMessage && greetingDue && greetingBubble.textContent !== '',
+      !isStaffOrAdmin && beforeFirstMessage && greetingDue && greetingBubble.textContent !== '',
     );
 
     nav.update(current, state.unreadCount);
@@ -3929,7 +4161,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // nothing at all (Row 6 hides the launcher outright).
       discardUserSurface();
       syncScreens();
-      launcher.hidden = !shouldMount(remote);
+      launcher.hidden = isStaffOrAdminUser ? false : !shouldMount(remote);
       throw error;
     }
   }
@@ -4158,6 +4390,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   async function startNewConversation(input: NewConversationInput, form: ProductSurface): Promise<void> {
     openingLinesInFlight += 1;
     try {
+      activeConversationTitle = config.title;
+      identityHeader.setTitle(config.title);
+      syncHeaderAvatar();
       // `startNewSession`, never `switchSession`: a switch joins a session
       // that already exists and deliberately mints nothing, so using it here
       // would drop the customer into whichever conversation the server
@@ -4376,7 +4611,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // to keep could do neither: it could not re-arm when the customer switched
   // conversations, which is why picking a past session left the previous
   // session's transcript on screen.
-  const connecting = store.client.connect();
+  const connecting = isPortalAdmin ? Promise.resolve() : store.client.connect();
+
+  // Portal (admin) mode: the Customers tab needs its first real data before
+  // the admin ever opens Messages, not only once they navigate there — see
+  // the `isPortalAdmin` comment above `refreshPortalQueue`. `20_000`, not
+  // shorter: this is a plain REST poll (no server-pushed queue event this
+  // SDK slice surfaces yet — see `portal-staff-client.ts`), and a customer's
+  // own widget polls its session list on no tighter a cadence than a screen
+  // navigation already provides.
+  if (isPortalAdmin) {
+    refreshPortalQueue();
+    portalQueuePollTimer = setInterval(refreshPortalQueue, 20_000);
+  }
 
   const namedSession = config.sessionId;
   if (namedSession === undefined) {
@@ -4438,6 +4685,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // Its scroll IntersectionObserver, and the marker it inserted into
       // `.dh-home` — both would otherwise outlive the shadow root.
       heroHeader.destroy();
+      // The portal (admin) socket, if this widget ever opened one — a second
+      // connection `store.destroy` below knows nothing about.
+      if (portalQueuePollTimer !== null) clearInterval(portalQueuePollTimer);
+      portalUnsubscribe?.();
+      portalClient?.disconnect();
       // `disconnect: true` — this store built the client it wraps, so nothing
       // else on the page is using that socket.
       store.destroy({ disconnect: true });
