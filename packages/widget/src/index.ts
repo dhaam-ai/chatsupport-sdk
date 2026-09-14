@@ -85,6 +85,15 @@ export type { SupportEntry, ResolvedEntry } from './remote-config.js';
 export { submitWebform, visitorMessage, WebformError, WEBFORM_PATH, WEBFORM_TIMEOUT_MS } from './webform.js';
 export type { WebformDraft, WebformReceipt, WebformFailureKind } from './webform.js';
 
+// The two things a TENANT shapes a form with, published from the one module
+// that defines them. `ContactRequirement` used to be exported from `form.js`
+// as a second, structurally identical declaration and `WebformCopy` was not
+// exported at all — so an integrator building their own surface on
+// `submitWebform` could name the draft but not the rule that decides which of
+// its two contact fields the server will insist on. Same union, same shape,
+// one definition.
+export type { ContactRequirement, WebformCopy } from './webform.js';
+
 // The web form WITHOUT the chat widget — no launcher, no panel, no socket, no
 // session, no token mint. `mountForm` puts it in an element the caller names,
 // which is the one thing the three surfaces above it (an inline embed, an
@@ -103,9 +112,10 @@ export type {
   MountFormOptions,
   MountedForm,
   FormBoot,
+  // An alias of `WebformCopy` above, kept under this name because it is what
+  // `FormBoot.form` is documented as and what this package already shipped.
   FormCopy,
   FormFieldLimits,
-  ContactRequirement,
   DhaamFormGlobal,
 } from './form.js';
 

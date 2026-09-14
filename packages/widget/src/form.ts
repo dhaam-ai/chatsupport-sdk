@@ -21,33 +21,40 @@
 // the two forms would then disagree about what the same tenant's submission
 // means.
 //
-// ── What this module does NOT do, and why it is listed ───────────────────
-//
-// It does not render the merchant's own `form.title` / `form.intro` /
-// `form.successMessage`, even when `GET /widget/form` returns them.
-// `ui/webform-form.ts` hardcodes those three strings and takes no copy
-// argument, and that file is currently pinned by SHA-256 by two console
-// tasks. Parameterising it is a real change with a real cost to other work,
-// not something to take as a side effect of this slice. The boot read is
-// PARSED here — `readFormBoot` returns the copy — so the surface above can
-// decide, but nothing in this file renders it yet. Absent copy and present
-// copy therefore look identical today, which is exactly the built-in-strings
-// case working, and is the honest half of that.
-//
-// ── The failure a visitor sees ───────────────────────────────────────────
+// ── The failure a visitor sees, and the two renders it forces ───────────
 //
 // A blank rectangle on a merchant's contact page is the outcome designed
 // against, so the form renders SYNCHRONOUSLY and unconditionally. Nothing is
 // awaited before first paint and no upstream answer can produce an empty
-// element. The boot read runs alongside and can only ADD the notice below,
-// never withhold the form.
+// element. The boot read runs alongside and can only ADD to the form, never
+// withhold it.
+//
+// That is also why the tenant's own shape arrives in a SECOND render. Both
+// things `GET /widget/form` publishes about a tenant — `contactRequirement`,
+// which decides whether Email or Phone is the detail the submit route will
+// insist on, and `form.title` / `form.intro` / `form.successMessage`, the
+// merchant's own copy — are answers to a network call, and the first paint
+// happens before that call lands. `ui/webform-form.ts` takes both as options
+// and builds a form in one shot, so the only way to apply them is to build a
+// second one. `applyTenantShape` below does exactly that, and only when the
+// answer would change something on screen: for the common tenant — the
+// server's default rule, no copy — the first render IS the tenant's render
+// and nothing is rebuilt. What the visitor already typed crosses over; see
+// that function.
+//
+// Both were parsed here and thrown away for one release. The merchant could
+// configure the rule, the server enforced it on submit, and every visitor saw
+// the `'email'` form regardless — which is why
+// `test/webform-tenant-wiring.test.ts` asserts on rendered labels and
+// rendered text rather than on the options object.
 
 import { createFormRoot } from './ui/form-root.js';
 import { FORM_STYLES } from './ui/form-styles.js';
-import { createWebformForm } from './ui/webform-form.js';
+import { DEFAULT_CONTACT_REQUIREMENT, createWebformForm } from './ui/webform-form.js';
+import type { WebformView } from './ui/webform-form.js';
 import { el } from './ui/dom.js';
 import { WebformError, submitWebform, visitorMessage } from './webform.js';
-import type { WebformDraft, WebformReceipt } from './webform.js';
+import type { ContactRequirement, WebformCopy, WebformDraft, WebformReceipt } from './webform.js';
 
 /** Path is fixed by chat-service; only the origin is the host's to state. */
 export const FORM_BOOT_PATH = '/chat-services/api/v1/widget/form';
@@ -63,15 +70,26 @@ export const FORM_BOOT_PATH = '/chat-services/api/v1/widget/form';
  */
 export const FORM_BOOT_TIMEOUT_MS = 2_000;
 
-/** The tenant's own copy, when they wrote any. `null` when they did not. */
-export interface FormCopy {
-  readonly title: string | null;
-  readonly intro: string | null;
-  readonly successMessage: string | null;
-}
+/**
+ * The tenant's own copy, when they wrote any. `null` when they did not.
+ *
+ * An ALIAS, not a second declaration. This was a structurally identical
+ * interface of its own, and two shapes describing one wire block is one shape
+ * too many: `webform.ts`'s is what `createWebformForm` takes, so a field added
+ * to one and not the other would have compiled here and rendered nothing.
+ * The name stays because it is what this module's `FormBoot` is documented and
+ * exported under.
+ */
+export type FormCopy = WebformCopy;
 
-/** Which contact detail the SUBMIT route will insist on for this tenant. */
-export type ContactRequirement = 'email' | 'phone' | 'either';
+/**
+ * Which contact detail the SUBMIT route will insist on for this tenant.
+ *
+ * Re-exported from `webform.ts` rather than redeclared, for the reason
+ * {@link FormCopy} gives. The union is byte-identical either way — this is a
+ * change of where the type LIVES, not of what it is.
+ */
+export type { ContactRequirement };
 
 /** Per-field caps, as published. UTF-16 code units, not bytes. */
 export interface FormFieldLimits {
@@ -151,7 +169,14 @@ function parseContactRequirement(value: unknown): ContactRequirement {
   // rather than a guess, so a value a newer server adds degrades to the
   // loosest rule this form can satisfy instead of demanding a field nobody
   // asked for.
-  return value === 'email' || value === 'phone' ? value : 'either';
+  //
+  // THE SHARED CONSTANT, not a second `'either'` spelled here. This value and
+  // the one `createWebformForm` applies when a caller names nothing are the
+  // same fallback reached by two routes — the first render uses that one, this
+  // one answers the boot read — and if the two ever disagreed, an unreadable
+  // tenant would get a form that visibly changed shape a moment after it
+  // appeared, for no reason a visitor could see. Equal by construction now.
+  return value === 'email' || value === 'phone' ? value : DEFAULT_CONTACT_REQUIREMENT;
 }
 
 export interface ReadFormBootOptions {
@@ -334,6 +359,25 @@ export interface MountedForm {
  */
 const mounted = new WeakMap<Element, MountedForm>();
 
+/**
+ * What the announcer says when the tenant's answer moved the contact rule.
+ *
+ * Names the change rather than reporting that one happened: "the form was
+ * updated" tells a screen-reader user that something they cannot see is now
+ * different and leaves them to find it. Each sentence is the rule the form
+ * now carries, in the same words the form itself uses for it — the `'either'`
+ * line is `ui/webform-form.ts`'s own hint, minus its trailing clause.
+ */
+const RESHAPE_NOTICE: Record<ContactRequirement, string> = {
+  email: 'This form was updated: an email address is now required.',
+  phone: 'This form was updated: a phone number is now required.',
+  either: 'This form was updated: enter an email address or a phone number.',
+};
+
+/** The other rebuild: the rule did not move, the merchant's own copy arrived.
+ *  Nothing about what to fill in changed, so nothing is claimed about it. */
+const COPY_NOTICE = 'This form was updated.';
+
 function report(onError: ((error: unknown) => void) | undefined, error: unknown): void {
   if (onError !== undefined) {
     onError(error);
@@ -403,11 +447,27 @@ const RESIZE_MESSAGE_TYPE = 'dhaam-form:resize';
 /**
  * Whether `value` is a canonical origin — `new URL(value).origin === value`.
  *
- * The same three lines as `form-embed.ts`'s, for the reason above. Canonical
- * is what matters: `https://shop.example.com/` and
+ * Canonical is what matters: `https://shop.example.com/` and
  * `https://shop.example.com:443` both denote the right origin and neither is
  * what `postMessage` will compare against, so both are refused here rather
  * than silently repaired into something that never matches.
+ *
+ * ── NOT the same test as `form-embed.ts`'s, and deliberately ─────────────
+ *
+ * That copy is four lines: it ALSO requires `http:` or `https:`. The two
+ * diverge because the two values are used for different things, and the
+ * justification lives with the stricter one — see `form-embed.ts`'s `isOrigin`
+ * for the full argument. In short: that value is a URL the browser must
+ * NAVIGATE to, and `ws://`/`wss://`/`ftp://` are all canonical origins that no
+ * `<iframe>` can load, so accepting one there produces a frame that never
+ * posts a height and a box that sits empty with nothing anywhere saying why.
+ * THIS value is a `postMessage` TARGET, which the browser itself matches
+ * against the real parent origin — a scheme no parent can have simply never
+ * matches, and the message is not sent. There is no silent-empty failure to
+ * guard against here, so there is no scheme test.
+ *
+ * Still a copy rather than an import: an import in either direction would put
+ * one of these two files' code into the other's bundle.
  */
 function isOrigin(value: string): boolean {
   try {
@@ -582,35 +642,114 @@ export function mountForm(target: Element, options: MountFormOptions): MountedFo
   const root = createFormRoot(target, FORM_STYLES);
   const boot = new AbortController();
 
-  const view = createWebformForm(
-    {
-      // No chat to offer: this bundle has no socket, no session and no
-      // launcher, so "Try live chat anyway" would be a button to nowhere.
-      alternative: null,
-      // `'assumed'` + `'UNKNOWN'` is the pair that renders "Leave a message"
-      // and "We'll reply by email." — the built-in strings. It is also the
-      // only honest pair: this surface has no calendar and asks for none, so
-      // claiming "We're currently offline" would be a guess presented as a
-      // fact. `ui/webform-form.ts`'s closed-copy guard requires BOTH
-      // `published` and `CLOSED` before it says that, which is why passing
-      // `'assumed'` here is safe against a future change to that resolution.
-      source: 'assumed',
-      hours: 'UNKNOWN',
-      // The merchant's pre-chat fields belong to the chat path and arrive
-      // over a route this bundle does not call.
-      extraFields: [],
-    },
-    {
-      onSubmit: async (draft: WebformDraft): Promise<WebformReceipt> => {
-        const receipt = await submitWebform({ apiUrl, publishableKey, draft });
-        options.onSubmitted?.(receipt);
-        return receipt;
+  /**
+   * Set the moment a draft leaves this form, and never cleared.
+   *
+   * It locks {@link applyTenantShape} out for the rest of this mount. A
+   * rebuild mints a NEW `submissionId` (`ui/webform-form.ts` mints one per
+   * form instance), so replacing the form under an in-flight or already-sent
+   * submission would turn the visitor's retry into a second submission the
+   * server's idempotency guard cannot recognise as the same one — and would
+   * throw away the confirmation they are looking at. A `'phone'` tenant whose
+   * boot read lands after the visitor has already pressed Send keeps the
+   * form they submitted; there is nothing left for a reshape to help with.
+   */
+  let submitting = false;
+
+  /**
+   * When the visitor first saw a form here — NOT when the current one was
+   * built.
+   *
+   * Handed to every build, including the rebuild, so `fillMs` stays a
+   * measurement of how long this VISITOR has been looking at this surface.
+   * It is read as a bot signal on the other side: chat-service-node
+   * `src/application/services/webform-text.ts` calls anything under
+   * `minFillMs` (`src/config/index.ts`, default 2000) a bot, and
+   * `src/application/services/webform.service.ts` answers a bot with a
+   * fabricated 202 — a fresh receipt id naming no row, no upstream call,
+   * nothing written, and the merchant's own success sentence shown to the
+   * visitor. A delta restarted at the rebuild would put every visitor who
+   * submits within 2 s of the boot read landing into exactly that hole, and
+   * a browser's autofill is instant.
+   */
+  const startedAt = Date.now();
+
+  function build(requirement: ContactRequirement, copy: FormCopy | null): WebformView {
+    return createWebformForm(
+      {
+        // No chat to offer: this bundle has no socket, no session and no
+        // launcher, so "Try live chat anyway" would be a button to nowhere.
+        alternative: null,
+        // `'assumed'` + `'UNKNOWN'` is the pair that renders "Leave a message"
+        // and the built-in intro rather than "We're currently offline." It is
+        // also the only honest pair: this surface has no calendar and asks for
+        // none, so claiming the team is closed would be a guess presented as a
+        // fact. `ui/webform-form.ts`'s closed-copy guard requires BOTH
+        // `published` and `CLOSED` before it says that, which is why passing
+        // `'assumed'` here is safe against a future change to that resolution
+        // — and is what lets the merchant's own title own every render this
+        // surface can produce.
+        source: 'assumed',
+        hours: 'UNKNOWN',
+        // The merchant's pre-chat fields belong to the chat path and arrive
+        // over a route this bundle does not call.
+        extraFields: [],
+        contactRequirement: requirement,
+        startedAt,
+        // `exactOptionalPropertyTypes` is on, so an absent block is an ABSENT
+        // KEY and never an explicit `undefined`.
+        ...(copy === null ? {} : { copy }),
       },
-      onError: (error: unknown) => report(onError, error),
-    },
-  );
+      {
+        onSubmit: async (draft: WebformDraft): Promise<WebformReceipt> => {
+          submitting = true;
+          const receipt = await submitWebform({ apiUrl, publishableKey, draft });
+          options.onSubmitted?.(receipt);
+          return receipt;
+        },
+        onError: (error: unknown) => report(onError, error),
+      },
+    );
+  }
+
+  /**
+   * What the form on screen was built from.
+   *
+   * Stated rather than inferred: {@link applyTenantShape} rebuilds only when
+   * the boot answer would change something, and "would it change" is a
+   * comparison against what is rendered — so the first render passes
+   * `DEFAULT_CONTACT_REQUIREMENT` explicitly instead of letting
+   * `createWebformForm` apply it out of sight.
+   */
+  let rendered: ContactRequirement = DEFAULT_CONTACT_REQUIREMENT;
+  let view = build(rendered, null);
 
   root.root.appendChild(view.node);
+
+  /**
+   * What a screen-reader user hears when the boot answer rearranges the form
+   * under them.
+   *
+   * OUTSIDE `view.node`, and that placement is the whole mechanism: a live
+   * region is announced only when its CONTENT changes while it is already in
+   * the tree, so the two regions inside the form — the `role="alert"` status
+   * line and the `role="status"` confirmation — cannot carry this. They are
+   * replaced along with everything else, arriving empty and `hidden`, which
+   * announces nothing while labels change, a hint appears and the two contact
+   * fields regroup.
+   *
+   * `role="status"` rather than `alert`: nothing is wrong, and an assertive
+   * interruption for a form that improved would be worse than the silence.
+   * `.dh-sr` is `form-styles.ts`'s existing screen-reader-only geometry and
+   * NO NEW CSS SHIPS WITH THIS. Not `hidden`, which would take it out of the
+   * accessibility tree and make it announce nothing at all.
+   *
+   * ⚠️ NOT VERIFIED WITH A SCREEN READER — jsdom builds no accessibility
+   * tree. What is pinned is the node, its survival across the rebuild, and
+   * that its text changes; how a reader voices it needs someone with one.
+   */
+  const announcer = el('p', { attrs: { class: 'dh-sr', role: 'status' } });
+  root.root.appendChild(announcer);
 
   // ── The one degraded state this surface adds ──────────────────────────
   //
@@ -649,6 +788,128 @@ export function mountForm(target: Element, options: MountFormOptions): MountedFo
         },
       ),
     );
+  }
+
+  /** Whether the merchant actually wrote any of the three. `''` is not copy —
+   *  the console stores an empty field as `null`, and `ui/webform-form.ts`
+   *  trims the other two to the same answer. */
+  function hasCopy(copy: FormCopy | null): boolean {
+    if (copy === null) return false;
+    return [copy.title, copy.intro, copy.successMessage].some(
+      (line) => typeof line === 'string' && line.trim() !== '',
+    );
+  }
+
+  /**
+   * Rebuilds the form from what the tenant's boot read actually said.
+   *
+   * ── Why a rebuild, and not a patch ──────────────────────────────────────
+   *
+   * The rule reaches further into the form than the two `required` flags a
+   * patch could reach: under `'either'` a hint element appears ABOVE both
+   * boxes, the two fields are regrouped under it, both labels lose their
+   * " (optional)" mark, an `aria-describedby` is wired, and the submit path
+   * grows a pair check. All of that is `createWebformForm`'s, decided in one
+   * shot at build time. Reaching in to reproduce it here would be a second
+   * implementation of the tenant rule, and the two would drift — which is the
+   * same argument this module's header makes for not writing a second form.
+   *
+   * ── Why it is usually skipped ───────────────────────────────────────────
+   *
+   * Only when something on screen would change. The common tenant — the
+   * server's own default rule, no copy written — renders identically either
+   * way, and rebuilding for a no-op would move focus and restart `fillMs` for
+   * nothing. `submitting` is the other half: see its declaration.
+   *
+   * ── What survives ──────────────────────────────────────────────────────
+   *
+   * Whatever is in the boxes, by field id. A browser's autofill is instant and
+   * this read is not, so "nothing can have been typed yet" is not true —
+   * it is the one thing a visitor would notice being taken away. The honeypot
+   * crosses over with the rest (a bot's fill is evidence, not noise), and so
+   * does focus, which would otherwise land on `<body>` mid-sentence.
+   *
+   * `fillMs` does NOT restart. The replacement form is genuinely new, but the
+   * delta it reports is not about the form — it is about how long the VISITOR
+   * has been here, and the server destroys any submission under 2 s as a bot.
+   * `startedAt` above carries the origin across; the seam is one optional
+   * number on `createWebformForm`'s options, which is a far smaller coupling
+   * than a `fillMs` this module would otherwise have to reason about blind.
+   *
+   * A VISIBLE validation message crosses over too. A client-side failure
+   * returns BEFORE `callbacks.onSubmit`, so it never sets `submitting` and
+   * this path is wide open under it: a visitor who pressed Send and was told
+   * "Please tell us what you need." would otherwise watch that sentence
+   * deleted by a network read they never asked for.
+   *
+   * ── What is said out loud ────────────────────────────────────────────
+   *
+   * The rearrangement is real — labels lose a mark, a hint appears, two
+   * fields regroup — and a sighted visitor watches it happen. `announcer`
+   * above is that same event for a visitor who cannot, and writing it is the
+   * last thing this does.
+   */
+  function applyTenantShape(requirement: ContactRequirement, copy: FormCopy | null): void {
+    if (submitting) return;
+    if (requirement === rendered && !hasCopy(copy)) return;
+
+    const typed = new Map<string, string>();
+    for (const box of view.node.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+      'input, textarea',
+    )) {
+      if (box.id !== '' && box.value !== '') typed.set(box.id, box.value);
+    }
+    const focused = root.shadow.activeElement instanceof HTMLElement ? root.shadow.activeElement.id : '';
+
+    // Read BEFORE the swap, off the form being replaced, and only when it is
+    // VISIBLE: `createStatusLine` leaves its node in the tree with `hidden`
+    // set and no text when there is nothing to say, and re-showing that would
+    // put an empty alert on screen.
+    const warningNode = view.node.querySelector<HTMLElement>('.dh-form-error');
+    const warning =
+      warningNode !== null && !warningNode.hidden ? (warningNode.textContent ?? '') : '';
+    const reshaped = requirement !== rendered;
+
+    const next = build(requirement, copy);
+    root.root.replaceChild(next.node, view.node);
+    view.destroy();
+    view = next;
+    rendered = requirement;
+
+    // Matched by walking the new subtree rather than by building a selector
+    // out of an id. Not fastidiousness: `CSS.escape` is the only correct way
+    // to put an arbitrary id into a selector, `CSS` is a GLOBAL, and it is
+    // absent in jsdom — so a selector here throws in this package's own test
+    // environment and would throw in any other host that lacks it. The ids in
+    // play are `createField`'s own and would not need escaping; depending on a
+    // global to handle ones that do not exist is the part that is wrong.
+    for (const box of next.node.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+      'input, textarea',
+    )) {
+      const value = typed.get(box.id);
+      if (value !== undefined) box.value = value;
+    }
+    if (focused !== '') {
+      for (const element of next.node.querySelectorAll<HTMLElement>('[id]')) {
+        if (element.id !== focused) continue;
+        element.focus({ preventScroll: true });
+        break;
+      }
+    }
+
+    // Written AFTER the replacement is in the tree, which is what makes it an
+    // announcement rather than a node that quietly appears already holding
+    // text. Re-shown verbatim rather than recomputed: the rebuild did not
+    // change what the visitor still has to do about it.
+    if (warning !== '') {
+      const shown = next.node.querySelector<HTMLElement>('.dh-form-error');
+      if (shown !== null) {
+        shown.textContent = warning;
+        shown.hidden = false;
+      }
+    }
+
+    announcer.textContent = reshaped ? RESHAPE_NOTICE[requirement] : COPY_NOTICE;
   }
 
   // ── The caps, applied as attributes rather than discovered as a 400 ────
@@ -691,7 +952,11 @@ export function mountForm(target: Element, options: MountFormOptions): MountedFo
       blockForSure(verdict);
       return;
     }
-    if (verdict.kind === 'ok') applyLimits(verdict.limits);
+    if (verdict.kind !== 'ok') return;
+    // Shape BEFORE caps: `applyLimits` writes `maxlength` onto the inputs that
+    // are in the tree, and a rebuild after it would replace exactly those.
+    applyTenantShape(verdict.contactRequirement, verdict.form);
+    applyLimits(verdict.limits);
   });
 
   const handle: MountedForm = {
