@@ -33,6 +33,7 @@
 // (2147483647) rather than v1's arbitrary six digits.
 
 import { safeImageUrl } from './dom.js';
+import { DEFAULT_LOGO_IMAGE } from './default-logo-data.js';
 
 import type {
   HeaderAppearance,
@@ -2874,15 +2875,20 @@ button {
   align-items: center;
   justify-content: center;
   gap: calc(var(--dh-space) * 2);
-  min-height: 44px;
-  padding: calc(var(--dh-space) * 3);
-  border-radius: 10px;
+  padding: calc(var(--dh-space) * 3) calc(var(--dh-space) * 4);
+  border-radius: var(--dh-radius);
+  border: 0;
   background: var(--dh-accent);
-  color: var(--dh-accent-text);
+  color: #fff;
+  font: inherit;
   font-size: 14px;
   font-weight: 600;
+  cursor: pointer;
+  transition: opacity 120ms ease;
 }
-.dh-messages-new[disabled] { opacity: 0.6; cursor: not-allowed; }
+.dh-messages-new:hover { opacity: 0.92; }
+.dh-messages-new:disabled { opacity: 0.6; cursor: not-allowed; }
+.dh-messages-new[hidden] { display: none; }
 
 /* ── New conversation (ui/new-conversation.ts) ────────────────────────────
 
@@ -3029,4 +3035,772 @@ button {
   font-weight: 600;
 }
 .dh-link-cancel:hover { background: var(--dh-surface-sunken); }
+
+/* ── Dhaam UI: Messages Screen Redesign ────────────────────────────────────
+   New design: Customers/Merchants tabs + new conversation card layout
+   (avatar circle · name · status pill · unread badge · preview · timestamp · chevron)
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Tab bar */
+.dh-mtab-bar {
+  flex: none;
+  display: flex;
+  border-bottom: 1.5px solid var(--dh-border);
+  margin-bottom: calc(var(--dh-space) * -1);
+}
+.dh-mtab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--dh-space) * 1.5);
+  padding: calc(var(--dh-space) * 3) 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--dh-text-muted);
+  border: 0;
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1.5px;
+  transition: color 120ms ease, border-color 120ms ease;
+  cursor: pointer;
+}
+.dh-mtab--active {
+  color: var(--dh-accent);
+  border-bottom-color: var(--dh-accent);
+  font-weight: 600;
+}
+.dh-mtab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text-muted);
+}
+.dh-mtab-count--active {
+  background: var(--dh-accent);
+  color: #fff;
+}
+
+/* Conversation row — new design */
+.dh-mrow-item {
+  list-style: none;
+}
+.dh-mrow-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 3);
+  padding: calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
+  border: 0;
+  border-bottom: 1px solid var(--dh-border);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.dh-mrow-btn:hover { background: var(--dh-surface-sunken); }
+.dh-mrow-btn[aria-current="true"] { background: color-mix(in srgb, var(--dh-accent) 6%, transparent); }
+
+/* Avatar circle */
+.dh-mrow-avatar {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--dh-accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* Body layout */
+.dh-mrow-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 0.5);
+}
+.dh-mrow-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--dh-space) * 2);
+}
+.dh-mrow-name-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 2);
+  min-width: 0;
+  flex: 1;
+}
+.dh-mrow-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--dh-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Status pill — Open = purple/accent tinted, Closed/Resolved = neutral */
+.dh-mrow-status-pill {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px calc(var(--dh-space) * 2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dh-accent) 14%, transparent);
+  color: var(--dh-accent);
+}
+.dh-mrow-status-pill[data-status="CLOSED"],
+.dh-mrow-status-pill[data-status="RESOLVED"] {
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text-muted);
+}
+.dh-mrow-status-pill[data-status="ON_HOLD"] {
+  background: color-mix(in srgb, #f59e0b 14%, transparent);
+  color: #b45309;
+}
+
+/* Right column: unread badge + chevron */
+.dh-mrow-right {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 1.5);
+  flex: none;
+}
+/* Unread badge — filled circle like the screenshot */
+.dh-mrow-unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dh-accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.dh-mrow-chevron {
+  color: var(--dh-text-muted);
+  display: flex;
+}
+/* Preview text */
+.dh-mrow-preview {
+  font-size: 13px;
+  color: var(--dh-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Timestamp */
+.dh-mrow-time {
+  font-size: 11px;
+  color: var(--dh-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Dhaam UI: Header & Screen Redesigns ─────────────────────────────────────
+   Matches exact Figma designs for:
+   1. Home screen (Purple gradient header, Dhaam logo, visible nav bar, Figma CTA/questions styling)
+   2. Messages screen (Purple gradient header, Dhaam AI logo + tagline, visible nav bar)
+   3. Conversation screen (Purple gradient header, online dot, pastel chat background, purple bubbles, hidden nav bar)
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* 1. Header gradient for home, messages, and conversation screens */
+:host([data-screen="home"]) .dh-header,
+:host([data-screen="conversation"]) .dh-header,
+:host([data-screen="messages"]) .dh-header {
+  background: linear-gradient(180deg, #2e0854 0%, #4c1d95 35%, #6d28d9 75%, #7c3aed 100%) !important;
+  color: #fff !important;
+  border-bottom-color: transparent !important;
+}
+
+/* 2. Home & Messages Screen Headers — hide default avatar/status/menu/back */
+:host([data-screen="home"]) .dh-back,
+:host([data-screen="home"]) .dh-avatar-host,
+:host([data-screen="home"]) .dh-status,
+:host([data-screen="home"]) .dh-reconnect,
+:host([data-screen="home"]) .dh-menu,
+:host([data-screen="home"]) .dh-hmenu-wrap,
+:host([data-screen="home"]) .dh-hmenu-toggle,
+:host([data-screen="messages"]) .dh-back,
+:host([data-screen="messages"]) .dh-avatar-host,
+:host([data-screen="messages"]) .dh-status,
+:host([data-screen="messages"]) .dh-reconnect,
+:host([data-screen="messages"]) .dh-menu,
+:host([data-screen="messages"]) .dh-hmenu-wrap,
+:host([data-screen="messages"]) .dh-hmenu-toggle {
+  display: none !important;
+}
+
+/* Header identity wrap containing logo + collapsed avatars */
+.dh-header-identity-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+
+/* Collapsed header hero avatars: hidden by default, shown ONLY on Home when hero is collapsed */
+.dh-header-hero-avatars {
+  display: none !important;
+}
+
+:host([data-screen="home"][data-design="hero"]) .dh-brand-band:has(.dh-hero[data-collapsed="true"]) .dh-header-hero-avatars {
+  display: flex !important;
+  align-items: center !important;
+}
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-hero-avatars,
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-header-hero-avatars-row {
+  display: flex !important;
+  align-items: center !important;
+  margin: 0 !important;
+}
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-hero-avatar,
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-header-hero-avatar {
+  position: relative !important;
+  display: block !important;
+  width: 30px !important;
+  height: 30px !important;
+  border: 2px solid #ffffff !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15) !important;
+}
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-hero-avatar + .dh-hero-avatar,
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-header-hero-avatar + .dh-header-hero-avatar {
+  margin-inline-start: -8px !important;
+}
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-hero-avatar img,
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-header-hero-avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 999px !important;
+  object-fit: cover !important;
+}
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-hero-presence,
+:host([data-screen="home"]) .dh-header-hero-avatars .dh-header-hero-presence {
+  position: absolute !important;
+  bottom: -1px !important;
+  inset-inline-end: -1px !important;
+  width: 9px !important;
+  height: 9px !important;
+  border-radius: 999px !important;
+  border: 1.5px solid #ffffff !important;
+  background: #22c55e !important;
+}
+
+/* Home & Messages: title shows the exact Dhaam AI SVG logo */
+:host([data-screen="home"]) .dh-title,
+:host([data-screen="messages"]) .dh-title {
+  display: block !important;
+  width: 95px !important;
+  height: 38px !important;
+  background: url("${DEFAULT_LOGO_IMAGE}") no-repeat left center !important;
+  background-size: contain !important;
+  font-size: 0 !important;
+  color: transparent !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+:host([data-screen="home"]) .dh-title::before,
+:host([data-screen="home"]) .dh-title::after,
+:host([data-screen="messages"]) .dh-title::before,
+:host([data-screen="messages"]) .dh-title::after {
+  display: none !important;
+}
+
+:host([data-screen="home"]) .dh-icon-button,
+:host([data-screen="messages"]) .dh-icon-button,
+:host([data-screen="conversation"]) .dh-icon-button {
+  color: #fff !important;
+  opacity: 0.95 !important;
+}
+:host([data-screen="home"]) .dh-icon-button:hover,
+:host([data-screen="messages"]) .dh-icon-button:hover,
+:host([data-screen="conversation"]) .dh-icon-button:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: #fff !important;
+}
+
+/* 3. Bottom navigation bar — show on home & messages, hide only on conversation */
+:host([data-screen="conversation"]) .dh-nav {
+  display: none !important;
+}
+:host([data-screen="home"]) .dh-nav,
+:host([data-screen="messages"]) .dh-nav {
+  display: flex !important;
+  background: #ffffff !important;
+  border-top: 1px solid #e5e7eb !important;
+  padding: 6px 0 !important;
+}
+.dh-nav-tab {
+  color: #9ca3af !important;
+  font-weight: 500 !important;
+  font-size: 12px !important;
+  transition: color 0.15s ease !important;
+}
+.dh-nav-tab[aria-selected="true"] {
+  color: #7c3aed !important;
+  font-weight: 600 !important;
+}
+.dh-nav > .dh-nav-tab + .dh-nav-tab {
+  border-inline-start: 1px solid #f3f4f6 !important;
+}
+
+/* 4. Conversation Header */
+:host([data-screen="conversation"]) .dh-title {
+  color: #fff !important;
+  font-weight: 600 !important;
+}
+:host([data-screen="conversation"]) .dh-status,
+.dh-status {
+  display: none !important;
+}
+:host([data-screen="conversation"]) .dh-status-dot,
+.dh-status-dot {
+  display: none !important;
+}
+:host([data-screen="conversation"]) .dh-avatar {
+  border: 2px solid rgba(255, 255, 255, 0.7) !important;
+  background: #f59e0b !important;
+  color: #78350f !important;
+  font-weight: 700 !important;
+}
+
+/* 5. Chat thread background: pastel pink-teal gradient (matches screenshot) */
+:host([data-screen="conversation"]) .dh-log {
+  background-color: #fbf7ff !important;
+  background-image:
+    radial-gradient(ellipse 85% 65% at 0% 0%, rgba(255, 205, 225, 0.5) 0%, transparent 65%),
+    radial-gradient(ellipse 85% 65% at 100% 0%, rgba(255, 235, 200, 0.4) 0%, transparent 65%),
+    radial-gradient(ellipse 85% 70% at 0% 100%, rgba(160, 245, 220, 0.45) 0%, transparent 65%),
+    radial-gradient(ellipse 90% 75% at 100% 100%, rgba(190, 225, 250, 0.5) 0%, transparent 70%) !important;
+  background-size: 100% 100% !important;
+  background-repeat: no-repeat !important;
+}
+
+/* 6. Outbound message bubble: solid purple */
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-bubble {
+  background: #7c3aed !important;
+  color: #fff !important;
+  border-radius: 16px 16px 4px 16px !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-time {
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-tick {
+  color: #34d399 !important;
+}
+
+/* 7. Inbound message bubble: crisp white card */
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-bubble {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border-radius: 16px 16px 16px 4px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+}
+:host([data-screen="conversation"]) .dh-msg-avatar {
+  background: #f59e0b !important;
+  color: #78350f !important;
+  font-weight: 700 !important;
+}
+
+/* 8. Hero header: hide duplicate hero logo (already in header) */
+:host([data-screen="home"]) .dh-hero-logo {
+  display: none !important;
+}
+
+/* 9. Hero avatars: 3 overlapping circular team avatars with green online dot.
+   No margin-top/bottom here — '.dh-hero-full' (rule 10 below) already gives
+   every row in this column an 8px gap; a margin on top of that gap was
+   double-spacing the row (8px gap + these margins), which is what was
+   reading as "too much gap" around the avatars. The one asymmetry Figma
+   wants — more room below the avatars than between the greeting and its
+   sub-line — is expressed as a single extra margin-bottom here, not by
+   fighting the gap on every child. */
+:host([data-screen="home"]) .dh-hero-avatars {
+  display: flex !important;
+  align-items: center !important;
+  margin-bottom: 8px !important;
+}
+:host([data-screen="home"]) .dh-hero-avatar {
+  width: 38px !important;
+  height: 38px !important;
+  border: 2px solid #ffffff !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+}
+:host([data-screen="home"]) .dh-hero-avatar + .dh-hero-avatar {
+  margin-inline-start: -10px !important;
+}
+:host([data-screen="home"]) .dh-hero-avatar img {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 999px !important;
+  object-fit: cover !important;
+}
+:host([data-screen="home"]) .dh-hero-presence {
+  position: absolute !important;
+  bottom: 0 !important;
+  inset-inline-end: 0 !important;
+  width: 11px !important;
+  height: 11px !important;
+  border-radius: 999px !important;
+  border: 2px solid #ffffff !important;
+  background: #22c55e !important;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.05) !important;
+}
+
+/* 10. Hero greeting and sub-greeting — match Figma sizing */
+:host([data-screen="home"]) .dh-hero-greeting {
+  font-size: 26px !important;
+  font-weight: 800 !important;
+  color: #ffffff !important;
+  line-height: 1.2 !important;
+  margin: 0 !important;
+}
+:host([data-screen="home"]) .dh-hero-sub {
+  font-size: 14px !important;
+  line-height: 1.45 !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+  margin: 0 !important;
+}
+/* 'gap' (not the base 16px) is the single source of spacing between the
+   avatar row, the greeting and the sub-line — see rule 9's comment. 8px
+   matches how tight the greeting sits over its sub-line in Figma; the
+   avatar row's own margin-bottom adds the bit of extra room Figma gives
+   above the headline. */
+:host([data-screen="home"]) .dh-hero-full {
+  padding: 0 18px 18px 18px !important;
+  gap: 8px !important;
+}
+
+/* 11. Home screen straddle overhang & content area */
+:host([data-screen="home"][data-design="hero"]) .dh-brand-band:has(.dh-hero:not([data-collapsed="true"])) {
+  padding-bottom: 40px !important;
+  margin-bottom: -40px !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+:host([data-screen="home"]) .dh-home {
+  background: transparent !important;
+  padding: 0 16px 16px 16px !important;
+  gap: 16px !important;
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+/* 12. Home screen CTA card — straddles purple gradient banner and white surface */
+:host([data-screen="home"]) .dh-home-cta {
+  background: #ffffff !important;
+  border: 1px solid #ede9fe !important;
+  box-shadow: 0 8px 24px rgba(124, 58, 237, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
+  border-radius: 18px !important;
+  padding: 14px 16px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 14px !important;
+  width: 100% !important;
+  cursor: pointer !important;
+  text-align: start !important;
+  margin-top: 4px !important;
+  position: relative !important;
+  z-index: 3 !important;
+  transition: all 0.15s ease !important;
+}
+:host([data-screen="home"]) .dh-home-cta:hover {
+  background: #faf5ff !important;
+  border-color: #d8b4fe !important;
+  transform: translateY(-1px) !important;
+  box-shadow: 0 10px 28px rgba(124, 58, 237, 0.18), 0 3px 8px rgba(0, 0, 0, 0.06) !important;
+}
+:host([data-screen="home"]) .dh-home-cta-icon {
+  width: 42px !important;
+  height: 42px !important;
+  background: #7c3aed !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #ffffff !important;
+  flex-shrink: 0 !important;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.3) !important;
+}
+:host([data-screen="home"]) .dh-home-cta-icon svg {
+  width: 22px !important;
+  height: 22px !important;
+  stroke: #ffffff !important;
+}
+:host([data-screen="home"]) .dh-home-cta-text {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+  flex: 1 !important;
+}
+:host([data-screen="home"]) .dh-home-cta-title {
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #111827 !important;
+}
+:host([data-screen="home"]) .dh-home-cta-sub {
+  font-size: 13px !important;
+  color: #6b7280 !important;
+}
+:host([data-screen="home"]) .dh-home-cta .dh-home-chevron {
+  color: #7c3aed !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  margin-left: auto !important;
+}
+
+/* 13. "Common Questions" section */
+:host([data-screen="home"]) .dh-home-questions {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  margin-top: 2px !important;
+}
+:host([data-screen="home"]) .dh-home-section-title {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: #6b7280 !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+}
+:host([data-screen="home"]) .dh-common-questions {
+  background: #ffffff !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 16px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  overflow: hidden !important;
+  list-style: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+:host([data-screen="home"]) .dh-common-question-item:not(:last-child) {
+  border-bottom: 1px solid #f3f4f6 !important;
+}
+:host([data-screen="home"]) .dh-common-question-row {
+  width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 15px 18px !important;
+  background: transparent !important;
+  border: none !important;
+  cursor: pointer !important;
+  text-align: start !important;
+  transition: background-color 0.15s ease !important;
+}
+:host([data-screen="home"]) .dh-common-question-row:hover {
+  background: #faf5ff !important;
+}
+:host([data-screen="home"]) .dh-common-question-label {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: #1f2937 !important;
+}
+:host([data-screen="home"]) .dh-common-question-row .dh-home-chevron {
+  color: #9ca3af !important;
+  font-size: 18px !important;
+  font-weight: 600 !important;
+}
+
+/* 14. Recent conversation row */
+:host([data-screen="home"]) .dh-home-recent-row {
+  border-radius: 16px !important;
+  border: 1px solid rgba(0,0,0,0.07) !important;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04) !important;
+  background: #ffffff !important;
+}
+:host([data-screen="home"]) .dh-home-seeall {
+  color: #7c3aed !important;
+  font-weight: 600 !important;
+  font-size: 13px !important;
+}
+
+/* 15. Customer Messages Screen styling matching media_1789103878278.png */
+:host([data-screen="messages"]) .dh-messages {
+  background: #ffffff !important;
+  padding: 16px !important;
+  gap: 12px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 !important;
+  min-height: 0 !important;
+}
+:host([data-screen="messages"]) .dh-messages-search {
+  border: 1px solid #e5e7eb !important;
+  background: #f9fafb !important;
+  border-radius: 12px !important;
+  padding: 10px 14px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  flex: none !important;
+}
+:host([data-screen="messages"]) .dh-messages-search-input {
+  font-size: 14px !important;
+  color: #111827 !important;
+  border: 0 !important;
+  background: transparent !important;
+  width: 100% !important;
+  padding: 0 !important;
+}
+:host([data-screen="messages"]) .dh-messages-search-input::placeholder {
+  color: #9ca3af !important;
+}
+:host([data-screen="messages"]) .dh-messages-list {
+  gap: 12px !important;
+  flex: 1 !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  list-style: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+:host([data-screen="messages"]) .dh-messages-item {
+  list-style: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+:host([data-screen="messages"]) .dh-messages-row {
+  background: #ffffff !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 16px !important;
+  padding: 14px 16px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  gap: 8px !important;
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  text-align: start !important;
+  cursor: pointer !important;
+  transition: all 0.12s ease !important;
+}
+:host([data-screen="messages"]) .dh-messages-row:hover {
+  background: #fdfcff !important;
+  border-color: #ddd6fe !important;
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.08) !important;
+}
+:host([data-screen="messages"]) .dh-messages-row[aria-current="true"] {
+  border-color: #7c3aed !important;
+  background: #faf5ff !important;
+}
+:host([data-screen="messages"]) .dh-messages-row-top {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+}
+:host([data-screen="messages"]) .dh-messages-title {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  color: #111827 !important;
+  line-height: 1.3 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+:host([data-screen="messages"]) .dh-messages-status {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  padding: 3px 10px !important;
+  border-radius: 999px !important;
+  background: #f3f4f6 !important;
+  color: #4b5563 !important;
+}
+:host([data-screen="messages"]) .dh-messages-status[data-status="OPEN"] {
+  background: #dcfce7 !important;
+  color: #15803d !important;
+}
+:host([data-screen="messages"]) .dh-messages-status[data-status="WAITING_FOR_AGENT"] {
+  background: #fef3c7 !important;
+  color: #92400e !important;
+}
+:host([data-screen="messages"]) .dh-messages-status[data-status="ASSIGNED"] {
+  background: #ede9fe !important;
+  color: #6d28d9 !important;
+}
+:host([data-screen="messages"]) .dh-messages-status[data-status="CLOSED"],
+:host([data-screen="messages"]) .dh-messages-status[data-status="RESOLVED"] {
+  background: #f3f4f6 !important;
+  color: #6b7280 !important;
+}
+:host([data-screen="messages"]) .dh-messages-time {
+  font-size: 12px !important;
+  color: #6b7280 !important;
+  white-space: nowrap !important;
+}
+:host([data-screen="messages"]) .dh-messages-preview {
+  font-size: 14px !important;
+  color: #374151 !important;
+  line-height: 1.4 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+:host([data-screen="messages"]) .dh-messages-unread {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  min-width: 20px !important;
+  height: 20px !important;
+  border-radius: 999px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  align-self: flex-start !important;
+  margin-top: 4px !important;
+  padding: 0 5px !important;
+}
+:host([data-screen="messages"]) .dh-messages-new {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  padding: 13px 18px !important;
+  border-radius: 12px !important;
+  border: 0 !important;
+  background: #7c3aed !important;
+  color: #ffffff !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.3) !important;
+  transition: all 0.12s ease !important;
+  margin-top: auto !important;
+  width: 100% !important;
+}
+:host([data-screen="messages"]) .dh-messages-new:hover:not(:disabled) {
+  background: #6d28d9 !important;
+  transform: translateY(-1px) !important;
+}
+:host([data-screen="messages"]) .dh-messages-new:disabled {
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
+}
+:host([data-screen="messages"]) .dh-messages-new svg {
+  stroke: #ffffff !important;
+}
 `;
+

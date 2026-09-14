@@ -34,7 +34,15 @@ export interface NavView {
   update(active: ScreenName, unread: number): void;
 }
 
-export function createNav(onSelect: (tab: NavTab) => void): NavView {
+/**
+ * `includeHome: false` drops the Home tab, leaving Messages alone.
+ *
+ * The admin/merchant portal has no Home screen — a staff user lands
+ * straight on their queue — so the tab that would open it is never built,
+ * rather than built and hidden. Defaults to `true`: the customer widget
+ * keeps both tabs exactly as before.
+ */
+export function createNav(onSelect: (tab: NavTab) => void, includeHome = true): NavView {
   const tabs: Array<{ id: NavTab; label: string; node: HTMLButtonElement; badge: HTMLElement }> = [];
 
   const build = (id: NavTab, label: string) => {
@@ -63,7 +71,7 @@ export function createNav(onSelect: (tab: NavTab) => void): NavView {
 
   const node = el('nav', {
     attrs: { class: 'dh-nav', role: 'tablist', 'aria-label': 'Chat sections' },
-    children: [build('home', 'Home'), build('messages', 'Messages')],
+    children: includeHome ? [build('home', 'Home'), build('messages', 'Messages')] : [build('messages', 'Messages')],
     on: {
       keydown: (event) => {
         const key = (event as KeyboardEvent).key;
