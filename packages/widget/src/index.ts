@@ -85,6 +85,26 @@ export type { SupportEntry, ResolvedEntry } from './remote-config.js';
 export { submitWebform, visitorMessage, WebformError, WEBFORM_PATH, WEBFORM_TIMEOUT_MS } from './webform.js';
 export type { WebformDraft, WebformReceipt, WebformFailureKind } from './webform.js';
 
+// The web form WITHOUT the chat widget — no launcher, no panel, no socket, no
+// session, no token mint. `mountForm` puts it in an element the caller names,
+// which is the one thing the three surfaces above it (an inline embed, an
+// iframe embed, a mountable route component) do not agree on.
+//
+// `readFormBoot` is published alongside it because those surfaces sometimes
+// need the answer BEFORE they have an element to render into — a hosted page
+// deciding whether to render a form at all, say — and a second implementation
+// of that read is how the two would come to disagree about one tenant.
+export { mountForm, getMountedForm, readFormBoot, FormConfigError, FORM_BOOT_PATH, FORM_BOOT_TIMEOUT_MS } from './form.js';
+export type {
+  MountFormOptions,
+  MountedForm,
+  FormBoot,
+  FormCopy,
+  FormFieldLimits,
+  ContactRequirement,
+  DhaamFormGlobal,
+} from './form.js';
+
 export type { ChatWidget } from './widget.js';
 export type { WidgetConfig, WidgetAuth, WidgetIdentity, ResolvedConfig } from './config.js';
 export type { PresentationMode, ResolvedPresentation } from './ui/presentation.js';
