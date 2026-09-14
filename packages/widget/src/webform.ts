@@ -40,6 +40,52 @@ export const WEBFORM_MESSAGE_MAX = 4000;
 export const WEBFORM_SUBJECT_MAX = 200;
 
 /**
+ * Which contact detail the SUBMIT route will insist on for this tenant.
+ *
+ * `tenant_webform_config.contact_requirement`, published to a client by
+ * `GET /chat-services/api/v1/widget/form` as `data.contactRequirement` — the
+ * fields are inside `data`, not at the top level. Read it there and pass it to
+ * {@link import('./ui/webform-form.js').createWebformForm}; a form that
+ * guesses is a form that collects the wrong detail.
+ *
+ * Enforced server-side by `assertContactRequirement`
+ * (`chat-service-node src/validators/webform.validator.ts`):
+ *
+ *   'email'   — an email is required. A phone alone is not enough.
+ *   'phone'   — a phone is required. An email alone is not enough.
+ *   'either'  — at least one of the two. The column's own NOT NULL DEFAULT.
+ */
+export type ContactRequirement = 'email' | 'phone' | 'either';
+
+/**
+ * The merchant's own copy for this form, as published inside `data.form`.
+ *
+ * Each string is independently nullable, and the whole block is ABSENT from
+ * the wire whenever the tenant wrote no copy, ops switched the config off, or
+ * chat-service could not reach nexusai. Absent — and `null` per field — both
+ * mean "render your own strings", which is what this widget did before the
+ * route existed.
+ *
+ * Structurally identical to `src/form.ts`'s `FormCopy` (task S1), so the
+ * parsed boot answer passes straight through. If the two ever need to differ,
+ * they have stopped describing one wire block and one of them is wrong.
+ *
+ * ⚠️ `FormCopy` exists on `feat/webform-s1` (worktree `chatsupport-sdk-wt-s1`)
+ * and, as this is written, in no commit: the identity above is asserted
+ * against S1's working tree and is UNVERIFIED until S1 lands. Re-check it
+ * then rather than trusting this sentence. The reference stays because it is
+ * the wiring contract.
+ */
+export interface WebformCopy {
+  /** Console: "Form title — Shown above the fields." */
+  readonly title: string | null;
+  /** Console: "Intro — One line setting expectations. Say when you'll reply." */
+  readonly intro: string | null;
+  /** Console: "After submitting — Shown after every submission." */
+  readonly successMessage: string | null;
+}
+
+/**
  * Exactly the accepted body. No extra keys — the route is `.strict()` and an
  * unknown key is a 400.
  */
@@ -47,9 +93,20 @@ export interface WebformDraft {
   /** Caller-minted idempotency key, stable for the life of one form instance. */
   readonly submissionId: string;
   readonly name?: string;
-  /** REQUIRED — nexusai's ticket create demands one, and the server, not the
-   *  visitor, picks whether this submission becomes a ticket. */
-  readonly email: string;
+  /**
+   * OPTIONAL, and matching the server rather than leading it: the submit
+   * route's schema is `email: z.string().email().max(320).optional()` and the
+   * tenant's `contact_requirement` decides whether one is demanded.
+   *
+   * It was `string` and unconditional here, which made every form this package
+   * builds collect an email — so a tenant set to `'phone'` got a form whose
+   * Phone box said "(optional)" while the server refused every submission that
+   * took that at its word.
+   *
+   * OMIT THE KEY rather than sending `''`: `.email()` rejects an empty string,
+   * so an unanswered box sent as `''` is a 400 in place of an absent field.
+   */
+  readonly email?: string;
   readonly phone?: string;
   readonly subject?: string;
   readonly message: string;
