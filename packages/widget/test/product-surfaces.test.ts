@@ -684,10 +684,22 @@ describe('web-form surface — leaving a message anonymously', () => {
     expect(document.activeElement).toBe($('#dh-webform-email'));
   });
 
+  // ONE sentence for all three outcomes, and it names EMAIL.
+  //
+  // It was three, branched on `receipt.outcome`. The `'chat'` one promised
+  // "someone will pick this up" — a session whose visitor provably cannot be
+  // reached (`webform.port.ts`: nothing can authenticate a `wf_` subject, and
+  // channel 6 has no egress), and a verdict C6 stopped producing at all. The
+  // other two named an address without naming how it would be used.
+  //
+  // `'queued'` shares it rather than promising less: the address is still the
+  // only channel a reply can arrive on if one arrives. What NO branch claims
+  // is that a ticket exists or that anyone has read it — see the confirmation
+  // comment in `ui/webform-form.ts`.
   it.each<[WebformReceipt['outcome'], string]>([
-    ['ticket', "Message received. We'll reply to ada@example.com."],
-    ['queued', "Message received. We'll reply to ada@example.com."],
-    ['chat', 'Thanks — someone will pick this up and reply to ada@example.com.'],
+    ['ticket', "Message received. We'll reply by email to ada@example.com."],
+    ['queued', "Message received. We'll reply by email to ada@example.com."],
+    ['chat', "Message received. We'll reply by email to ada@example.com."],
   ])('confirms a %s outcome with the right sentence, and moves focus to it', async (outcome, sentence) => {
     const view = createWebformForm(
       { alternative: null, hours: 'OPEN', source: 'published', extraFields: [] },
