@@ -51,11 +51,13 @@
   },
   "peerDependencies": {
     "@dhaam-ccrm/core": "workspace:^",
+    "@dhaam-ccrm/widget": "workspace:^",
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0"
   },
   "devDependencies": {
     "@dhaam-ccrm/core": "workspace:*",
+    "@dhaam-ccrm/widget": "workspace:*",
     "@testing-library/react": "^16.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",

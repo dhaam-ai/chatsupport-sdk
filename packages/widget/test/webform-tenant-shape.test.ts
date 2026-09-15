@@ -25,7 +25,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createWebformForm } from '../src/ui/webform-form.js';
+import { DEFAULT_CONTACT_REQUIREMENT, createWebformForm } from '../src/ui/webform-form.js';
 import { dedupeAgainstRendered } from '../src/ui/field-dedup.js';
 import type { FieldSpec } from '../src/ui/forms.js';
 import type { WebformCopy, WebformDraft, WebformReceipt } from '../src/webform.js';
@@ -119,7 +119,7 @@ describe("the tenant's contact requirement decides which contact field is requir
     expect(document.activeElement).toBe($('#dh-webform-phone'));
   });
 
-  it("keeps today's shape for an 'email' tenant, and for a caller that names none", () => {
+  it("keeps today's shape for an 'email' tenant", () => {
     build({ contactRequirement: 'email' });
     expect($$('.dh-field-label').map((l) => l.textContent)).toEqual([
       'Name (optional)',
@@ -128,15 +128,49 @@ describe("the tenant's contact requirement decides which contact field is requir
       'How can we help?',
     ]);
     expect($<HTMLInputElement>('#dh-webform-email').required).toBe(true);
+  });
 
+  // The second half of the test above, which used to assert that a caller
+  // naming nothing got the `'email'` tenant's form. It no longer does, and
+  // that is the point: this default is reached only when the rule could not be
+  // read — an absent `data.form` block, a value a newer console writes — and
+  // the form it produces must be the one the SUBMIT ROUTE will judge against.
+  // `'email'` demanded a detail the server does not require, so a visitor who
+  // had given a phone number was refused by this form for a rule nobody had
+  // configured. `'either'` is the column's own NOT NULL DEFAULT and
+  // chat-service's `DEFAULT_CONTACT_REQUIREMENT`.
+  //
+  // Compared against a bare literal rather than the exported constant: a test
+  // that reads the same symbol the implementation reads cannot fail when that
+  // symbol drifts away from the server, which is the only drift worth pinning.
+  it("falls back to the SERVER's default, not this form's history, when a caller names none", () => {
     build();
+
+    expect($<HTMLInputElement>('#dh-webform-email').required).toBe(false);
+    expect($<HTMLInputElement>('#dh-webform-phone').required).toBe(false);
     expect($$('.dh-field-label').map((l) => l.textContent)).toEqual([
       'Name (optional)',
       'Email',
-      'Phone (optional)',
+      'Phone',
       'How can we help?',
     ]);
-    expect($<HTMLInputElement>('#dh-webform-email').required).toBe(true);
+    // The `'either'` rule, rendered — the whole tell that this is where an
+    // unreadable answer landed.
+    expect($('#dh-webform-contact-hint').textContent).toBe(
+      'Enter an email address or a phone number — either one is enough.',
+    );
+    expect(DEFAULT_CONTACT_REQUIREMENT).toBe('either');
+  });
+
+  // Byte-for-byte the form a tenant CONFIGURED to `'either'` gets. An
+  // unreadable answer and a deliberate `'either'` must be indistinguishable on
+  // screen, or "the default is `'either'`" is only true of the option object.
+  it('renders the fallback and a configured `either` identically', () => {
+    build({ contactRequirement: 'either' });
+    const configured = $('form').innerHTML;
+
+    build();
+    expect($('form').innerHTML).toBe(configured);
   });
 });
 
@@ -311,7 +345,12 @@ describe("the tenant's copy is rendered, and its absence renders today's strings
     build(withCopy);
 
     expect($(HEADING).textContent).toBe('Leave a message');
-    expect($(SUBTITLE).textContent).toBe("We'll reply by email.");
+    // `DEFAULT_INTRO['either']`, because `BASE` names no requirement and the
+    // fallback is the server's `'either'`. Which of the three sentences is
+    // shown is `DEFAULT_INTRO`'s business and is pinned per requirement
+    // further down; what this asserts is that ABSENT COPY renders one of this
+    // form's own strings rather than a blank line.
+    expect($(SUBTITLE).textContent).toBe("We'll get back to you.");
 
     $<HTMLInputElement>('#dh-webform-email').value = 'ada@example.com';
     $<HTMLTextAreaElement>('#dh-webform-message').value = 'Hello';

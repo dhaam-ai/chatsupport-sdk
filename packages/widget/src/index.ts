@@ -85,6 +85,62 @@ export type { SupportEntry, ResolvedEntry } from './remote-config.js';
 export { submitWebform, visitorMessage, WebformError, WEBFORM_PATH, WEBFORM_TIMEOUT_MS } from './webform.js';
 export type { WebformDraft, WebformReceipt, WebformFailureKind } from './webform.js';
 
+// The two things a TENANT shapes a form with, published from the one module
+// that defines them. `ContactRequirement` used to be exported from `form.js`
+// as a second, structurally identical declaration and `WebformCopy` was not
+// exported at all — so an integrator building their own surface on
+// `submitWebform` could name the draft but not the rule that decides which of
+// its two contact fields the server will insist on. Same union, same shape,
+// one definition.
+export type { ContactRequirement, WebformCopy } from './webform.js';
+
+// The web form WITHOUT the chat widget — no launcher, no panel, no socket, no
+// session, no token mint. `mountForm` puts it in an element the caller names,
+// which is the one thing the three surfaces above it (an inline embed, an
+// iframe embed, a mountable route component) do not agree on.
+//
+// `readFormBoot` is published alongside it because those surfaces sometimes
+// need the answer BEFORE they have an element to render into — a hosted page
+// deciding whether to render a form at all, say — and a second implementation
+// of that read is how the two would come to disagree about one tenant.
+//
+// `parentOriginFromLocation` is the frame side's one line: a hosted page
+// reads `?origin=` with it and passes the result straight to `mountForm` as
+// `parentOrigin`, which is what makes the iframe embed resize.
+export { mountForm, getMountedForm, readFormBoot, parentOriginFromLocation, FormConfigError, FORM_BOOT_PATH, FORM_BOOT_TIMEOUT_MS } from './form.js';
+export type {
+  MountFormOptions,
+  MountedForm,
+  FormBoot,
+  // An alias of `WebformCopy` above, kept under this name because it is what
+  // `FormBoot.form` is documented as and what this package already shipped.
+  FormCopy,
+  FormFieldLimits,
+  DhaamFormGlobal,
+} from './form.js';
+
+// The iframe embed's HOST half — the merchant's own page, which creates the
+// frame and applies the heights the page inside posts up. Its counterpart on
+// the frame side is `mountForm`'s `parentOrigin` option, and the protocol
+// both are written against is the header of `src/form-embed.ts`.
+//
+// `hostedOrigin` is required there and has no default: this package has no
+// canonical console origin to bake in, and guessing one would point a
+// merchant's contact page at someone else's deployment.
+//
+// `EMBED_UNREACHABLE_TIMEOUT_MS` is exported for the same reason
+// `FORM_BOOT_TIMEOUT_MS` above is: it is the deadline behind an
+// `onUnreachable` callback, and a caller rendering their own fallback needs
+// to know how long they waited for it.
+export {
+  embedForm,
+  FormEmbedError,
+  EMBED_MIN_HEIGHT_PX,
+  EMBED_UNREACHABLE_TIMEOUT_MS,
+  FORM_RESIZE_MESSAGE_TYPE,
+} from './form-embed.js';
+export type { EmbedFormOptions, EmbedHandle, DhaamFormEmbedGlobal } from './form-embed.js';
+
 export type { ChatWidget } from './widget.js';
 export type { WidgetConfig, WidgetAuth, WidgetIdentity, ResolvedConfig } from './config.js';
 export type { PresentationMode, ResolvedPresentation } from './ui/presentation.js';

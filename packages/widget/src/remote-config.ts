@@ -47,6 +47,10 @@ import type {
   WidgetPosition,
   WidgetTheme,
 } from './config.js';
+// One definition of the rule, shared with `ui/webform-form.ts`'s option and
+// `webform.ts`'s draft — a second union spelled here would be a second thing
+// to keep equal to `tenant_webform_config.contact_requirement`.
+import type { ContactRequirement } from './webform.js';
 
 /** One console-defined field on the pre-chat form. */
 export interface PreChatField {
@@ -269,6 +273,24 @@ export interface RemoteConfig {
   readonly botDisplayName: string | undefined;
   readonly publishedVersion: number;
   /**
+   * `data.form.contactRequirement` — which of Email / Phone the SUBMIT route
+   * will insist on for this tenant, for the form the WIDGET hosts.
+   *
+   * `undefined` when the deployment's web form is off (the whole `form` block
+   * is absent then), when the publish named no rule, or when it named one this
+   * bundle has never heard of. All three mean the same thing to a form — "we
+   * could not ask" — and `ui/webform-form.ts`'s `DEFAULT_CONTACT_REQUIREMENT`
+   * is what they land on, which is the server's own fallback rather than this
+   * widget's history.
+   *
+   * Flat, and only this one leaf of `data.form`: the widget's panel supplies
+   * its own heading and its own context, so the merchant's `title` / `intro` /
+   * `successMessage` are the STANDALONE form's to render (`form.ts` reads them
+   * off `GET /widget/form`) and are deliberately not lifted here for a surface
+   * that has nowhere to put them.
+   */
+  readonly webformContactRequirement: ContactRequirement | undefined;
+  /**
    * chat-service's own resolution of the visitor's support entry point —
    * `data.support`, field-for-field the sibling `PublicSupportEntry` contract.
    * `null` means "the fetch never told us" (an older chat-service, an absent
@@ -341,6 +363,10 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   flows: [],
   botDisplayName: undefined,
   publishedVersion: 0,
+  // "we could not ask", one more time. NOT `'email'` and not any other
+  // member: a config that never landed has said nothing about this tenant,
+  // and `ui/webform-form.ts` owns where that lands.
+  webformContactRequirement: undefined,
   // "we could not ask" ≠ "there is nothing" — the same argument the
   // `isOpenNow` default already makes above. `entryFor` reads this and
   // answers a chat entry point, never a guessed ticket or a hidden launcher.
@@ -750,6 +776,9 @@ function parseFlows(value: unknown): readonly PublishedFlow[] {
   return flows;
 }
 
+/** The widget's own list, not the wire's — see {@link oneOf}'s last paragraph. */
+const CONTACT_REQUIREMENTS = ['email', 'phone', 'either'] as const;
+
 const ENTRY_PRIMARY = ['chat', 'ticket', 'offline', 'none'] as const;
 const ENTRY_SECONDARY = ['chat', 'ticket'] as const;
 const ENTRY_HOURS = ['OPEN', 'CLOSED', 'NO_CALENDAR'] as const;
@@ -785,6 +814,12 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
 
   const appearance = isRecord(data['appearance']) ? data['appearance'] : {};
   const behaviour = isRecord(data['behaviour']) ? data['behaviour'] : {};
+  // `{}` for an absent block, which is the COMMON case rather than an edge
+  // one: `data.form` is omitted entirely wherever the deployment's web form is
+  // off. `oneOf` then answers `undefined` for the missing key, which is the
+  // same answer a malformed one gets — deliberately, because a form cannot act
+  // on the difference.
+  const form = isRecord(data['form']) ? data['form'] : {};
   const rawOfflineMode = data['offlineMode'];
   const rawCsat = behaviour['csatStyle'];
   const rawIsOpen = data['isOpenNow'];
@@ -841,6 +876,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     flows: parseFlows(data['flows']),
     botDisplayName: str(data, 'botDisplayName'),
     publishedVersion: typeof rawVersion === 'number' ? rawVersion : 0,
+    webformContactRequirement: oneOf(form, 'contactRequirement', CONTACT_REQUIREMENTS),
     support: parseSupport(data['support']),
   };
 }
