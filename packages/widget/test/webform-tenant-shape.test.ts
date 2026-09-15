@@ -309,7 +309,12 @@ describe("'either': one of the two, and the visitor is told so before submitting
     const sent = $('.dh-offline-sent').textContent ?? '';
     expect(sent).not.toContain('+447700900123');
     expect(sent).not.toMatch(/repl(y|ies)/i);
-    expect(sent).toContain('Message received.');
+    // EXACTLY the heading, with the subtitle hidden. It used to repeat the
+    // heading verbatim — "Message receivedMessage received." stacked — and a
+    // `toContain` assertion passed on that stutter. With no address there is
+    // nothing true to add, so nothing is added.
+    expect(sent).toBe('Message received');
+    expect($<HTMLElement>('.dh-offline-sent .dh-form-subtitle').hidden).toBe(true);
   });
 
   // The email is the ONLY address this sentence may carry, and it is named
@@ -324,8 +329,10 @@ describe("'either': one of the two, and the visitor is told so before submitting
     $<HTMLFormElement>('form').requestSubmit();
     await flush();
 
+    expect($('.dh-offline-sent .dh-form-subtitle').textContent).toBe(
+      "We'll reply by email to visitor@example.com.",
+    );
     const sent = $('.dh-offline-sent').textContent ?? '';
-    expect(sent).toContain("Message received. We'll reply by email to visitor@example.com.");
     expect(sent).not.toContain('+447700900123');
   });
 
@@ -353,6 +360,76 @@ describe("'either': one of the two, and the visitor is told so before submitting
 
     expect(onSubmit).not.toHaveBeenCalled();
     expect($('.dh-form-error').textContent).toBe('Email is required.');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // THE PROMOTED-PHONE SHAPE — where all three `'either'` protections used
+  // to switch off together
+  // ══════════════════════════════════════════════════════════════════════
+  // A merchant on an `'either'` tenant marks their own "Phone number" field
+  // required. `dedupeAgainstRendered` drops it as a duplicate and PROMOTES the
+  // built-in Phone to `required: true`, which makes `pairRule` false — and the
+  // hint, the label treatment and the submit check were all gated on
+  // `pairRule`. The form then posted exactly the phone-only submission those
+  // three exist to stop, and the server answered 400 with no row written.
+  //
+  // This is not exotic: `'either'` is `contact_requirement`'s NOT NULL default
+  // and this field is the console's own example
+  // (`webform-required-promotion.test.ts`). The email rule is the SERVER's
+  // (`decideWebformOutcome`'s ticket branch is guarded by `!input.hasEmail`),
+  // so it cannot depend on the pair surviving a merchant's field list.
+  const PROMOTES_PHONE = [
+    { id: 'p1', label: 'Phone number', type: 'phone', required: true },
+  ] as const;
+
+  it('still demands the email when a required merchant phone field turns pairRule off', async () => {
+    const onSubmit = vi.fn();
+    build(
+      { contactRequirement: 'either', extraFields: [...PROMOTES_PHONE] },
+      onSubmit,
+    );
+
+    // The precondition: the pair really is broken.
+    expect(document.querySelector('#dh-webform-contact-hint')).toBeNull();
+    expect($<HTMLInputElement>('#dh-webform-phone').required).toBe(true);
+
+    $<HTMLInputElement>('#dh-webform-phone').value = '+447700900123';
+    $<HTMLTextAreaElement>('#dh-webform-message').value = 'Hello';
+    $<HTMLFormElement>('form').requestSubmit();
+    await flush();
+
+    // The defect: this used to post, with no `email` key on the draft.
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect($('.dh-form-error').textContent).toBe('Please add an email address.');
+    expect(document.activeElement).toBe($('#dh-webform-email'));
+  });
+
+  // The label story has to stay coherent in that state too: with no hint to
+  // explain a choice, both boxes must read as demanded, because both are —
+  // the merchant requires the phone and the server requires the email.
+  it('leaves no "(optional)" on either box once the phone is promoted', () => {
+    build({ contactRequirement: 'either', extraFields: [...PROMOTES_PHONE] });
+
+    expect(labelFor('dh-webform-email')).toBe('Email');
+    expect(labelFor('dh-webform-phone')).toBe('Phone');
+    // Name is untouched — it really is optional.
+    expect(labelFor('dh-webform-name')).toBe('Name (optional)');
+  });
+
+  it('accepts the promoted-phone form once an email is given', async () => {
+    const onSubmit = vi.fn().mockResolvedValue(receipt);
+    build({ contactRequirement: 'either', extraFields: [...PROMOTES_PHONE] }, onSubmit);
+
+    $<HTMLInputElement>('#dh-webform-email').value = 'ada@example.com';
+    $<HTMLInputElement>('#dh-webform-phone').value = '+447700900123';
+    $<HTMLTextAreaElement>('#dh-webform-message').value = 'Hello';
+    $<HTMLFormElement>('form').requestSubmit();
+    await flush();
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const draft = onSubmit.mock.calls[0]?.[0] as WebformDraft;
+    expect(draft.email).toBe('ada@example.com');
+    expect(draft.phone).toBe('+447700900123');
   });
 });
 
@@ -409,7 +486,7 @@ describe("the tenant's copy is rendered, and its absence renders today's strings
     await flush();
 
     expect($('.dh-offline-sent .dh-form-subtitle').textContent).toBe(
-      "Message received. We'll reply by email to ada@example.com.",
+      "We'll reply by email to ada@example.com.",
     );
   });
 
