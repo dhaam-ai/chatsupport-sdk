@@ -88,13 +88,17 @@ const PHONE_TENANT_SHAPE = {
   hint: null,
 };
 
-/** The `'either'` tenant's form: neither marked, the pair carries the rule. */
+/**
+ * The `'either'` tenant's form: the email unmarked because a reply needs it,
+ * the phone still marked optional because nothing does. Neither is `required`
+ * on the ELEMENT — the rule is cross-field and `run`'s backstop owns it.
+ */
 const EITHER_TENANT_SHAPE = {
   emailLabel: 'Email',
   emailRequired: false,
-  phoneLabel: 'Phone',
+  phoneLabel: 'Phone (optional)',
   phoneRequired: false,
-  hint: 'Enter an email address or a phone number — either one is enough.',
+  hint: 'Add an email address so we can reply. A phone number is optional.',
 };
 
 /** A 200 from the boot route, with only what a test cares about stated. */

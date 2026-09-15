@@ -123,9 +123,11 @@ export interface WebformDraft {
 
 export type WebformFailureKind =
   | 'validation' // 400 VALIDATION_FAILED — our predicates and theirs disagree
+  | 'needs_email' // 400 WEBFORM_EMAIL_REQUIRED — see `visitorMessage`
   | 'unauthorized' // 401 AUTH_INVALID — the merchant's publishable key is wrong or revoked
   | 'origin' // 403 ORIGIN_NOT_ALLOWED
   | 'channel_off' // 403 CHANNEL_DISABLED — our cached `support` is stale
+  | 'unreachable' // 404, and every other unlisted status below 500
   | 'too_large' // 413 PAYLOAD_TOO_LARGE
   | 'rate_limited' // 429 RATE_LIMITED
   | 'unavailable' // 503 WEBFORM_UNAVAILABLE or 500 INTERNAL
@@ -134,7 +136,9 @@ export type WebformFailureKind =
 export interface WebformErrorDetails {
   /** The server's `error.code`, when the body carried one. Diagnostic. */
   readonly code?: string;
-  /** Present only for `'validation'`, when `details.fieldErrors` named one. */
+  /** The box to put the visitor back in. `'validation'` reads it off
+   *  `details.fieldErrors`; `'needs_email'` names Email itself, because the
+   *  refusal that produces it carries no field errors at all. */
   readonly field?: string;
   /** Seconds, from `Retry-After`. Present only for `'rate_limited'`. */
   readonly retryAfterSec?: number;
@@ -208,17 +212,31 @@ export function visitorMessage(error: unknown): string {
   switch (kind) {
     case 'validation':
       return 'Please check the highlighted field and try again.';
+    case 'needs_email':
+      return "Please add an email address — that's the only way we can reply.";
     case 'unauthorized':
     case 'origin':
+    case 'unreachable':
       return "We can't reach support from this page right now.";
     case 'channel_off':
-      return 'Messaging is switched off for this site.';
+      return 'This form is no longer available on this site.';
     case 'too_large':
       return 'That message is too long — please shorten it.';
     case 'rate_limited':
       return 'Too many messages from this page just now. Try again in a minute.';
     case 'unavailable':
     case 'network':
+      return GENERIC_RETRY_MESSAGE;
+    // TOTAL AT RUNTIME, not just over the union. `WebformError` is a public
+    // export and its `kind` is only as narrow as the caller's types — a
+    // `WebformError` built in JavaScript, or one from a newer bundle sharing a
+    // page with an older one, carries a `kind` this `switch` has never seen.
+    // Without this the function returned `undefined`, and the consumer writes
+    // the result straight into `textContent`: the visitor read the literal
+    // word "undefined". The generic retry line is the right landing place,
+    // because an unrecognised failure is exactly the case where this bundle
+    // knows nothing except that the message did not go.
+    default:
       return GENERIC_RETRY_MESSAGE;
   }
 }
@@ -293,14 +311,40 @@ function errorFromResponse(response: Response, body: unknown): WebformError {
   if (status >= 500) {
     return new WebformError('unavailable', `webform submit → ${status}`, true, details);
   }
-  // 400, and every other unlisted status below 500 (a future addition this
-  // bundle has never seen) — treated as a validation disagreement, since
-  // that is what every status in this range means on this route today.
-  const field = fieldFromBody(body);
-  return new WebformError('validation', `webform submit → ${status}`, false, {
-    ...details,
-    ...(field === undefined ? {} : { field }),
-  });
+  if (status === 400) {
+    // TWO different 400s, and only one of them is about a field.
+    //
+    // `WEBFORM_EMAIL_REQUIRED` is the OUTCOME-level refusal
+    // (`decideWebformOutcome` → `needs_email`): the tenant's contact rule
+    // accepted a phone-only submission at parse time and the only destination
+    // this surface can reach — a nexusai ticket — cannot be created without an
+    // address. It is answered by `refuse(...)`, whose body is
+    // `{ error: { code, message, retryable } }` with NO `details.fieldErrors`
+    // (`widget-public.routes.ts`), so the generic sentence would tell a
+    // visitor to check a highlighted field while nothing was highlighted.
+    // Email is named here instead, which is also the box `focusFieldNamed`
+    // puts them back in.
+    if (code === 'WEBFORM_EMAIL_REQUIRED') {
+      return new WebformError('needs_email', 'webform submit → 400 WEBFORM_EMAIL_REQUIRED', false, {
+        ...details,
+        field: 'email',
+      });
+    }
+    const field = fieldFromBody(body);
+    return new WebformError('validation', 'webform submit → 400', false, {
+      ...details,
+      ...(field === undefined ? {} : { field }),
+    });
+  }
+  // 404, and every other unlisted status below 500.
+  //
+  // This used to fall through to `'validation'`, which told a visitor their
+  // input was wrong whenever the route was simply not there — a misaddressed
+  // `apiUrl`, a moved path prefix, a gateway that never reached this service.
+  // Nothing they typed produced it and nothing they can type fixes it, so
+  // blaming the form costs them a retry they can never win. Not retryable for
+  // the same reason.
+  return new WebformError('unreachable', `webform submit → ${status}`, false, details);
 }
 
 const OUTCOMES = ['chat', 'ticket', 'queued'] as const;

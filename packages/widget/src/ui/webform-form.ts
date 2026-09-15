@@ -231,18 +231,37 @@ export const DEFAULT_CONTACT_REQUIREMENT: ContactRequirement = 'either';
 /**
  * The line under the heading, when the merchant wrote none.
  *
- * `'email'` keeps the sentence this form has always shown. The other two are
- * new because they have to be: "We'll reply by email." on a `'phone'` tenant's
- * form is a promise made about a box that tenant does not collect, and on an
- * `'either'` tenant's form it names one of two channels before the visitor has
- * chosen. `'either'` is deliberately channel-neutral — at render time this
- * package genuinely does not know which detail it is about to be given.
+ * ONE sentence for all three contact rules, and it names EMAIL — because email
+ * is the only channel that can answer a submission from this surface at all.
+ * Read off the SERVER, not off this form's own fields:
+ *
+ *   • `decideWebformOutcome` (`chat-service-node
+ *     src/application/services/webform-decision.ts`) can only return a ticket,
+ *     a refusal, or a non-destination — C6's standalone-surface rule — and the
+ *     ticket branch is guarded by `if (!input.hasEmail) return { kind:
+ *     'needs_email' }`. There is no phone destination for it to pick.
+ *   • The ticket it files is answered by nexusai's `POST /tickets/reply`,
+ *     which mails the filer via `send_tenant_email`
+ *     (`src/api/ticket_note_activity.py`) at the `customer_email`
+ *     chat-service supplied — the address from the Email box on this form.
+ *   • `Channel.WEBFORM`'s own reply port sends nothing at any configuration:
+ *     `delivery/ports/webform.port.ts` classifies every attempt as
+ *     `no_email_egress` or `no_reply_address`.
+ *
+ * It was three sentences, one per rule, and the `'phone'` one read "We'll
+ * reply by phone." That named a channel this system does not have. A
+ * phone-only submission is refused outright with 400 `WEBFORM_EMAIL_REQUIRED`
+ * whenever the tenant's flags are known, and when they are not it is accepted
+ * as `queued` and then terminated FAILED by the drain worker
+ * (`webform-drain.service.ts`, "UNDELIVERABLE after acceptance"). Nobody ever
+ * rings. `'either'`'s "We'll get back to you." was the same promise with the
+ * channel left out, and it is false in exactly the same case.
+ *
+ * Naming email under every rule is true, and it is the one thing a visitor can
+ * act on before they submit. If they skip the box anyway, `webform.ts`'s
+ * `'needs_email'` sentence is the recovery.
  */
-const DEFAULT_INTRO: Record<ContactRequirement, string> = {
-  email: "We'll reply by email.",
-  phone: "We'll reply by phone.",
-  either: "We'll get back to you.",
-};
+const DEFAULT_INTRO = "We'll reply by email.";
 
 /** `''` is not copy. The console stores an empty intro as `null` already; this
  *  makes the other two agree rather than rendering a blank heading. */
@@ -286,9 +305,14 @@ export function createWebformForm(
         // `offlineMessage` first when closed: it is the merchant's copy ABOUT
         // being closed, so it is more specific than a general form intro, and
         // it already outranked the built-in here before `copy` existed.
-        text: closed
-          ? (options.offlineMessage ?? intro ?? "Leave us a message and we'll get back to you.")
-          : (intro ?? DEFAULT_INTRO[requirement]),
+        //
+        // The closed built-in was "Leave us a message and we'll get back to
+        // you." — a reply promised with no channel named, which is false for
+        // the same phone-only visitor `DEFAULT_INTRO` above is about. Being
+        // closed changes WHEN someone answers, not HOW, so the same sentence
+        // is right on both sides of the hours and the heading already carries
+        // the state ("We're currently offline.").
+        text: (closed ? options.offlineMessage : undefined) ?? intro ?? DEFAULT_INTRO,
       }),
     ],
   });
@@ -348,15 +372,28 @@ export function createWebformForm(
     !emailField.spec.required &&
     !phoneField.spec.required;
 
-  // ── How a visitor learns the `'either'` rule BEFORE submitting ──────────
+  // ── What the `'either'` visitor is told BEFORE submitting ───────────────
   //
-  // One sentence, ABOVE both boxes, naming both fields and saying that one
-  // answer is enough. Above, because a rule read after the decision is a
-  // rejection with extra steps, and a visitor scanning a contact form reads
-  // downward. Naming both fields, because "one of these" forward-references
-  // boxes the reader has not reached yet. "Either one is enough", because
-  // stripping " (optional)" from the two labels (below) otherwise leaves them
-  // reading, under this package's convention, as though BOTH were demanded.
+  // One sentence, ABOVE both boxes. Above, because a rule read after the
+  // decision is a rejection with extra steps, and a visitor scanning a contact
+  // form reads downward.
+  //
+  // ⚠️ IT USED TO READ "Enter an email address or a phone number — either one
+  // is enough." THAT WAS FALSE, and false for the MAJORITY tenant: `'either'`
+  // is `contact_requirement`'s own NOT NULL DEFAULT. A phone-only submission
+  // clears `assertContactRequirement` at parse time and is then refused by
+  // `decideWebformOutcome` — the ticket branch is guarded by
+  // `if (!input.hasEmail) return { kind: 'needs_email' }` — so the POST
+  // answers 400 and NO ROW IS WRITTEN. "Either one is enough" was therefore
+  // false about the only thing the sentence exists to decide: what to type.
+  // Worse, the least-effort reading of it (type the phone, it is shorter) was
+  // the one that got refused, directly under an intro promising an email
+  // reply.
+  //
+  // So the pair is named for what it is: the email is what makes a reply
+  // possible, and the phone is additive. That is also why only EMAIL's
+  // " (optional)" is unmade below, and why the backstop in `run` checks the
+  // email rather than the pair.
   //
   // `.dh-form-subtitle` and `.dh-field` are EXISTING rules (`ui/styles.ts`
   // §"Data-collecting surfaces") and NO NEW CSS SHIPS WITH THIS. That is not
@@ -372,7 +409,7 @@ export function createWebformForm(
   const contactHint = pairRule
     ? el('p', {
         attrs: { class: 'dh-form-subtitle', id: CONTACT_HINT_ID },
-        text: 'Enter an email address or a phone number — either one is enough.',
+        text: 'Add an email address so we can reply. A phone number is optional.',
       })
     : null;
 
@@ -389,13 +426,18 @@ export function createWebformForm(
       // any given reader voices it is untested here and should be checked by
       // someone with one before this is called done.
       field.view.input.setAttribute('aria-describedby', CONTACT_HINT_ID);
-      // " (optional)" removed from BOTH labels — see `pairRule` above for why
-      // it is the false half of the binary. `ui/forms.ts` owns the mark and is
-      // outside this slice, so it is unmade here, on this surface's own nodes,
-      // where the three-state truth (required / optional / one-of-a-pair) is
-      // actually known.
-      field.view.node.querySelector('.dh-field-optional')?.remove();
     }
+    // " (optional)" is unmade on EMAIL ONLY, and PHONE KEEPS ITS MARK.
+    //
+    // Both marks used to go, on the reasoning that neither field was required
+    // on its own. But under this package's inverse convention ("optional is
+    // marked, not required", `ui/forms.ts`) an unmarked Phone reads as
+    // demanded, which it is not, and an unmarked Email read as one half of a
+    // choice, which it also is not — the server needs it. Leaving Phone marked
+    // and Email unmarked makes the two labels say exactly what the hint above
+    // them says, so a visitor who reads only the labels and a visitor who
+    // reads only the hint reach the same answer.
+    emailField.view.node.querySelector('.dh-field-optional')?.remove();
   }
 
   const contactGroup =
@@ -541,18 +583,19 @@ export function createWebformForm(
       missing.view.input.focus({ preventScroll: true });
       return;
     }
-    // The `'either'` pair, checked where reading order puts it — above the
+    // The `'either'` rule, checked where reading order puts it — above the
     // message box — and worded as the hint's own opening, so a visitor who
     // reaches it recognises the rule they were already shown rather than
     // meeting a second, new one. A backstop, not the mechanism: the hint is.
-    if (
-      pairRule &&
-      emailField !== undefined &&
-      phoneField !== undefined &&
-      emailField.view.value() === '' &&
-      phoneField.view.value() === ''
-    ) {
-      status.show('Enter an email address or a phone number.');
+    //
+    // CHECKS THE EMAIL, NOT THE PAIR. It used to fire only when BOTH boxes
+    // were empty, which let a phone-only submission through to a 400 the
+    // visitor could have been spared — and, while the tenant's channel flags
+    // are unreadable, through to a `queued` receipt for a row the drain worker
+    // then terminates FAILED. Stopping it here keeps their text in the box and
+    // costs them one field instead of a round trip.
+    if (pairRule && emailField !== undefined && emailField.view.value() === '') {
+      status.show('Please add an email address.');
       emailField.view.input.focus({ preventScroll: true });
       return;
     }
@@ -608,25 +651,41 @@ export function createWebformForm(
     );
 
     if (!sent || lastReceipt === null) return;
-    // WHICHEVER detail the visitor actually gave. It was `emailValue`
-    // unconditionally, which was safe only while an email was unconditionally
-    // demanded — on a `'phone'` tenant that same line would have read "We'll
-    // reply to ." Email first when both are present: it is the channel the
-    // ticket branch uses.
-    const reachAt = emailValue !== '' ? emailValue : phoneValue;
+    // ── What this may promise, and why it is only ever the email ──────────
+    //
+    // THE ADDRESS IS THE EMAIL OR IT IS NOTHING. It used to fall back to the
+    // phone number — `reachAt = emailValue !== '' ? emailValue : phoneValue` —
+    // which read "We'll reply to +447700900123." to a visitor nobody can ring.
+    // See `DEFAULT_INTRO` above for the server reading: a phone-only
+    // submission reaches no destination at any configuration, so naming the
+    // number was the one sentence on this surface that promised a channel
+    // that does not exist.
+    //
+    // THE OUTCOME IS NOT BRANCHED ON ANY MORE. There were two more sentences
+    // here for `outcome === 'chat'` ("someone will pick this up…"), and C6
+    // made that verdict unreachable: `decideWebformOutcome` no longer returns
+    // `{kind:'chat'}` for anything. Even the one receipt that can still carry
+    // it — a duplicate describing a pre-C6 row — describes a session whose
+    // visitor provably cannot be reached (`webform.port.ts`: no token can
+    // authenticate a `wf_` subject, and channel 6 has no egress), so "someone
+    // will pick this up and reply to you" was false there too.
+    //
+    // WHAT IS DELIBERATELY NOT CLAIMED: `queued`. That outcome means the row
+    // is durable and the destination is UNDECIDED — the drain worker may yet
+    // file a ticket, discard it (the tenant withdrew the channel) or fail it
+    // outright — and the bot verdict answers 202 `queued` naming no row at
+    // all. So no sentence here says a ticket exists or that anyone has read
+    // it; with no address given, "Message received." claims exactly what the
+    // server did and nothing beyond it.
     const line =
       // The merchant's own sentence wins outright, and nothing is spliced into
-      // it. The console calls this field "Shown after every submission", which
-      // includes the chat outcome below; a value interpolated into a string
-      // they wrote would land wherever the sentence happened to end.
+      // it. The console calls this field "Shown after every submission"; a
+      // value interpolated into a string they wrote would land wherever the
+      // sentence happened to end.
       successMessage ??
-      (lastReceipt.outcome === 'chat'
-        ? reachAt === ''
-          ? 'Thanks — someone will pick this up.'
-          : `Thanks — someone will pick this up and reply to ${reachAt}.`
-        : reachAt === ''
-          ? 'Message received.'
-          : `Message received. We'll reply to ${reachAt}.`);
+      (emailValue === ''
+        ? 'Message received.'
+        : `Message received. We'll reply by email to ${emailValue}.`);
     const echo = confirmation.querySelector('.dh-form-subtitle');
     if (echo !== null) echo.textContent = line;
     form.hidden = true;

@@ -151,13 +151,13 @@ describe("the tenant's contact requirement decides which contact field is requir
     expect($$('.dh-field-label').map((l) => l.textContent)).toEqual([
       'Name (optional)',
       'Email',
-      'Phone',
+      'Phone (optional)',
       'How can we help?',
     ]);
     // The `'either'` rule, rendered — the whole tell that this is where an
     // unreadable answer landed.
     expect($('#dh-webform-contact-hint').textContent).toBe(
-      'Enter an email address or a phone number — either one is enough.',
+      'Add an email address so we can reply. A phone number is optional.',
     );
     expect(DEFAULT_CONTACT_REQUIREMENT).toBe('either');
   });
@@ -177,15 +177,19 @@ describe("the tenant's contact requirement decides which contact field is requir
 // ── 2. `'either'` — the constraint no `required` attribute can express ────
 
 describe("'either': one of the two, and the visitor is told so before submitting", () => {
-  it('marks neither field required and neither field optional', () => {
+  // The two labels now say what the hint says: the email is what makes a
+  // reply possible, the phone is additive. Unmarking BOTH used to read, under
+  // this package's inverse convention, as though both were demanded — and
+  // unmarking Phone specifically claimed a box the server never needs.
+  it('unmarks the email and leaves the phone marked optional', () => {
     build({ contactRequirement: 'either' });
 
+    // Neither is `required` on the ELEMENT: the rule is a cross-field one and
+    // `run`'s backstop owns it, not the browser's own validation.
     expect($<HTMLInputElement>('#dh-webform-email').required).toBe(false);
     expect($<HTMLInputElement>('#dh-webform-phone').required).toBe(false);
-    // The false half of the binary, removed: two boxes both marked
-    // "(optional)" read as "skip both", which the server refuses.
     expect(labelFor('dh-webform-email')).toBe('Email');
-    expect(labelFor('dh-webform-phone')).toBe('Phone');
+    expect(labelFor('dh-webform-phone')).toBe('Phone (optional)');
     // Name is untouched — it really is optional.
     expect(labelFor('dh-webform-name')).toBe('Name (optional)');
   });
@@ -194,8 +198,13 @@ describe("'either': one of the two, and the visitor is told so before submitting
     build({ contactRequirement: 'either' });
 
     const hint = $('#dh-webform-contact-hint');
+    // NOT "either one is enough". A phone-only submission clears
+    // `assertContactRequirement` and is then refused 400 by
+    // `decideWebformOutcome` with no row written, so that sentence was false
+    // about the only thing it exists to decide — what to type — and false for
+    // the DEFAULT tenant, `'either'` being the column's NOT NULL default.
     expect(hint.textContent).toBe(
-      'Enter an email address or a phone number — either one is enough.',
+      'Add an email address so we can reply. A phone number is optional.',
     );
 
     const email = $('#dh-webform-email');
@@ -225,16 +234,42 @@ describe("'either': one of the two, and the visitor is told so before submitting
     await flush();
 
     expect(onSubmit).not.toHaveBeenCalled();
-    expect($('.dh-form-error').textContent).toBe('Enter an email address or a phone number.');
+    expect($('.dh-form-error').textContent).toBe('Please add an email address.');
     expect(document.activeElement).toBe($('#dh-webform-email'));
   });
 
-  it.each<['email' | 'phone', string, string]>([
-    ['email', 'ada@example.com', 'phone'],
-    ['phone', '+447700900123', 'email'],
-  ])('accepts %s alone and omits the other key', async (given, value, absent) => {
-    const onSubmit = vi.fn().mockResolvedValue(receipt);
+  // ── The backstop checks the EMAIL, not the pair ───────────────────────
+  //
+  // A phone-only submission is refused by the server on every row that can
+  // accept one — `decideWebformOutcome`'s ticket branch is guarded by
+  // `if (!input.hasEmail) return { kind: 'needs_email' }` — and when the
+  // tenant's channel flags are unreadable it is worse than a refusal: the
+  // route answers `queued` and the drain worker terminates the row FAILED.
+  // Stopping it here keeps the visitor's text in the box.
+  it('does not post a phone-only submission it knows the server will refuse', async () => {
+    const onSubmit = vi.fn();
     build({ contactRequirement: 'either' }, onSubmit);
+
+    $<HTMLInputElement>('#dh-webform-phone').value = '+447700900123';
+    $<HTMLTextAreaElement>('#dh-webform-message').value = 'Hello';
+    $<HTMLFormElement>('form').requestSubmit();
+    await flush();
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect($('.dh-form-error').textContent).toBe('Please add an email address.');
+    expect(document.activeElement).toBe($('#dh-webform-email'));
+  });
+
+  // An unanswered box is an ABSENT KEY, never `''` — the route's schema is
+  // `z.string().email().optional()` and `''` fails `.email()`. Phone-alone is
+  // exercised under `'phone'`, the rule that still permits it on the wire;
+  // under `'either'` the email backstop above stops it first.
+  it.each<['email' | 'phone', string, string, 'either' | 'phone']>([
+    ['email', 'ada@example.com', 'phone', 'either'],
+    ['phone', '+447700900123', 'email', 'phone'],
+  ])('accepts %s alone and omits the other key', async (given, value, absent, contactRequirement) => {
+    const onSubmit = vi.fn().mockResolvedValue(receipt);
+    build({ contactRequirement }, onSubmit);
 
     $<HTMLInputElement>(`#dh-webform-${given}`).value = value;
     $<HTMLTextAreaElement>('#dh-webform-message').value = 'Hello';
@@ -247,22 +282,39 @@ describe("'either': one of the two, and the visitor is told so before submitting
     expect(absent in draft).toBe(false);
   });
 
-  it('confirms to whichever detail was given — a phone-only visitor is not told "reply to ."', async () => {
-    build({ contactRequirement: 'either' });
+  // ── CRITERION 2, the sharp case ───────────────────────────────────────
+  //
+  // Under 'either' (and under 'phone') a visitor may give a phone number and
+  // no email, and the form accepts it — `assertContactRequirement` does too.
+  // What CANNOT happen is a reply. `decideWebformOutcome` routes a ticket
+  // through `if (!input.hasEmail) return { kind: 'needs_email' }`, so a
+  // phone-only submission is refused outright when the tenant's flags are
+  // known; when they are not it is accepted as `queued` and then terminated
+  // FAILED by the drain worker ("UNDELIVERABLE after acceptance"). No egress
+  // exists on channel 6 either. Nobody rings, ever.
+  //
+  // So this confirmation must not name the number, and must not promise a
+  // reply. It says only what the server actually did: it has the message.
+  // Under `'phone'`, where the form still lets a phone-only submission reach
+  // the wire (`pairRule` is false, so the email backstop does not apply and
+  // the tenant's own rule marks Phone required).
+  it('promises no reply to a phone-only visitor, and never names the number', async () => {
+    build({ contactRequirement: 'phone' });
 
     $<HTMLInputElement>('#dh-webform-phone').value = '+447700900123';
     $<HTMLTextAreaElement>('#dh-webform-message').value = 'Hello';
     $<HTMLFormElement>('form').requestSubmit();
     await flush();
 
-    expect($('.dh-offline-sent').textContent).toContain(
-      "Message received. We'll reply to +447700900123.",
-    );
+    const sent = $('.dh-offline-sent').textContent ?? '';
+    expect(sent).not.toContain('+447700900123');
+    expect(sent).not.toMatch(/repl(y|ies)/i);
+    expect(sent).toContain('Message received.');
   });
 
-  // Documented at the `reachAt` line in `ui/webform-form.ts`: email first,
-  // because it is the channel the ticket branch replies on. Pinned here so
-  // flipping that polarity is a red test and not a silent change of promise.
+  // The email is the ONLY address this sentence may carry, and it is named
+  // together with the channel it will be used on — nexusai answers the ticket
+  // through `send_tenant_email` at the `customer_email` chat-service supplied.
   it('confirms to the email when both were given — the channel the ticket branch uses', async () => {
     build({ contactRequirement: 'either' });
 
@@ -273,7 +325,7 @@ describe("'either': one of the two, and the visitor is told so before submitting
     await flush();
 
     const sent = $('.dh-offline-sent').textContent ?? '';
-    expect(sent).toContain("Message received. We'll reply to visitor@example.com.");
+    expect(sent).toContain("Message received. We'll reply by email to visitor@example.com.");
     expect(sent).not.toContain('+447700900123');
   });
 
@@ -345,12 +397,11 @@ describe("the tenant's copy is rendered, and its absence renders today's strings
     build(withCopy);
 
     expect($(HEADING).textContent).toBe('Leave a message');
-    // `DEFAULT_INTRO['either']`, because `BASE` names no requirement and the
-    // fallback is the server's `'either'`. Which of the three sentences is
-    // shown is `DEFAULT_INTRO`'s business and is pinned per requirement
-    // further down; what this asserts is that ABSENT COPY renders one of this
-    // form's own strings rather than a blank line.
-    expect($(SUBTITLE).textContent).toBe("We'll get back to you.");
+    // `DEFAULT_INTRO`, which is now one sentence for every requirement — see
+    // the per-requirement case further down for why. What this asserts is
+    // that ABSENT COPY renders this form's own string rather than a blank
+    // line.
+    expect($(SUBTITLE).textContent).toBe("We'll reply by email.");
 
     $<HTMLInputElement>('#dh-webform-email').value = 'ada@example.com';
     $<HTMLTextAreaElement>('#dh-webform-message').value = 'Hello';
@@ -358,7 +409,7 @@ describe("the tenant's copy is rendered, and its absence renders today's strings
     await flush();
 
     expect($('.dh-offline-sent .dh-form-subtitle').textContent).toBe(
-      "Message received. We'll reply to ada@example.com.",
+      "Message received. We'll reply by email to ada@example.com.",
     );
   });
 
@@ -393,7 +444,11 @@ describe("the tenant's copy is rendered, and its absence renders today's strings
   it.each<[string, string | undefined, string | null, string]>([
     ['offlineMessage outranks intro', 'Back at 9am.', 'We answer within a day.', 'Back at 9am.'],
     ['intro is used when there is no offlineMessage', undefined, 'We answer within a day.', 'We answer within a day.'],
-    ['the built-in is last', undefined, null, "Leave us a message and we'll get back to you."],
+    // The closed built-in is `DEFAULT_INTRO` too. Being closed changes WHEN
+    // someone answers, not HOW, and the old string ("…and we'll get back to
+    // you.") promised a reply while naming no channel — false for exactly the
+    // phone-only visitor above. The heading still carries the state.
+    ['the built-in is last', undefined, null, "We'll reply by email."],
   ])('closed subtitle: %s', (_label, offlineMessage, intro, expected) => {
     build({
       hours: 'CLOSED',
@@ -405,17 +460,34 @@ describe("the tenant's copy is rendered, and its absence renders today's strings
     expect($(SUBTITLE).textContent).toBe(expected);
   });
 
-  // "We'll reply by email." is a promise about a box a 'phone' tenant does not
-  // collect, and on 'either' it names one of two channels before the visitor
-  // has picked one.
-  it.each<['email' | 'phone' | 'either', string]>([
-    ['email', "We'll reply by email."],
-    ['phone', "We'll reply by phone."],
-    ['either', "We'll get back to you."],
-  ])('the default intro for %s does not promise a channel it has not been given', (requirement, expected) => {
-    build({ contactRequirement: requirement });
-    expect($(SUBTITLE).textContent).toBe(expected);
-  });
+  // ── CRITERION 2, before the visitor has typed anything ────────────────
+  //
+  // The intro is where the reply is first promised, so it is bound by the
+  // same fact as the confirmation: EMAIL IS THE ONLY CHANNEL THAT ANSWERS.
+  //
+  // This used to vary by requirement — "We'll reply by phone." on 'phone',
+  // "We'll get back to you." on 'either'. Both were verified against which
+  // box the form collects rather than against what the server can reach, and
+  // both are false: no phone destination exists in `decideWebformOutcome`, in
+  // the delivery registry, or in nexusai's reply path.
+  it.each<['email' | 'phone' | 'either']>([['email'], ['phone'], ['either']])(
+    'the default intro on %s names email, the only channel that can answer',
+    (requirement) => {
+      build({ contactRequirement: requirement });
+      expect($(SUBTITLE).textContent).toBe("We'll reply by email.");
+    },
+  );
+
+  // The mirror of the above, stated as the prohibition rather than the value,
+  // so a future rewording cannot reintroduce the promise by accident.
+  it.each<['email' | 'phone' | 'either']>([['email'], ['phone'], ['either']])(
+    'no requirement promises a phone call on %s',
+    (requirement) => {
+      build({ contactRequirement: requirement });
+      expect($(SUBTITLE).textContent?.toLowerCase()).not.toContain('phone');
+      expect($(SUBTITLE).textContent?.toLowerCase()).not.toContain('call');
+    },
+  );
 });
 
 // ── 4. Criterion 6: moving `required` must not move a single DROP ─────────
