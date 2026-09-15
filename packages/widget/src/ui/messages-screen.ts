@@ -22,6 +22,7 @@
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 
 import { ICONS, el, icon } from './dom.js';
+import { preserveListFocus, type ListFocusOutcome } from './focus.js';
 import { relativeTimeLabel } from './session-picker.js';
 import { statusLabel } from './session-status.js';
 
@@ -71,6 +72,22 @@ export interface MessagesScreenCallbacks {
 
 export interface MessagesScreenView {
   readonly node: HTMLElement;
+  /**
+   * The polite region that narrates a focus rescue. Handed out SEPARATELY
+   * from `node` and mounted by `widget.ts` beside the other two, exactly as
+   * `MessageListView.liveRegion` and `IdentityHeaderView.liveRegion` are.
+   *
+   * Not merely a tidiness point. The panel holds several
+   * `.dh-sr[role="status"]` elements and more than one test reaches for
+   * "the" live region with an unscoped `querySelector`, which resolves to
+   * whichever comes FIRST in the shadow tree. `messagesScreen.node` sits
+   * high in the panel — above `messageList.log` — so leaving this region
+   * inside it silently stole the transcript's region from
+   * `session-closed.test.ts`. The panel already carries a comment about the
+   * same hazard with `.dh-input`. Keeping every region in one late,
+   * deliberate group is what stops the next one being an accident.
+   */
+  readonly liveRegion: HTMLElement;
   /** @param currentSessionId the conversation on screen behind this tab, or `null`. */
   render(sessions: readonly ChatSessionSummary[], currentSessionId: string | null): void;
   setStartingNew(busy: boolean): void;
@@ -517,6 +534,28 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
     on: { click: () => callbacks.onStartNew?.() },
   });
 
+  // Says out loud what the focus rescue just did, and NOTHING else.
+  //
+  // Same shape as the widget's three existing regions (ui/message-list.ts,
+  // ui/identity-header.ts, ui/message-actions.ts): visually hidden via
+  // `dh-sr`, `role="status"`, polite, atomic.
+  //
+  // Deliberately NOT `aria-live` on the list container. `applyFilter()`
+  // rewrites every in-tab row's name, status, preview and relative timestamp
+  // on every render, and those timestamps drift on their own, so a
+  // container-level region would announce something on essentially every
+  // 20-second poll, forever, to somebody who is not even looking. An
+  // announcement nobody asked for on a timer is its own defect. This fires
+  // only when the user's own focus had to be moved because the row it was on
+  // stopped existing — an event they are, by definition, present for.
+  //
+  // Handed to `widget.ts` rather than parked in `node` — see
+  // `MessagesScreenView.liveRegion` for why its POSITION in the panel is
+  // load-bearing and not a matter of taste.
+  const live = el('span', {
+    attrs: { class: 'dh-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+  });
+
   const node = el('div', { attrs: { class: 'dh-messages' }, children: [search, list, newButton] });
 
   const rows = new Map<string, CustomerMessageRow>();
@@ -537,18 +576,54 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
       if (matches) anyVisible = true;
     }
 
-    if (allSessions.length === 0) {
-      empty.textContent = 'No conversations yet.';
-      empty.hidden = false;
-    } else {
-      empty.textContent = 'No conversations match your search.';
-      empty.hidden = anyVisible;
+    const nothingAtAll = allSessions.length === 0;
+    const emptyText = nothingAtAll
+      ? 'No conversations yet.'
+      : 'No conversations match your search.';
+    // Written only when it actually differs. Assigning an identical string
+    // still replaces the text node, and a live-region implementation reading
+    // this element would be entitled to treat that as a fresh change — so an
+    // unconditional write turns a 20-second poll into a 20-second
+    // announcement. Nothing announces this element today (the region above
+    // is the one that speaks), and this is what keeps giving it a role later
+    // a one-line change rather than a new defect.
+    if (empty.textContent !== emptyText) empty.textContent = emptyText;
+    empty.hidden = nothingAtAll ? false : anyVisible;
+  }
+
+  /**
+   * Only the two outcomes the user did not ask for get said out loud; see
+   * `ListFocusOutcome` for why `restored` stays quiet.
+   */
+  function announceRescue(outcome: ListFocusOutcome): void {
+    if (outcome.kind === 'moved') {
+      const landed = allSessions.find((summary) => summary.id === outcome.id);
+      // "no longer listed", not "closed": the row is gone from this list and
+      // that is all this code actually knows. Asserting a status it has not
+      // been told would be a guess spoken with confidence.
+      const name = landed === undefined ? 'another conversation' : getCustomerConversationTitle(landed);
+      live.textContent = `The conversation you were on is no longer listed. You are now on ${name}.`;
+      return;
+    }
+    if (outcome.kind === 'emptied') {
+      live.textContent = 'The conversation you were on is no longer listed. Your list is now empty.';
     }
   }
 
   return {
     node,
+    liveRegion: live,
     render(sessions, currentSessionId) {
+      // The portal list below has the identical guard — the two screens keep
+      // a `row.node.remove()` loop each and share no removal path, so this
+      // has to be stated twice or it protects half the users. See
+      // `preserveListFocus` for what removing the focused row costs.
+      const rescueFocus = preserveListFocus(
+        allSessions.map((summary) => summary.id),
+        (id) => rows.get(id)?.node,
+        searchInput,
+      );
+
       allSessions = sessions;
       currentId = currentSessionId;
 
@@ -574,6 +649,10 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
       }
 
       applyFilter();
+      // After `applyFilter`, never before: it is what decides which surviving
+      // rows the search query has hidden, and a hidden row is not somewhere
+      // focus may land.
+      announceRescue(rescueFocus());
     },
     setStartingNew(busy) {
       newButton.disabled = busy;
@@ -651,6 +730,28 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
     children: [empty],
   });
 
+  // Says out loud what the focus rescue just did, and NOTHING else.
+  //
+  // Same shape as the widget's three existing regions (ui/message-list.ts,
+  // ui/identity-header.ts, ui/message-actions.ts): visually hidden via
+  // `dh-sr`, `role="status"`, polite, atomic.
+  //
+  // Deliberately NOT `aria-live` on the list container. `applyFilter()`
+  // rewrites every in-tab row's name, status, preview and relative timestamp
+  // on every render, and those timestamps drift on their own, so a
+  // container-level region would announce something on essentially every
+  // 20-second poll, forever, to somebody who is not even looking. An
+  // announcement nobody asked for on a timer is its own defect. This fires
+  // only when the user's own focus had to be moved because the row it was on
+  // stopped existing — an event they are, by definition, present for.
+  //
+  // Handed to `widget.ts` rather than parked in `node` — see
+  // `MessagesScreenView.liveRegion` for why its POSITION in the panel is
+  // load-bearing and not a matter of taste.
+  const live = el('span', {
+    attrs: { class: 'dh-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+  });
+
   const node = el('div', { attrs: { class: 'dh-messages' }, children: [tabBar, search, list] });
 
   const rows = new Map<string, MessageRow>();
@@ -723,18 +824,40 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
     secondTabCountBadge.textContent = String(secondTabCount);
     customersCountBadge.textContent = String(customerCount);
 
-    if (totalInTab === 0) {
-      if (activeTab === 'customers') {
-        empty.textContent = 'No customer conversations yet.';
-      } else if (isMerchantUser) {
-        empty.textContent = 'No admin conversations yet.';
-      } else {
-        empty.textContent = 'No merchant conversations yet.';
-      }
-      empty.hidden = false;
-    } else {
-      empty.textContent = 'No conversations match your search.';
-      empty.hidden = anyVisible;
+    const nothingInTab = totalInTab === 0;
+    const emptyText = !nothingInTab
+      ? 'No conversations match your search.'
+      : activeTab === 'customers'
+      ? 'No customer conversations yet.'
+      : isMerchantUser
+      ? 'No admin conversations yet.'
+      : 'No merchant conversations yet.';
+    // Conditional for the same reason as the customer list's copy of this —
+    // see that one for the whole argument. Short version: an identical
+    // re-assignment still replaces the text node, and this element is
+    // rewritten on every 20-second poll.
+    if (empty.textContent !== emptyText) empty.textContent = emptyText;
+    empty.hidden = nothingInTab ? false : anyVisible;
+  }
+
+  /**
+   * Only the two outcomes the user did not ask for get said out loud; see
+   * `ListFocusOutcome` for why `restored` stays quiet.
+   */
+  function announceRescue(outcome: ListFocusOutcome): void {
+    if (outcome.kind === 'moved') {
+      const landed = allSessions.find((summary) => summary.id === outcome.id);
+      // Named through `getRowDisplayName` with the CURRENT tab and role, so
+      // the announcement says exactly the name the row itself is showing
+      // rather than a second opinion about who the conversation is with.
+      const name = landed === undefined
+        ? 'another conversation'
+        : getRowDisplayName(landed, activeTab, callbacks.userRole);
+      live.textContent = `The conversation you were on is no longer listed. You are now on ${name}.`;
+      return;
+    }
+    if (outcome.kind === 'emptied') {
+      live.textContent = 'The conversation you were on is no longer listed. Your list is now empty.';
     }
   }
 
@@ -745,7 +868,18 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
 
   return {
     node,
+    liveRegion: live,
     render(sessions, currentSessionId) {
+      // Captured before a single node moves: `allSessions` is still the
+      // PREVIOUS render's array, which is the order the rows are currently
+      // in — and `rows` still holds the ones this render is about to delete.
+      // See `preserveListFocus` for why a removal is a focus event at all.
+      const rescueFocus = preserveListFocus(
+        allSessions.map((summary) => summary.id),
+        (id) => rows.get(id)?.node,
+        searchInput,
+      );
+
       allSessions = sessions;
       currentId = currentSessionId;
 
@@ -769,6 +903,10 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
       }
 
       applyFilter();
+      // After `applyFilter`, never before: it is what decides which surviving
+      // rows are hidden by the active tab and the search query, and a hidden
+      // row is not somewhere focus may land.
+      announceRescue(rescueFocus());
     },
     setStartingNew(_busy) {},
     focus() {
