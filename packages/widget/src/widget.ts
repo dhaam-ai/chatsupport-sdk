@@ -1926,6 +1926,26 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       if (name !== 'conversation') {
         currentPortalSessionId = null;
         portalConversationActive = false;
+        // Clearing the id is only half of ending the exemption. That id is
+        // what `portalVisibleSessions` reads to keep a CLOSED conversation
+        // listed while the admin is READING it — so until the list is
+        // re-rendered against the cleared value, the row is still there,
+        // still in the tab badge, still clickable, and still marked
+        // `aria-current="true"` for a conversation the admin has just
+        // demonstrably left. `syncScreens()` below does not do it:
+        // `messagesScreen.render` has exactly one caller, and this is not
+        // one of its call sites. Leaving it to the next `/agent/queue`
+        // refresh made "while they are reading it" mean "until the network
+        // gets round to it" — up to a full 20-second poll of a stale row.
+        //
+        // Sits ABOVE the `if (!open) return` guard below, so it also runs
+        // when the panel CLOSES (`close()` sets `open = false`, then calls
+        // `screens.reset`, which lands here). That is deliberate and safe:
+        // the list has to be correct for the next open regardless, and the
+        // re-render cannot strand focus, because `close()` calls
+        // `restoreFocus?.()` immediately afterwards and that is the last
+        // word on where focus goes.
+        syncSessionSurfaces();
       }
       syncScreens();
       // Focus follows navigation, same as any single-page app's route
@@ -2300,6 +2320,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // log's region: `status` re-announces on every connection change, and
       // the log's region is busy narrating ticks. See identity-header.ts.
       identityHeader.liveRegion,
+      // Third and last, and the ORDER of these three is load-bearing:
+      // several tests reach for "the" live region with an unscoped
+      // `.dh-sr[role="status"]` query, which resolves to whichever comes
+      // first in the shadow tree. `messageList.liveRegion` stays first
+      // because `session-closed.test.ts` means that one. Appending here —
+      // rather than leaving this region inside `messagesScreen.node`, which
+      // sits far higher up the panel — is what keeps that true.
+      messagesScreen.liveRegion,
     ],
     on: {
       keydown: (event) => {

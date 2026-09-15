@@ -250,8 +250,26 @@ describe('portal queue — a CLOSED conversation is off the staff list', () => {
       await vi.advanceTimersByTimeAsync(20_000);
       expect(visibleRowNames()).toEqual(['Reading Rae', 'Other Ollie']);
 
-      // Backing out ends the exemption: the next poll drops it like any other.
+      // Backing out ends the exemption THERE AND THEN — no timer advance
+      // between the Back and this assertion, deliberately.
+      //
+      // This used to read `clickBack(); await advanceTimersByTimeAsync(20_000)`
+      // and it was measuring the wrong thing: advancing 20 seconds also
+      // flushes the next `/agent/queue` refresh, which re-renders the list
+      // for its own reasons, so the assertion passed on the refresh alone and
+      // could not distinguish "dropped when the admin left it" from "dropped
+      // up to 20 seconds later, whenever the network got round to it". In
+      // that window the closed row was still listed, still in the tab badge,
+      // still clickable, and still telling a screen reader it was the
+      // `aria-current` conversation — the one the admin had demonstrably just
+      // left. The exemption is "while they are reading it", so it has to end
+      // on the leaving, not on the next poll.
       clickBack();
+      expect(visibleRowNames()).toEqual(['Other Ollie']);
+      expect(tabCounts().customers).toBe('1');
+
+      // The eventual-consistency half is still worth its line: the refresh
+      // that follows must not bring the row back.
       await vi.advanceTimersByTimeAsync(20_000);
       expect(visibleRowNames()).toEqual(['Other Ollie']);
     } finally {
