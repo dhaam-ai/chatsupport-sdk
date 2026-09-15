@@ -293,15 +293,31 @@ describe('the gate is exactly sessions.length > 0 — now expressed as rows, not
     expect(messagesRows()).toHaveLength(2);
   });
 
+  // ── Why RESOLVED and not CLOSED, here and in the two tests below ────────
+  //
+  // These three tests are about TERMINAL sessions — pickable rather than
+  // inert, no optimistic flip to open, and the SWITCHED-close pairing — and
+  // each of them used a CLOSED row as the vehicle for that. As of the
+  // 2026-09-14 rule, CLOSED is no longer rendered on the customer's surfaces
+  // at all (widget.ts's `customerVisibleSessions`), so a CLOSED fixture
+  // stopped producing the row these tests need and stopped testing anything.
+  //
+  // RESOLVED is the terminal status that IS still rendered, and it is the
+  // one the reactivation path is now about: the user drew the line between
+  // the two states deliberately (resolved is finished but reopenable; closed
+  // is off the table). So the invariant is retargeted onto RESOLVED, not
+  // dropped — every assertion below is the same assertion it always was.
+  // A CLOSED row's absence is proven separately, in
+  // test/closed-session-hidden.test.ts.
   it('keeps a terminal session pickable — reactivation is a real path back', async () => {
-    sessionRows = [summaryRow({ id: 'closed_one', status: 'CLOSED' })];
+    sessionRows = [summaryRow({ id: 'resolved_one', status: 'RESOLVED' })];
     await openedWidget();
     await goToMessages();
 
     const row = messagesRows()[0];
     if (row === undefined) throw new Error('no row rendered');
     expect(row.disabled).toBe(false);
-    expect(row.closest('.dh-messages-item')?.getAttribute('data-status')).toBe('CLOSED');
+    expect(row.closest('.dh-messages-item')?.getAttribute('data-status')).toBe('RESOLVED');
   });
 });
 
@@ -332,7 +348,9 @@ describe('picking a conversation', () => {
   });
 
   it('does not optimistically flip a terminal session to open', async () => {
-    sessionRows = [summaryRow({ id: 'sess_past', status: 'CLOSED' })];
+    // RESOLVED rather than CLOSED — see the retarget note above the
+    // "keeps a terminal session pickable" test.
+    sessionRows = [summaryRow({ id: 'sess_past', status: 'RESOLVED' })];
     const { widget } = await openedWidget();
     await goToMessages();
 
@@ -448,7 +466,9 @@ describe('starting a new conversation', () => {
 
 describe('the SWITCHED-close pairing', () => {
   it('does not close the conversation the customer just switched INTO', async () => {
-    sessionRows = [summaryRow({ id: 'sess_past', status: 'CLOSED' })];
+    // RESOLVED rather than CLOSED — see the retarget note above the
+    // "keeps a terminal session pickable" test.
+    sessionRows = [summaryRow({ id: 'sess_past', status: 'RESOLVED' })];
     const { widget, socket } = await openedWidget();
     await goToMessages();
 

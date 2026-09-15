@@ -162,12 +162,25 @@ describe("Home's recent conversation shows a status for every session", () => {
 // is asserted status by status rather than as "not resolved and not closed":
 // a future edit that widens it fails loudly instead of quietly being kinder.
 //
-// Nothing becomes unreachable. Every conversation, in every status, is still
-// listed on the Messages screen, reached from the bottom tab bar that is on
-// screen whenever Home is — this section is a shortcut back into the one
-// conversation still going, not the list. NOT via Home's "See all": that
-// button is a child of the section this hides, so it goes when the section
-// goes. The Messages tab is the whole surviving route.
+// Nothing THIS decision hides becomes unreachable. A conversation in any of
+// the four statuses it hides and still lists — RESOLVED, WAITING_FOR_AGENT,
+// ASSIGNED, ON_HOLD — is on the Messages screen, reached from the bottom tab
+// bar that is on screen whenever Home is; this section is a shortcut back
+// into the one conversation still going, not the list. NOT via Home's "See
+// all": that button is a child of the section this hides, so it goes when the
+// section goes. The Messages tab is the whole surviving route.
+//
+// CLOSED is the exception, and it is NOT this decision's doing. As of
+// 2026-09-14 widget.ts withholds closed conversations from the customer's
+// surfaces upstream of both screens (`customerVisibleSessions`), so a CLOSED
+// conversation is on neither Home nor Messages and has no surviving customer
+// route at all — deliberately, by a separate user decision. D4 above is
+// unchanged and still reads as written; what changed is that it can no longer
+// be cited as a guarantee that every status remains reachable. It guarantees
+// that for the four statuses above and for no others. The SUPERSEDED block
+// further down this file records the other half of the same 2026-09-14 rule
+// (which conversation Home is HANDED); the two are one record, and neither
+// restores the old blanket guarantee.
 //
 // The pill's WORDS are still computed for every status (the loop above), so
 // the section is hidden with correct content inside it rather than emptied.
@@ -202,13 +215,34 @@ describe("Home's recent conversation appears only when it is still OPEN", () => 
     expect(homeShowing(null)).toBe(false);
   });
 
-  // `widget.ts`'s `mostRecentSession` still picks the newest session OVERALL,
-  // and that is deliberate and unchanged: it is not "the newest OPEN one".
-  // So a visitor whose newest conversation was just closed sees no Recent
-  // section even though an older OPEN one exists. Approved as-is — the older
-  // one is one tap away on Messages, and a Home shortcut that skips past the
-  // conversation you were last in is more confusing than no shortcut.
-  it('hides the section for a closed newest conversation, older OPEN one or not', () => {
+  // ── SUPERSEDED 2026-09-14: read this before citing the test below ───────
+  //
+  // This comment used to say that `widget.ts`'s `mostRecentSession` picks the
+  // newest session OVERALL, so a visitor whose newest conversation had just
+  // been closed saw no Recent section even when an older OPEN one existed,
+  // and that this was approved as-is. That is no longer the rule. Asked
+  // directly, the user decided that "don't show closed sessions" extends to
+  // Home too: CLOSED is now filtered out of the customer's conversations
+  // before Home is handed anything (`customerVisibleSessions` in widget.ts),
+  // so `mostRecentSession` skips closed ones and Home offers the most recent
+  // NON-closed conversation instead of nothing.
+  //
+  // What that leaves unchanged, and what this test still guards: Home's own
+  // status rule. `SHOWN_IN_RECENT` is untouched — the section still appears
+  // for OPEN and for nothing else, so RESOLVED, WAITING_FOR_AGENT, ASSIGNED
+  // and ON_HOLD still hide it, per the separate and still-valid D4 decision
+  // above. The two rules compose: one decides WHICH conversation Home is
+  // handed, this one decides whether it is shown.
+  //
+  // What this test does NOT cover, and must not be read as evidence about:
+  // it calls `home.update()` directly with a CLOSED summary and never
+  // exercises `mostRecentSession`, so it proves only that Home hides the
+  // section for a CLOSED conversation it is handed — not that widget.ts
+  // would ever hand it one. Under the new rule it would not, except for the
+  // conversation the customer is currently in. The selection rule is proven
+  // where it lives, in test/closed-session-hidden.test.ts ("skips a closed
+  // newest conversation and offers the open one behind it").
+  it('hides the section for a closed conversation it is handed', () => {
     expect(homeShowing(summary({ id: 'newest', status: 'CLOSED' }))).toBe(false);
   });
 });

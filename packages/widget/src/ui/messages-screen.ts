@@ -1,4 +1,14 @@
-// The Messages screen — every conversation with search and category tabs.
+// The Messages screen — the conversation list, with search and category tabs.
+//
+// It said "every conversation" until 2026-09-15, and that is no longer true
+// of either branch below. `widget.ts` withholds CLOSED conversations from
+// what it hands to `render()` — from the customer's own list
+// (`customerVisibleSessions`) and from the portal queue's Customers and
+// Merchants tabs (`portalVisibleSessions`) — with one exemption for the
+// conversation that is on screen right now. RESOLVED is untouched and still
+// listed. This screen renders and counts exactly what it is given: keeping
+// the rule upstream is what stops the tab count badges `applyFilter()`
+// derives from disagreeing with the rows beside them.
 //
 // ── Redesign: Dhaam UI (Role-based tabs) ──────────────────────────────────
 //
@@ -18,8 +28,41 @@ import { statusLabel } from './session-status.js';
 export type ActiveConversationTab = 'customers' | 'merchants' | 'admin';
 
 export interface MessagesScreenCallbacks {
-  /** The customer picked a row — including a terminal one, which reactivates it server-side. */
-  readonly onOpenConversation: (sessionId: string, displayName: string, subtitle?: string) => void;
+  /**
+   * The customer picked a row — including a terminal one, which reactivates it
+   * server-side.
+   *
+   * `displayName` is OPTIONAL because the two screens behind this one callback
+   * genuinely have different amounts to say, and only one of them has a name:
+   *
+   *   - the PORTAL list ({@link createPortalMessagesScreen}) knows who is on
+   *     the other end and passes all three. `createMessageRow`'s `onSelect`
+   *     still requires a `displayName`, and that does guard the row's own
+   *     call site (its click handler, :341) — but it does NOT guard the
+   *     forwarding lambda at :758, in `createPortalMessagesScreen`'s own
+   *     `render()`. Widening this signature made that forward compile, so
+   *     nothing in the type system protects that hop anymore. What protects
+   *     it now is a test, not a type:
+   *     `packages/widget/test/portal-open-conversation.test.ts` asserts the
+   *     call arity is 3 and that `displayName` is a non-empty string — and
+   *     it has already caught this exact regression once in practice.
+   *   - the CUSTOMER list ({@link createCustomerMessagesScreen}) has nothing
+   *     but the id: `createCustomerMessageRow`'s `onSelect` is
+   *     `(sessionId: string)`, because a customer row is a conversation the
+   *     customer is already a party to and the name belongs to the widget's
+   *     own session list, not to the row.
+   *
+   * Handing over an id alone is therefore the DESIGNED customer path, not a
+   * gap. `widget.ts`'s `selectSession` resolves the name itself out of
+   * `pastSessions` via {@link getCustomerConversationTitle}, and reads an
+   * absent `subtitle` as "leave the status line alone" rather than as "blank
+   * it"; `openPortalConversation` has its own `?? 'Conversation'` fallback for
+   * the same reason. This parameter was declared required until 2026-09-14,
+   * which made the customer call site a type error (TS2554) describing a hole
+   * that was never there — both implementations were honest about the two
+   * paths and only this signature was not.
+   */
+  readonly onOpenConversation: (sessionId: string, displayName?: string, subtitle?: string) => void;
   /** Optional start-new callback. */
   readonly onStartNew?: () => void;
   /** Current user role in the portal ('admin' | 'merchant' | 'customer'). */

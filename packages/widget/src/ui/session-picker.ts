@@ -16,13 +16,32 @@
 // check, is precisely the two-sources-of-truth bug this was scoped to avoid
 // — so this module does not attempt a guest heuristic of its own at all.
 //
-// ── Terminal sessions are not disabled ────────────────────────────────────
+// ── A row that IS rendered is never a disabled one ───────────────────────
 //
-// CLOSED/RESOLVED is real information, shown via the status label like every
-// other status — but the row underneath is the same enabled, keyboard- and
-// pointer-clickable `<button>` regardless of status. Picking one and typing
-// reactivates it server-side, so nothing here may render it as inert: no
-// `disabled`, no dimmed-archive styling distinct from a live row.
+// Whatever status a row arrives with — RESOLVED included — the control
+// underneath it is the same enabled, keyboard- and pointer-clickable
+// `<button>`. Picking one and typing reactivates it server-side, so nothing
+// here may render it as inert: no `disabled`, no dimmed-archive styling
+// distinct from a live row. Status is carried by the label, not by taking
+// the control away.
+//
+// That rule NARROWED on 2026-09-14, and only on one side. It used to read
+// "CLOSED/RESOLVED is real information, shown like every other status"; the
+// merchant-side distinction the user drew is that RESOLVED and CLOSED are
+// two different states. RESOLVED is finished but still the customer's to
+// reopen, so it keeps its row and this whole paragraph applies to it
+// unchanged. CLOSED is the merchant taking the conversation off the table,
+// and the customer's lists no longer offer it at all — a way back into
+// something they can do nothing with is not information, it is a dead end
+// wearing a label.
+//
+// The CLOSED rule is NOT enforced in this file, and putting it here would be
+// the bug the guest-gating paragraph above describes: these view factories
+// render exactly the `sessions` array they are given, and deciding which
+// conversations a customer has belongs to the module that owns the flow.
+// That is `widget.ts` — see `customerVisibleSessions` there, which also
+// carries the one exception (the conversation the customer is currently in
+// stays listed even once it closes, so it cannot vanish mid-read).
 //
 // ── Accessible name, built once ───────────────────────────────────────────
 //

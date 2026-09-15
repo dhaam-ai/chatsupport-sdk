@@ -548,6 +548,84 @@ function isUserInitiated(kind: SurfaceKind): boolean {
   return USER_INITIATED_SURFACES.has(kind);
 }
 
+/**
+ * The customer's own conversations, minus the ones a merchant has CLOSED.
+ *
+ * `CLOSED` and `RESOLVED` are two different states and only one of them is
+ * hidden. A `RESOLVED` conversation is finished but still the customer's to
+ * pick up again — tapping it joins it and the next message reactivates it
+ * server-side — so it keeps its row, its status label and that route back.
+ * `CLOSED` is the merchant taking the conversation off the table; leaving it
+ * in the list offered a way back into something the customer can do nothing
+ * with. Every other status is untouched: this is `=== 'CLOSED'` and not "the
+ * terminal ones", precisely so a future seventh status cannot be swept in.
+ *
+ * `joinedSessionId` is the exception, and it is the whole reason this takes
+ * an argument. The list re-renders the moment `session.closed` arrives, so a
+ * conversation the customer is READING can be closed underneath them — and
+ * pulling its row out from under a customer who is looking straight at it,
+ * mid-tap, is a worse failure than showing one finished row. The conversation
+ * they are actually in therefore stays listed (and stays marked
+ * `aria-current`) until they leave it, at which point the next render drops
+ * it like any other closed one.
+ *
+ * A DISPLAY rule, and only that: nothing here changes a status, a REST query
+ * or what the server considers reachable. `switchSession` still accepts a
+ * closed session — a deep link or a host calling it directly is unaffected.
+ */
+function customerVisibleSessions(
+  sessions: readonly ChatSessionSummary[],
+  joinedSessionId: string | null,
+): readonly ChatSessionSummary[] {
+  return sessions.filter(
+    (summary) => summary.status !== 'CLOSED' || summary.id === joinedSessionId,
+  );
+}
+
+/**
+ * The same rule for the PORTAL (staff) queue — the Customers and Merchants
+ * tabs — applied to the rows `GET /agent/queue` returns.
+ *
+ * Same user decision as {@link customerVisibleSessions} and the same
+ * `=== 'CLOSED'`, not "the terminal ones": `RESOLVED` is a conversation the
+ * staff member can still open, read and reply into, and it keeps its row and
+ * its "Resolved" pill. Only `CLOSED` — the conversation taken off the table —
+ * leaves the list. Asking for two rules here would have meant the queue and
+ * the customer's own list disagreeing about what "closed" means.
+ *
+ * `openSessionId` is `currentPortalSessionId`, the portal's answer to
+ * `joinedSessionId`: the conversation whose thread is on screen RIGHT NOW,
+ * set by `openPortalConversation` and cleared the moment the admin navigates
+ * off the conversation screen. It is the honest equivalent because it names
+ * the one conversation a staff member is actually reading, and the queue
+ * re-renders under them every 20s poll — so without it, a conversation closed
+ * by someone else mid-read would take its own row (and its `aria-current`
+ * marking) out from under the person reading it. Once they leave it, the
+ * clearing in `screens.onChange` means the next render drops it like any
+ * other closed row.
+ *
+ * A DISPLAY rule and only that. `portalQueueRows` and `portalQueueIds` keep
+ * every row the server sent, so `/agent/queue` is unchanged, the click
+ * routing in `onOpenConversation` still recognises a closed session as a
+ * PORTAL one, and `openPortalConversation` still opens it when something
+ * else (the currently-open thread, a deep link) names it.
+ *
+ * Kept separate from `customerVisibleSessions` rather than merged into one
+ * helper: the two surfaces answer to different identities
+ * (`currentPortalSessionId` vs the joined customer session) and the customer
+ * one is settled, verified behaviour that a shared signature would put back
+ * in play. One shared predicate is a reasonable later tidy-up, not something
+ * to do while changing what the portal renders.
+ */
+function portalVisibleSessions(
+  sessions: readonly ChatSessionSummary[],
+  openSessionId: string | null,
+): readonly ChatSessionSummary[] {
+  return sessions.filter(
+    (summary) => summary.status !== 'CLOSED' || summary.id === openSessionId,
+  );
+}
+
 /** The shape all three surfaces share, so one slot can hold any of them. */
 interface ProductSurface {
   readonly node: HTMLElement;
@@ -1956,6 +2034,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   let portalClient: ConversationClient | null = null;
   let portalUnsubscribe: (() => void) | null = null;
+  // EVERY row `/agent/queue` returned, CLOSED ones included. What the two
+  // tabs actually render is `portalVisibleSessions(...)` of this, in
+  // `syncSessionSurfaces` — kept apart on purpose, because `portalQueueIds`
+  // has to keep a closed session's id for the click routing in
+  // `onOpenConversation` to still recognise it as a PORTAL session rather
+  // than a customer one.
   let portalQueueRows: readonly PortalQueueRow[] = [];
   const portalQueueIds = new Set<string>();
   let portalQueuePollTimer: ReturnType<typeof setInterval> | null = null;
@@ -3397,8 +3481,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   function syncSessionSurfaces(): void {
     if (destroyed) return;
     const state = store.getState();
+    const joinedSessionId = state.session?.id ?? null;
+    // The one filtered list both customer surfaces read — Home's single
+    // "Recent conversation" row and the Messages list. Filtering once here
+    // rather than twice downstream is the same "one input, two screens"
+    // reason this function exists at all.
+    const customerSessions = customerVisibleSessions(state.pastSessions, joinedSessionId);
     const ctaSub = remote.header.ctaSubtitle || config.header.ctaSubtitle || 'We usually reply instantly';
-    homeScreen.update(mostRecentSession(state.pastSessions), ctaSub, entry);
+    homeScreen.update(mostRecentSession(customerSessions), ctaSub, entry);
     // Portal (admin) mode: the Customers tab's real rows come from
     // `/agent/queue`, not from `state.pastSessions` — that array is the
     // customer-flow client's OWN session history (the widget always builds
@@ -3409,8 +3499,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // Merchants tab's count with sessions that are neither real merchant
     // conversations nor anything an admin can act on here. Swapped, not
     // merged, for admin; every other `userRole` is unaffected.
-    const sessions = isPortalAdmin ? portalQueueRows.map(portalQueueRowToSummary) : state.pastSessions;
-    messagesScreen.render(sessions, currentPortalSessionId ?? state.session?.id ?? null);
+    // CLOSED rows are withheld here, at the one seam both portal tabs read,
+    // so the tab COUNT BADGES (derived in `applyFilter()` from this same
+    // array) can never say "3" over two visible rows — see
+    // `portalVisibleSessions` for the rule and for what it deliberately does
+    // not touch.
+    const sessions = isPortalAdmin
+      ? portalVisibleSessions(portalQueueRows.map(portalQueueRowToSummary), currentPortalSessionId)
+      : customerSessions;
+    messagesScreen.render(sessions, currentPortalSessionId ?? joinedSessionId);
   }
 
   /** Puts the conversation back on screen. Idempotent. */

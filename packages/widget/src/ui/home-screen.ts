@@ -32,12 +32,29 @@ import type { ResolvedEntry } from '../remote-config.js';
  * offered alongside the broader one and this is the one that was chosen — so
  * widening it is a product decision, not a tidy-up.
  *
- * Nothing becomes unreachable: every conversation in every status is still on
- * the Messages screen, and the bottom tab bar that opens it is on screen
- * whenever Home is. Not behind this section's own "See all" — that button is
- * a CHILD of the section (`recentSection` below), so hiding the section takes
- * "See all" with it. The Messages tab is the whole surviving route, which is
- * why it has to be one that is always there.
+ * Nothing this table hides becomes unreachable: a conversation in any of the
+ * four statuses it hides and still lists — `RESOLVED`, `WAITING_FOR_AGENT`,
+ * `ASSIGNED`, `ON_HOLD` — is still on the Messages screen, and the bottom tab
+ * bar that opens it is on screen whenever Home is. Not behind this section's
+ * own "See all" — that button is a CHILD of the section (`recentSection`
+ * below), so hiding the section takes "See all" with it. The Messages tab is
+ * the whole surviving route, which is why it has to be one that is always
+ * there.
+ *
+ * That reachability argument NARROWED on 2026-09-14, and only for `CLOSED`.
+ * It used to read "every conversation in every status is still on the
+ * Messages screen"; that is no longer true. `widget.ts` now withholds closed
+ * conversations from the customer's surfaces upstream of this screen (see
+ * `customerVisibleSessions` there), so a `CLOSED` conversation is on neither
+ * Home nor Messages and has no surviving customer route at all — deliberately,
+ * by user decision: closed is the merchant taking it off the table, and a
+ * route back into something the customer can do nothing with is a dead end.
+ * `RESOLVED`, `WAITING_FOR_AGENT`, `ASSIGNED` and `ON_HOLD` are unaffected and
+ * the paragraph above holds for them in full, which is what matters when
+ * weighing this table: hiding a status HERE still costs nothing but a tap for
+ * every status except `CLOSED`, which is already withheld upstream — except
+ * for the joined-session case, which is the one way a `CLOSED` summary still
+ * reaches `update()` at all (see the `@param recent` note below).
  *
  * A `Record<ChatStatus, boolean>` rather than `status === 'OPEN'`, for exactly
  * the reason `ui/session-status.ts` gives for its own table: a seventh wire
@@ -70,20 +87,37 @@ export interface HomeScreenCallbacks {
 export interface HomeScreenView {
   readonly node: HTMLElement;
   /**
-   * @param recent the newest conversation OVERALL, or `null` when there is
-   *   none — which is the case for every first-time visitor, and part of why
+   * @param recent the newest of the conversations the customer still has
+   *   (see below on the one status the caller withholds), or `null` when
+   *   there is none — which is the case for every first-time visitor, and part of why
    *   the whole "Recent conversation" section is conditional rather than an
    *   empty-state box. The other part is its STATUS: the section shows only
    *   for an `OPEN` one (see {@link SHOWN_IN_RECENT}), so passing a resolved
    *   or waiting conversation here renders the row and hides the section.
    *
-   *   "Overall" is load-bearing and is the caller's choice, not this
-   *   screen's: `widget.ts`'s `mostRecentSession` picks the newest session
-   *   whatever its status, and it is deliberately NOT "the newest open one".
-   *   A visitor whose newest conversation has just been closed therefore sees
-   *   no Recent section even when an older open one exists. That is the
-   *   approved behaviour — the older one is one tap away on Messages — so
-   *   this is not a bug to fix by teaching the caller to search.
+   *   Which conversation that is remains the caller's choice, not this
+   *   screen's, and that choice CHANGED on 2026-09-14 by explicit user
+   *   decision. It used to be the newest session overall, so a visitor whose
+   *   newest conversation had just been closed saw no Recent section even
+   *   when an older open one existed; that is superseded. `widget.ts` now
+   *   filters `CLOSED` out of the customer's conversations
+   *   (`customerVisibleSessions`) before this screen is handed anything, so
+   *   `mostRecentSession` skips closed ones and a closed conversation no
+   *   longer stands in front of an open one here.
+   *
+   *   With one exception, which is why this can still be handed a `CLOSED`
+   *   summary: the conversation the customer is currently JOINED to is exempt
+   *   from that filter (so it cannot vanish from under them mid-read — see
+   *   `customerVisibleSessions`), and while it is both closed and newest it
+   *   still wins `mostRecentSession` and hides this section even when an
+   *   older OPEN conversation exists.
+   *
+   *   Only `CLOSED`. `mostRecentSession` is still not "the newest OPEN one":
+   *   a visitor whose newest conversation has just been RESOLVED still sees
+   *   no Recent section even when an older open one exists, because
+   *   {@link SHOWN_IN_RECENT} — a separate, still-valid decision — shows the
+   *   section for `OPEN` and nothing else. The older one is one tap away on
+   *   Messages.
    * @param entry the resolved support entry — which of the six PRD rows this
    *   render is for. Drives the CTA's title/sub-line, the alt button beside
    *   it, and the mid-visit chat→ticket announcement.

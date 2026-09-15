@@ -237,6 +237,17 @@ function readQueueRow(row: unknown): PortalQueueRow | null {
  * tokens are refused before reaching this call at all (chat-service's
  * staff-role mapping gap) — `widget.ts` only wires this path in for
  * `userRole === 'admin'` for exactly that reason.
+ *
+ * Returns what the endpoint sent, in the order it sent it, and filters
+ * nothing by status: `includeClosed: 'false'` below is a REQUEST to the
+ * server, not a promise about the rows that come back, and a row that
+ * arrives `CLOSED` (status code 4) is still parsed and still returned here.
+ * Which of these rows the Customers and Merchants tabs SHOW is decided one
+ * layer up, by `widget.ts`'s `portalVisibleSessions` — closed conversations
+ * are withheld from the rendered list and its tab counts, RESOLVED ones are
+ * not. The full list stays available to `widget.ts` on purpose: its
+ * `portalQueueIds` decides whether a click routes to the portal client or
+ * the customer one, and that has to recognise a closed session too.
  */
 export async function listPortalQueue(options: PortalStaffOptions, limit = 50): Promise<readonly PortalQueueRow[]> {
   const body = (await getJson(options, '/agent/queue', {

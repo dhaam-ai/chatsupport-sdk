@@ -644,7 +644,7 @@ describe('opening itself', () => {
     mount(config());
     // The same drain `remote-config-gating.test.ts` uses: the fetch, its
     // `.json()`, and the caller's `.then` are each their own tick.
-    for (let i = 0; i < 8; i += 1) await new Promise((resolve) => queueMicrotask(resolve));
+    for (let i = 0; i < 8; i += 1) await new Promise<void>((resolve) => queueMicrotask(resolve));
   };
 
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
