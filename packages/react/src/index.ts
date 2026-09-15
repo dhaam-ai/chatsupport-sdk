@@ -66,6 +66,24 @@ export { OfflineBanner } from './offline-banner.js';
 export type { OfflineBannerProps } from './offline-banner.js';
 
 // ---------------------------------------------------------------------------
+// The web form, at a route of the merchant's own app.
+//
+// The one export here that needs no `ChatProvider`, no `ChatClient` and no
+// token: `<DhaamForm>` is a wrapper around @dhaam-ccrm/widget's `mountForm`,
+// whose only credential is the publishable key. It is in this package rather
+// than in the widget because what a React merchant is missing is not the form
+// — that is `mountForm`'s — it is the mount/unmount lifecycle a route has, and
+// that is React's, which is what this package is for.
+//
+// @dhaam-ccrm/widget is a PEER dependency for it, for the same reason
+// @dhaam-ccrm/core is: two copies in one tree would mean two `WeakMap`s of
+// mounted forms and two `instanceof FormConfigError`s.
+// ---------------------------------------------------------------------------
+
+export { DhaamForm } from './dhaam-form.js';
+export type { DhaamFormProps } from './dhaam-form.js';
+
+// ---------------------------------------------------------------------------
 // DOM-side hooks. Unlike everything above, these are not selectors over
 // `ChatState` — they are the browser-facing half a chat UI needs and core
 // deliberately does not own (§4: core has "ZERO framework, UI, and DOM-document

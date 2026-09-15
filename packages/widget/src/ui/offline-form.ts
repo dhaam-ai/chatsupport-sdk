@@ -32,6 +32,7 @@ import {
   submitOnce,
 } from './forms.js';
 import type { FieldSpec } from './forms.js';
+import { dedupeAgainstRendered } from './field-dedup.js';
 
 /** The four flat strings the offline path produces. */
 export interface OfflineMessage {
@@ -61,17 +62,6 @@ const CONTACT_FIELD: FieldSpec = {
   required: true,
 };
 
-/**
- * Console fields that duplicate the two built-ins above.
- *
- * The console seeds every workspace with "Your name" and "Email address", so
- * without this every merchant who never touched their pre-chat settings gets a
- * form asking for a name twice. Anchored and case-insensitive, matching the
- * seeded labels exactly rather than by substring — a merchant's "Name of the
- * product you ordered" must survive.
- */
-const BUILT_IN_LABEL = /^(name|your name|email|email address|phone|contact|contact details)$/i;
-
 const MIN_MESSAGE_LENGTH = 4;
 
 export function createOfflineForm(
@@ -90,12 +80,23 @@ export function createOfflineForm(
     ],
   });
 
-  const name = createField(NAME_FIELD, 'dh-offline');
-  const contact = createField(CONTACT_FIELD, 'dh-offline');
+  // Deduped against this form's own two specs by `ui/field-dedup.ts` — the
+  // same rule and the same module the web form uses against ITS three. Only
+  // the rendered set differs, and that is enough to flip a field: "Email or
+  // phone" names one input HERE, so a merchant asking for an email, a phone,
+  // or the pair of them is repeating it and is dropped; the web form renders
+  // no such label and keeps the pair.
+  //
+  // The required-promotion the web form needs is a no-op on this surface,
+  // where both built-ins are already required — kept on the same code path so
+  // it cannot quietly stop applying if the CONTACT field ever becomes
+  // optional. Name is excluded by the reachability rule, so promotion would
+  // not resume for it either way — by design, not by omission.
+  const { rendered: built, extra } = dedupeAgainstRendered([NAME_FIELD, CONTACT_FIELD], extraFields);
+  const name = createField(built[0] ?? NAME_FIELD, 'dh-offline');
+  const contact = createField(built[1] ?? CONTACT_FIELD, 'dh-offline');
 
-  const custom = extraFields
-    .filter((spec) => !BUILT_IN_LABEL.test(spec.label.trim()))
-    .map((spec) => ({ spec, view: createField(spec, 'dh-offline') }));
+  const custom = extra.map((spec) => ({ spec, view: createField(spec, 'dh-offline') }));
 
   const messageLabel = el('label', {
     attrs: { class: 'dh-field-label', for: 'dh-offline-message' },

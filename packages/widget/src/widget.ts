@@ -3135,6 +3135,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
                 hours: entry.hours,
                 source: entry.source,
                 ...(remote.offlineMessage === undefined ? {} : { offlineMessage: remote.offlineMessage }),
+                // The tenant's own contact rule, read fresh off `remote` at
+                // BUILD time for the same reason `entry.secondary` and
+                // `preChatFields` are. Omitted rather than passed as
+                // `undefined`: `exactOptionalPropertyTypes` is on, and
+                // `createWebformForm` owns where an absent rule lands (its
+                // `DEFAULT_CONTACT_REQUIREMENT`, which is the server's).
+                ...(remote.webformContactRequirement === undefined
+                  ? {}
+                  : { contactRequirement: remote.webformContactRequirement }),
                 extraFields: remote.preChatEnabled && isGuest ? [...remote.preChatFields] : [],
               },
               // No `onCancel`, and no `onChooseChat`: this form is standing
@@ -4203,6 +4212,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
           hours: entry.hours,
           source: entry.source,
           ...(remote.offlineMessage === undefined ? {} : { offlineMessage: remote.offlineMessage }),
+          // Read fresh at BUILD time, like everything else in this object —
+          // see `openWebform`'s own note above on why nothing here is closed
+          // over once.
+          ...(remote.webformContactRequirement === undefined
+            ? {}
+            : { contactRequirement: remote.webformContactRequirement }),
           extraFields: remote.preChatEnabled && isGuest ? [...remote.preChatFields] : [],
         },
         {

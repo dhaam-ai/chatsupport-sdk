@@ -459,9 +459,21 @@ describe('web-form surface — leaving a message anonymously', () => {
     return { outcome: 'ticket', receiptId: 'r1', duplicate: false, ...overrides };
   }
 
-  it('renders Name, Email and Phone, with Email the only required one', () => {
+  // `contactRequirement` is NAMED here rather than defaulted. The default is
+  // the server's `'either'`, whose rendered shape is a different thing
+  // entirely (a hint above the pair, neither field marked) and is covered at
+  // the full-surface boundary by `test/webform-tenant-wiring.test.ts`. What
+  // this asserts is the `'email'` tenant's form, which nothing else at this
+  // layer pins.
+  it("renders Name, Email and Phone, with Email the only required one, for an 'email' tenant", () => {
     const view = createWebformForm(
-      { alternative: null, hours: 'OPEN', source: 'published', extraFields: [] },
+      {
+        alternative: null,
+        hours: 'OPEN',
+        source: 'published',
+        extraFields: [],
+        contactRequirement: 'email',
+      },
       { onSubmit: async () => receipt(), onError: () => {} },
     );
     mount(view.node);
@@ -556,10 +568,21 @@ describe('web-form surface — leaving a message anonymously', () => {
     expect(second).toBe(first);
   });
 
-  it('requires an email before submitting, and focuses it', async () => {
+  // Named for the reason above, and it matters more here: this is the only
+  // place in the suite that pins the sentence an `'email'` tenant's visitor
+  // sees when they leave the box empty. Under the `'either'` default the
+  // refusal is the pair's, worded differently, and is pinned in
+  // `test/webform-tenant-shape.test.ts`.
+  it("requires an email before submitting, and focuses it, for an 'email' tenant", async () => {
     const onSubmit = vi.fn();
     const view = createWebformForm(
-      { alternative: null, hours: 'OPEN', source: 'published', extraFields: [] },
+      {
+        alternative: null,
+        hours: 'OPEN',
+        source: 'published',
+        extraFields: [],
+        contactRequirement: 'email',
+      },
       { onSubmit, onError: () => {} },
     );
     mount(view.node);
@@ -661,10 +684,22 @@ describe('web-form surface — leaving a message anonymously', () => {
     expect(document.activeElement).toBe($('#dh-webform-email'));
   });
 
+  // ONE sentence for all three outcomes, and it names EMAIL.
+  //
+  // It was three, branched on `receipt.outcome`. The `'chat'` one promised
+  // "someone will pick this up" — a session whose visitor provably cannot be
+  // reached (`webform.port.ts`: nothing can authenticate a `wf_` subject, and
+  // channel 6 has no egress), and a verdict C6 stopped producing at all. The
+  // other two named an address without naming how it would be used.
+  //
+  // `'queued'` shares it rather than promising less: the address is still the
+  // only channel a reply can arrive on if one arrives. What NO branch claims
+  // is that a ticket exists or that anyone has read it — see the confirmation
+  // comment in `ui/webform-form.ts`.
   it.each<[WebformReceipt['outcome'], string]>([
-    ['ticket', "Message received. We'll reply to ada@example.com."],
-    ['queued', "Message received. We'll reply to ada@example.com."],
-    ['chat', 'Thanks — someone will pick this up and reply to ada@example.com.'],
+    ['ticket', "We'll reply by email to ada@example.com."],
+    ['queued', "We'll reply by email to ada@example.com."],
+    ['chat', "We'll reply by email to ada@example.com."],
   ])('confirms a %s outcome with the right sentence, and moves focus to it', async (outcome, sentence) => {
     const view = createWebformForm(
       { alternative: null, hours: 'OPEN', source: 'published', extraFields: [] },
@@ -680,7 +715,12 @@ describe('web-form surface — leaving a message anonymously', () => {
     expect($<HTMLFormElement>('form').hidden).toBe(true);
     const confirmation = $('.dh-offline-sent');
     expect(confirmation.hidden).toBe(false);
-    expect(confirmation.textContent).toContain(sentence);
+    // The SUBTITLE exactly, not `toContain` over the whole block: the heading
+    // already says "Message received", and an assertion that merely contains
+    // the sentence passes just as happily on a stuttered "Message
+    // receivedMessage received. …" as on the line a visitor should read.
+    expect($('.dh-offline-sent .dh-form-subtitle').textContent).toBe(sentence);
+    expect(confirmation.textContent).toBe('Message received' + sentence);
     expect(document.activeElement).toBe(confirmation);
   });
 

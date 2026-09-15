@@ -209,7 +209,19 @@ describe('shouldMount — the compatibility guarantee', () => {
 // widget`, rather than only existing as internal exports the design promised
 // a host could import and nobody wired up.
 describe('the chooser is published from the package entry point', () => {
-  it('entryFor, parseSupport and shouldMount are reachable from ../src/index.js', async () => {
+  // 20s, and ONLY this test. What it measures is a cold transform of the whole
+  // `../src/index.js` graph — vitest's own compile cost — which has nothing to
+  // do with what it asserts, namely that three symbols are REACHABLE through
+  // the package entry point. 5s is vitest's default, not a budget anyone chose
+  // for this; measured here at 2.2s / 2.9s / 5.03s across three isolated runs
+  // on 2026-09-14, i.e. straddling it, and the standalone form added ~40 KB of
+  // new source to that graph.
+  //
+  // What 20s does NOT mean: it is not a performance budget, it does not say
+  // this import is allowed to take 20s, and it must not be read as one if it
+  // ever starts taking that long. If it does, the thing to look at is the
+  // barrel's size, not this number.
+  it('entryFor, parseSupport and shouldMount are reachable from ../src/index.js', { timeout: 20_000 }, async () => {
     const pkg = await import('../src/index.js');
     expect(pkg.entryFor(DEFAULT_REMOTE_CONFIG)).toEqual({
       primary: 'chat',
