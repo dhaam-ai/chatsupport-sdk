@@ -222,7 +222,7 @@ The single most common integration mistake here is collapsing these:
 
 | Origin | What it is | Where it appears |
 |---|---|---|
-| **SDK CDN** — `https://cdn.dhaamdesk.com/` | Where our script files are served from, alongside `widget.js` | `<script src>` |
+| **SDK CDN** — `https://cdn.dhaamai.com/` | Where our script files are served from, alongside `widget.js` | `<script src>` |
 | **chat-service** — e.g. `https://chat.example.com` | Reads the form's config, receives the submission | `data-api-url` / `apiUrl` |
 | **console host** — e.g. `https://console.dhaamdesk.com` | Serves the hosted page `/f/<publishableKey>` that the iframe points at | `data-hosted-origin` / `hostedOrigin` |
 
@@ -233,7 +233,7 @@ someone else's deployment — so it is required, explicit, and validated.
 ### 1. Script tag, form rendered inline
 
 ```html
-<script src="https://cdn.dhaamdesk.com/form.js"
+<script src="https://cdn.dhaamai.com/form.js"
         data-publishable-key="dhp_live_…"
         data-api-url="https://chat.example.com"></script>
 
@@ -276,7 +276,7 @@ everywhere, a CSP that forbids the form's own styles, a compliance rule that
 wants the form on its own origin — embed the hosted page instead:
 
 ```html
-<script src="https://cdn.dhaamdesk.com/form-embed.js"
+<script src="https://cdn.dhaamai.com/form-embed.js"
         data-publishable-key="dhp_live_…"
         data-hosted-origin="https://console.dhaamdesk.com"></script>
 

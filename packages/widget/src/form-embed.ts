@@ -627,7 +627,7 @@ export function embedForm(target: Element, options: EmbedFormOptions): EmbedHand
 // global and scanning the document are properties of THAT ARTIFACT, and a
 // React app importing `embedForm` from the npm package must get neither.
 //
-//     <script src="https://cdn.dhaamdesk.com/form-embed.js"
+//     <script src="https://cdn.dhaamai.com/form-embed.js"
 //             data-publishable-key="dhp_live_…"
 //             data-hosted-origin="https://console.dhaamdesk.com"></script>
 //     <div data-dhaam-form></div>
