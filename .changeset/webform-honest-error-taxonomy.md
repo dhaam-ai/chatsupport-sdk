@@ -56,6 +56,23 @@ mark, because nothing needs it), and the submit backstop checks the email
 rather than the pair — so the form no longer posts a submission it already
 knows the server will refuse.
 
+That email rule does **not** depend on the pair surviving. A merchant on an
+`'either'` tenant who marks their own "Phone number" field required has it
+dropped as a duplicate, which promotes the built-in Phone — and the hint, the
+label treatment and the submit check were all gated on the pair being intact,
+so that one field switched off all three and the form posted the phone-only
+submission they exist to stop. The email check now follows the server's rule
+(`decideWebformOutcome` refuses a ticket with no address) rather than the
+form's shape, and in the promoted state neither box is marked "(optional)",
+because both really are required — the merchant needs the phone, the server
+needs the email.
+
+The confirmation subtitle no longer restates the heading. It read "Message
+received." beneath a heading already reading "Message received", which stacked
+as one stuttered line and was byte-identical when no address was given. The
+heading owns "we have it"; the subtitle owns what happens next, and with no
+address there is nothing true to add, so it is hidden rather than padded.
+
 `visitorMessage` is now total at runtime, not only over the union. `switch`
 had no `default`, and `WebformError` is a public export whose `kind` is only
 as narrow as the caller's types — so an unrecognised kind returned

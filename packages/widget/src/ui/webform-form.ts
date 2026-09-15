@@ -360,17 +360,48 @@ export function createWebformForm(
   // So the pair carries the rule instead: see `contactHint` below.
   //
   // OFF when a promotion has already made one of them mandatory. A merchant
-  // who marked their own "Email address" required has it dropped as a
-  // duplicate and promotes Email (`ui/field-dedup.ts`), and a hint offering a
-  // choice between a mandatory field and an optional one would be a lie about
-  // the form the visitor is looking at. `firstMissingRequired` covers that
-  // case on its own, and any answer it accepts satisfies `'either'` too.
+  // who marked their own "Email address" or "Phone number" required has it
+  // dropped as a duplicate and promotes the built-in it repeated
+  // (`ui/field-dedup.ts`), and a hint offering a CHOICE between a mandatory
+  // field and an optional one would be a lie about the form on screen.
+  //
+  // ⚠️ THIS SWITCHES OFF THE HINT AND THE GROUPING. IT MUST NOT SWITCH OFF THE
+  // EMAIL RULE — see `emailNeeded` below. This comment used to certify the
+  // promoted path as safe: "`firstMissingRequired` covers that case on its
+  // own, and any answer it accepts satisfies `'either'` too." That was true
+  // while any ONE answer satisfied `'either'`. It is false now.
+  // `firstMissingRequired` (`ui/forms.ts`) tests `spec.required && value ===
+  // ''` and nothing else, so on an `'either'` tenant whose merchant marked
+  // their own "Phone number" required it accepts a phone-only answer — which
+  // is exactly what the server refuses.
   const pairRule =
     requirement === 'either' &&
     emailField !== undefined &&
     phoneField !== undefined &&
     !emailField.spec.required &&
     !phoneField.spec.required;
+
+  // ── The rule that does NOT depend on the pair being intact ──────────────
+  //
+  // On an `'either'` tenant the server needs an email for ANY successful
+  // submission: `decideWebformOutcome`'s ticket branch is guarded by
+  // `if (!input.hasEmail) return { kind: 'needs_email' }`, and a ticket is the
+  // only destination this surface can reach. That is a fact about the SERVER,
+  // so it holds whatever the merchant's own pre-chat fields did to this form's
+  // shape — a promotion rearranges which labels carry a mark, it does not
+  // teach nexusai to answer a phone number.
+  //
+  // Kept separate from `pairRule` for exactly that reason. Tying the email
+  // check to the pair meant one merchant field — a required "Phone number",
+  // which is the console's own example — silently switched off the hint, the
+  // label treatment AND the submit check together, and the form then posted
+  // the phone-only submission this whole rule exists to stop.
+  //
+  // Scoped to `'either'`. A `'phone'` tenant has the same server-side gap and
+  // it is NOT closed here: that is a live gap recorded as debt, not an
+  // oversight. Widening this would also re-mark a box the tenant's own rule
+  // governs, which is S6's contract rather than this slice's.
+  const emailNeeded = requirement === 'either' && emailField !== undefined;
 
   // ── What the `'either'` visitor is told BEFORE submitting ───────────────
   //
@@ -427,16 +458,20 @@ export function createWebformForm(
       // someone with one before this is called done.
       field.view.input.setAttribute('aria-describedby', CONTACT_HINT_ID);
     }
-    // " (optional)" is unmade on EMAIL ONLY, and PHONE KEEPS ITS MARK.
-    //
-    // Both marks used to go, on the reasoning that neither field was required
-    // on its own. But under this package's inverse convention ("optional is
-    // marked, not required", `ui/forms.ts`) an unmarked Phone reads as
-    // demanded, which it is not, and an unmarked Email read as one half of a
-    // choice, which it also is not — the server needs it. Leaving Phone marked
-    // and Email unmarked makes the two labels say exactly what the hint above
-    // them says, so a visitor who reads only the labels and a visitor who
-    // reads only the hint reach the same answer.
+    // PHONE KEEPS ITS MARK. Both marks used to go, on the reasoning that
+    // neither field was required on its own. But under this package's inverse
+    // convention ("optional is marked, not required", `ui/forms.ts`) an
+    // unmarked Phone reads as demanded, which it is not.
+  }
+
+  // " (optional)" is unmade on EMAIL wherever the email is needed — OUTSIDE
+  // the `pairRule` block above, because the need does not end when the pair
+  // does. In the promoted-Phone state there is no hint and Phone carries no
+  // mark either (it really is required), so both labels read as demanded,
+  // which is the truth: the merchant requires the phone and the server
+  // requires the email. A `.dh-field-optional` that is not there is a no-op,
+  // which is what makes this safe to run when Email was promoted too.
+  if (emailNeeded && emailField !== undefined) {
     emailField.view.node.querySelector('.dh-field-optional')?.remove();
   }
 
@@ -588,13 +623,19 @@ export function createWebformForm(
     // reaches it recognises the rule they were already shown rather than
     // meeting a second, new one. A backstop, not the mechanism: the hint is.
     //
-    // CHECKS THE EMAIL, NOT THE PAIR. It used to fire only when BOTH boxes
-    // were empty, which let a phone-only submission through to a 400 the
-    // visitor could have been spared — and, while the tenant's channel flags
-    // are unreadable, through to a `queued` receipt for a row the drain worker
-    // then terminates FAILED. Stopping it here keeps their text in the box and
-    // costs them one field instead of a round trip.
-    if (pairRule && emailField !== undefined && emailField.view.value() === '') {
+    // CHECKS THE EMAIL, AND DOES NOT RIDE ON `pairRule`. It used to fire only
+    // when BOTH boxes were empty, which let a phone-only submission through to
+    // a 400 the visitor could have been spared; gating it on `pairRule` then
+    // let a single required merchant field — "Phone number" — switch it off
+    // entirely. `emailNeeded` is the server's rule, not the pair's shape.
+    //
+    // Where the server is NOT certain to refuse: if the tenant's channel flags
+    // are unreadable the route answers 202 `queued` and the drain worker
+    // decides later, terminating the row FAILED for a submission with no
+    // address. So this is not always a refusal the visitor was going to get
+    // anyway — sometimes it is a row that would have been accepted and then
+    // quietly killed. Stopping it here keeps their text in the box either way.
+    if (emailNeeded && emailField !== undefined && emailField.view.value() === '') {
       status.show('Please add an email address.');
       emailField.view.input.focus({ preventScroll: true });
       return;
@@ -677,17 +718,23 @@ export function createWebformForm(
     // all. So no sentence here says a ticket exists or that anyone has read
     // it; with no address given, "Message received." claims exactly what the
     // server did and nothing beyond it.
+    // THE SUBTITLE DOES NOT RESTATE THE HEADING. It read "Message received."
+    // under a heading already reading "Message received", which a visitor sees
+    // as one stuttered line — and with no address given the two were byte
+    // identical. The heading owns "we have it"; this line owns what happens
+    // next, and when there is no address there is nothing true to add, so it
+    // is hidden rather than padded with a sentence that claims something.
     const line =
       // The merchant's own sentence wins outright, and nothing is spliced into
       // it. The console calls this field "Shown after every submission"; a
       // value interpolated into a string they wrote would land wherever the
       // sentence happened to end.
-      successMessage ??
-      (emailValue === ''
-        ? 'Message received.'
-        : `Message received. We'll reply by email to ${emailValue}.`);
-    const echo = confirmation.querySelector('.dh-form-subtitle');
-    if (echo !== null) echo.textContent = line;
+      successMessage ?? (emailValue === '' ? '' : `We'll reply by email to ${emailValue}.`);
+    const echo = confirmation.querySelector<HTMLElement>('.dh-form-subtitle');
+    if (echo !== null) {
+      echo.textContent = line;
+      echo.hidden = line === '';
+    }
     form.hidden = true;
     confirmation.hidden = false;
     // Focus follows the surface — leaving it on the now-hidden submit button

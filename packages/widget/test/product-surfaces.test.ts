@@ -697,9 +697,9 @@ describe('web-form surface — leaving a message anonymously', () => {
   // is that a ticket exists or that anyone has read it — see the confirmation
   // comment in `ui/webform-form.ts`.
   it.each<[WebformReceipt['outcome'], string]>([
-    ['ticket', "Message received. We'll reply by email to ada@example.com."],
-    ['queued', "Message received. We'll reply by email to ada@example.com."],
-    ['chat', "Message received. We'll reply by email to ada@example.com."],
+    ['ticket', "We'll reply by email to ada@example.com."],
+    ['queued', "We'll reply by email to ada@example.com."],
+    ['chat', "We'll reply by email to ada@example.com."],
   ])('confirms a %s outcome with the right sentence, and moves focus to it', async (outcome, sentence) => {
     const view = createWebformForm(
       { alternative: null, hours: 'OPEN', source: 'published', extraFields: [] },
@@ -715,7 +715,12 @@ describe('web-form surface — leaving a message anonymously', () => {
     expect($<HTMLFormElement>('form').hidden).toBe(true);
     const confirmation = $('.dh-offline-sent');
     expect(confirmation.hidden).toBe(false);
-    expect(confirmation.textContent).toContain(sentence);
+    // The SUBTITLE exactly, not `toContain` over the whole block: the heading
+    // already says "Message received", and an assertion that merely contains
+    // the sentence passes just as happily on a stuttered "Message
+    // receivedMessage received. …" as on the line a visitor should read.
+    expect($('.dh-offline-sent .dh-form-subtitle').textContent).toBe(sentence);
+    expect(confirmation.textContent).toBe('Message received' + sentence);
     expect(document.activeElement).toBe(confirmation);
   });
 
