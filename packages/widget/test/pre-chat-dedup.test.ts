@@ -73,7 +73,23 @@ function webformView(
   onSubmit: (draft: WebformDraft) => Promise<WebformReceipt> = async () => receipt,
 ): void {
   const view = createWebformForm(
-    { alternative: null, hours: 'OPEN', source: 'published', extraFields },
+    {
+      alternative: null,
+      hours: 'OPEN',
+      source: 'published',
+      extraFields,
+      // NAMED, not defaulted. These are dedup/promotion tests, and the
+      // evidence of an unpromoted built-in is the " (optional)" mark on its
+      // label — a mark the `'either'` rule strips from BOTH contact fields on
+      // purpose, so under that rule "Phone" says nothing about whether a
+      // promotion happened. `'email'` is the one requirement that leaves Phone
+      // marked, which is what makes the negative cases here readable at all.
+      // It was also this form's default until the fallback moved to the
+      // server's `'either'`; naming it keeps these tests about dedup rather
+      // than about whatever the default happens to be.
+      // `test/webform-tenant-shape.test.ts` covers dedup under all three.
+      contactRequirement: 'email',
+    },
     { onSubmit, onError: () => {} },
   );
   mount(view.node);

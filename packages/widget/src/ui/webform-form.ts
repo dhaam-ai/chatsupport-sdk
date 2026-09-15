@@ -40,13 +40,18 @@
 //                         "render your own strings", and the strings below are
 //                         what that renders.
 //
-// NEITHER DEFAULTS TO THE COLUMN'S DEFAULT. `contactRequirement` defaults to
-// `'email'`, which is what this form did before the option existed, so a
-// caller that has not yet read the boot route renders exactly what it rendered
-// yesterday rather than a different guess. `widget.ts` is such a caller: its
-// config comes from `remote-config.ts`, which carries no `form` block at all.
-// Until that hop is wired, the widget-hosted form still shows every tenant an
-// `'email'` form — a KNOWN REMAINING GAP, not a fixed one.
+// BOTH ARE NOW PASSED, BY BOTH CALLERS. `widget.ts` reads the rule off
+// `remote-config.ts`'s `webformContactRequirement` (chat-service publishes it
+// as `data.form.contactRequirement` on `GET /widget/config`) and `form.ts`
+// reads rule AND copy off `readFormBoot`. While that was not true this file's
+// `'email'` default was the only thing every visitor ever saw, which is the
+// gap `test/webform-tenant-wiring.test.ts` now stands against — it asserts on
+// rendered labels and rendered text, never on the option object, because an
+// option nobody passes renders nothing.
+//
+// `contactRequirement` DEFAULTS TO THE COLUMN'S OWN DEFAULT — see
+// `DEFAULT_CONTACT_REQUIREMENT` below. `copy` has no default to align with:
+// absent copy means "render your own strings", and the strings are here.
 //
 // ── `prefer` is always `'ticket'` from this surface ─────────────────────
 //
@@ -94,14 +99,13 @@ export interface WebformFormOptions {
    *  reads, not a record with a schema. */
   readonly extraFields: readonly FieldSpec[];
   /**
-   * The tenant's `contact_requirement`, from `GET /widget/form`'s
-   * `data.contactRequirement`.
+   * The tenant's `contact_requirement` — `GET /widget/form`'s
+   * `data.contactRequirement` for the standalone form, and
+   * `GET /widget/config`'s `data.form.contactRequirement` for the in-widget
+   * one.
    *
-   * DEFAULTS TO `'email'`, which is this form's behaviour before the option
-   * existed — NOT to the column's `'either'`. A caller that does not yet read
-   * the boot route has learned nothing about this tenant, and changing what it
-   * renders on the strength of a default nobody supplied would swap one guess
-   * for another. `widget.ts` is such a caller today; see this file's header.
+   * Absent falls back to {@link DEFAULT_CONTACT_REQUIREMENT}, which is the
+   * SERVER's own fallback and not this form's history.
    */
   readonly contactRequirement?: ContactRequirement;
   /**
@@ -112,6 +116,22 @@ export interface WebformFormOptions {
    * the documented meaning of the block being absent from the wire.
    */
   readonly copy?: WebformCopy | null;
+  /**
+   * When the visitor first saw a form on this surface, as `Date.now()`.
+   *
+   * Absent means "now" — the form instance and the surface began together,
+   * which is true for every caller that builds once.
+   *
+   * It exists for the one that does not. `form.ts` renders before its boot
+   * read lands and REBUILDS when the tenant's answer would change something
+   * on screen, and `fillMs` below is an elapsed delta the server reads as a
+   * bot signal: chat-service-node `webform-text.ts` calls anything under
+   * `minFillMs` (2000 by default) a bot, and `webform.service.ts` answers a
+   * bot with a fabricated 202 that writes no row. A delta restarted at the
+   * rebuild is therefore not "shorter, never longer" — it is a visitor's
+   * message silently destroyed while they are shown a success sentence.
+   */
+  readonly startedAt?: number;
 }
 
 export interface WebformFormCallbacks {
@@ -184,6 +204,31 @@ function underRequirement(spec: FieldSpec, requirement: ContactRequirement): Fie
 }
 
 /**
+ * Where an absent or unreadable `contactRequirement` lands.
+ *
+ * `'either'`, because that is where the SERVER lands:
+ * `chat-service-node src/validators/webform.validator.ts`'s
+ * `DEFAULT_CONTACT_REQUIREMENT`, which is `tenant_webform_config
+ * .contact_requirement`'s own NOT NULL DEFAULT and is applied at submit
+ * (`webform.service.ts`) and on both boot routes for a tenant with no row.
+ *
+ * It was `'email'` — this form's behaviour from before the option existed —
+ * and that was defensible only while nothing passed the option at all: a
+ * default nobody could override is a guess, and the least surprising guess is
+ * the one the form already made. Both callers now pass the real value, so the
+ * default is only ever reached when the answer is genuinely unreadable, and
+ * the right answer there is the one the submit route will use. An `'email'`
+ * default puts " (optional)" on Phone and demands an email that the server
+ * does not require — a form that is stricter than the thing enforcing it.
+ *
+ * KEEP THIS EQUAL TO THE SERVER'S. If chat-service moves its default, this
+ * moves with it; `test/webform-tenant-wiring.test.ts` pins the pair against a
+ * bare literal rather than against this symbol, precisely so a drift here
+ * fails rather than propagates.
+ */
+export const DEFAULT_CONTACT_REQUIREMENT: ContactRequirement = 'either';
+
+/**
  * The line under the heading, when the merchant wrote none.
  *
  * `'email'` keeps the sentence this form has always shown. The other two are
@@ -212,7 +257,7 @@ export function createWebformForm(
   callbacks: WebformFormCallbacks,
 ): WebformView {
   const closed = options.source === 'published' && options.hours === 'CLOSED';
-  const requirement = options.contactRequirement ?? 'email';
+  const requirement = options.contactRequirement ?? DEFAULT_CONTACT_REQUIREMENT;
   const title = written(options.copy?.title);
   const intro = written(options.copy?.intro);
   const successMessage = written(options.copy?.successMessage);
@@ -473,10 +518,11 @@ export function createWebformForm(
   // Minted once, at build time, and reused by every attempt from this form
   // instance — a retry after a rejected attempt must send the SAME id, or
   // the server's idempotency guard cannot recognise it as the same
-  // submission. `builtAt` is likewise fixed at build time: `fillMs` is an
-  // ELAPSED delta, never a wall-clock stamp.
+  // submission. `builtAt` is an ELAPSED-delta origin, never a wall-clock
+  // stamp, and it is the SURFACE's start rather than this instance's — see
+  // `startedAt` on the options.
   const submissionId = newSubmissionId();
-  const builtAt = Date.now();
+  const builtAt = options.startedAt ?? Date.now();
   let lastReceipt: WebformReceipt | null = null;
 
   function focusFieldNamed(name: string): void {
