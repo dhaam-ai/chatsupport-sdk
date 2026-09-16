@@ -285,13 +285,13 @@ const CONNECTION_COLOR: Record<ConnectionState, string> = {
 /**
  * How many past conversations the picker asks for.
  *
- * Five is the server's own default for `GET /chat/sessions/customer` and well
- * inside its cap of 20 (chat.validator.ts). A picker is a shortcut back to a
- * recent conversation, not an archive browser — a longer list would push the
- * "start a new conversation" action below the fold on a phone, which is the
- * one action every customer needs to be able to reach.
+ * Ten stays well inside the server's cap of 20 for `GET
+ * /chat/sessions/customer` (chat.validator.ts). A picker is a shortcut back
+ * to a recent conversation, not an archive browser — a longer list would
+ * push the "start a new conversation" action below the fold on a phone,
+ * which is the one action every customer needs to be able to reach.
  */
-const SESSION_PICKER_LIMIT = 50;
+const SESSION_PICKER_LIMIT = 10;
 
 /** Everything the connection's state implies for the UI, decided in one place. */
 interface ConnectionStatus {
