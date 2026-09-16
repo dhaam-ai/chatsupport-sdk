@@ -517,7 +517,14 @@ describe('mountForm — the submission', () => {
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     expect(body['email']).toBe('ada@example.com');
     expect(body['message']).toBe('Where is my order?');
-    expect(body['prefer']).toBe('ticket');
+    // NO `prefer`, and the key is absent rather than null/''. This surface has
+    // no chat button (`alternative: null` a few lines into `mountForm`), so
+    // asking for a ticket here would not record a visitor's choice -- it would
+    // make "leave a message" the only outcome their contact page can produce,
+    // even for a tenant with chat on inside business hours. Omitted, the
+    // server's decision table picks from that tenant's own channels and hours.
+    // The in-widget form still sends `'ticket'` and is pinned separately below.
+    expect('prefer' in body).toBe(false);
     // The honeypot is always sent, and is empty for a human.
     expect(body['company_website']).toBe('');
     // An elapsed delta, never a wall-clock stamp.

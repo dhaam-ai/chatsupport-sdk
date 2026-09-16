@@ -109,6 +109,31 @@ export interface WebformFormOptions {
    */
   readonly contactRequirement?: ContactRequirement;
   /**
+   * What to put in the draft's `prefer`, or `null` to send NO `prefer` at all.
+   *
+   * Defaults to `'ticket'`, which is the in-widget behaviour and the reason
+   * the header note above says this form never asks for chat: in the widget a
+   * visitor who wants chat presses "Try live chat anyway", which calls
+   * `onChooseChat` and never submits through here.
+   *
+   * ⚠️ THAT ARGUMENT DOES NOT HOLD ON THE STANDALONE SURFACES. `src/form.ts`
+   * has no launcher, no socket and no chat button -- it passes
+   * `alternative: null` for exactly that reason -- so a hardcoded
+   * `prefer: 'ticket'` there is not "the visitor chose to leave a message", it
+   * is the only outcome they can reach. A tenant with chat ON and the web form
+   * ON, inside business hours, would still never get a conversation from their
+   * own contact page.
+   *
+   * `null` therefore omits the key, which hands the choice to the decision
+   * table the tenant actually configured (`webform-decision.ts`): its `primary`
+   * applies, so row 1 (both channels on, OPEN) becomes a chat session in the
+   * Inbox and row 2 (CLOSED) still files a ticket. Verified against the live
+   * database: the three `channel = 6` sessions on tenant 12775 are submissions
+   * that carried no `prefer`; every submission that carried `'ticket'` became
+   * a ticket regardless of hours.
+   */
+  readonly prefer?: 'ticket' | null;
+  /**
    * The merchant's own `title` / `intro` / `successMessage`.
    *
    * `undefined` or `null` — and each field independently `null` — renders this
@@ -277,6 +302,8 @@ export function createWebformForm(
 ): WebformView {
   const closed = options.source === 'published' && options.hours === 'CLOSED';
   const requirement = options.contactRequirement ?? DEFAULT_CONTACT_REQUIREMENT;
+  // `??` would fold `null` into `'ticket'` and silently undo the whole option.
+  const preferred = options.prefer === undefined ? 'ticket' : options.prefer;
   const title = written(options.copy?.title);
   const intro = written(options.copy?.intro);
   const successMessage = written(options.copy?.successMessage);
@@ -669,7 +696,11 @@ export function createWebformForm(
       ...(emailValue === '' ? {} : { email: emailValue }),
       ...(phoneValue === '' ? {} : { phone: phoneValue }),
       message: body,
-      prefer: 'ticket',
+      // `undefined` means "not configured", which is the widget's case and
+      // keeps its long-standing `'ticket'`. `null` is a DECISION -- send no
+      // `prefer` -- and must not collapse into the same branch, which is why
+      // this tests `=== null` rather than falsiness.
+      ...(preferred === null ? {} : { prefer: preferred }),
       ...(pageUrl === undefined ? {} : { pageUrl }),
       ...(locale === undefined ? {} : { locale }),
       fillMs: Date.now() - builtAt,

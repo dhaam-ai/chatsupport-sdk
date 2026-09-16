@@ -680,6 +680,15 @@ export function mountForm(target: Element, options: MountFormOptions): MountedFo
         // No chat to offer: this bundle has no socket, no session and no
         // launcher, so "Try live chat anyway" would be a button to nowhere.
         alternative: null,
+        // …which is also why this surface sends NO `prefer`. Having just said
+        // there is no chat button here, hardcoding `prefer: 'ticket'` as the
+        // widget does would make "leave a message" the only reachable outcome
+        // rather than the visitor's choice -- a tenant with chat on, inside
+        // business hours, would never get a conversation from their own
+        // contact page. Omitted, the server's decision table decides from the
+        // tenant's own channel settings and hours: chat in the Inbox on row 1,
+        // a ticket on row 2. See `WebformFormOptions.prefer`.
+        prefer: null,
         // `'assumed'` + `'UNKNOWN'` is the pair that renders "Leave a message"
         // and the built-in intro rather than "We're currently offline." It is
         // also the only honest pair: this surface has no calendar and asks for
