@@ -639,12 +639,22 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
   // the bubble's own coloured background.
   const bubble = el('div', {
     attrs: { class: 'dh-msg-bubble' },
-    children: [author, quote, body, meta],
+    children: [quote, body],
+  });
+
+  const bubbleWrap = el('div', {
+    attrs: { class: 'dh-msg-bubble-wrap' },
+    children: [bubble, actions.node],
+  });
+
+  const contentWrap = el('div', {
+    attrs: { class: 'dh-msg-content-wrap' },
+    children: [author, bubbleWrap, meta],
   });
 
   const node = el('div', {
     attrs: { class: 'dh-msg' },
-    children: [avatar, bubble, actions.node],
+    children: [avatar, contentWrap],
   });
 
   let current = initial;
@@ -672,6 +682,7 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
         quote.hidden = true;
         meta.hidden = true;
         actions.node.hidden = true;
+        node.replaceChildren(bubble);
         const shown = visibleContent(message);
         if (body.textContent !== shown) body.textContent = shown;
         return;
@@ -695,44 +706,48 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
         }
       }
 
-      // `false` means "do not name this one" — the customer's own messages,
-      // and every message after the first in a run from the same sender.
-      // Repeating the name on each of five consecutive bot replies is noise
-      // that pushes the words themselves off the screen.
-      if (!showAuthorName) {
+      const isBot = message.senderType === 'BOT';
+      const isAgent = message.senderType === 'AGENT';
+      const outgoing = isOutgoing(message);
+
+      node.setAttribute('data-mine', String(outgoing));
+      node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
+
+      if (outgoing) {
+        avatar.hidden = true;
         author.hidden = true;
         author.textContent = '';
-      } else {
-        author.hidden = false;
-        // `textContent`: a display name is another party's data.
-        if (author.textContent !== senderName) author.textContent = senderName ?? '';
-      }
-
-      // The avatar, unlike the heading above, is not gated on being first in
-      // a run — see its construction comment for why every incoming row
-      // carries one.
-      if (senderName === null) {
-        avatar.hidden = true;
+        bubbleWrap.replaceChildren(actions.node, bubble);
+        // keep avatar in row (hidden) so avatarOf queries in tests and DOM tools find it
+        node.replaceChildren(avatar, bubbleWrap, meta);
       } else {
         avatar.hidden = false;
-        const isBot = message.senderType === 'BOT';
-        const isAgent = message.senderType === 'AGENT';
         if (isBot) {
           avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--bot';
+          avatar.replaceChildren(icon(ICONS.sparkle, 16));
         } else if (isAgent) {
           avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--agent';
+          const letter = (senderName ?? 'Agent').trim().slice(0, 1);
+          avatar.textContent = letter;
         } else {
           avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--customer';
+          const letter = (senderName ?? 'Customer').trim().slice(0, 1);
+          avatar.textContent = letter;
         }
-        // One character: `.dh-avatar`'s CSS uppercases it, matching the
-        // header avatar's own convention of leaving case to CSS rather than
-        // baking it into the string (ui/styles.ts).
-        const letter = senderName.trim().slice(0, 1);
-        if (avatar.textContent !== letter) avatar.textContent = letter;
-      }
 
-      node.setAttribute('data-mine', String(isOutgoing(message)));
-      node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
+        if (!showAuthorName) {
+          author.hidden = true;
+          author.textContent = '';
+        } else {
+          author.hidden = false;
+          const displayName = isBot ? '✦ Dhaam Assistant' : (senderName ?? '');
+          if (author.textContent !== displayName) author.textContent = displayName;
+        }
+
+        bubbleWrap.replaceChildren(bubble, actions.node);
+        contentWrap.replaceChildren(author, bubbleWrap, meta);
+        node.replaceChildren(avatar, contentWrap);
+      }
 
       // Still never `innerHTML`. `renderLinkified` builds text nodes and
       // `<a>` elements by hand and runs every href through the same allowlist
@@ -750,16 +765,26 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
         time.setAttribute('datetime', iso);
         time.textContent = Number.isNaN(created.getTime())
           ? ''
-          : created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          : created.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
       }
 
       if (attachmentNode === null && message.attachment !== undefined) {
         attachmentNode = renderAttachment(message.attachment);
-        bubble.insertBefore(attachmentNode, meta);
+        bubble.appendChild(attachmentNode);
       }
 
       const presentation = tick === null ? null : TICK_PRESENTATION[tick];
-      tickGlyph.textContent = presentation?.glyph ?? '';
+      if (outgoing) {
+        if (tick === null) {
+          tickGlyph.replaceChildren();
+        } else if (tick === 'pending') {
+          tickGlyph.textContent = '○';
+        } else {
+          tickGlyph.replaceChildren(icon(ICONS.checkDouble, 14));
+        }
+      } else {
+        tickGlyph.replaceChildren();
+      }
       tickGlyph.setAttribute('data-state', tick ?? '');
       // The tick's meaning as words. Colour distinguishes `read` from
       // `delivered` visually; this is what distinguishes them otherwise.
@@ -926,7 +951,7 @@ function senderLabel(message: ChatMessage, state: ChatState, lastBotName: string
   if (message.senderType === 'SYSTEM') return 'System';
   if (message.senderType === 'BOT') {
     if (handledBy?.kind === 'BOT') return handledBy.displayName;
-    return lastBotName ?? 'Assistant';
+    return lastBotName ?? 'Dhaam Assistant';
   }
   return 'You';
 }

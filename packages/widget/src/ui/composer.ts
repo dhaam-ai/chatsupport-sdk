@@ -263,7 +263,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     attrs: {
       class: 'dh-input',
       rows: '1',
-      placeholder: 'Type a message…',
+      placeholder: 'Type your message...',
       'aria-label': 'Message',
       // The browser's own suggestion UI is unhelpful in a chat box and, on
       // iOS, its autocapitalise-sentences default fights the user mid-word.

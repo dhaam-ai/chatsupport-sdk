@@ -1275,7 +1275,7 @@ describe('the sender avatar', () => {
     expect(avatarOf(view.log.querySelector('.dh-msg'))?.textContent).toBe('S');
   });
 
-  it("letters the avatar with the tenant's own bot name, not a hardcoded word", () => {
+  it("renders sparkle icon on the bot's avatar", () => {
     const { view } = build();
     view.render(
       state({
@@ -1285,7 +1285,9 @@ describe('the sender avatar', () => {
       ME,
     );
 
-    expect(avatarOf(view.log.querySelector('.dh-msg'))?.textContent).toBe('K');
+    const avatar = avatarOf(view.log.querySelector('.dh-msg'));
+    expect(avatar?.classList.contains('dh-msg-avatar--bot')).toBe(true);
+    expect(avatar?.querySelector('svg')).not.toBeNull();
   });
 
   it('falls back to the generic word\'s own initial when nothing more specific has resolved', () => {
