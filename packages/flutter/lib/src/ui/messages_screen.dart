@@ -157,6 +157,27 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       itemBuilder: (BuildContext context, int index) {
                         final ChatSessionSummary summary = visible[index];
                         return _ConversationRow(
+                          // Keyed by id, not by index — the same rule
+                          // `session_row_list.dart` has always applied, and
+                          // for the same reason: a list rebuilt with one
+                          // conversation removed must drop THAT row's element
+                          // rather than reuse it for whatever slid up into
+                          // its position.
+                          //
+                          // This row missed it, and the cost was specific.
+                          // Unkeyed, removing a row did not destroy its
+                          // element, so a focused row's focus node SURVIVED
+                          // and was silently re-pointed at a different
+                          // conversation — no focus change, so nothing for
+                          // assistive technology to announce, and Enter
+                          // opened a conversation the customer had not
+                          // chosen. Keyed, focus genuinely moves and is
+                          // announced.
+                          //
+                          // Pinned by `test/ui/messages_row_focus_test.dart`,
+                          // which asserts the node actually differs rather
+                          // than only where it lands.
+                          key: ValueKey<String>(summary.id),
                           summary: summary,
                           radius: radius,
                           onTap: () => cubit.openConversation(summary.id),
@@ -268,8 +289,12 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ConversationRow extends StatelessWidget {
-  const _ConversationRow(
-      {required this.summary, required this.radius, required this.onTap});
+  const _ConversationRow({
+    super.key,
+    required this.summary,
+    required this.radius,
+    required this.onTap,
+  });
 
   final ChatSessionSummary summary;
   final double radius;

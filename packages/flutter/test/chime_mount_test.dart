@@ -244,4 +244,102 @@ void main() {
 
     expect(plays, equals(1));
   });
+
+  // ── Joining a closed conversation is not an arrival ─────────────────
+  //
+  // Added when the chime moved onto the visible count. That narrowing has a
+  // consequence the file above does not cover: the number watched can change
+  // because WHAT IT COUNTS changed, not because anything came in. Joining a
+  // conversation that was already closed brings it back into
+  // `customerVisibleSessions` (the exemption for the one being read), so its
+  // existing unread enters the sum for the first time and the count jumps.
+  //
+  // Played, that chimes for a backlog — the one thing `playOnUnreadRise`
+  // exists to prevent: "a restored session's backlog must not greet a
+  // returning visitor with a noise about messages they have already read."
+  // Reachable when a host opens such a conversation directly.
+  //
+  // `ChatWidget` answers it by watching `session?.sessionId` alongside the
+  // count and calling `Chime.recordWithoutPlaying` when THAT is what moved.
+  group('a join that reveals a closed conversation', () {
+    /// Lets a queued `sessions` event reach the Cubit before the next pump.
+    ///
+    /// The cases above this group never needed one: they drive
+    /// `updateSessionSummaries` directly, which is synchronous. These join a
+    /// session, and `FakeWidgetChatClient`'s controllers are built in
+    /// `setUp`, OUTSIDE the fake clock — so `add` schedules delivery on a
+    /// microtask that a plain `pump()` inside `FakeAsync` will never drain.
+    /// `runAsync` steps out to the real clock for that delivery; the `pump`
+    /// after it turns the resulting state into a frame. Same helper and same
+    /// reasoning as `test/ui/conversation_screen_test.dart`'s own `flush`.
+    Future<void> flush(WidgetTester tester) async {
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump();
+    }
+
+    Future<void> join(WidgetTester tester, ChatWidgetCubit cubit, String id,
+        {ChatStatus status = ChatStatus.open}) async {
+      cubit.openConversation(id);
+      client.emitSession(testSession(id: id, status: status));
+      await flush(tester);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('is silent — the jump is a reveal, not a reply',
+        (WidgetTester tester) async {
+      final ChatWidgetCubit cubit = await pump(
+        tester,
+        initialSessions: <ChatSessionSummary>[_closed(4)],
+      );
+      expect(cubit.state.customerVisibleUnreadCount, isZero,
+          reason: 'hidden at mount, so the watermark is seeded at zero');
+
+      await join(tester, cubit, 'closed_one', status: ChatStatus.closed);
+
+      expect(cubit.state.customerVisibleUnreadCount, equals(4),
+          reason: 'the count really does jump — that is not in dispute');
+      expect(plays, isZero,
+          reason: 'nothing ARRIVED; those four were already sitting there');
+    });
+
+    // The half that matters most: a fix that simply silenced this
+    // conversation would pass the case above and be worse than the defect.
+    testWidgets('but a real message afterwards still plays',
+        (WidgetTester tester) async {
+      final ChatWidgetCubit cubit = await pump(
+        tester,
+        initialSessions: <ChatSessionSummary>[_closed(4)],
+      );
+      await join(tester, cubit, 'closed_one', status: ChatStatus.closed);
+      expect(plays, isZero);
+
+      cubit.updateSessionSummaries(<ChatSessionSummary>[_closed(5)]);
+      await tester.pump();
+
+      expect(plays, equals(1),
+          reason: 'the watermark was RECORDED at 4, not suppressed, so 5 is '
+              'still a rise');
+    });
+
+    // The control that isolates the cause. An OPEN conversation is already
+    // visible, so joining it reveals nothing and must behave exactly as it
+    // always did — which is what will catch a future change that re-routes
+    // the trigger onto joins in general.
+    testWidgets('joining an already-visible conversation is unaffected',
+        (WidgetTester tester) async {
+      final ChatWidgetCubit cubit = await pump(
+        tester,
+        initialSessions: <ChatSessionSummary>[_summary(4)],
+      );
+      expect(cubit.state.customerVisibleUnreadCount, equals(4));
+
+      await join(tester, cubit, 's1');
+      expect(plays, isZero);
+
+      cubit.updateSessionSummaries(<ChatSessionSummary>[_summary(5)]);
+      await tester.pump();
+
+      expect(plays, equals(1), reason: 'and a real arrival still sounds');
+    });
+  });
 }

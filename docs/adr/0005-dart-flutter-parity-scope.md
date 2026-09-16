@@ -137,6 +137,22 @@ not render an attacker-chosen URL because a `mediaType` claims it is an image" r
    than a gap — Home and Messages read `state.sessionSummaries` directly. Probably dead
    code to delete.
 
+   *Amended 2026-09-16.* The sentence above is left as written because this ADR is
+   Accepted and records the assessment **as made** on 2026-09-05; the evidence under it has
+   since changed, and rewriting it would erase the record rather than update it. What is no
+   longer true: **no surface in `packages/flutter/lib` reads `state.sessionSummaries`
+   to build a list any more.** Home, Messages and the header switcher all read
+   `ChatWidgetState.customerVisibleSessions` — the same host-supplied page minus the
+   `CLOSED` conversations, exempting the one the customer is joined to. The record itself
+   is unchanged and still readable at `state.sessionSummaries`, which is also what
+   `MessagesScreen` compares against to tell "you have none" apart from "yours were all
+   closed".
+
+   The gap's *recommendation* is unaffected and still stands: `SessionPickerScreen` still
+   has no library call site. Its sibling `SessionSwitcher` does now have one
+   (`chat_widget.dart`'s conversation app bar), so the two are no longer in the same
+   position and "probably dead code to delete" should be re-assessed for the screen alone.
+
 ## Consequences
 
 **The process finding worth carrying forward:** seven subsystems in this port reached
