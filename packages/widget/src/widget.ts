@@ -578,9 +578,13 @@ function customerVisibleSessions(
   sessions: readonly ChatSessionSummary[],
   joinedSessionId: string | null,
 ): readonly ChatSessionSummary[] {
-  return sessions.filter(
-    (summary) => summary.status !== 'CLOSED' || summary.id === joinedSessionId,
-  );
+  return sessions.filter((summary) => {
+    if (summary.id === joinedSessionId) return true;
+    if (summary.status === 'CLOSED') return false;
+    const s = summary as any;
+    if (s.hasMessage === false) return false;
+    return true;
+  });
 }
 
 /**
@@ -622,9 +626,13 @@ function portalVisibleSessions(
   sessions: readonly ChatSessionSummary[],
   openSessionId: string | null,
 ): readonly ChatSessionSummary[] {
-  return sessions.filter(
-    (summary) => summary.status !== 'CLOSED' || summary.id === openSessionId,
-  );
+  return sessions.filter((summary) => {
+    if (summary.id === openSessionId) return true;
+    if (summary.status === 'CLOSED') return false;
+    const s = summary as any;
+    if (s.hasMessage === false) return false;
+    return true;
+  });
 }
 
 /** The shape all three surfaces share, so one slot can hold any of them. */
@@ -2124,6 +2132,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       merchantName: isMerchant ? (row.merchantName ?? storeName) : undefined,
       customerName: row.customerName ?? undefined,
       customerEmail: row.customerEmail ?? undefined,
+      hasMessage: row.hasMessage,
     } as unknown as ChatSessionSummary;
   }
 

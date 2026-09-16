@@ -53,6 +53,7 @@ describe('listPortalQueue — GET /agent/queue row parsing', () => {
         customerName: 'Jane Doe',
         customerEmail: null,
         lastMessage: 'Where is my order?',
+        hasMessage: true,
         chatType: 'customer',
         targetRole: null,
         targetId: null,
@@ -94,6 +95,43 @@ describe('listPortalQueue — GET /agent/queue row parsing', () => {
         customerName: null,
         customerEmail: null,
         lastMessage: null,
+        hasMessage: true,
+        chatType: 'customer',
+        targetRole: null,
+        targetId: null,
+        storeName: null,
+        merchantName: null,
+      },
+    ]);
+  });
+
+  it('flags hasMessage: false when lastMessage is explicitly null (ghost session)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          data: [
+            {
+              id: 'sess_ghost',
+              status: 'OPEN',
+              customer: { displayName: 'amit83', email: 'amit83@gmail.com' },
+              lastMessage: null,
+              unreadCount: 0,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const rows = await listPortalQueue(OPTIONS);
+    expect(rows).toEqual([
+      {
+        sessionId: 'sess_ghost',
+        status: 'OPEN',
+        customerName: 'amit83',
+        customerEmail: 'amit83@gmail.com',
+        lastMessage: null,
+        hasMessage: false,
         chatType: 'customer',
         targetRole: null,
         targetId: null,

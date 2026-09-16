@@ -276,4 +276,31 @@ describe('portal queue — a CLOSED conversation is off the staff list', () => {
       vi.useRealTimers();
     }
   });
+
+  it('hides ghost sessions where lastMessage is null and excludes them from tab counts', async () => {
+    // 1 session with an actual message, 1 ghost session where customer only logged in (lastMessage: null)
+    const active = {
+      id: 'sess_active',
+      status: CODE.OPEN,
+      customer: { displayName: 'Active Alex' },
+      lastMessage: { content: 'Hi there!' },
+    };
+    const ghost = {
+      id: 'sess_ghost',
+      status: CODE.OPEN,
+      customer: { displayName: 'Ghost Gary' },
+      lastMessage: null,
+      unreadCount: 0,
+    };
+    queueRows = [active, ghost];
+
+    const widget = mount(config());
+    widget.open();
+    await queueRendered();
+
+    // Only Active Alex is shown in the list; Ghost Gary is omitted
+    expect(visibleRowNames()).toEqual(['Active Alex']);
+    // Tab count badge should say 1, not 2
+    expect(tabCounts().customers).toBe('1');
+  });
 });

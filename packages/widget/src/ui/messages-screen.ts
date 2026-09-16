@@ -585,6 +585,13 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
     const query = searchInput.value.trim().toLowerCase();
     let anyVisible = false;
     for (const summary of allSessions) {
+      const s = summary as any;
+      if (s.hasMessage === false && summary.id !== currentId) {
+        const row = rows.get(summary.id);
+        if (row) row.node.hidden = true;
+        continue;
+      }
+
       const row = rows.get(summary.id);
       if (row === undefined) continue;
 
@@ -820,6 +827,13 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
       // gated `totalInTab` on `rows.get(...)` existing here, which let the
       // badge say "88" while this said "No conversations yet." whenever a
       // row had not been created yet.
+      const s = summary as any;
+      if (s.hasMessage === false && summary.id !== currentId) {
+        const row = rows.get(summary.id);
+        if (row) row.node.hidden = true;
+        continue;
+      }
+
       if (sessionBelongsToTab(summary, 'customers', callbacks.userRole)) customerCount++;
       if (sessionBelongsToTab(summary, secondTabKey, callbacks.userRole)) secondTabCount++;
 

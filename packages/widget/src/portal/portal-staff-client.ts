@@ -137,6 +137,7 @@ export interface PortalQueueRow {
   readonly customerName: string | null;
   readonly customerEmail: string | null;
   readonly lastMessage: string | null;
+  readonly hasMessage: boolean;
   readonly chatType: string | null;
   readonly targetRole: string | null;
   readonly targetId: string | null;
@@ -215,12 +216,18 @@ function readQueueRow(row: unknown): PortalQueueRow | null {
     (typeof source['storeName'] === 'string' ? source['storeName'] : null) ??
     merchantName;
 
+  const hasMessage =
+    'lastMessage' in source
+      ? (source['lastMessage'] !== null && source['lastMessage'] !== undefined)
+      : true;
+
   return {
     sessionId,
     status: readQueueStatus(source['status']),
     customerName,
     customerEmail,
     lastMessage: lastContent,
+    hasMessage,
     chatType,
     targetRole,
     targetId,
@@ -253,6 +260,7 @@ export async function listPortalQueue(options: PortalStaffOptions, limit = 50): 
   const body = (await getJson(options, '/agent/queue', {
     limit: String(limit),
     includeClosed: 'false',
+    hasMessagesOnly: 'true',
   })) as { data?: unknown };
 
   const rows = Array.isArray(body?.data) ? body.data : [];
