@@ -45,6 +45,12 @@ class SessionPickerScreen extends StatelessWidget {
   });
 
   /// Rendered as given — see `SessionRowList.sessions`.
+  ///
+  /// WHICH conversations those are is the caller's answer, not this
+  /// screen's. The surfaces this package mounts itself pass
+  /// `ChatWidgetState.customerVisibleSessions`, which withholds the ones a
+  /// merchant has CLOSED; a host mounting this screen over a list of its own
+  /// decides for itself and gets every row it supplies.
   final List<ChatSessionSummary> sessions;
 
   /// The customer picked a row, including a terminal one.

@@ -96,6 +96,14 @@ void main() {
       // The customer moves to another conversation, and THAT one resolves
       // properly. The park is compared by exact id, so it releases here.
       client.emitSession(testSession(id: 's2', status: ChatStatus.assigned));
+      // s2 needs a transcript of ITS OWN: `dueCsatCard` returns null on an
+      // empty one, because an empty transcript has nothing to rate. Until
+      // `_onSession` reset the per-session projections on replacement, this
+      // line was unnecessary only because s1's messages leaked across the
+      // switch and were rated in s2's name — the very cross-session leak
+      // that reset exists to stop. Not noise: delete it and this test goes
+      // back to passing for the wrong reason.
+      client.emitMessage(testMessage(id: 'm2'));
       await settle();
       client.emitSession(testSession(id: 's2', status: ChatStatus.resolved));
       await settle();

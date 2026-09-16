@@ -26,11 +26,19 @@
 ///
 /// ── Terminal rows are not disabled ──────────────────────────────────────
 ///
-/// CLOSED/RESOLVED is real information and is shown, through the same status
-/// label every other status uses. The control underneath is the same
+/// A terminal status is real information and is shown, through the same
+/// status label every other status uses. The control underneath is the same
 /// enabled, tappable, focusable button regardless: picking a terminal
 /// conversation and typing reactivates it server-side, so rendering it inert
 /// would take away a path that works.
+///
+/// WHICH terminal rows arrive here narrowed on 2026-09-15, and only for
+/// CLOSED — see the same note on `session_row_list.dart`. RESOLVED is still
+/// listed on every customer surface and is still the reopen path. CLOSED is
+/// withheld one layer up (`ChatWidgetState.customerVisibleSessions`), except
+/// for the conversation the customer is currently in. Nothing about the row
+/// itself changed: these widgets still render, and keep enabled, exactly
+/// what they are handed.
 ///
 /// ── Reading order ───────────────────────────────────────────────────────
 ///

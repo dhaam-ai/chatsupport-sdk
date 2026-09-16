@@ -162,6 +162,56 @@ dependencies:
   # that turns those samples into a file an agent can actually open.
   # https://pub.dev/packages/record
   record: ^6.2.1
+  # The bundled reply chime (`lib/src/ui/header/chime.dart`,
+  # `assets/chime.wav`). Taken deliberately, reversing an earlier decision
+  # this file recorded: the chime shipped on `SystemSound.alert`, which
+  # Flutter documents as IGNORED on Android, iOS and web, so on the three
+  # platforms a customer actually uses the notification sound did not exist.
+  # The `ChimePlayer` seam was offered as the answer, but it put the whole
+  # feature behind work every host had to do, and a sound that needs the host
+  # to write code is a sound most installs never get.
+  #
+  # Chosen over `just_audio`, which was the other candidate, on platform
+  # coverage rather than taste: `just_audio` 0.9.46's own pubspec declares
+  # `flutter: plugin: platforms:` for android, ios, macos and web ONLY, so
+  # taking it would narrow this package below the six platforms `record`
+  # already builds for and leave Linux and Windows hosts with no chime and no
+  # error. `audioplayers` declares all six. `soundpool` was the third and is
+  # out on its own evidence — `pub add --dry-run` reports it as
+  # `soundpool 2.4.1 (discontinued)`.
+  #
+  # ^6.4.0, not the newer ^6.8: `flutter pub add --dry-run audioplayers` here
+  # resolves 6.4.0 and reports 6.8.1 as available-but-incompatible — verified
+  # by running it, the same way the url_launcher, file_picker,
+  # shared_preferences and record pins above were, never assumed. It brings
+  # thirteen packages: `audioplayers` plus one federated implementation per
+  # platform plus the platform interface, and `path_provider`, `uuid`,
+  # `synchronized` and `fixnum` underneath those.
+  #
+  # Its own `environment:` is `sdk: '>=3.0.0 <4.0.0'` — character for
+  # character the constraint at the top of this file — so nothing here had to
+  # be raised to take it. That was a selection criterion, not a happy
+  # accident: this package sits between the sibling apps and `dhaam_chat`,
+  # and a dependency that forced the SDK floor up would narrow who can depend
+  # on it for a chime.
+  #
+  # What this costs a host, stated rather than buried: NOTHING they must
+  # declare. `audioplayers_android` 5.2.0's AndroidManifest.xml is a bare
+  # `<manifest package="xyz.luan.audioplayers"/>` with no `<uses-permission>`
+  # at all, and `audioplayers_darwin` 6.2.0 ships no PrivacyInfo.xcprivacy
+  # and touches no capture API — audited in the resolved packages, not
+  # inferred from the README. That asymmetry with `record` below is the point:
+  # `record` opens a microphone and so obliges every host to explain itself to
+  # the customer and to Apple, while PLAYING a file this package already
+  # bundles asks the platform for nothing. A chime that cost hosts a new
+  # permission prompt would not have been worth having.
+  #
+  # The asset is 12 KB of 16-bit PCM and is registered under `flutter:
+  # assets:` at the bottom of this file, so it ships with any app depending on
+  # this package and is reachable as
+  # `packages/dhaam_chat_flutter/assets/chime.wav` with no host wiring.
+  # https://pub.dev/packages/audioplayers
+  audioplayers: ^6.4.0
 
 dev_dependencies:
   flutter_test:
@@ -185,3 +235,22 @@ dev_dependencies:
   # Matches the sibling apps' lint package (they use flutter_lints ^5.0.0);
   # `dhaam_chat` uses plain `lints` because it has no Flutter to lint against.
   flutter_lints: ^5.0.0
+
+# ── Bundled assets ─────────────────────────────────────────────────────────
+#
+# One file, named explicitly rather than by directory. A `- assets/` entry
+# bundles whatever happens to be sitting in the folder, which is how a
+# generator script or a stray export ends up inside every host's application;
+# naming the file means the only thing shipped is the thing meant to ship.
+#
+# Flutter keys a DEPENDENCY package's assets as `packages/<package>/<path>` —
+# flutter_tools' own `asset.dart` builds exactly that Uri with the comment
+# "Asset from, and declared in $packageName", and leaves a root application's
+# assets unprefixed. So this reaches a host's bundle as
+# `packages/dhaam_chat_flutter/assets/chime.wav`, which is the literal
+# `kChimeAssetKey` in `lib/src/ui/header/chime.dart`. Two files have to agree
+# about that string and they are far apart, so `chime_asset_test.dart` pins
+# the pair rather than trusting them to stay in step.
+flutter:
+  assets:
+    - assets/chime.wav

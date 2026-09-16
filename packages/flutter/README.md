@@ -350,17 +350,183 @@ asked to answer for nothing.
 
 ---
 
+## The notification sound
+
+`behaviour.sound` in the console — "Plays on the visitor's side when a reply
+arrives". Two parties have to agree before anything is heard: the merchant
+enabled it, and this visitor has not silenced it. `RemoteConfig.sound`
+defaults to **false**, and that default is load-bearing — a config that could
+not be read is not consent to make noise on somebody's device.
+
+**It works on a fresh install, with no host wiring.** That is a change: the
+chime used to play through `SystemSound.alert`, which Flutter documents as
+ignored on Android, iOS and web, so on every platform a customer actually uses
+the sound did not exist. The default player now plays a bundled asset through
+`audioplayers`.
+
+**The asset** is `assets/chime.wav` — 11,952 bytes of 16-bit mono PCM at
+22.05 kHz, 0.27 s. It is the web widget's own chime rendered to a file: the
+rising fifth (660 Hz, then 990 Hz at +90 ms) that `packages/widget/src/ui/chime.ts`
+builds from two WebAudio oscillators, with the same exponential envelope, and
+sine rather than square for the reason that file gives — a chime is heard on
+top of whatever the visitor is already doing, and a harmonically rich waveform
+at the same loudness is the one people call harsh. It is generated, not found:
+`test/support/reference_chime.dart` is the source, and
+`test/ui/header/chime_asset_test.dart` asserts the committed bytes really are
+that chime — correct sample format, two notes at the right frequencies, not
+silent, not clipped, fading rather than clicking at the end. It is registered
+under `flutter: assets:`, so it ships with any app that depends on this
+package and needs no entry in yours.
+
+**It costs you no new platform permission.** None, on any of the six targets —
+`audioplayers_android`'s manifest declares no `uses-permission` at all, and
+`audioplayers_darwin` ships no privacy manifest and touches no capture API.
+That is the difference between playing a file and opening a microphone, and it
+is why `record` (above) obliges you to write `Info.plist` and manifest entries
+and this does not. What it does cost is native audio code linked on six
+platforms; `pubspec.yaml`'s entry states the trade in full, including the
+`just_audio` and `soundpool` alternatives that were rejected and why.
+
+**To use your own sound instead**, hand over a player. The seam is one
+closure, and the package builds it at most once — on the first chime that
+actually passes both gates, so a muted visitor allocates nothing:
+
+```dart
+ChatWidget(
+  cubit: cubit,
+  chime: Chime(createPlayer: () => () async => myPlayer.play('ping.mp3')),
+);
+```
+
+`playSystemChime` is still exported for a desktop-only host that would rather
+use the system alert than ship 12 KB: `Chime(createPlayer: () => playSystemChime)`.
+
+**A failure here is always silent.** A platform with no output device, a
+missing plugin, a host player that throws — all end in nothing happening and
+nothing thrown. This runs on the message-arrival path, where a sound is by far
+the least important thing occurring, and the alternative is an exception raised
+while a customer is being handed a reply.
+
+---
+
+## Remembering the visitor's decisions
+
+Two things in this package are a decision the person in front of the screen
+made and expects to survive the app closing: whether they **agreed to the
+merchant's consent notice**, and whether they **silenced the chime**. Both go
+through one seam, `ChatStorage` (`lib/src/storage/chat_storage.dart`), and
+both are keyed per publishable key — `chatsdk:<publishableKey>:consent` and
+`chatsdk:<publishableKey>:muted`, the same key shape the web widget writes to
+`localStorage`, so two tenants on one device cannot answer for each other.
+
+**The default forgets.** A host that wires nothing gets `MemoryChatStorage`:
+each decision is honoured for as long as the widget is up and asked again on
+the next mount. That is not a degraded mode — it is exactly what the web
+widget does in a browser with site data blocked.
+
+**To make them stick**, hand over the durable store:
+
+```dart
+import 'package:dhaam_chat/dhaam_chat.dart' show PublishableKey;
+import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
+
+const ChatStorage storage = SharedPreferencesChatStorage();
+final PublishableKey key = PublishableKey.parse('dhp_live_...');
+
+ChatWidgetCubit(
+  client: client,
+  consent: ConsentGate(storage: storage, publishableKey: key),
+  mute: MuteMemory(storage: storage, publishableKey: key),
+);
+```
+
+`shared_preferences` is already a dependency of this package, so this adds
+nothing to your graph and needs no platform entry on any of the six targets.
+
+**A store that fails is never treated as a decision.** An unreadable store
+reads as "not yet decided": the notice is shown again, and the chime is
+audible again. A failed write costs the visitor nothing this session — the
+switch they just moved stays moved — and only means they are asked again next
+launch. The opposite direction is the one that cannot be allowed: a widget
+that believed it held an agreement it never recorded, or that silenced
+someone who never asked for silence.
+
+**The mute restore only ever silences.** The read is asynchronous and the
+header menu is not, so a visitor who reaches for the switch before the stored
+answer lands keeps what they chose. An un-mute persists by leaving the
+un-muted default alone rather than by overwriting a decision.
+
+---
+
+## Letting the customer out of the panel
+
+`ChatWidget` takes an optional `onClose`, and a close control appears on Home
+and on Messages the moment you pass one:
+
+```dart
+ChatWidget(
+  cubit: cubit,
+  onClose: () => Navigator.of(context).pop(),
+);
+```
+
+**The pop is yours; this package never makes one.** There is no `Navigator`
+call anywhere in `lib/src/` and there is not going to be. `ChatWidget` mounts
+no `MaterialApp` of its own, so the only navigator in scope is *yours* — and
+this widget does not know whether it is on a route at all. It may be a pushed
+page, a `showModalBottomSheet`, or a tab embedded in a screen that was never
+pushed. A `Navigator.pop` from in here would be this package dismissing
+whatever route happened to be on top of someone else's stack. It is the same
+refusal the conversation app bar already makes with
+`automaticallyImplyLeading: false`, which exists so the panel's back arrow
+cannot pop the host's route out from under it.
+
+So the callback is the whole contract: pressed, it fires exactly once, and
+nothing in this package moves. Pop a route, close a sheet, flip a bool that
+hides an embedded panel, or ask the customer whether they meant it first —
+they are all yours, and the widget stays exactly where it is until you act.
+
+**Pass nothing and there is no control.** Not a disabled one, not a
+zero-sized box: the screens build the tree they built before the parameter
+existed. That is the standing "absent means off, not broken" rule this
+package applies to every unwired seam — the ⋯ menu drops an unbacked row
+rather than offering one that quietly does nothing, and a close button that
+called nobody would be the same broken promise. A host that mounts this panel
+as a permanent tab of its own app has nothing to close, and passes nothing.
+
+**Home and Messages, not the conversation.** Those two are where a customer
+sits between conversations; the conversation screen already has a header
+carrying its own back arrow, identity, session switcher and ⋯ menu, and a
+second dismissal control in that row would compete with the back arrow beside
+it. The control is right-aligned above each screen's own content — above
+Home's hero band rather than floating on it, because that band renders
+nothing at all for a tenant who configured none and *collapses on scroll*, so
+an icon placed on it would have had no guaranteed background and would have
+scrolled away with it.
+
+**It is a real button.** `ChatCloseButton` is an `IconButton` whose
+accessible name is `kCloseChatLabel` (`'Close chat'`), carried on the
+semantics node as its tooltip — the same way `HeaderMenu`'s 'Conversation
+options' and the composer's 'Send message' get theirs. It takes keyboard
+focus like any other button, and both screens use the one widget and the one
+name, because from the customer's side this is a single affordance that
+happens to be on whichever tab they are on.
+
+---
+
 ## What is not wired yet
 
 The parity port is not finished, and the honest list matters more than the
 green test count. Everything below is a real gap between this package and
 `packages/widget/src/**`, not a rough edge.
 
-**Nothing plays a merchant-supplied chime sound.** `Chime` is mounted and
-message arrivals do chime, on `SystemSound.alert`. What has no path is
-*replacing* that sound with an asset: the `ChimePlayer` seam exists and
-`ChatWidget` takes one, but this package bundles no audio plugin, so a
-merchant who wants their own tone needs the host to supply the player.
+**A merchant cannot supply their OWN chime sound.** The chime itself now
+plays — see "The notification sound" above — but the tone is this package's
+bundled asset, and there is no console field or `RemoteConfig` key that points
+at a merchant-hosted file. `behaviour.sound` is a boolean: whether a chime
+happens, not which one. A host that wants a different tone replaces the whole
+player through the `ChimePlayer` seam; a merchant cannot do it from the
+console on either platform, and the reference cannot either.
 
 **`captureContactInfo` still has nowhere to deliver.** `dhaam_chat_rest`
 captures user agent, IP, watermark and geolocation through a
@@ -429,8 +595,31 @@ ChatWidgetCubit(
 );
 ```
 
-`toChatSessionSummary` is exported from this package for a host still mapping
-`RestChatSessionSummary` rows but doing its own fetching. `RestChatSessionSummary`
+**That snippet on its own now leaves every transcript blank, and this is the
+warning for it.** It is flagged here, against the line a host actually copies,
+rather than only in the section below. A host on this route passes no `rest:`,
+so it gets no `messageHistory` either — and opening a conversation from the
+list CLEARS the message store before painting the new one, deliberately, to
+stop the previous conversation showing under the new one's name. Nothing then
+refills it. The customer taps a conversation and gets an empty pane, for every
+conversation, with no error anywhere. Wire the transcript's own source in the
+same breath:
+
+```dart
+ChatWidgetCubit(
+  client: client,
+  sessionSource: () async => myBackend.conversations(),
+  messageHistory: (String id) async => myBackend.transcript(id),
+);
+```
+
+Or pass `rest:`, which fills both. Either way, read **The transcript comes
+from outside the socket too** below before shipping this — it is the same
+seam, one screen further in.
+
+Back to the list itself: `toChatSessionSummary` is exported from this package
+for a host still mapping `RestChatSessionSummary` rows but doing its own
+fetching. `RestChatSessionSummary`
 and `ChatSessionSummary` share `dhaam_chat`'s own ChatStatus/ChatMode/HandledBy,
 so it is a field copy with no vocabulary to translate:
 
@@ -486,7 +675,262 @@ draw. That was two integrators' bug report; `sessionSource` was the first
 answer to it and `rest` is the second, because a seam nobody fills is
 indistinguishable — from the customer's side — from the bug it was added to
 fix. A silently empty list looks exactly like a customer who has never
-started a conversation.
+started a conversation. Filling the list and stopping there is the trap
+described next.
+
+**The transcript comes from outside the socket too**, and for the same
+reason: `WidgetChatClient` is the WebSocket slice, and the history of a
+conversation the customer OPENS is `GET /chat/sessions/{id}/messages`. So
+`state.messages` sits in exactly the position `state.sessionSummaries` did,
+the parameter is `messageHistory`, and it is spelled deliberately like
+`sessionSource` so the two can be read against one another. Two routes here
+rather than three — there is no push-your-own-page counterpart, because the
+message store is the Cubit's own and has no public writer.
+
+**Why there is anything to fill.** Opening a past conversation used to show
+the PREVIOUS one's messages: a snapshot for a different session swapped the
+id and left the old transcript painted underneath it. That half is fixed — a
+snapshot whose id differs is a replacement and clears the message store, in
+the same emit that installs the session, so no observer ever reads one
+conversation's id against another's transcript. Which opens the opposite
+hole, and it is the one `messageHistory` closes. `seedReplacedSession` in
+`packages/core` names it in as many words: the commit clears the transcript —
+that is the whole point of it — so a replacement that nothing then seeds is
+"a permanently blank pane". A customer who opens the conversation they had
+yesterday then sees nothing at all, which is not obviously better than seeing
+somebody else's messages and is just as broken.
+
+**The REST client covers this one too (recommended).** The same one line
+fills both:
+
+```dart
+ChatWidgetCubit(client: client, rest: rest);
+```
+
+The Cubit builds `restMessageHistory(rest: rest)` for itself beside
+`restSessionSource(rest: rest)` — the route, the page size, and the one piece
+of normalising a host would otherwise have to know about. It adds nothing to
+your dependency graph; this package already depends on `dhaam_chat_rest`.
+`packages/flutter/example/lib/main.dart` is this route.
+
+**The page arrives REVERSED, and that is what the adapter is for.**
+`listMessages` returns newest-first, paging backwards. `MessageHistoryFetch`
+promises OLDEST-first, and `restMessageHistory` reconciles the two, so
+knowledge of a route's page order stays in the one file that talks to that
+route. It is not cosmetic: the transcript orders by `ChatMessage.seq` (D2,
+the ordering key), and a history row is allowed to carry none — rows
+predating sequencing legitimately lack it and keep the order they were handed
+over in. A page passed straight through would paint exactly those
+conversations upside down.
+
+**The page size is a hard ceiling, deliberately.** `kMessageHistoryPageSize`
+is 20, matching `DEFAULT_PAGE_SIZE` in `packages/core/src/messages/types.ts`,
+so the Dart widget and the TS one open a conversation on the same page. What
+that number MEANS here is not the same, and the difference is worth stating
+rather than discovering: the reference can page — a scroll handler calls
+`loadMore` with a backward cursor — and this package cannot. There is no
+"load older" control anywhere in `lib/`, so 20 is the furthest back a
+customer can read in a re-opened conversation, with nothing on screen to say
+anything was left out. Left at parity rather than raised on a guess, because
+"how much of an old conversation should a widget with no scrollback show" is
+a product question and not the adapter's to answer. A host that knows its
+conversations run long says so explicitly:
+`messageHistory: restMessageHistory(rest: rest, limit: 100)`. A non-positive
+limit is refused with an `ArgumentError` at that call rather than inside the
+fetch, because the route answers a bad limit with a 400 — which would reach
+the seed's error channel wearing the clothes of a network failure, reporting
+a caller bug as an outage.
+
+**Or hand over just the transcript fetch.** A host that proxies chat through
+its own backend has no `dhaam_chat_rest` client to give, so `messageHistory`
+takes the function instead — a `MessageHistoryFetch`, one call, one page, by
+explicit id:
+
+```dart
+ChatWidgetCubit(
+  client: client,
+  sessionSource: () async => myBackend.conversations(),
+  messageHistory: (String id) async => myBackend.transcript(id),
+);
+```
+
+Three things that closure has to honour, because they are the ones this
+package cannot check for you:
+
+* **Oldest first.** The point above, from the other side: it is the single
+  thing a host writing its own fetch cannot guess, and the REST route does
+  the opposite.
+* **The `sessionId` it was HANDED**, never the one currently on screen. The
+  two differ exactly when it matters — a customer can open a second
+  conversation while the first page is still in flight, and a fetch that
+  resolved the id for itself would race the very switch it is being asked to
+  seed.
+* **An empty page is ordinary success**, never an error. A conversation with
+  no messages in it is a real thing, and so is one whose first message has
+  not been sent yet.
+
+**Passing both `rest` and `messageHistory` is not two fetches.** Exactly one
+source is built and the closure wins — the same `??`, one line from the
+list's, for the same reason: it is the more specific instruction, and letting
+a convenience default silently discard hand-written intent would fill the
+pane from the wrong place. Wrong messages are far harder to notice than no
+messages.
+
+**When the seed fires, and when it does not.** On REPLACEMENT only: a
+snapshot whose session id differs from the one on screen. A refresh for the
+session already on screen cleared nothing and so has nothing to refill —
+ending a conversation, an agent picking it up, a reconnect replaying the
+snapshot are all that — and re-reading page one for each would be a request
+per event that repaints the same rows. The first session of a connection is
+not a replacement either. A conversation the customer has just STARTED is
+one, and is seeded like anything else: the page comes back empty, an empty
+page writes nothing at all, and that costs one request per deliberate "new
+conversation" press rather than a special case that has to be carried across
+the mint's round trip.
+
+Two races are already handled, so a host's own fetch need not think about
+them. A page that lands for a conversation the customer has since LEFT
+repaints nothing: a seed is a round trip, on a slow connection a customer can
+open two or three conversations inside one, and the transcript carries a
+generation counter that a stale page cannot match. And a page never
+duplicates or overwrites a message the socket already delivered — identity is
+the message id (D1), and where both copies exist the LIVE one is kept,
+because a page built server-side before that frame went out describes an
+older view of it.
+
+A fetch that **fails** is reported to `FlutterError`, never to the customer's
+screen, and empties nothing: this seed only ever ADDS, so a failure leaves
+the transcript exactly as it was — which, for a freshly opened conversation,
+is empty. Nothing retries it; the next conversation opened asks again.
+
+A host that wires **neither** route gets a pane that opens blank for every
+conversation the customer taps, silently and with no error. Off, not broken,
+is this package's standing answer for an unfilled seam — but it is worth
+being blunt about the cost here, because blank is NOT what that host saw
+before: they saw the previous conversation's messages under the new one's
+name. Wiring `messageHistory` is what finishes the fix rather than moving it.
+
+**Device details reach the CRM only if you hand them over.** `POST /identify`
+upserts the visitor as a Contact and its body carries an optional `device`
+block — `deviceId`, `deviceToken`, `platform`. Nothing in `packages/flutter`
+called that route until now, so a host holding a push token had nowhere to put
+it. Two arguments now fix that:
+
+```dart
+ChatWidgetCubit(
+  client: client,
+  rest: rest,
+  contactProfile: RestIdentityProfile(
+    name: user.name,
+    email: user.email,
+    device: RestIdentityDevice(
+      deviceId: myDeviceId,
+      deviceToken: myPushToken,
+      platform: RestDevicePlatform.ios,
+    ),
+  ),
+);
+```
+
+**The SDK forwards; it does not collect.** This is the line the whole
+parameter is drawn on, and it is the integrator's own: *"the integrated
+developer will append these details to the SDK — we will not; we use that
+detail, send to API backend via SDK."* So there is no `device_info_plus` here,
+no Firebase, no plugin of any kind added for this, and nothing that asks a
+platform channel what handset it is running on. It is the same reasoning
+`setOnline` states for connectivity: a library sitting between your app and
+`dhaam_chat` taking a discovery plugin would add a second answer to a question
+your app has already answered — and it would be the wrong one, because the
+thing that minted your push token is the only thing that knows it.
+
+Nothing is derived from `identity` either. `ChatIdentity.profile` is a
+`ChatParticipantProfile` — what the socket is told — and `contactProfile` is
+the CRM body; filling one from the other would be this package inventing a
+value you did not supply, at the one seam whose entire point is that it does
+not. Supply both if you want both.
+
+**`platform` is lowercase on the wire** — `'ios' | 'android' | 'web'`, the
+route's own spelling and unlike every other enum in `dhaam_chat_rest`, where
+`'IOS'` is a validation failure. `RestDevicePlatform` is what makes that
+unspellable at the call site rather than discoverable in a 400. All three
+types (`RestIdentityProfile`, `RestIdentityDevice`, `RestDevicePlatform`) are
+re-exported from this package, so naming what you are handing over needs no
+second import.
+
+**It never blocks and never breaks chat.** The upsert goes out from
+`connect()` — the same "the panel is open" hop that fetches the session list —
+and is never awaited: `ChatClient.setContactInfo`'s own doc explains why a
+slow capture must not delay the socket, and that applies with more force to a
+CRM write, which no part of talking to an agent depends on. A **failed**
+identify is reported to `FlutterError`, never to the customer's screen, and
+re-arms: the next `connect()` — a customer pressing "Try again" on the
+unavailable panel — asks once more. A **settled** one is never re-sent, because
+`contactProfile` is a constructor argument and cannot change for that Cubit's
+lifetime, so a second upsert would carry byte-identical data.
+
+**A device token is never logged.** It is a push credential — the backend's
+own schema says so — and this package puts it nowhere but the seam: no field
+of `contactProfile` reaches `ChatWidgetState`, and the error path reports the
+exception without interpolating the profile into it. `dhaam_chat_rest`'s
+exceptions hold up their end, keeping the request body and the URL out of
+`toString()` for exactly this reason.
+
+**Or hand over just the upsert.** `contactIdentifier` takes the function — a
+`ContactIdentifier`, one call, one upsert — for a host that routes its CRM
+through its own backend and holds no `dhaam_chat_rest` client:
+
+```dart
+ChatWidgetCubit(
+  client: client,
+  contactProfile: profile,
+  contactIdentifier: (RestIdentityProfile p) => myBackend.upsertContact(p),
+);
+```
+
+Both supplied, exactly one source is built and the closure wins — the same
+`??`, for the same reason, as `sessionSource` and `messageHistory`. Supplying
+an identifier with **no** `contactProfile` forwards nothing at all: there is
+nothing host-supplied to forward, and this package will not make something up
+to fill it. IP, user agent and geolocation are a different road entirely —
+they ride `ChatClient.setContactInfo` on the hello frame, not this route.
+
+**A CLOSED conversation is no longer offered to the customer.** Every
+conversation surface in this package reads `state.customerVisibleSessions` —
+Home's most-recent card, the Messages list, the header's session switcher —
+and the Messages tab badge counts `state.customerVisibleUnreadCount` off that
+same list, so the number on the badge and the rows behind it cannot disagree.
+
+**RESOLVED is not withheld, and that distinction is the whole rule.**
+`ChatStatus.closed` and `ChatStatus.resolved` are two different states and
+exactly one of them is held back. A resolved conversation is finished but
+still the customer's to pick up again — tapping it joins it, and the next
+message reactivates it server-side — so it keeps its row, its status label
+and that route back. CLOSED is the merchant taking the conversation off the
+table, and leaving it listed offered a way back into something the customer
+can do nothing with. The predicate is `!= ChatStatus.closed` and deliberately
+not "the terminal ones", precisely so that a seventh wire status cannot be
+swept into this rule by nobody's decision.
+
+**The conversation the customer is IN stays listed, even once it closes.**
+These surfaces rebuild the moment a `session.updated` snapshot lands, so a
+conversation someone is reading can be closed underneath them — and pulling a
+row out from under a finger mid-tap is a worse failure than showing one
+finished row. The session named by `state.session` keeps its row, and stays
+marked as the current one, until the customer leaves it; the next rebuild
+then drops it like any other closed conversation.
+
+**It is a DISPLAY rule and only that.** No status changes, no REST query
+changes, no page size changes. `state.sessionSummaries` still holds the whole
+page exactly as the host supplied it — read that, not the filtered list, if
+you want the unfiltered record — `ChatWidgetCubit.openConversation` still
+accepts a closed session id, and a host that mounts `SessionPickerScreen`
+with a list of its own is unaffected. The reply CHIME follows the same rule
+as the badge — it watches `state.customerVisibleUnreadCount`, not the
+whole-page `state.unreadCount` — so a message arriving in a conversation this
+widget will not list changes neither the badge nor the sound. A chime with no
+badge change, no row and nowhere to go is one the customer can neither
+explain nor act on. `state.unreadCount` is still the unfiltered whole-page
+sum, and still the number to read if that is what you want.
 
 **The inline report-issue entry point is not ported.** `widget.ts` opens the
 report form from two places — the header menu (`:858`, ported) and an inline

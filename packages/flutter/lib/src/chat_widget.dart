@@ -68,17 +68,62 @@ const Set<ConnectionState> kTerminalConnectionStates = <ConnectionState>{
 };
 
 class ChatWidget extends StatefulWidget {
-  const ChatWidget({super.key, required this.cubit, this.chime});
+  const ChatWidget({
+    super.key,
+    required this.cubit,
+    this.chime,
+    this.onClose,
+  });
 
   final ChatWidgetCubit cubit;
+
+  /// The customer asked to leave the panel. Null — the default — draws no
+  /// close control at all.
+  ///
+  /// ── This package never pops a route, and that is the whole point ─────
+  ///
+  /// The reported gap: "add in home view or message view in SDK to close —
+  /// `Navigator.pop`, so it will go back to the original screen." The pop
+  /// belongs to the HOST and this callback is where it goes:
+  ///
+  /// ```dart
+  /// ChatWidget(cubit: cubit, onClose: () => Navigator.of(context).pop());
+  /// ```
+  ///
+  /// Calling [Navigator.pop] from inside this widget would be this package
+  /// dismissing a route it did not push. It mounts no [MaterialApp] and
+  /// therefore no [Navigator] of its own (see this library's header), so the
+  /// only navigator in scope is the host's — and this widget may not be on a
+  /// pushed route at all: a panel embedded in a page, or shown in a sheet
+  /// the host closes its own way, would have some unrelated screen popped
+  /// out from under it. The conversation app bar already makes exactly this
+  /// refusal one screen in, with `automaticallyImplyLeading: false`.
+  ///
+  /// ── Optional for the same reason every other seam here is ───────────
+  ///
+  /// Absent means OFF, not broken — the rule the ⋯ menu applies to an
+  /// unbacked row and [ChatWidgetCubit] applies to an unwired
+  /// `sessionSource`. A host that mounts this panel as a tab of its own app
+  /// has nothing to close and passes nothing, and gets the same two screens
+  /// it had before this parameter existed. A control that appeared anyway
+  /// and did nothing would be the survey-that-discards-the-answer bug
+  /// wearing another face.
+  ///
+  /// Reaches Home and Messages, and not the conversation screen: those two
+  /// are where a customer is between conversations, and the conversation
+  /// already has a header with its own controls. Pinned by
+  /// `test/ui/close_affordance_test.dart`.
+  final VoidCallback? onClose;
 
   /// The reply chime, or null to build the default one.
   ///
   /// Injectable for the reason every other platform-touching thing in this
   /// package is (`AttachmentPicker`, `ChimePlayer`, `GeolocationProbe`): a
   /// widget that reaches a platform channel directly is a widget whose tests
-  /// cannot run in CI. See `chime.dart` on why the default player is
-  /// [SystemSound] rather than an audio plugin, and how a host replaces it.
+  /// cannot run in CI. The default player bundles this package's own
+  /// `assets/chime.wav` through `audioplayers` — see `chime.dart` on why that
+  /// replaced `SystemSound`, which Flutter ignores on Android, iOS and web,
+  /// and on how a host supplies its own player instead.
   final Chime? chime;
 
   @override
@@ -98,11 +143,21 @@ class _ChatWidgetState extends State<ChatWidget> {
     // reading and stay silent for it.
     //
     // `playOnUnreadRise` enforces "strictly on the way up, never on the
-    // first observation": `unreadCount` also FALLS (to zero, when the panel
-    // is read), and a restored session's backlog must not greet a returning
+    // first observation": the count also FALLS (to zero, when the panel is
+    // read), and a restored session's backlog must not greet a returning
     // visitor with a noise about messages they have already read.
+    //
+    // ── The SAME number the listener reads, and why it has to be ────────
+    //
+    // `customerVisibleUnreadCount`, not the whole-page `unreadCount` — the
+    // two sites are one mechanism. The watermark seeded here is what every
+    // later rise is compared against, so a seed taken from the wider count
+    // while the listener read the narrower one would compare a real reply
+    // against a number it can never exceed and stay silent for it. Pinned
+    // by `chime_mount_test.dart`'s "seeds its first silent reading from the
+    // VISIBLE count", which fails if only one of the two is narrowed.
     _chime.playOnUnreadRise(
-      unread: widget.cubit.state.unreadCount,
+      unread: widget.cubit.state.customerVisibleUnreadCount,
       sound: widget.cubit.state.config.sound,
       muted: widget.cubit.state.muted,
     );
@@ -129,11 +184,37 @@ class _ChatWidgetState extends State<ChatWidget> {
         // CHANGE and a rebuild happens for a hundred reasons that are not
         // one. `listenWhen` is the selector; the initial reading is taken in
         // `initState` instead.
+        //
+        // ── The chime obeys the same rule as the badge ─────────────────
+        //
+        // The number watched is `customerVisibleUnreadCount`, the same one
+        // the Messages tab badge counts — NOT the whole-page
+        // `unreadCount`. A conversation the merchant has CLOSED is on none
+        // of this widget's surfaces, so an unread rise confined to one
+        // moves no badge, shows no row and leads nowhere: a sound for it is
+        // a promise the customer can neither explain nor act on, and the
+        // sound is the louder half of that promise, not the exempt one.
+        // The selector is narrowed WITH the value, deliberately: one
+        // number, watched and recorded in the same place, so the watermark
+        // cannot drift away from what is being handed over. A selector left
+        // on the whole page would record the visible count only on the
+        // ticks the page happened to move, stranding the watermark above it
+        // and swallowing the next real reply — the same failure the
+        // `initState` seed's own note describes, from the other end.
+        //
+        // The price is named rather than hidden: the exception in
+        // [ChatWidgetState.customerVisibleSessions] moves this number too,
+        // so joining a conversation that was ALREADY closed brings its
+        // unread into the sum and chimes once for a navigation rather than
+        // an arrival. Nothing in this package lists a closed conversation
+        // to tap, so that needs a host opening one directly; it is the
+        // lesser of the two, not a case anybody decided was wanted.
         listenWhen: (ChatWidgetState previous, ChatWidgetState current) =>
-            previous.unreadCount != current.unreadCount,
+            previous.customerVisibleUnreadCount !=
+            current.customerVisibleUnreadCount,
         listener: (BuildContext context, ChatWidgetState state) =>
             _chime.playOnUnreadRise(
-          unread: state.unreadCount,
+          unread: state.customerVisibleUnreadCount,
           // BOTH have to agree: `config.sound` is the merchant enabling a
           // chime at all, `muted` is this visitor silencing it. `Chime` is
           // the one place the two are combined, so no caller can satisfy one
@@ -249,9 +330,20 @@ class _ChatWidgetState extends State<ChatWidget> {
                             ),
                           ),
                           Expanded(
+                            // `onClose` is handed to the two screens that
+                            // carry the control rather than drawn here, so
+                            // it sits with the rest of each screen's own
+                            // layout — Home's above its hero band, Messages'
+                            // above its search box. A bar drawn at this
+                            // level would be the "second, generic header"
+                            // the app bar above is gated to avoid. Null
+                            // reaches them as null and draws nothing; see
+                            // [ChatWidget.onClose].
                             child: switch (state.screen) {
-                              ScreenName.home => const HomeScreen(),
-                              ScreenName.messages => const MessagesScreen(),
+                              ScreenName.home =>
+                                HomeScreen(onClose: widget.onClose),
+                              ScreenName.messages =>
+                                MessagesScreen(onClose: widget.onClose),
                               ScreenName.conversation =>
                                 const ConversationScreen(),
                             },
@@ -260,7 +352,15 @@ class _ChatWidgetState extends State<ChatWidget> {
                       ),
                 bottomNavigationBar: ChatBottomNav(
                   active: state.screen,
-                  unreadCount: state.unreadCount,
+                  // The unread behind the tab, not the unread on the page:
+                  // this badge is a promise about what the Messages screen
+                  // will show, and that screen no longer shows closed
+                  // conversations. The chime above now watches this same
+                  // number rise, so the sound and the badge cannot disagree
+                  // about whether anything happened. `state.unreadCount` —
+                  // the whole-page sum — is untouched as the RECORD of what
+                  // the host supplied; see [ChatWidgetState.unreadCount].
+                  unreadCount: state.customerVisibleUnreadCount,
                   onSelect: widget.cubit.switchTab,
                 ),
               ),
@@ -345,11 +445,19 @@ class _ConversationAppBar extends StatelessWidget
         // choice. The module itself renders an empty list as an empty-state
         // ROW, never as a hidden component, and asks no guest question of its
         // own — re-deriving "is this a guest" here would be the second
-        // derivation D10 exists to forbid. `sessionSummaries` is empty for a
-        // guest because the server says so, and that is the whole rule.
-        if (state.sessionSummaries.isNotEmpty)
+        // derivation D10 exists to forbid. The list is empty for a guest
+        // because the server says so, and that is the whole rule.
+        //
+        // Asked over `customerVisibleSessions` and not over the raw page,
+        // because those are the rows this panel would actually contain: a
+        // customer whose only other conversation the merchant has CLOSED
+        // would otherwise get a toggle in the header that opens onto "No
+        // other conversations yet." — a control offering a choice that is
+        // not there. One gate and one list, both from
+        // [ChatWidgetState.customerVisibleSessions].
+        if (state.customerVisibleSessions.isNotEmpty)
           SessionSwitcher(
-            sessions: state.sessionSummaries,
+            sessions: state.customerVisibleSessions,
             currentSessionId: state.session?.sessionId,
             onSelect: cubit.selectSession,
             onStartNew: cubit.startNewConversation,

@@ -59,11 +59,19 @@ export 'package:dhaam_chat_rest/dhaam_chat_rest.dart'
 /// ── Why the maximum, and not the middle ─────────────────────────────────
 ///
 /// Because this widget cannot page. `MessagesScreen` renders
-/// `state.sessionSummaries` in full (filtered by the search box, never
-/// paginated) and `HomeScreen` reads the most recent one, so whatever this
-/// number is becomes the hard ceiling on the conversations a customer can
-/// EVER reach — with no "load more" to get past it and nothing on screen to
-/// say anything was left out. The two failure directions are not comparable:
+/// `state.customerVisibleSessions` in full (narrowed by the search box,
+/// never paginated) and `HomeScreen` reads the most recent one, so whatever
+/// this number is becomes the hard ceiling on the conversations a customer
+/// can EVER reach — with no "load more" to get past it and nothing on screen
+/// to say anything was left out.
+///
+/// That list is `state.sessionSummaries` minus the CLOSED ones, which makes
+/// the ceiling if anything tighter: a page spent on conversations that will
+/// not be listed is a page not spent on ones that will. The fix for that is
+/// not a smaller ask, and it is emphatically not a narrower REST query —
+/// what the server is asked for is unchanged, deliberately, because the
+/// withholding is a DISPLAY decision this binding makes and not a claim
+/// about what exists. The two failure directions are not comparable:
 /// too few silently hides a customer's own conversation, too many costs a few
 /// kilobytes of JSON on a page fetched when the panel opens and when a row
 /// changes.

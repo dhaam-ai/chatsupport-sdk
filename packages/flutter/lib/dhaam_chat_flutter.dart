@@ -19,6 +19,22 @@ export 'src/config/remote_config_client.dart';
 export 'src/forms/forms.dart';
 export 'src/nav/chat_screens.dart';
 export 'src/session/chat_session_summary.dart';
+// `ContactIdentifier` — the seam that forwards the device details a HOST
+// already holds to `POST /identify` — `restContactIdentifier`, the
+// REST-backed one `ChatWidgetCubit(rest: ...)` builds for itself, and the
+// three `dhaam_chat_rest` types a host fills in (`RestIdentityProfile`,
+// `RestIdentityDevice`, `RestDevicePlatform`), re-exported there so naming
+// what you are handing over needs no second import. This package discovers
+// none of those values; see the file's header.
+export 'src/session/contact_identity.dart';
+// `MessageHistoryFetch` — the seam that fills the transcript of a
+// conversation the customer has just opened — and `restMessageHistory`,
+// the REST-backed fetch `ChatWidgetCubit(rest: ...)` builds for itself.
+// Both public for the same reason the session list's pair is: the seam is a
+// constructor parameter type a host has to be able to name, and the default
+// is what saves a host holding a `RestClient` from writing anything at all.
+export 'src/session/message_history_source.dart';
+export 'src/session/rest_message_history.dart';
 // `toChatSessionSummary` and `restSessionSource` — the field copy and the
 // REST-backed fetch that `ChatWidgetCubit(rest: ...)` builds for itself.
 // Exported because a host writing its own `sessionSource` over the same

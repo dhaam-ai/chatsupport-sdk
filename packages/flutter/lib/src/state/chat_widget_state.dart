@@ -260,23 +260,28 @@ class ChatWidgetState extends Equatable {
   /// enough of it. Both have to agree before anything plays — see
   /// `chime.dart`, which is the one place the two are combined.
   ///
-  /// ── Not persisted, and where that belongs ───────────────────────────
+  /// ── Persisted, when the host supplies a store ───────────────────────
   ///
   /// The reference remembers it in `localStorage` under
   /// `chatsdk:<publishableKey>:muted`, keyed per publishable key so two
-  /// tenants on one browser cannot mute each other. This package has no
-  /// key-value store and does not add one here: the consent gate needs the
-  /// same store, under the same per-publishable-key rule, and inventing a
-  /// second one now would leave two answers to "where does this widget
-  /// remember a per-visitor decision".
+  /// tenants on one browser cannot mute each other. This package now keeps
+  /// the same record under the same key, through `MuteMemory` and
+  /// [ChatStorage] — the one place this widget remembers a per-visitor
+  /// decision, which is also where the consent answer lives. See
+  /// `ChatWidgetCubit.setMuted`, which writes it, and that class's
+  /// `_restoreMuted`, which reads it once at construction.
   ///
-  /// So for this widget's lifetime, and re-asked on the next mount — which
-  /// is the safe direction (a visitor who muted and comes back hears one
-  /// chime and can mute again; the reverse would silence someone who never
-  /// asked for it). `HeaderMenu` already paints the flipped label from
-  /// whatever this says, including an already-muted value it has never seen
-  /// change, so wiring a persisted read to it later is one line and no new
-  /// behaviour.
+  /// `false` at construction and only ever raised by the restore, never
+  /// lowered by it: the read is asynchronous and the header menu is not, so
+  /// a visitor who reaches for the switch before the answer lands keeps what
+  /// they chose. An un-mute persists by leaving this default alone rather
+  /// than by overwriting a decision.
+  ///
+  /// A host that wires no store gets `MuteMemory.unremembered` and the
+  /// original behaviour — honoured for this widget's lifetime, un-muted on
+  /// the next mount. That is the safe direction to fail in: a visitor who
+  /// muted and comes back hears one chime and can mute again, where the
+  /// reverse would silence someone who never asked for it.
   final bool muted;
 
   /// The message the customer is composing a reply TO, or null for none.
@@ -313,16 +318,108 @@ class ChatWidgetState extends Equatable {
   final List<ChatMessage> messages;
   final bool isTyping;
 
-  /// Host-supplied conversation summaries for the Messages/Home screens.
+  /// Host-supplied conversation summaries for the Messages/Home screens, as
+  /// supplied — every status, unfiltered.
+  ///
+  /// This is the RECORD of what the host handed over, which is why nothing
+  /// is removed from it. What the customer is shown is
+  /// [customerVisibleSessions]; read that, not this, to render a list.
   /// Empty by default — see [ChatSessionSummary]'s header on why this
   /// package cannot populate it itself.
   final List<ChatSessionSummary> sessionSummaries;
 
-  /// Sum of [sessionSummaries]' `unreadCount` — the Messages tab's badge.
+  /// The customer's own conversations, minus the ones a merchant has CLOSED
+  /// — what every conversation surface in this package actually renders.
+  ///
+  /// ── CLOSED only; RESOLVED keeps its row ─────────────────────────────
+  ///
+  /// [ChatStatus.closed] and [ChatStatus.resolved] are two different states
+  /// and exactly one of them is withheld. A RESOLVED conversation is
+  /// finished but still the customer's to pick up again — tapping it joins
+  /// it and the next message reactivates it server-side — so it keeps its
+  /// row, its status label and that route back. CLOSED is the merchant
+  /// taking the conversation off the table; leaving it listed offered a way
+  /// back into something the customer can do nothing with. Every other
+  /// status is untouched: this is `!= ChatStatus.closed` and NOT "the
+  /// terminal ones", precisely so a seventh wire status cannot be swept in
+  /// by a rule nobody decided for it.
+  ///
+  /// ── The conversation being READ is the exception ────────────────────
+  ///
+  /// The surfaces rebuild the moment a `session.updated` snapshot lands, so
+  /// a conversation the customer is looking at can be closed underneath
+  /// them — and pulling its row out from under someone mid-tap is a worse
+  /// failure than showing one finished row. The session named by [session]
+  /// therefore stays listed (and stays MARKED as current, which is the same
+  /// identity `SessionRowList.currentSessionId` is compared against) until
+  /// they leave it, at which point the next rebuild drops it like any other
+  /// closed one.
+  ///
+  /// Keyed on `session?.sessionId` because that is this package's only
+  /// answer to "which conversation is the customer in": it is the id the
+  /// header switcher already passes as `currentSessionId`, so the row that
+  /// survives here is exactly the row that renders as current. The screen
+  /// the customer happens to be on is deliberately not part of it — the
+  /// list has to behave the same on Home, on Messages and in the switcher.
+  ///
+  /// ── A DISPLAY rule, and only that ───────────────────────────────────
+  ///
+  /// Nothing here changes a status, a REST query, a page size or what the
+  /// server considers reachable. [sessionSummaries] still holds the whole
+  /// page, [ChatWidgetCubit.openConversation] still accepts a closed
+  /// session, and a host that mounts [SessionPickerScreen] with its own list
+  /// is unaffected. Derived on read rather than filtered into state for that
+  /// reason, and for one more: the exception above depends on [session],
+  /// which changes on its own schedule, so a list filtered once at arrival
+  /// would answer with whichever conversation was open at fetch time.
+  ///
+  /// ── Why it lives here rather than in the three screens ──────────────
+  ///
+  /// `MessagesScreen`, `HomeScreen` and the header's `SessionSwitcher` all
+  /// read this state object and nothing else in common; the row widgets
+  /// below them render exactly what they are handed, which is what makes
+  /// "what does the customer see" one question about one list rather than
+  /// three. Three copies of this predicate would be three places for one of
+  /// them to be forgotten — the same one-fact-two-derivations bug
+  /// [composingNew] was collapsed into the surface slot to end.
+  List<ChatSessionSummary> get customerVisibleSessions => sessionSummaries
+      .where((ChatSessionSummary summary) =>
+          summary.status != ChatStatus.closed ||
+          summary.id == session?.sessionId)
+      .toList(growable: false);
+
+  /// Sum of [sessionSummaries]' `unreadCount` — every conversation the host
+  /// supplied, including ones the merchant has closed.
+  ///
   /// `0` whenever no summaries have been supplied, which reads as "no
-  /// unread", the same safe default an unread badge should have absent real
+  /// unread", the same safe default an unread count should have absent real
   /// data.
+  ///
+  /// ── What reads this, and what no longer does ────────────────────────
+  ///
+  /// Neither of the two surfaces that once did. The Messages tab BADGE
+  /// counts [customerVisibleUnreadCount], and so does the reply CHIME (see
+  /// `ChatWidget`'s listener and its `initState` seed). A badge is a promise
+  /// that there is something behind the tab, and a sound is the louder half
+  /// of the same promise; a count including a conversation this widget will
+  /// not list is one the customer can neither explain nor clear.
+  ///
+  /// What is left is the unfiltered record: this is the sum the host
+  /// actually supplied, and a host that wants that number rather than the
+  /// visible one reads it here. Kept for that, and because it is the only
+  /// place the two can be compared — `chime_mount_test.dart` asserts a rise
+  /// confined to a closed conversation moves this and not
+  /// [customerVisibleUnreadCount].
   final int unreadCount;
+
+  /// The unread total across [customerVisibleSessions] — the Messages tab's
+  /// badge.
+  ///
+  /// Derived from the same one list the tab leads to, so the number on the
+  /// badge and the rows behind it can never disagree. See [unreadCount] for
+  /// the whole-page sum and for what still reads it.
+  int get customerVisibleUnreadCount => customerVisibleSessions.fold<int>(
+      0, (int sum, ChatSessionSummary summary) => sum + summary.unreadCount);
 
   /// Whether the DEVICE has a network, as last reported by the host.
   ///

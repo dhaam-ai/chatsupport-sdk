@@ -22,8 +22,65 @@ import '../theme/chat_theme.dart';
 import 'common_questions_list.dart';
 import 'hero_header.dart';
 
+/// The accessible name of the close control, on both screens that carry one.
+///
+/// ── One name, because it is one control ─────────────────────────────────
+///
+/// Home and Messages are tabs, not two places: the customer sees the same
+/// affordance in the same corner whichever one they are on, and a screen
+/// reader that announced two different names would describe it as two
+/// different controls. So `messages_screen.dart` imports exactly this one
+/// name (`show kCloseChatLabel`) rather than restating the string — one
+/// constant here, no widget shared, no layout borrowed.
+///
+/// It is the accessible NAME and not decoration: `IconButton` forwards
+/// `tooltip` to the semantics node, which is how the ⋯ menu
+/// ('Conversation options') and the session switcher already get theirs.
+/// Left unset, an icon-only button has no name at all.
+const String kCloseChatLabel = 'Close chat';
+
+/// The close control `ChatWidget.onClose` backs.
+///
+/// Right-aligned above the screen's own content, so it lands where a panel's
+/// dismiss control is looked for and never on top of something it would
+/// obscure.
+///
+/// The callback is REQUIRED and non-null here: "there is nobody to tell" is
+/// answered by not building this at all, at the one place that knows it —
+/// the screen's own `build`. A widget that rendered a zero-sized box for a
+/// null callback would still be a widget in a tree that is supposed to be
+/// unchanged, and a DISABLED button would be worse: a control that looks
+/// like a way out and is not.
+class ChatCloseButton extends StatelessWidget {
+  const ChatCloseButton({super.key, required this.onClose});
+
+  /// Invoked once per press, with no navigation of this package's own — see
+  /// `ChatWidget.onClose` on why the pop is the host's.
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+        child: IconButton(
+          onPressed: onClose,
+          tooltip: kCloseChatLabel,
+          icon: const Icon(Icons.close),
+        ),
+      ),
+    );
+  }
+}
+
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.onClose});
+
+  /// Forwarded from `ChatWidget.onClose`. Null draws no close control, and
+  /// this screen is then the very tree it was before the parameter existed —
+  /// see the `build` below, which does not even wrap the hero.
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -31,8 +88,26 @@ class HomeScreen extends StatelessWidget {
       builder: (BuildContext context, ChatWidgetState state) {
         final ChatWidgetCubit cubit = context.read<ChatWidgetCubit>();
         final RemoteConfig config = state.config;
+        // The most recent conversation the customer STILL HAS — closed ones
+        // are not among them (see
+        // [ChatWidgetState.customerVisibleSessions]).
+        //
+        // That is a decision the user made directly, and it is why the
+        // filter is applied BEFORE `mostRecentSummary` rather than after:
+        // asked whether a customer whose newest conversation had just been
+        // closed should see no Recent section at all or the newest one they
+        // can still do something with, they chose the second. Filtering
+        // afterwards — `mostRecentSummary` first, then dropping a closed
+        // winner — would produce the first, with an older open conversation
+        // sitting unmentioned behind a section that had vanished.
+        //
+        // Only CLOSED falls through this way. This screen has no
+        // status-gating table (unlike `home-screen.ts`'s `SHOWN_IN_RECENT`):
+        // every status it is handed renders its row and its pill, so a
+        // RESOLVED or WAITING_FOR_AGENT newest still leads Home exactly as
+        // it did.
         final ChatSessionSummary? recent =
-            mostRecentSummary(state.sessionSummaries);
+            mostRecentSummary(state.customerVisibleSessions);
         final double radius = chatCornerRadius(config);
 
         // ── The hero is pinned ABOVE the scroll view, not inside it ──
@@ -45,7 +120,7 @@ class HomeScreen extends StatelessWidget {
         // `CollapsingHeroHeader` owns that arrangement rather than this
         // screen assembling it — see its own header for why the band and the
         // scroll view have to be one widget's business.
-        return CollapsingHeroHeader(
+        final Widget hero = CollapsingHeroHeader(
           config: config,
           child: ListView(
             padding: EdgeInsets.zero,
@@ -95,6 +170,29 @@ class HomeScreen extends StatelessWidget {
               ),
             ],
           ),
+        );
+
+        // ── The close control, and the tree a host without one gets ──
+        //
+        // Returned UNWRAPPED when there is no callback: no Column, no
+        // Expanded, nothing between the hero and this screen's caller. A
+        // host that passes no `onClose` therefore gets the identical tree it
+        // got before the parameter existed, which is the claim
+        // `close_affordance_test.dart` makes and the reason this is a branch
+        // rather than an `if` inside a Column that would always be built.
+        //
+        // Above the hero rather than over it. The hero is a merchant-coloured
+        // band that renders nothing at all for a tenant who configured none
+        // (see `HeroHeader`), so an icon floated on top of it would have no
+        // guaranteed background to be legible against — and it COLLAPSES on
+        // scroll, which would take the way out with it.
+        final VoidCallback? close = onClose;
+        if (close == null) return hero;
+        return Column(
+          children: <Widget>[
+            ChatCloseButton(onClose: close),
+            Expanded(child: hero),
+          ],
         );
       },
     );

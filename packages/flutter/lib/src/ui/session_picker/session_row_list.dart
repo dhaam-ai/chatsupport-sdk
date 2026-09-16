@@ -15,10 +15,29 @@
 ///
 /// [SessionRow]'s tap handler is required and non-nullable. There is no
 /// status it is withheld for, no `enabled` parameter to pass `false` to, and
-/// no dimmed-archive variant: picking a CLOSED or RESOLVED conversation and
-/// typing reactivates it server-side, so rendering one inert would take away
-/// a path that works. Making that unrepresentable in the constructor is
-/// stronger than a comment asking for it.
+/// no dimmed-archive variant: picking a RESOLVED conversation and typing
+/// reactivates it server-side, so rendering one inert would take away a path
+/// that works. Making that unrepresentable in the constructor is stronger
+/// than a comment asking for it.
+///
+/// That paragraph NARROWED on 2026-09-15, and only for CLOSED. It used to
+/// read "picking a CLOSED or RESOLVED conversation", treating the two as one
+/// case; they are not one case. RESOLVED is finished but still the
+/// customer's — it keeps its row, its status word and that route back, and
+/// the reopen path above is exactly why. CLOSED is the merchant taking the
+/// conversation off the table, and a route back into something the customer
+/// can do nothing with is a dead end, so this package's own surfaces no
+/// longer hand one to this widget: the customer's list is filtered upstream,
+/// at `ChatWidgetState.customerVisibleSessions`, with one exception — the
+/// conversation being READ as it is closed, which stays until they leave it.
+///
+/// What did NOT change is this widget's own contract. It renders exactly the
+/// list it is given, every row enabled, whatever the status. A caller that
+/// hands it a CLOSED summary — that exception, or a host mounting
+/// [SessionPickerScreen] with a list of its own — gets a live, pickable row,
+/// because reactivation is still a real path and refusing to draw one here
+/// would be a second, silent filter in the layer whose whole job is not to
+/// have one.
 library;
 
 import 'package:flutter/material.dart';

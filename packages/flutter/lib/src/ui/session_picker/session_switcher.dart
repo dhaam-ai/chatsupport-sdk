@@ -81,6 +81,12 @@ class SessionSwitcher extends StatefulWidget {
   /// renders the popover, with its empty-state row: the toggle is not
   /// hidden, because "is there anything to switch to" is the caller's
   /// `sessions.length > 0` question and not a second one asked in here.
+  ///
+  /// `chat_widget.dart` asks that question over
+  /// `ChatWidgetState.customerVisibleSessions` — the same list it then
+  /// passes here, so the gate and the rows can never disagree and a
+  /// conversation the merchant has closed cannot put a toggle in the header
+  /// that opens onto an empty panel.
   final List<ChatSessionSummary> sessions;
 
   /// The conversation the customer is presently in — marked, never disabled.

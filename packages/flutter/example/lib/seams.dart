@@ -181,11 +181,21 @@ AttachmentDraftController exampleAttachmentDraft({
 
 /// The message-arrival chime, with the package's own default player.
 ///
-/// `Chime()` with no factory uses `playSystemChime`, which is
-/// `SystemSound.play(SystemSoundType.alert)` — Flutter's own, no audio plugin,
-/// no asset, nothing for a host to bundle. That is why this seam needs no
-/// dependency where the geolocation one would have needed a plugin and four
-/// permission strings.
+/// `Chime()` with no factory uses `bundledChimePlayer`, which plays the
+/// package's OWN `assets/chime.wav` through `audioplayers`. This comment used
+/// to say it used `playSystemChime` — `SystemSound.play(SystemSoundType.alert)`
+/// — and describe the seam as needing no dependency at all. That stopped being
+/// true when the audio work landed, and the old text mattered: Flutter
+/// documents `SystemSound.alert` as IGNORED on Android, iOS and web, so on the
+/// three platforms a customer actually uses there was no chime to describe.
+/// `playSystemChime` is still exported for a host that wants exactly that,
+/// through `Chime(createPlayer: () => playSystemChime)`.
+///
+/// It still costs a host NOTHING to declare, which is the part of the old
+/// comment that survives: the asset ships inside the package and
+/// `audioplayers` asks for no permission on any platform — unlike the
+/// geolocation seam, which would have needed a plugin and four permission
+/// strings.
 ///
 /// **Nothing constructs one of these inside the package**, so like
 /// [exampleAttachmentDraft] this is built and not passed. Its `play` still

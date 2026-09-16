@@ -28,6 +28,17 @@ ChatSessionSummary _summary(int unread) => ChatSessionSummary(
       unreadCount: unread,
     );
 
+/// The same, for a conversation the merchant has CLOSED — one this widget
+/// will not list anywhere (see [ChatWidgetState.customerVisibleSessions] and
+/// `test/ui/closed_session_hidden_test.dart` for the rule itself).
+ChatSessionSummary _closed(int unread) => ChatSessionSummary(
+      id: 'closed_one',
+      status: ChatStatus.closed,
+      mode: ChatMode.human,
+      createdAt: DateTime.utc(2026, 1, 1),
+      unreadCount: unread,
+    );
+
 void main() {
   late FakeWidgetChatClient client;
   late int plays;
@@ -44,16 +55,23 @@ void main() {
   });
 
   /// Mounts a widget whose merchant has [sound] configured.
+  ///
+  /// [initialSessions] is for the cases that need MIXED statuses; the
+  /// [initialUnread] shorthand it sits beside is one open conversation and
+  /// nothing else, which is what every case above them wants.
   Future<ChatWidgetCubit> pump(
     WidgetTester tester, {
     bool sound = true,
     int initialUnread = 0,
+    List<ChatSessionSummary>? initialSessions,
   }) async {
     final ChatWidgetCubit cubit = ChatWidgetCubit(
       client: client,
       initialConfig: testRemoteConfig(sound: sound),
     );
-    if (initialUnread > 0) {
+    if (initialSessions != null) {
+      cubit.updateSessionSummaries(initialSessions);
+    } else if (initialUnread > 0) {
       cubit.updateSessionSummaries(<ChatSessionSummary>[
         _summary(initialUnread),
       ]);
@@ -160,5 +178,70 @@ void main() {
     await tester.pump();
 
     expect(chime.isInitialised, isFalse);
+  });
+
+  // ── The chime obeys the same rule as the badge ─────────────────────────
+  //
+  // A conversation the merchant has CLOSED is not listed on any of this
+  // widget's surfaces ([ChatWidgetState.customerVisibleSessions]), and the
+  // Messages tab badge counts only what IS listed. A chime is the louder
+  // half of that same promise: a sound with no badge change, no row and
+  // nowhere to go is one the customer can neither explain nor act on. So
+  // the host drives the chime off `customerVisibleUnreadCount` too — both
+  // where the listener reads it and where `initState` seeds the watermark
+  // from it.
+  //
+  // The rules INSIDE `Chime` are still `test/ui/header/chime_test.dart`'s;
+  // what these three cases pin is WHICH NUMBER this widget hands it.
+
+  testWidgets('is silent for a rise confined to a CLOSED conversation',
+      (WidgetTester tester) async {
+    final ChatWidgetCubit cubit = await pump(
+      tester,
+      initialSessions: <ChatSessionSummary>[_summary(2), _closed(5)],
+    );
+
+    // The whole page goes 7 -> 8; what the customer can reach stays at 2.
+    cubit.updateSessionSummaries(<ChatSessionSummary>[_summary(2), _closed(6)]);
+    await tester.pump();
+
+    expect(cubit.state.unreadCount, equals(8));
+    expect(cubit.state.customerVisibleUnreadCount, equals(2));
+    expect(plays, isZero);
+  });
+
+  testWidgets('still plays for a rise the customer CAN go and read',
+      (WidgetTester tester) async {
+    // The other half, and the one that stops the narrowing from being
+    // implemented as silence: a closed conversation sitting in the page
+    // must not swallow a reply that landed somewhere the customer can open.
+    final ChatWidgetCubit cubit = await pump(
+      tester,
+      initialSessions: <ChatSessionSummary>[_summary(2), _closed(5)],
+    );
+
+    cubit.updateSessionSummaries(<ChatSessionSummary>[_summary(3), _closed(5)]);
+    await tester.pump();
+
+    expect(plays, equals(1));
+  });
+
+  testWidgets('seeds its first silent reading from the VISIBLE count',
+      (WidgetTester tester) async {
+    // `initState` matters as much as the listener. The seed is the
+    // watermark every later rise is compared against, so a seed taken from
+    // the whole page (6 here) while the listener reads the visible count
+    // (1, then 2) would compare 2 against 6 and stay silent for a real
+    // reply. Both sites read the same number, or neither is narrowed.
+    final ChatWidgetCubit cubit = await pump(
+      tester,
+      initialSessions: <ChatSessionSummary>[_summary(1), _closed(5)],
+    );
+    expect(plays, isZero);
+
+    cubit.updateSessionSummaries(<ChatSessionSummary>[_summary(2), _closed(5)]);
+    await tester.pump();
+
+    expect(plays, equals(1));
   });
 }
