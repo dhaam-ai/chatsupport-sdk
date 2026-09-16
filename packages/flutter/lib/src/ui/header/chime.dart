@@ -234,6 +234,28 @@ class Chime {
     if (previous == null || unread <= previous) return;
     play(sound: sound, muted: muted);
   }
+
+  /// Moves the watermark to [unread] without ever sounding.
+  ///
+  /// For a jump that is not an arrival. The caller's count can change because
+  /// WHAT IT COUNTS changed rather than because a message came in — see
+  /// `chat_widget.dart`, where joining a conversation that was already closed
+  /// brings it back into the customer's visible list and its existing unread
+  /// enters the sum for the first time. Read as a rise, that chimes for a
+  /// backlog, which is the one thing [playOnUnreadRise] exists to prevent.
+  ///
+  /// RECORDING rather than suppressing, and the difference is the whole
+  /// point: the next genuinely new message is compared against THIS value, so
+  /// it still rises and still sounds. Suppressing would have silenced the
+  /// conversation from then on — a worse bug than the one being fixed, and
+  /// one a green suite would happily hide, which is why
+  /// `chime_mount_test.dart` pins both halves.
+  ///
+  /// The same discipline [playOnUnreadRise] already applies when the gate
+  /// refuses: it records the count even while muted, so un-muting does not
+  /// then chime for the backlog accumulated meanwhile. One watermark, two
+  /// ways of arriving at it, never a second mechanism.
+  void recordWithoutPlaying(int unread) => _lastUnread = unread;
 }
 
 /// The name this decision is stored under, inside the per-publishable-key

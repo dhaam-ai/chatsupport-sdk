@@ -133,6 +133,14 @@ class ChatWidget extends StatefulWidget {
 class _ChatWidgetState extends State<ChatWidget> {
   late final Chime _chime = widget.chime ?? Chime();
 
+  /// The session the chime last saw the customer in.
+  ///
+  /// Only the chime reads it, and only to tell "the visible unread total
+  /// changed because a message arrived" apart from "it changed because
+  /// joining a conversation revealed one". See the listener in [build]; the
+  /// second is not an arrival and must not sound.
+  String? _lastJoinedSessionId;
+
   @override
   void initState() {
     super.initState();
@@ -161,6 +169,10 @@ class _ChatWidgetState extends State<ChatWidget> {
       sound: widget.cubit.state.config.sound,
       muted: widget.cubit.state.muted,
     );
+    // Taken at the same moment as the seed above, so a widget mounted with a
+    // session already joined does not read its first emission as a join and
+    // record a jump that never happened.
+    _lastJoinedSessionId = widget.cubit.state.session?.sessionId;
     // Not in the Cubit's own constructor — see ChatWidgetCubit.connect's
     // doc: network I/O as a side effect of construction is untestable by
     // construction, and this widget (which owns nothing about the Cubit's
@@ -202,26 +214,51 @@ class _ChatWidgetState extends State<ChatWidget> {
         // and swallowing the next real reply — the same failure the
         // `initState` seed's own note describes, from the other end.
         //
-        // The price is named rather than hidden: the exception in
-        // [ChatWidgetState.customerVisibleSessions] moves this number too,
-        // so joining a conversation that was ALREADY closed brings its
-        // unread into the sum and chimes once for a navigation rather than
-        // an arrival. Nothing in this package lists a closed conversation
-        // to tap, so that needs a host opening one directly; it is the
-        // lesser of the two, not a case anybody decided was wanted.
+        // ── The price this used to carry, and how it is paid ───────────
+        //
+        // The exception in [ChatWidgetState.customerVisibleSessions] moves
+        // this number too: joining a conversation that was ALREADY closed
+        // brings its unread into the sum, so the count jumps for a
+        // navigation rather than an arrival. That was accepted as the lesser
+        // of two evils when the chime was narrowed — "not a case anybody
+        // decided was wanted" — and it is no longer accepted, because it did
+        // not have to be. Confirmed by probe, then by a failing test on this
+        // very code: a host opening such a conversation got a chime for four
+        // messages that were already sitting there.
+        //
+        // So the session id is watched ALONGSIDE the count, and when that is
+        // what moved the jump is RECORDED instead of played — see
+        // `Chime.recordWithoutPlaying`. The reveal is silent; the next real
+        // message is still compared against the recorded value and still
+        // sounds.
+        //
+        // The id belongs in the SELECTOR, not only in the listener body.
+        // Were it read only on ticks where the count moved, a join that left
+        // the count unchanged would strand `_lastJoinedSessionId` stale, and
+        // the next genuine arrival would then look like a join and be
+        // swallowed. Silencing a real reply is the worse failure of the two,
+        // which is why the cheap extra wake-up is taken.
         listenWhen: (ChatWidgetState previous, ChatWidgetState current) =>
             previous.customerVisibleUnreadCount !=
-            current.customerVisibleUnreadCount,
-        listener: (BuildContext context, ChatWidgetState state) =>
-            _chime.playOnUnreadRise(
-          unread: state.customerVisibleUnreadCount,
-          // BOTH have to agree: `config.sound` is the merchant enabling a
-          // chime at all, `muted` is this visitor silencing it. `Chime` is
-          // the one place the two are combined, so no caller can satisfy one
-          // and forget the other.
-          sound: state.config.sound,
-          muted: state.muted,
-        ),
+                current.customerVisibleUnreadCount ||
+            previous.session?.sessionId != current.session?.sessionId,
+        listener: (BuildContext context, ChatWidgetState state) {
+          final String? joined = state.session?.sessionId;
+          if (joined != _lastJoinedSessionId) {
+            _lastJoinedSessionId = joined;
+            _chime.recordWithoutPlaying(state.customerVisibleUnreadCount);
+            return;
+          }
+          _chime.playOnUnreadRise(
+            unread: state.customerVisibleUnreadCount,
+            // BOTH have to agree: `config.sound` is the merchant enabling a
+            // chime at all, `muted` is this visitor silencing it. `Chime` is
+            // the one place the two are combined, so no caller can satisfy
+            // one and forget the other.
+            sound: state.config.sound,
+            muted: state.muted,
+          );
+        },
         builder: (BuildContext context, ChatWidgetState state) {
           final ThemeData theme = chatThemeData(
               state.config, MediaQuery.platformBrightnessOf(context));
