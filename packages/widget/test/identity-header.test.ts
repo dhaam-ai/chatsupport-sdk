@@ -55,19 +55,25 @@ describe('absence — handledBy undefined means "render my own title", not "unha
   });
 });
 
-describe('presence — a current handledBy names the agent or the bot', () => {
-  it('shows the human agent once assigned', () => {
+describe('presence — a current handledBy names the agent or the bot, paired with a brand', () => {
+  it('shows the human agent once assigned, paired with the configured (specific) title', () => {
     const header = createIdentityHeader(FALLBACK);
     header.update(session({ status: 'ASSIGNED', handledBy: AGENT }));
-    expect(header.node.textContent).toBe('Ada');
+    expect(header.node.textContent).toBe('Ada · Acme Support');
     expect(header.node.getAttribute('data-handled-by')).toBe('AGENT');
   });
 
-  it("shows the bot's own name while the bot handles it", () => {
+  it("shows the bot's own name while the bot handles it, paired with the configured title", () => {
     const header = createIdentityHeader(FALLBACK);
     header.update(session({ status: 'OPEN', handledBy: BOT }));
-    expect(header.node.textContent).toBe('Assistant');
+    expect(header.node.textContent).toBe('Assistant · Acme Support');
     expect(header.node.getAttribute('data-handled-by')).toBe('BOT');
+  });
+
+  it('pairs with the platform brand, not the literal generic title, when the configured title is generic', () => {
+    const header = createIdentityHeader('Chat with us');
+    header.update(session({ status: 'ASSIGNED', handledBy: AGENT }));
+    expect(header.node.textContent).toBe('Ada · Dhaam Support');
   });
 });
 
@@ -95,7 +101,7 @@ describe('staleness — a reactivated session keeps a name isHandledByCurrent mu
     for (const status of others) {
       const header = createIdentityHeader(FALLBACK);
       header.update(session({ status, handledBy: AGENT }));
-      expect(header.node.textContent).toBe('Ada');
+      expect(header.node.textContent).toBe('Ada · Acme Support');
     }
   });
 });

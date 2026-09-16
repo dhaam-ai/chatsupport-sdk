@@ -68,6 +68,7 @@ import { createIdentityHeader } from './ui/identity-header.js';
 import { createMessageList } from './ui/message-list.js';
 import { createMessagesScreen, getCustomerConversationTitle } from './ui/messages-screen.js';
 import { createPortalThread } from './ui/portal-thread.js';
+import { statusLabel } from './ui/session-status.js';
 import {
   createPortalConversationClient,
   listPortalQueue,
@@ -2532,7 +2533,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }),
     store.select(
       (state) => (state.session === null ? null : `${state.session.id}:${state.session.status}`),
-      () => syncProductSurfaces(),
+      () => {
+        syncProductSurfaces();
+        // The header's status line reads `endedSession`, so a status flip
+        // into or out of CLOSED/RESOLVED has to repaint it too — otherwise it
+        // sits on whatever the last connection event left it showing until
+        // an unrelated transport event happens to fire next.
+        syncConnection();
+      },
     ),
     store.select(
       (state) => state.connectionState,
@@ -3878,15 +3886,31 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // transport event, and a repaint per heartbeat is work nobody asked for.
     if (wasUnreachable !== givenUp) syncScreens();
 
-    // The merchant's subtitle stands in for `'Online'` and for nothing else.
-    // Every other label is diagnostic, and a response-time promise painted
-    // over "Not connected — use Reconnect to try again" would tell a customer
-    // their message is on its way to somebody while it is going nowhere. A
-    // healthy connection is the one state with nothing of its own to report,
-    // so it is the one the merchant's words can have.
-    statusText.textContent =
-      connectionState === 'connected' && subtitle !== '' ? subtitle : status.label;
-    statusDot.style.color = status.color;
+    // A genuinely-ended session on screen (`endedSession` — the same
+    // CLOSED/RESOLVED-minus-parked predicate the CSAT card and the ended
+    // footer already key off) is not a fact about the connection at all, and
+    // "Online" painted over a conversation that is OVER is precisely the
+    // confusion this branch exists to remove. It outranks both the
+    // merchant's subtitle and the connection label — neither describes a
+    // conversation with nothing left to report a connection for — and the
+    // dot goes with it: the dot means "here is the connection's colour", and
+    // a resolved conversation has none to show.
+    const ended = endedSession(state);
+    if (ended !== null) {
+      statusText.textContent = statusLabel(ended.status);
+      statusDot.style.display = 'none';
+    } else {
+      // The merchant's subtitle stands in for `'Online'` and for nothing
+      // else. Every other label is diagnostic, and a response-time promise
+      // painted over "Not connected — use Reconnect to try again" would tell
+      // a customer their message is on its way to somebody while it is going
+      // nowhere. A healthy connection is the one state with nothing of its
+      // own to report, so it is the one the merchant's words can have.
+      statusText.textContent =
+        connectionState === 'connected' && subtitle !== '' ? subtitle : status.label;
+      statusDot.style.display = '';
+      statusDot.style.color = status.color;
+    }
 
     reconnectButton.hidden = status.control === 'hidden';
     // `inert` and "a manual attempt is already running" are different reasons

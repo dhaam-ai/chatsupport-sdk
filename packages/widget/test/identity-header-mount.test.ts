@@ -108,6 +108,8 @@ const query = <T extends Element>(selector: string): T => {
 };
 
 const titleText = (): string => query<HTMLElement>('#dh-title').textContent ?? '';
+const statusText = (): string => query<HTMLElement>('.dh-status-text').textContent ?? '';
+const statusDotHidden = (): boolean => query<HTMLElement>('.dh-status-dot').style.display === 'none';
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
@@ -178,7 +180,7 @@ describe('the header is T11’s component, not a second hand-built one', () => {
 describe('identity follows the session', () => {
   it('names the agent once one is handling the chat', async () => {
     await connected({ status: 'ASSIGNED', handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' } });
-    expect(titleText()).toBe('Ada');
+    expect(titleText()).toBe('Ada · Acme Support');
     expect(query('#dh-title').getAttribute('data-handled-by')).toBe('AGENT');
   });
 
@@ -202,7 +204,7 @@ describe('identity follows the session', () => {
     // `applyAgentJoined` spreads a NEW session object, so the default
     // strictEqual selector comparison sees the change — this is the assertion
     // that would fail if the subscription compared field-wise instead.
-    expect(titleText()).toBe('Ada');
+    expect(titleText()).toBe('Ada · Acme Support');
   });
 
   it('still refuses to name a joiner while the session says it is waiting', async () => {
@@ -221,7 +223,7 @@ describe('identity follows the session', () => {
       status: 'ASSIGNED',
       handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
     });
-    expect(titleText()).toBe('Ada');
+    expect(titleText()).toBe('Ada · Acme Support');
 
     socket.push('agent.left', { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' });
     await settle();
@@ -234,7 +236,7 @@ describe('identity follows the session', () => {
       status: 'ASSIGNED',
       handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
     });
-    expect(titleText()).toBe('Ada');
+    expect(titleText()).toBe('Ada · Acme Support');
 
     // Exactly the reactivation shape: the server keeps the previous handler on
     // the record while the status goes back to WAITING_FOR_AGENT. Ada is not
@@ -251,7 +253,53 @@ describe('identity follows the session', () => {
 
   it('names a bot the same way it names a human', async () => {
     await connected({ status: 'OPEN', handledBy: { kind: 'BOT', id: 'bot_1', displayName: 'Assistant' } });
-    expect(titleText()).toBe('Assistant');
+    expect(titleText()).toBe('Assistant · Acme Support');
     expect(query('#dh-title').getAttribute('data-handled-by')).toBe('BOT');
+  });
+});
+
+describe('the status line defers to a genuinely-ended session', () => {
+  it('says the session’s own status word, not the connection label, once it is resolved', async () => {
+    const { socket } = await connected({
+      status: 'ASSIGNED',
+      handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
+    });
+    expect(statusText()).toBe('Online');
+    expect(statusDotHidden()).toBe(false);
+
+    socket.sessionUpdated({
+      status: 'RESOLVED',
+      handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
+    });
+    await settle();
+
+    // A healthy connection has nothing to do with whether THIS conversation
+    // is over — "Online" over a resolved thread is the exact confusion this
+    // branch exists to remove. The dot goes with it: it means "here is the
+    // connection's colour", and a resolved conversation has none to show.
+    expect(statusText()).toBe('Resolved');
+    expect(statusDotHidden()).toBe(true);
+  });
+
+  it('returns to the connection label once a resolved session is reopened', async () => {
+    const { socket } = await connected({
+      status: 'ASSIGNED',
+      handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
+    });
+    socket.sessionUpdated({
+      status: 'RESOLVED',
+      handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
+    });
+    await settle();
+    expect(statusText()).toBe('Resolved');
+
+    socket.sessionUpdated({
+      status: 'ASSIGNED',
+      handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
+    });
+    await settle();
+
+    expect(statusText()).toBe('Online');
+    expect(statusDotHidden()).toBe(false);
   });
 });

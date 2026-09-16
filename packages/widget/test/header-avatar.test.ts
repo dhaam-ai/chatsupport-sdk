@@ -234,7 +234,7 @@ describe('an agent on the chat — their letter', () => {
     });
     expect(avatarText()).toBe('A');
     expect(isAgentAvatar()).toBe(true);
-    expect(titleText()).toBe('Ada');
+    expect(titleText()).toBe('Ada · Acme Support');
   });
 
   it('flips from brand to agent when one joins mid-conversation', async () => {
@@ -294,7 +294,7 @@ describe('an agent on the chat — their letter', () => {
     });
     expect(avatarText()).toBe('A');
     expect(isAgentAvatar()).toBe(true);
-    expect(titleText()).toBe('Assistant');
+    expect(titleText()).toBe('Assistant · Acme Support');
   });
 });
 

@@ -92,6 +92,14 @@ function isGenericTitle(t: string | undefined): boolean {
 }
 
 /**
+ * The platform's own name — what a generically-titled chat's agent label is
+ * paired with once someone answers it ("Ravi · Dhaam Support"). A host that
+ * set a SPECIFIC title (a store or merchant name) keeps that title as the
+ * pairing instead of this constant; see {@link isGenericTitle}.
+ */
+const PLATFORM_BRAND = 'Dhaam Support';
+
+/**
  * @param initialTitle The widget's own configured title (`WidgetConfig.title`),
  *   shown whenever there is no CURRENT handler to name.
  */
@@ -106,11 +114,26 @@ export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
   let currentLabel = fallbackTitle;
   let seenAnyState = false;
 
-  function labelFor(session: Pick<ChatSession, 'status' | 'handledBy'> | null): string {
+  function currentAgentName(session: Pick<ChatSession, 'status' | 'handledBy'> | null): string | null {
     if (session !== null && isHandledByCurrent(session) && session.handledBy?.displayName) {
       return session.handledBy.displayName;
     }
-    return fallbackTitle;
+    return null;
+  }
+
+  /**
+   * The bare agent/bot name is what the title used to show on its own. Paired
+   * with a brand now — "Ravi · Dhaam Support" — because a name alone answers
+   * "who", never "who I'm even talking to a company through", and the
+   * screenshots this shipped from named that gap directly. The pairing is
+   * skipped (bare `fallbackTitle`) whenever there is no CURRENT handler, same
+   * as before.
+   */
+  function labelFor(session: Pick<ChatSession, 'status' | 'handledBy'> | null): string {
+    const name = currentAgentName(session);
+    if (name === null) return fallbackTitle;
+    const brand = isGenericTitle(fallbackTitle) ? PLATFORM_BRAND : fallbackTitle;
+    return `${name} · ${brand}`;
   }
 
   function update(session: Pick<ChatSession, 'status' | 'handledBy'> | null): void {
@@ -127,7 +150,11 @@ export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
     }
     if (label === currentLabel) return;
     currentLabel = label;
-    liveRegion.textContent = `You're now chatting with ${label}.`;
+    // The announcement stays on the bare name (or the bare fallback, with no
+    // agent) — "You're now chatting with Ravi · Dhaam Support" reads like a
+    // company name got appended to a person by mistake, where the visual
+    // header pairing them side by side reads fine.
+    liveRegion.textContent = `You're now chatting with ${currentAgentName(session) ?? fallbackTitle}.`;
   }
 
   function setFallbackTitle(title: string): void {
