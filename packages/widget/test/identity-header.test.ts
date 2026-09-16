@@ -75,6 +75,23 @@ describe('presence — a current handledBy names the agent or the bot, paired wi
     header.update(session({ status: 'ASSIGNED', handledBy: AGENT }));
     expect(header.node.textContent).toBe('Ada · Dhaam Support');
   });
+
+  it('shows the bare name once, not paired with itself, when the configured title already IS the handler’s name', () => {
+    // A portal view whose "who is this conversation with" title happens to
+    // equal the assigned handler's own name — most often a staff account
+    // testing against a same-named customer — must not read
+    // "shanu111 · shanu111": that repeats the one fact on screen twice
+    // instead of saying two different things.
+    const header = createIdentityHeader('Ada');
+    header.update(session({ status: 'ASSIGNED', handledBy: AGENT }));
+    expect(header.node.textContent).toBe('Ada');
+  });
+
+  it('is case- and whitespace-insensitive about the same-name check', () => {
+    const header = createIdentityHeader('  ada  ');
+    header.update(session({ status: 'ASSIGNED', handledBy: AGENT }));
+    expect(header.node.textContent).toBe('Ada');
+  });
 });
 
 describe('staleness — a reactivated session keeps a name isHandledByCurrent must reject', () => {

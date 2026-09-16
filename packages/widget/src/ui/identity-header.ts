@@ -133,6 +133,13 @@ export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
     const name = currentAgentName(session);
     if (name === null) return fallbackTitle;
     const brand = isGenericTitle(fallbackTitle) ? PLATFORM_BRAND : fallbackTitle;
+    // A host can hand this component a fallback title that already IS the
+    // agent's name — a portal view whose "who is this conversation with"
+    // title happens to match the assigned handler, most often a staff
+    // account testing against its own name. Pairing a string with itself
+    // ("shanu111 · shanu111") repeats the one fact on screen twice instead of
+    // adding a second one, so the bare name wins rather than the pairing.
+    if (brand.trim().toLowerCase() === name.trim().toLowerCase()) return name;
     return `${name} · ${brand}`;
   }
 

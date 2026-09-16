@@ -3366,13 +3366,15 @@ button {
   color: #fff !important;
   font-weight: 600 !important;
 }
-:host([data-screen="conversation"]) .dh-status,
-.dh-status {
-  display: none !important;
-}
-:host([data-screen="conversation"]) .dh-status-dot,
-.dh-status-dot {
-  display: none !important;
+/* The section header above promises "online dot" — this used to hide
+   .dh-status/.dh-status-dot unconditionally instead (a bare, unscoped
+   ".dh-status { display: none !important }" alongside the conversation-only
+   one), which is what silently dropped the status line — Online, Resolved,
+   all of it — for every embed, not just this screen. Kept as readable text
+   on the gradient instead; the dot's colour stays inline (JS sets it per
+   connection state) so this never fights that signal. */
+:host([data-screen="conversation"]) .dh-status-text {
+  color: rgba(255, 255, 255, 0.85) !important;
 }
 :host([data-screen="conversation"]) .dh-avatar {
   border: 2px solid rgba(255, 255, 255, 0.7) !important;
