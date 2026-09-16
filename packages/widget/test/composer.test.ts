@@ -60,7 +60,7 @@ describe('the icon row nests inside the input’s own border', () => {
     expect(box?.querySelector('.dh-composer-row')).not.toBeNull();
   });
 
-  it('keeps attach, emoji, mic, link and send inside the row, in that order — not beside the box', () => {
+  it('keeps image, emoji, attach, link and send inside the row, in that order — not beside the box', () => {
     const { composer } = build();
     const row = composer.node.querySelector('.dh-composer-box .dh-composer-row')!;
     // Direct children only: the emoji picker's own node is a wrapper that
@@ -72,12 +72,13 @@ describe('the icon row nests inside the input’s own border', () => {
         : (child.querySelector('button')?.getAttribute('aria-label') ?? null),
     );
     expect(directChildLabels).toEqual([
-      'Attach a file',
+      'Attach an image',
       'Insert emoji', // the emoji picker's own trigger, inside its wrapper node
-      'Record a voice message',
+      'Attach a file',
       'Insert a link',
       'Send message',
-      null, // the hidden file input, last — see ui/dom.ts's .dh-file
+      null, // the hidden file input, see ui/dom.ts's .dh-file
+      null, // the hidden image input
     ]);
   });
 

@@ -80,6 +80,8 @@ export interface ConnectionHelloPayload {
    */
   targetRole?: string;
   targetId?: string;
+  /** Outlet IDs this connection is registered/subscribed for (merchant console) */
+  outletIds?: string[];
 
   /** Last applied `seq` (D2). Omit on first connect. */
   resumeFrom?: number;

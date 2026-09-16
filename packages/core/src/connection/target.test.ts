@@ -43,7 +43,7 @@ function ackFrame(overrides: Partial<ConnectionAckPayload> = {}): ServerFrame {
 
 const TARGET = { role: 'merchant', id: 'merch-7' } as const;
 
-function harness(opts: { target?: { role: string; id: string } } = {}) {
+function harness(opts: { target?: { role: string; id: string }; outletIds?: string[] } = {}) {
   const store = new ChatStore({ initialState: createInitialChatState() });
   const timers = new ManualTimers();
   let transport!: FakeTransport;
@@ -53,6 +53,7 @@ function harness(opts: { target?: { role: string; id: string } } = {}) {
     url: 'wss://example.test/chat-services/v2/ws',
     publishableKey: 'dhp_test_1',
     ...(opts.target ? { target: opts.target } : {}),
+    ...(opts.outletIds ? { outletIds: opts.outletIds } : {}),
     getToken: vi.fn(async () => 'tok_abc') as unknown as TokenProvider,
     schedule: timers.schedule,
     transportBackoff: new TransportBackoffPolicy({ random: () => 1 }),
@@ -129,5 +130,21 @@ describe('an untargeted conversation is byte-for-byte unchanged', () => {
 
     const hello = h.transport.connects[0]!.hello as Record<string, unknown>;
     expect(hello.publishableKey).toBe('dhp_test_1');
+  });
+
+  it('sends outletIds when provided in options', async () => {
+    const h = harness({ outletIds: ['outlet-1', 'outlet-2'] });
+    await connect(h);
+
+    const hello = h.transport.connects[0]!.hello as Record<string, unknown>;
+    expect(hello.outletIds).toEqual(['outlet-1', 'outlet-2']);
+  });
+
+  it('omits outletIds when not provided', async () => {
+    const h = harness();
+    await connect(h);
+
+    const hello = h.transport.connects[0]!.hello as Record<string, unknown>;
+    expect('outletIds' in hello).toBe(false);
   });
 });

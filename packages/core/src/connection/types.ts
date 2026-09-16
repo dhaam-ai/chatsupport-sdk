@@ -165,6 +165,8 @@ export interface ConnectionControllerOptions {
    * byte-for-byte unaffected.
    */
   readonly target?: { readonly role: string; readonly id: string };
+  /** Multi-outlet subscription for merchant / manager console. */
+  readonly outletIds?: readonly string[];
 
   /** Initial conversation subject / store name, if any. */
   readonly subject?: string;

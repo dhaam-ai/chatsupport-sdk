@@ -3323,15 +3323,15 @@ button {
   display: none !important;
 }
 
-:host([data-screen="home"]) .dh-icon-button,
-:host([data-screen="messages"]) .dh-icon-button,
-:host([data-screen="conversation"]) .dh-icon-button {
+:host([data-screen="home"]) .dh-header .dh-icon-button,
+:host([data-screen="messages"]) .dh-header .dh-icon-button,
+:host([data-screen="conversation"]) .dh-header .dh-icon-button {
   color: #fff !important;
   opacity: 0.95 !important;
 }
-:host([data-screen="home"]) .dh-icon-button:hover,
-:host([data-screen="messages"]) .dh-icon-button:hover,
-:host([data-screen="conversation"]) .dh-icon-button:hover {
+:host([data-screen="home"]) .dh-header .dh-icon-button:hover,
+:host([data-screen="messages"]) .dh-header .dh-icon-button:hover,
+:host([data-screen="conversation"]) .dh-header .dh-icon-button:hover {
   background: rgba(255, 255, 255, 0.18) !important;
   color: #fff !important;
 }
@@ -3362,29 +3362,43 @@ button {
 }
 
 /* 4. Conversation Header */
-:host([data-screen="conversation"]) .dh-title {
-  color: #fff !important;
-  font-weight: 600 !important;
+:host([data-screen="conversation"]) .dh-header {
+  background: #7c3aed !important;
 }
-/* The section header above promises "online dot" — this used to hide
-   .dh-status/.dh-status-dot unconditionally instead (a bare, unscoped
-   ".dh-status { display: none !important }" alongside the conversation-only
-   one), which is what silently dropped the status line — Online, Resolved,
-   all of it — for every embed, not just this screen. Kept as readable text
-   on the gradient instead; the dot's colour stays inline (JS sets it per
-   connection state) so this never fights that signal. */
+:host([data-screen="conversation"]) .dh-title {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  font-size: 15px !important;
+}
+:host([data-screen="conversation"]) .dh-status {
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+}
+:host([data-screen="conversation"]) .dh-status-dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  background: #22c55e !important;
+  display: inline-block !important;
+}
 :host([data-screen="conversation"]) .dh-status-text {
-  color: rgba(255, 255, 255, 0.85) !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
 }
 :host([data-screen="conversation"]) .dh-avatar {
-  border: 2px solid rgba(255, 255, 255, 0.7) !important;
+  border: 2px solid rgba(255, 255, 255, 0.6) !important;
   background: #f59e0b !important;
-  color: #78350f !important;
+  color: #ffffff !important;
   font-weight: 700 !important;
 }
 
-/* 5. Chat thread background: pastel pink-teal gradient (matches screenshot) */
-:host([data-screen="conversation"]) .dh-log {
+/* 5. Chat thread background: pastel pink-teal gradient */
+:host([data-screen="conversation"]) .dh-log,
+:host([data-screen="conversation"]) .dh-portal-log,
+.dh-portal-log,
+.dh-portal-thread {
   background-color: #fbf7ff !important;
   background-image:
     radial-gradient(ellipse 85% 65% at 0% 0%, rgba(255, 205, 225, 0.5) 0%, transparent 65%),
@@ -3395,30 +3409,311 @@ button {
   background-repeat: no-repeat !important;
 }
 
-/* 6. Outbound message bubble: solid purple */
-:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-bubble {
-  background: #7c3aed !important;
-  color: #fff !important;
-  border-radius: 16px 16px 4px 16px !important;
+/* 6. Day Separator Badge */
+.dh-day-separator {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  margin: 14px 0 10px !important;
+  width: 100% !important;
 }
-:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-time {
-  color: rgba(255, 255, 255, 0.8) !important;
-}
-:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-tick {
-  color: #34d399 !important;
+.dh-day-pill {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 4px 14px !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  border-radius: 10px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.5px !important;
+  color: #54656f !important;
+  text-transform: uppercase !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+  border: 1px solid rgba(0, 0, 0, 0.05) !important;
 }
 
-/* 7. Inbound message bubble: crisp white card */
-:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-bubble {
-  background: #ffffff !important;
-  color: #0f172a !important;
-  border-radius: 16px 16px 16px 4px !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+/* 7. System Event Pill (e.g. joined/left/assigned) */
+.dh-system-row,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"],
+.dh-log .dh-msg[data-system="true"] {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  margin: 8px 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
 }
-:host([data-screen="conversation"]) .dh-msg-avatar {
-  background: #f59e0b !important;
-  color: #78350f !important;
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-avatar,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-author,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-meta,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-actions,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-reply-btn {
+  display: none !important;
+}
+.dh-system-pill,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-bubble,
+.dh-log .dh-msg[data-system="true"] .dh-msg-bubble {
+  display: inline-block !important;
+  max-width: 86% !important;
+  padding: 6px 14px !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 12px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: #475569 !important;
+  text-align: center !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  line-height: 1.4 !important;
+}
+
+/* 8. Outgoing message: vibrant purple card */
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"],
+.dh-portal-log .dh-msg[data-mine="true"] {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  margin: 4px 0 6px auto !important;
+  max-width: 82% !important;
+  position: relative !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-bubble-wrap,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-msg-bubble-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-direction: row !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-bubble,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-msg-bubble {
+  background: #7c3aed !important;
+  color: #ffffff !important;
+  border-radius: 16px 16px 4px 16px !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  line-height: 1.45 !important;
+  box-shadow: 0 1px 3px rgba(124, 58, 237, 0.25) !important;
+  word-break: break-word !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-meta,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-msg-meta {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 4px !important;
+  margin-top: 3px !important;
+  padding-right: 2px !important;
+  font-size: 11px !important;
+  color: #64748b !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-tick,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-tick {
+  display: inline-flex !important;
+  align-items: center !important;
+  color: #22c55e !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-tick svg,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-tick svg {
+  stroke: #22c55e !important;
+  width: 14px !important;
+  height: 14px !important;
+}
+
+/* 9. Incoming message: crisp white card with avatar */
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"],
+.dh-portal-log .dh-msg[data-mine="false"] {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  gap: 8px !important;
+  margin: 4px 0 6px 0 !important;
+  max-width: 85% !important;
+  position: relative !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-avatar,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-avatar {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+  font-size: 13px !important;
   font-weight: 700 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+}
+.dh-msg-avatar--bot {
+  background: #f3e8ff !important;
+  color: #7c3aed !important;
+}
+.dh-msg-avatar--agent {
+  background: #f59e0b !important;
+  color: #ffffff !important;
+}
+.dh-msg-avatar--customer {
+  background: #3b82f6 !important;
+  color: #ffffff !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-content-wrap,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-content-wrap {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  min-width: 0 !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-bubble-wrap,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-bubble-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-direction: row !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-author,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-author {
+  display: block !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: #64748b !important;
+  margin-bottom: 3px !important;
+  margin-left: 2px !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-bubble,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-bubble {
+  background: #ffffff !important;
+  color: #1e293b !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 16px 16px 16px 4px !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  line-height: 1.45 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+  word-break: break-word !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-meta,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-meta {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 4px !important;
+  margin-top: 3px !important;
+  padding-left: 2px !important;
+  font-size: 11px !important;
+  color: #94a3b8 !important;
+}
+
+/* 10. Reply action button on hover */
+.dh-msg-reply-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 50% !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: #94a3b8 !important;
+  cursor: pointer !important;
+  opacity: 0 !important;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease !important;
+}
+.dh-msg:hover .dh-msg-reply-btn {
+  opacity: 1 !important;
+}
+.dh-msg-reply-btn:hover {
+  background: rgba(0, 0, 0, 0.06) !important;
+  color: #475569 !important;
+}
+
+
+/* 11. Portal Thread Container Layout */
+.dh-portal-thread {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 0%;
+  overflow: hidden;
+}
+.dh-portal-thread[hidden],
+:host(:not([data-screen="conversation"])) .dh-portal-thread {
+  display: none !important;
+}
+.dh-portal-log {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dh-portal-log[hidden] {
+  display: none !important;
+}
+
+/* 12. Composer tools & send button styling */
+.dh-composer-tools {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+.dh-composer .dh-icon-button,
+.dh-composer-tool-btn {
+  color: #64748b !important;
+  opacity: 1 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  transition: color 0.15s ease, background-color 0.15s ease !important;
+}
+.dh-composer .dh-icon-button:hover,
+.dh-composer-tool-btn:hover {
+  color: #1e293b !important;
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+.dh-composer .dh-icon-button[disabled],
+.dh-composer-tool-btn[disabled] {
+  opacity: 0.35 !important;
+  cursor: not-allowed !important;
+}
+.dh-composer .dh-icon-button svg,
+.dh-composer-tool-btn svg {
+  display: block !important;
+  stroke: currentColor !important;
+}
+.dh-send {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 50% !important;
+  display: grid !important;
+  place-items: center !important;
+  background: #7c3aed !important;
+  color: #ffffff !important;
+  margin-inline-start: auto !important;
+  border: none !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.35) !important;
+  transition: background-color 0.15s ease, opacity 0.15s ease !important;
+}
+.dh-send[disabled] {
+  background: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+  cursor: not-allowed !important;
+}
+.dh-send svg {
+  display: block !important;
+  stroke: currentColor !important;
 }
 
 /* 8. Hero header: hide duplicate hero logo (already in header) */
@@ -3680,100 +3975,154 @@ button {
 }
 :host([data-screen="messages"]) .dh-messages-item {
   list-style: none !important;
-  margin: 0 !important;
+  margin: 0 0 10px 0 !important;
   padding: 0 !important;
 }
-:host([data-screen="messages"]) .dh-messages-row {
+:host([data-screen="messages"]) .dh-messages-row,
+:host([data-screen="messages"]) .dh-mrow-btn {
   background: #ffffff !important;
   border: 1px solid #e5e7eb !important;
   border-radius: 16px !important;
-  padding: 14px 16px !important;
+  padding: 12px 14px !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-  gap: 8px !important;
   width: 100% !important;
   display: flex !important;
-  flex-direction: column !important;
-  align-items: stretch !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 12px !important;
   text-align: start !important;
   cursor: pointer !important;
   transition: all 0.12s ease !important;
 }
-:host([data-screen="messages"]) .dh-messages-row:hover {
+:host([data-screen="messages"]) .dh-messages-row:hover,
+:host([data-screen="messages"]) .dh-mrow-btn:hover {
   background: #fdfcff !important;
   border-color: #ddd6fe !important;
   box-shadow: 0 4px 12px rgba(124, 58, 237, 0.08) !important;
 }
-:host([data-screen="messages"]) .dh-messages-row[aria-current="true"] {
+:host([data-screen="messages"]) .dh-messages-row[aria-current="true"],
+:host([data-screen="messages"]) .dh-mrow-btn[aria-current="true"] {
   border-color: #7c3aed !important;
   background: #faf5ff !important;
 }
-:host([data-screen="messages"]) .dh-messages-row-top {
+:host([data-screen="messages"]) .dh-mrow-avatar {
+  flex: none !important;
+  width: 44px !important;
+  height: 44px !important;
+  border-radius: 999px !important;
+  background: #7c3aed !important;
+  color: #ffffff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+}
+:host([data-screen="messages"]) .dh-mrow-body {
+  flex: 1 !important;
+  min-width: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+}
+:host([data-screen="messages"]) .dh-messages-row-top,
+:host([data-screen="messages"]) .dh-mrow-top {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
   gap: 8px !important;
 }
-:host([data-screen="messages"]) .dh-messages-title {
-  font-size: 15px !important;
-  font-weight: 600 !important;
+:host([data-screen="messages"]) .dh-mrow-name-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+  flex: 1 !important;
+}
+:host([data-screen="messages"]) .dh-messages-title,
+:host([data-screen="messages"]) .dh-mrow-name {
+  font-size: 14px !important;
+  font-weight: 700 !important;
   color: #111827 !important;
   line-height: 1.3 !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
 }
-:host([data-screen="messages"]) .dh-messages-status {
-  font-size: 12px !important;
+:host([data-screen="messages"]) .dh-messages-status,
+:host([data-screen="messages"]) .dh-mrow-status-pill {
+  font-size: 11px !important;
   font-weight: 600 !important;
-  padding: 3px 10px !important;
+  padding: 2px 8px !important;
   border-radius: 999px !important;
   background: #f3f4f6 !important;
   color: #4b5563 !important;
 }
-:host([data-screen="messages"]) .dh-messages-status[data-status="OPEN"] {
+:host([data-screen="messages"]) .dh-messages-status[data-status="OPEN"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="OPEN"] {
   background: #dcfce7 !important;
   color: #15803d !important;
 }
-:host([data-screen="messages"]) .dh-messages-status[data-status="WAITING_FOR_AGENT"] {
+:host([data-screen="messages"]) .dh-messages-status[data-status="WAITING_FOR_AGENT"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="WAITING_FOR_AGENT"] {
   background: #fef3c7 !important;
   color: #92400e !important;
 }
-:host([data-screen="messages"]) .dh-messages-status[data-status="ASSIGNED"] {
+:host([data-screen="messages"]) .dh-messages-status[data-status="ASSIGNED"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="ASSIGNED"] {
   background: #ede9fe !important;
   color: #6d28d9 !important;
 }
 :host([data-screen="messages"]) .dh-messages-status[data-status="CLOSED"],
-:host([data-screen="messages"]) .dh-messages-status[data-status="RESOLVED"] {
+:host([data-screen="messages"]) .dh-messages-status[data-status="RESOLVED"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="CLOSED"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="RESOLVED"] {
   background: #f3f4f6 !important;
   color: #6b7280 !important;
 }
-:host([data-screen="messages"]) .dh-messages-time {
-  font-size: 12px !important;
-  color: #6b7280 !important;
+:host([data-screen="messages"]) .dh-mrow-right {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex: none !important;
+}
+:host([data-screen="messages"]) .dh-mrow-chevron {
+  color: #9ca3af !important;
+  display: flex !important;
+}
+:host([data-screen="messages"]) .dh-messages-time,
+:host([data-screen="messages"]) .dh-mrow-time {
+  font-size: 11px !important;
+  color: #9ca3af !important;
   white-space: nowrap !important;
 }
-:host([data-screen="messages"]) .dh-messages-preview {
-  font-size: 14px !important;
-  color: #374151 !important;
+:host([data-screen="messages"]) .dh-messages-preview,
+:host([data-screen="messages"]) .dh-mrow-preview {
+  font-size: 13px !important;
+  color: #6b7280 !important;
   line-height: 1.4 !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
 }
-:host([data-screen="messages"]) .dh-messages-unread {
+:host([data-screen="messages"]) .dh-messages-unread[hidden],
+:host([data-screen="messages"]) .dh-mrow-unread-badge[hidden] {
+  display: none !important;
+}
+:host([data-screen="messages"]) .dh-messages-unread:not([hidden]),
+:host([data-screen="messages"]) .dh-mrow-unread-badge:not([hidden]) {
   background: #dc2626 !important;
   color: #ffffff !important;
   font-size: 11px !important;
   font-weight: 700 !important;
-  min-width: 20px !important;
-  height: 20px !important;
+  min-width: 18px !important;
+  height: 18px !important;
   border-radius: 999px !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  align-self: flex-start !important;
-  margin-top: 4px !important;
-  padding: 0 5px !important;
+  padding: 0 4px !important;
 }
 :host([data-screen="messages"]) .dh-messages-new {
   display: flex !important;

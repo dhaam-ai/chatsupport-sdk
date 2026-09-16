@@ -139,6 +139,7 @@ export class ConnectionController {
    * the support desk. Readonly and set once — see `ConnectionControllerOptions.target`.
    */
   readonly #target: { readonly role: string; readonly id: string } | undefined;
+  readonly #outletIds: readonly string[] | undefined;
   readonly #onFrame: ((frame: ServerFrame) => void) | undefined;
   readonly #onResumeGap: ((gap: ResumeGap) => void) | undefined;
   readonly #refreshAtFraction: number;
@@ -214,6 +215,7 @@ export class ConnectionController {
     this.#url = options.url;
     this.#publishableKey = options.publishableKey;
     this.#target = options.target;
+    this.#outletIds = options.outletIds;
     this.#pendingNewSessionSubject = options.subject;
     this.#getToken = options.getToken;
     this.#schedule = options.schedule ?? systemTimers;
@@ -505,6 +507,9 @@ export class ConnectionController {
       ...(this.#target === undefined
         ? {}
         : { targetRole: this.#target.role, targetId: this.#target.id }),
+      ...(this.#outletIds === undefined || this.#outletIds.length === 0
+        ? {}
+        : { outletIds: [...this.#outletIds] }),
       // D2 §8.3: sent on *any* transition into `authenticating`, reconnect and
       // first connect alike. Omitted entirely on a first connection — under
       // `exactOptionalPropertyTypes` an explicit `undefined` is a different

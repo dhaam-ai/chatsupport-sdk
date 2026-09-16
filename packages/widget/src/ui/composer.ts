@@ -139,8 +139,40 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     on: { change: () => acceptFile() },
   });
 
+  const imageInput = el('input', {
+    attrs: { class: 'dh-file', type: 'file', accept: 'image/*', tabindex: '-1', 'aria-hidden': 'true', hidden: true },
+    on: {
+      change: () => {
+        const file = (imageInput as HTMLInputElement).files?.[0];
+        if (file) {
+          if (file.size > MAX_ATTACHMENT_BYTES) {
+            report(new Error('File too large'), 'Files must be under 25 MB.');
+            (imageInput as HTMLInputElement).value = '';
+            return;
+          }
+          pendingFile = file;
+          previewName.textContent = file.name;
+          previewSize.textContent = formatBytes(file.size);
+          previewUrl = URL.createObjectURL(file);
+          previewThumb.src = previewUrl;
+          previewThumb.hidden = false;
+          preview.hidden = false;
+          showError(null);
+          syncSendState();
+        }
+        (imageInput as HTMLInputElement).value = '';
+      },
+    },
+  });
+
+  const imageButton = el('button', {
+    attrs: { class: 'dh-icon-button dh-composer-tool-btn', type: 'button', 'aria-label': 'Attach an image' },
+    children: [icon(ICONS.image, 18)],
+    on: { click: () => (imageInput as HTMLInputElement).click() },
+  });
+
   const attachButton = el('button', {
-    attrs: { class: 'dh-icon-button', type: 'button', 'aria-label': 'Attach a file' },
+    attrs: { class: 'dh-icon-button dh-composer-tool-btn', type: 'button', 'aria-label': 'Attach a file' },
     children: [icon(ICONS.paperclip, 18)],
     on: { click: () => fileInput.click() },
   });
@@ -303,7 +335,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
           input,
           el('div', {
             attrs: { class: 'dh-composer-row' },
-            children: [attachButton, emojiPicker.node, micButton, linkButton, sendButton, fileInput],
+            children: [imageButton, emojiPicker.node, attachButton, linkButton, sendButton, fileInput, imageInput],
           }),
           // A child of the box, not of the row beside its trigger the way the
           // emoji popover is: it anchors to the box's full width (see
@@ -336,6 +368,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   function syncSendState(): void {
     const hasContent = input.value.trim() !== '' || pendingFile !== null;
     sendButton.disabled = !enabled || uploading || !hasContent;
+    imageButton.disabled = !enabled || uploading;
     attachButton.disabled = !enabled || uploading;
     emojiPicker.setEnabled(enabled && !uploading);
     micButton.disabled = !enabled || uploading;

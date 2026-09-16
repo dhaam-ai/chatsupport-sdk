@@ -437,19 +437,37 @@ interface CustomerMessageRow {
 function createCustomerMessageRow(
   onSelect: (sessionId: string) => void,
 ): CustomerMessageRow {
-  const status = el('span', { attrs: { class: 'dh-messages-status' } });
-  const time = el('time', { attrs: { class: 'dh-messages-time' } });
-  const top = el('div', { attrs: { class: 'dh-messages-row-top' }, children: [status, time] });
+  // Avatar circle (initial letter)
+  const avatarText = el('span', { attrs: { class: 'dh-mrow-avatar-text' } });
+  const avatar = el('div', { attrs: { class: 'dh-mrow-avatar' }, children: [avatarText] });
 
-  const title = el('span', { attrs: { class: 'dh-messages-title' } });
-  const preview = el('span', { attrs: { class: 'dh-messages-preview', hidden: true } });
-  const unread = el('span', { attrs: { class: 'dh-messages-unread', hidden: true } });
+  // Title / Name (bold, left)
+  const title = el('span', { attrs: { class: 'dh-messages-title dh-mrow-name' } });
+  // Status pill
+  const status = el('span', { attrs: { class: 'dh-messages-status dh-mrow-status-pill' } });
+  // Unread badge (circle, right side)
+  const unread = el('span', { attrs: { class: 'dh-messages-unread dh-mrow-unread-badge', hidden: true } });
+  // Chevron icon
+  const chevron = el('span', { attrs: { class: 'dh-mrow-chevron', 'aria-hidden': 'true' }, children: [icon(CHEVRON_ICON, 14)] });
+
+  // Top row: name + pill | badge + chevron
+  const nameRow = el('div', { attrs: { class: 'dh-mrow-name-row' }, children: [title, status] });
+  const rightCol = el('div', { attrs: { class: 'dh-mrow-right' }, children: [unread, chevron] });
+  const top = el('div', { attrs: { class: 'dh-messages-row-top dh-mrow-top' }, children: [nameRow, rightCol] });
+
+  // Preview text
+  const preview = el('span', { attrs: { class: 'dh-messages-preview dh-mrow-preview', hidden: true } });
+  // Timestamp
+  const time = el('time', { attrs: { class: 'dh-messages-time dh-mrow-time' } });
+
+  // Body: top + preview + time
+  const body = el('div', { attrs: { class: 'dh-mrow-body' }, children: [top, preview, time] });
 
   const button = el('button', {
-    attrs: { class: 'dh-messages-row', type: 'button' },
-    children: [top, title, preview, unread],
+    attrs: { class: 'dh-messages-row dh-mrow-btn', type: 'button' },
+    children: [avatar, body],
   });
-  const node = el('li', { attrs: { class: 'dh-messages-item' }, children: [button] });
+  const node = el('li', { attrs: { class: 'dh-messages-item dh-mrow-item' }, children: [button] });
 
   let current: ChatSessionSummary | null = null;
   button.addEventListener('click', () => {
@@ -469,12 +487,13 @@ function createCustomerMessageRow(
       status.textContent = statusLabel(summary.status);
       status.setAttribute('data-status', summary.status);
 
+      const displayName = getCustomerConversationTitle(summary);
+      title.textContent = displayName;
+      avatarText.textContent = getRowInitials(displayName);
+
       const whenIso = summary.lastMessageAt ?? summary.createdAt;
       if (time.getAttribute('datetime') !== whenIso) time.setAttribute('datetime', whenIso);
       time.textContent = relativeTimeLabel(whenIso);
-
-      const displayName = getCustomerConversationTitle(summary);
-      title.textContent = displayName;
 
       const previewContent = (summary.lastMessagePreview && summary.lastMessagePreview !== '')
         ? summary.lastMessagePreview

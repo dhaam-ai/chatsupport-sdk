@@ -72,6 +72,55 @@ const CLOSURE_COPY: Record<CloseReason, string> = {
   SWITCHED: 'This conversation was moved.',
 };
 
+function isSystemMessage(message: ChatMessage): boolean {
+  const content = message.content.trim();
+  return (
+    content.endsWith('has joined the chat.') ||
+    content.endsWith('has left the chat.') ||
+    content.includes('has joined the chat') ||
+    content.includes('has left the chat') ||
+    content.startsWith('Conversation assigned to') ||
+    content.startsWith('The agent has left') ||
+    content.startsWith('This chat session has been closed') ||
+    content.startsWith('This conversation was closed') ||
+    content.startsWith('This conversation was marked')
+  );
+}
+
+function formatDayKey(isoString?: string): string {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  } catch {
+    return '';
+  }
+}
+
+function getDayLabel(isoString?: string): string {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return '';
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return 'TODAY';
+    if (diffDays === 1) return 'YESTERDAY';
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase();
+  } catch {
+    return '';
+  }
+}
+
+function createDaySeparator(label: string): HTMLElement {
+  const pill = el('span', { attrs: { class: 'dh-day-pill' }, text: label });
+  return el('div', { attrs: { class: 'dh-day-separator' }, children: [pill] });
+}
+
 export interface MessageListCallbacks {
   readonly onRetry: (message: ChatMessage) => void;
   readonly onLoadOlder: () => void;
@@ -237,6 +286,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
 
   /** id → rendered row, so a re-render patches rather than rebuilds. */
   const rows = new Map<string, MessageRow>();
+  const daySeparators = new Map<string, HTMLElement>();
   let announcedUpTo: string | null = null;
   let seenAnyState = false;
   let closedReason: CloseReason | null = null;
@@ -276,11 +326,28 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     lastBotName = botNameFrom(state) ?? lastBotName;
 
     const live = new Set<string>();
+    const liveDays = new Set<string>();
     let previous: Node = loadOlder;
+    let lastDayKey = '';
     // Names the FIRST message of each run only — see `MessageRow.update`.
     let previousAuthor: string | null = null;
 
     for (const message of state.messages) {
+      const dayKey = formatDayKey(message.createdAt);
+      if (dayKey && dayKey !== lastDayKey) {
+        lastDayKey = dayKey;
+        liveDays.add(dayKey);
+        let sep = daySeparators.get(dayKey);
+        if (!sep) {
+          sep = createDaySeparator(getDayLabel(message.createdAt));
+          daySeparators.set(dayKey, sep);
+        }
+        if (previous.nextSibling !== sep) {
+          log.insertBefore(sep, previous.nextSibling);
+        }
+        previous = sep;
+      }
+
       live.add(message.id);
       let row = rows.get(message.id);
       if (row === undefined) {
@@ -311,6 +378,12 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
         log.insertBefore(row.node, previous.nextSibling);
       }
       previous = row.node;
+    }
+
+    for (const [dayKey, sep] of daySeparators) {
+      if (liveDays.has(dayKey)) continue;
+      sep.remove();
+      daySeparators.delete(dayKey);
     }
 
     for (const [id, row] of rows) {
@@ -590,6 +663,22 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
       current = message;
       currentSenderLabel = senderName ?? 'You';
 
+      const isSystem = isSystemMessage(message);
+      node.setAttribute('data-system', String(isSystem));
+
+      if (isSystem) {
+        avatar.hidden = true;
+        author.hidden = true;
+        quote.hidden = true;
+        meta.hidden = true;
+        actions.node.hidden = true;
+        const shown = visibleContent(message);
+        if (body.textContent !== shown) body.textContent = shown;
+        return;
+      }
+      meta.hidden = false;
+      actions.node.hidden = false;
+
       // The quote is compared before rewriting, like `body` below, and for
       // the same reason: an unrelated re-render (a tick change, a typing
       // flap) must not destroy a text selection inside it.
@@ -626,6 +715,15 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
         avatar.hidden = true;
       } else {
         avatar.hidden = false;
+        const isBot = message.senderType === 'BOT';
+        const isAgent = message.senderType === 'AGENT';
+        if (isBot) {
+          avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--bot';
+        } else if (isAgent) {
+          avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--agent';
+        } else {
+          avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--customer';
+        }
         // One character: `.dh-avatar`'s CSS uppercases it, matching the
         // header avatar's own convention of leaving case to CSS rather than
         // baking it into the string (ui/styles.ts).
