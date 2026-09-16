@@ -178,18 +178,25 @@ describe('the header is T11’s component, not a second hand-built one', () => {
 });
 
 describe('identity follows the session', () => {
-  it('names the agent once one is handling the chat', async () => {
+  // `TITLE` ('Acme Support') is a SPECIFIC title here — a real store/merchant
+  // name a host configured on purpose — so per identity-header.ts's own
+  // contract the visible text never changes for whoever is handling the
+  // chat; only `data-handled-by` (the avatar's own hook) tracks that. See
+  // identity-header.test.ts for the GENERIC-title pairing behaviour.
+
+  it('keeps the configured title once a human agent is assigned, but still marks the avatar hook', async () => {
     await connected({ status: 'ASSIGNED', handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' } });
-    expect(titleText()).toBe('Ada · Acme Support');
+    expect(titleText()).toBe(TITLE);
     expect(query('#dh-title').getAttribute('data-handled-by')).toBe('AGENT');
   });
 
   it('keeps the configured title when nobody has picked the chat up', async () => {
     await connected({ status: 'WAITING_FOR_AGENT' });
     expect(titleText()).toBe(TITLE);
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('');
   });
 
-  it('updates when an agent joins mid-conversation', async () => {
+  it('the avatar hook still updates when an agent joins mid-conversation, even though the title text does not', async () => {
     // `OPEN` rather than `WAITING_FOR_AGENT`: `applyAgentJoined` writes
     // `handledBy` but deliberately does NOT touch `status`, and
     // `isHandledByCurrent` refuses to narrate a handler while the session
@@ -197,17 +204,20 @@ describe('identity follows the session', () => {
     // defers to it — the subscription is what is under test here.
     const { socket } = await connected({ status: 'OPEN' });
     expect(titleText()).toBe(TITLE);
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('');
 
     socket.push('agent.joined', { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' });
     await settle();
 
     // `applyAgentJoined` spreads a NEW session object, so the default
     // strictEqual selector comparison sees the change — this is the assertion
-    // that would fail if the subscription compared field-wise instead.
-    expect(titleText()).toBe('Ada · Acme Support');
+    // that would fail if the subscription compared field-wise instead. The
+    // title stays put; the hook is what proves the subscription still fired.
+    expect(titleText()).toBe(TITLE);
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('AGENT');
   });
 
-  it('still refuses to name a joiner while the session says it is waiting', async () => {
+  it('still refuses to mark a joiner while the session says it is waiting', async () => {
     const { socket } = await connected({ status: 'WAITING_FOR_AGENT' });
     socket.push('agent.joined', { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' });
     await settle();
@@ -216,31 +226,33 @@ describe('identity follows the session', () => {
     // and `agent.joined` does not advance `status`. Pinned so a future
     // "fix" here has to argue with core rather than quietly diverge from it.
     expect(titleText()).toBe(TITLE);
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('');
   });
 
-  it('falls back again when the agent leaves', async () => {
+  it('clears the avatar hook again when the agent leaves', async () => {
     const { socket } = await connected({
       status: 'ASSIGNED',
       handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
     });
-    expect(titleText()).toBe('Ada · Acme Support');
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('AGENT');
 
     socket.push('agent.left', { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' });
     await settle();
 
     expect(titleText()).toBe(TITLE);
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('');
   });
 
-  it('does not narrate a stale agent on a session that went back to waiting', async () => {
+  it('does not mark a stale agent on a session that went back to waiting', async () => {
     const { socket } = await connected({
       status: 'ASSIGNED',
       handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
     });
-    expect(titleText()).toBe('Ada · Acme Support');
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('AGENT');
 
     // Exactly the reactivation shape: the server keeps the previous handler on
     // the record while the status goes back to WAITING_FOR_AGENT. Ada is not
-    // on this chat right now, so her name must not be on the header.
+    // on this chat right now, so the hook must not still say AGENT.
     socket.sessionUpdated({
       status: 'WAITING_FOR_AGENT',
       handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
@@ -251,9 +263,9 @@ describe('identity follows the session', () => {
     expect(query('#dh-title').getAttribute('data-handled-by')).toBe('');
   });
 
-  it('names a bot the same way it names a human', async () => {
+  it('marks a bot the same way it marks a human', async () => {
     await connected({ status: 'OPEN', handledBy: { kind: 'BOT', id: 'bot_1', displayName: 'Assistant' } });
-    expect(titleText()).toBe('Assistant · Acme Support');
+    expect(titleText()).toBe(TITLE);
     expect(query('#dh-title').getAttribute('data-handled-by')).toBe('BOT');
   });
 });

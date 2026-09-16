@@ -93,9 +93,9 @@ function isGenericTitle(t: string | undefined): boolean {
 
 /**
  * The platform's own name — what a generically-titled chat's agent label is
- * paired with once someone answers it ("Ravi · Dhaam Support"). A host that
- * set a SPECIFIC title (a store or merchant name) keeps that title as the
- * pairing instead of this constant; see {@link isGenericTitle}.
+ * paired with once someone answers it ("Ravi · Dhaam Support"). Never used
+ * for a SPECIFIC title (a store or merchant name) — that title stands alone,
+ * unpaired with anyone; see {@link isGenericTitle} and {@link labelFor}.
  */
 const PLATFORM_BRAND = 'Dhaam Support';
 
@@ -122,25 +122,32 @@ export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
   }
 
   /**
-   * The bare agent/bot name is what the title used to show on its own. Paired
-   * with a brand now — "Ravi · Dhaam Support" — because a name alone answers
-   * "who", never "who I'm even talking to a company through", and the
-   * screenshots this shipped from named that gap directly. The pairing is
-   * skipped (bare `fallbackTitle`) whenever there is no CURRENT handler, same
-   * as before.
+   * A SPECIFIC title — a real store/outlet/merchant name a host configured on
+   * purpose — names who this conversation is with all by itself. Pairing it
+   * with whichever staff member happens to answer ("tse · Mohali") answers a
+   * question the customer never asked and outranks the one fact that
+   * actually matters here: which outlet they are talking to. So a specific
+   * title is never touched by who is currently handling the chat; it is the
+   * label, full stop.
+   *
+   * A GENERIC title (the widget's own default, or none) has the opposite
+   * problem: "Chat with us" names no one, so once someone answers, pairing
+   * their name with the platform's own — "Ravi · Dhaam Support" — is what
+   * gives the customer both facts this SPECIFIC case gets from the store name
+   * alone: who, and through whom.
    */
   function labelFor(session: Pick<ChatSession, 'status' | 'handledBy'> | null): string {
+    if (!isGenericTitle(fallbackTitle)) return fallbackTitle;
     const name = currentAgentName(session);
     if (name === null) return fallbackTitle;
-    const brand = isGenericTitle(fallbackTitle) ? PLATFORM_BRAND : fallbackTitle;
     // A host can hand this component a fallback title that already IS the
-    // agent's name — a portal view whose "who is this conversation with"
-    // title happens to match the assigned handler, most often a staff
-    // account testing against its own name. Pairing a string with itself
-    // ("shanu111 · shanu111") repeats the one fact on screen twice instead of
-    // adding a second one, so the bare name wins rather than the pairing.
-    if (brand.trim().toLowerCase() === name.trim().toLowerCase()) return name;
-    return `${name} · ${brand}`;
+    // agent's name — the platform's own default bot name ("Assistant")
+    // colliding with a placeholder widget title, most often. Pairing a
+    // string with itself ("Assistant · Assistant") repeats the one fact on
+    // screen twice instead of adding a second one, so the bare name wins
+    // rather than the pairing.
+    if (PLATFORM_BRAND.trim().toLowerCase() === name.trim().toLowerCase()) return name;
+    return `${name} · ${PLATFORM_BRAND}`;
   }
 
   function update(session: Pick<ChatSession, 'status' | 'handledBy'> | null): void {

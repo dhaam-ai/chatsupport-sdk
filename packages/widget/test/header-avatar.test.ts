@@ -7,12 +7,19 @@
 //   2. an agent on the chat — that agent's single-letter avatar;
 //   3. otherwise — the merchant's configured brand face (logo or initials).
 //
-// The half that matters most here is agreement with the TITLE beside it:
-// identity-header.ts gates the displayed name on core's `isHandledByCurrent`,
-// and the avatar rides the same session subscription behind the same gate —
-// so the assertions below repeatedly check the avatar AND the title together.
-// A face of Ada next to "Acme Support" (or the reverse) is the bug this file
-// exists to keep out.
+// The avatar and `data-handled-by` (the title's own CSS/testing hook) ride
+// the SAME session subscription behind the SAME `isHandledByCurrent` gate —
+// so the assertions below repeatedly check the avatar AND that hook together.
+// A face of Ada with the hook still empty (or the reverse) is the bug this
+// file exists to keep out.
+//
+// The visible TITLE TEXT is a separate story as of the outlet-chat fix: a
+// SPECIFIC title (a real store/merchant name, like `TITLE` below) never
+// pairs with a handler's name — "tse · Mohali" answered a question nobody
+// asked — so the avatar can show the agent's face while the title keeps
+// naming the store. See identity-header.test.ts for the full contract; this
+// file only asserts the title where a GENERIC title WOULD pair (and does
+// not, here, because `TITLE` is specific).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -227,14 +234,15 @@ describe('no agent — the brand face', () => {
 });
 
 describe('an agent on the chat — their letter', () => {
-  it('shows the agent’s first initial, agreeing with the title beside it', async () => {
+  it('shows the agent’s first initial, while the specific title beside it stays on the store name', async () => {
     await connected({
       status: 'ASSIGNED',
       handledBy: { kind: 'AGENT', id: 'agt_1', displayName: 'Ada' },
     });
     expect(avatarText()).toBe('A');
     expect(isAgentAvatar()).toBe(true);
-    expect(titleText()).toBe('Ada · Acme Support');
+    expect(titleText()).toBe(TITLE);
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('AGENT');
   });
 
   it('flips from brand to agent when one joins mid-conversation', async () => {
@@ -287,14 +295,15 @@ describe('an agent on the chat — their letter', () => {
     expect(isAgentAvatar()).toBe(false);
   });
 
-  it('letters a bot the same way, because the title names one the same way', async () => {
+  it('letters a bot the same way, even though the specific title never names one', async () => {
     await connected({
       status: 'OPEN',
       handledBy: { kind: 'BOT', id: 'bot_1', displayName: 'Assistant' },
     });
     expect(avatarText()).toBe('A');
     expect(isAgentAvatar()).toBe(true);
-    expect(titleText()).toBe('Assistant · Acme Support');
+    expect(titleText()).toBe(TITLE);
+    expect(query('#dh-title').getAttribute('data-handled-by')).toBe('BOT');
   });
 });
 
