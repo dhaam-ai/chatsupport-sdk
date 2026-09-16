@@ -94,25 +94,35 @@ async function getJson(options: PortalStaffOptions, path: string, query: Record<
 function createStaffHistorySource(options: PortalStaffOptions): MessageHistorySource {
   return {
     async listMessages(query) {
-      const body = await getJson(options, `/agent/sessions/${encodeURIComponent(query.sessionId)}/messages`, {
-        limit: String(query.limit),
-        ...(query.before === undefined ? {} : { before: query.before }),
-      });
+      try {
+        const body = await getJson(options, `/agent/sessions/${encodeURIComponent(query.sessionId)}/messages`, {
+          limit: String(query.limit),
+          ...(query.before === undefined ? {} : { before: query.before }),
+        });
 
-      const page = unwrapEnvelope<{ messages?: unknown; hasMore?: unknown }>(
-        body,
-        'GET /agent/sessions/{sessionId}/messages',
-      );
+        const page = unwrapEnvelope<{ messages?: unknown; hasMore?: unknown }>(
+          body,
+          'GET /agent/sessions/{sessionId}/messages',
+        );
 
-      const rows = Array.isArray(page.messages) ? page.messages : [];
-      const messages = rows
-        .map(projectHistoryRow)
-        .filter((message): message is RestChatMessage => message !== null);
+        const rows = Array.isArray(page.messages) ? page.messages : [];
+        const messages = rows
+          .map(projectHistoryRow)
+          .filter((message): message is RestChatMessage => message !== null);
 
-      return {
-        messages: messages as unknown as readonly ChatMessage[],
-        hasMore: page.hasMore === true,
-      };
+        return {
+          messages: messages as unknown as readonly ChatMessage[],
+          hasMore: page.hasMore === true,
+        };
+      } catch (error) {
+        // Merchant/manager identities are admitted to WebSocket v2 keyless hello
+        // and session.join, but /agent/* REST routes are strictly staff-only (401/403).
+        // Catch gracefully so conversation open & live pushes remain functional.
+        if (error instanceof PortalApiError && (error.status === 401 || error.status === 403)) {
+          return { messages: [], hasMore: false };
+        }
+        throw error;
+      }
     },
   };
 }
@@ -266,3 +276,65 @@ export async function listPortalQueue(options: PortalStaffOptions, limit = 50): 
   const rows = Array.isArray(body?.data) ? body.data : [];
   return rows.map(readQueueRow).filter((row): row is PortalQueueRow => row !== null);
 }
+
+function readPartyConversationRow(row: unknown): PortalQueueRow | null {
+  if (typeof row !== 'object' || row === null) return null;
+  const source = row as Record<string, unknown>;
+  const sessionId = source['sessionId'] ?? source['id'];
+  if (typeof sessionId !== 'string') return null;
+
+  const customerName = typeof source['customerName'] === 'string' ? source['customerName'] : null;
+  const customerEmail = typeof source['customerEmail'] === 'string' ? source['customerEmail'] : null;
+  const targetRole = typeof source['targetRole'] === 'string' ? source['targetRole'] : 'merchant';
+  const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
+
+  return {
+    sessionId,
+    status: readQueueStatus(source['status']),
+    customerName,
+    customerEmail,
+    lastMessage: null,
+    hasMessage: true,
+    chatType: 'merchant',
+    targetRole,
+    targetId,
+    storeName: null,
+    merchantName: null,
+  };
+}
+
+export interface PartyConversationQuery {
+  readonly limit?: number;
+  readonly outletIds?: readonly string[];
+}
+
+/**
+ * Lists conversations addressed to the caller's merchant / manager role or outlets.
+ *
+ * `GET /chat-services/api/v1/party/conversations` (Wire Contract §6).
+ * Strictly formats ?outletIds=a,b (comma-separated string, never bracket array ?outletIds[]).
+ * Omits ?outletIds when empty or not provided.
+ */
+export async function listPartyConversations(
+  options: PortalStaffOptions,
+  query?: PartyConversationQuery,
+): Promise<readonly PortalQueueRow[]> {
+  const queryParams: Record<string, string> = {
+    limit: String(query?.limit ?? 50),
+  };
+
+  if (query?.outletIds && query.outletIds.length > 0) {
+    const cleaned = query.outletIds.map((id) => id.trim()).filter((id) => id.length > 0);
+    if (cleaned.length > 0) {
+      queryParams['outletIds'] = cleaned.join(',');
+    }
+  }
+
+  const body = (await getJson(options, '/party/conversations', queryParams)) as {
+    data?: { conversations?: unknown[] };
+  };
+
+  const rows = Array.isArray(body?.data?.conversations) ? body.data.conversations : [];
+  return rows.map(readPartyConversationRow).filter((row): row is PortalQueueRow => row !== null);
+}
+

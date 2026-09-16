@@ -72,6 +72,7 @@ import { statusLabel } from './ui/session-status.js';
 import {
   createPortalConversationClient,
   listPortalQueue,
+  listPartyConversations,
   PortalApiError,
 } from './portal/portal-staff-client.js';
 import type { PortalQueueRow } from './portal/portal-staff-client.js';
@@ -2052,9 +2053,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // `./portal/portal-staff-client.ts`'s header for why the two protocols
   // cannot share a session model. `store`'s own connection still opens (line
   // near the bottom of this function) and is simply unused for portal
-  // rendering; nothing about the customer flow changes for `userRole`
-  // undefined/'customer'/'merchant'.
-  const isPortalAdmin = (config as any).userRole === 'admin' && config.auth.getToken !== undefined;
+  // rendering; customer flow is used when userRole is 'customer' or undefined.
+  const portalUserRole = (config as any).userRole;
+  const isPortalStaff =
+    (portalUserRole === 'admin' || portalUserRole === 'merchant' || portalUserRole === 'manager') &&
+    config.auth.getToken !== undefined;
+  const isMerchantPortal = portalUserRole === 'merchant' || portalUserRole === 'manager';
 
   async function portalToken(): Promise<string> {
     const resolved = await config.auth.getToken!();
@@ -2063,8 +2067,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   let portalClient: ConversationClient | null = null;
   let portalUnsubscribe: (() => void) | null = null;
-  // EVERY row `/agent/queue` returned, CLOSED ones included. What the two
-  // tabs actually render is `portalVisibleSessions(...)` of this, in
+  // EVERY row `/agent/queue` or `/party/conversations` returned, CLOSED ones included.
+  // What the two tabs actually render is `portalVisibleSessions(...)` of this, in
   // `syncSessionSurfaces` — kept apart on purpose, because `portalQueueIds`
   // has to keep a closed session's id for the click routing in
   // `onOpenConversation` to still recognise it as a PORTAL session rather
@@ -2091,10 +2095,22 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     return client;
   }
 
-  /** GET /agent/queue — this tenant's real customer conversations. REST, not the socket; works before/independent of `ensurePortalClient()`. */
+  /** GET /agent/queue (for admin) or GET /party/conversations (for merchant/manager) — this tenant's real customer conversations. */
   function refreshPortalQueue(): void {
-    if (!isPortalAdmin || destroyed) return;
-    listPortalQueue({ apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId })
+    if (!isPortalStaff || destroyed) return;
+    const fetchPromise = isMerchantPortal
+      ? listPartyConversations(
+          { apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId },
+          { outletIds: (config as any).outletIds },
+        )
+      : listPortalQueue({
+          apiUrl: config.apiUrl,
+          wsUrl: config.wsUrl,
+          getToken: portalToken,
+          senderId: config.identity.userId,
+        });
+
+    fetchPromise
       .then((rows) => {
         if (destroyed) return;
         portalQueueRows = rows;
@@ -2106,7 +2122,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         // A failed queue refresh leaves the last-known list on screen rather
         // than blanking it — same "don't discard what's still true" rule
         // `refreshSessions` follows for the customer flow.
-        report(error instanceof PortalApiError ? new Error(`could not load the customer queue: ${error.message}`) : error);
+        report(
+          error instanceof PortalApiError
+            ? new Error(`could not load the customer queue: ${error.message}`)
+            : error,
+        );
       });
   }
 
@@ -2300,7 +2320,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // one element wearing each of those classes at a time; an ALWAYS-
       // mounted second one is exactly what broke `widget-dom.test.ts`'s
       // `querySelector('.dh-input')` during development of this feature.
-      ...(isPortalAdmin ? [portalThread.node] : []),
+      ...(isPortalStaff ? [portalThread.node] : []),
       messageList.log,
       // Above the chips and below the transcript: the greeting is the first
       // thing said, and the chips are the answers to it.
@@ -3558,7 +3578,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // array) can never say "3" over two visible rows — see
     // `portalVisibleSessions` for the rule and for what it deliberately does
     // not touch.
-    const sessions = isPortalAdmin
+    const sessions = isPortalStaff
       ? portalVisibleSessions(portalQueueRows.map(portalQueueRowToSummary), currentPortalSessionId)
       : customerSessions;
     messagesScreen.render(sessions, currentPortalSessionId ?? joinedSessionId);
@@ -4784,16 +4804,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // to keep could do neither: it could not re-arm when the customer switched
   // conversations, which is why picking a past session left the previous
   // session's transcript on screen.
-  const connecting = isPortalAdmin ? Promise.resolve() : store.client.connect();
+  const connecting = isPortalStaff ? Promise.resolve() : store.client.connect();
 
-  // Portal (admin) mode: the Customers tab needs its first real data before
-  // the admin ever opens Messages, not only once they navigate there — see
-  // the `isPortalAdmin` comment above `refreshPortalQueue`. `20_000`, not
-  // shorter: this is a plain REST poll (no server-pushed queue event this
-  // SDK slice surfaces yet — see `portal-staff-client.ts`), and a customer's
-  // own widget polls its session list on no tighter a cadence than a screen
+  // Portal (staff/merchant) mode: the Customers tab needs its first real data before
+  // the user ever opens Messages, not only once they navigate there — see
+  // `refreshPortalQueue`. `20_000`, not shorter: this is a plain REST poll
+  // (no server-pushed queue event this SDK slice surfaces yet — see `portal-staff-client.ts`),
+  // and a customer's own widget polls its session list on no tighter a cadence than a screen
   // navigation already provides.
-  if (isPortalAdmin) {
+  if (isPortalStaff) {
     refreshPortalQueue();
     portalQueuePollTimer = setInterval(refreshPortalQueue, 20_000);
   }

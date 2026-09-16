@@ -265,6 +265,9 @@ export interface WidgetConfig {
   /** The current user's role in the portal ('admin' | 'merchant' | 'customer'). */
   readonly userRole?: 'admin' | 'merchant' | 'customer' | string;
 
+  /** Outlets this merchant or manager identity is viewing/scoping to. */
+  readonly outletIds?: readonly string[];
+
   /**
    * The line under the title — a response-time promise, typically. Defaults to
    * `''`, which leaves the connection status alone.
