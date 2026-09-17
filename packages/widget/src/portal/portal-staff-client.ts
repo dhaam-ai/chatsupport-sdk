@@ -301,6 +301,11 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
   const targetRole = typeof source['targetRole'] === 'string' ? source['targetRole'] : 'merchant';
   const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
 
+  const isCustomerAdmin =
+    (typeof customerName === 'string' && customerName.toLowerCase().includes('admin')) ||
+    (typeof customerEmail === 'string' && customerEmail.toLowerCase().includes('admin')) ||
+    source['chatType'] === 'admin';
+
   return {
     sessionId,
     status: readQueueStatus(source['status']),
@@ -308,7 +313,7 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     customerEmail,
     lastMessage: null,
     hasMessage: true,
-    chatType: 'merchant',
+    chatType: isCustomerAdmin ? 'admin' : (typeof source['chatType'] === 'string' ? source['chatType'] : 'merchant'),
     targetRole,
     targetId,
     storeName: null,

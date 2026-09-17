@@ -896,7 +896,7 @@ button {
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
 }
 .dh-title { font-size: 15px; font-weight: 600; margin: 0; }
 /* The header's avatar — the merchant's brand face (logo or initials) until an
@@ -1904,12 +1904,12 @@ button {
 
 /* The conversation header's overflow menu. Anchored to its own toggle rather
    than to the header, so it stays put when the title beside it changes length. */
-.dh-hmenu-wrap { position: relative; flex: none; }
+.dh-hmenu-wrap { position: relative; flex: none; z-index: 100; }
 .dh-hmenu {
   position: absolute;
   top: calc(100% + 6px);
   inset-inline-end: 0;
-  z-index: 3;
+  z-index: 1000 !important;
   display: flex;
   flex-direction: column;
   min-width: 216px;
@@ -3236,7 +3236,7 @@ button {
   max-width: 100% !important;
   padding: 10px 14px !important;
   gap: 8px !important;
-  overflow: hidden !important;
+  overflow: visible !important;
 }
 
 /* 2. Home & Messages Screen Headers — hide default avatar/status/menu/back */
@@ -3400,7 +3400,7 @@ button {
   max-width: 100% !important;
   padding: 10px 14px !important;
   gap: 8px !important;
-  overflow: hidden !important;
+  overflow: visible !important;
 }
 :host([data-screen="conversation"]) .dh-title {
   color: #ffffff !important;

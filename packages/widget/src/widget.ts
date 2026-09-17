@@ -2057,7 +2057,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const portalUserRole = (config as any).userRole;
   const isPortalStaff =
     (portalUserRole === 'admin' || portalUserRole === 'merchant' || portalUserRole === 'manager') &&
-    config.auth.getToken !== undefined;
+    config.auth.getToken !== undefined &&
+    (config as any).target === undefined;
   const isMerchantPortal = portalUserRole === 'merchant' || portalUserRole === 'manager';
 
   async function portalToken(): Promise<string> {

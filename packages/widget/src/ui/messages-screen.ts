@@ -115,12 +115,20 @@ export function getRowDisplayName(
     if (tab === 'admin' || tab === 'merchants') {
       // Merchant viewing Admin chat
       if (s.adminName && typeof s.adminName === 'string' && s.adminName.trim()) return s.adminName.trim();
-      if (s.customerName && s.customerName.toLowerCase().includes('admin')) return s.customerName.trim();
-      if (s.targetName && s.targetName.toLowerCase().includes('admin')) return s.targetName.trim();
+      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim()) {
+        const cName = s.customerName.trim();
+        if (cName.toLowerCase().includes('admin') || cName !== 'Customer') return cName;
+      }
+      if (s.targetName && typeof s.targetName === 'string' && s.targetName.trim() && s.targetName.toLowerCase().includes('admin')) {
+        return s.targetName.trim();
+      }
+      if (s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@')) {
+        return s.customerEmail.split('@')[0];
+      }
       if (s.handledBy?.displayName && s.handledBy.displayName !== 'Support Bot' && s.handledBy.displayName !== 'Dhaam Bot') {
         return s.handledBy.displayName;
       }
-      return 'tse';
+      return 'Store Admin';
     } else {
       // Merchant viewing Customer chat
       if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() && !s.customerName.toLowerCase().includes('admin')) {
@@ -183,8 +191,14 @@ export function getRowSubtitle(
   if (isMerchantUser) {
     if (tab === 'admin' || tab === 'merchants') {
       // Merchant viewing Admin chat: display Admin's email
-      const email = s.adminEmail || s.targetEmail || (s.handledBy?.email) || 'tse@gmail.com';
-      return `Admin • ${email}`;
+      const email =
+        s.adminEmail ||
+        (s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@') ? s.customerEmail : null) ||
+        s.targetEmail ||
+        (s.handledBy?.email) ||
+        '';
+      if (email) return `Admin • ${email}`;
+      return 'Admin';
     } else {
       // Merchant viewing Customer chat: display Customer's email
       if (s.customerEmail) return `Customer • ${s.customerEmail}`;
@@ -221,49 +235,36 @@ export function sessionBelongsToTab(
   const s = summary as any;
   const isMerchantUser = userRole === 'merchant';
 
-  // Primary: use server-provided chatType when available
-  if (s.chatType === 'merchant') {
-    // For a merchant viewer: admin↔merchant sessions carry chatType='merchant'
-    // (because the target IS the merchant). The merchant's 2nd tab has key 'admin',
-    // so we must match on 'admin' (or 'merchants' which is the same slot key-wise).
-    // For an admin viewer: correctly routed to the 'merchants' tab.
-    return isMerchantUser ? (tab === 'admin' || tab === 'merchants') : tab === 'merchants';
-  }
-  if (s.chatType === 'admin') {
-    return isMerchantUser ? (tab === 'admin' || tab === 'merchants') : tab === 'merchants';
-  }
-  if (s.chatType === 'customer') {
-    return tab === 'customers';
-  }
+  const isInitiatorAdmin =
+    (typeof s.customerName === 'string' && s.customerName.toLowerCase().includes('admin')) ||
+    (typeof s.customerEmail === 'string' && s.customerEmail.toLowerCase().includes('admin')) ||
+    (s.adminName && !s.customerName) ||
+    s.chatType === 'admin';
 
-  // Fallbacks:
   if (isMerchantUser) {
     // When Merchant is logged in:
     // Tab 1: Customers
     // Tab 2: Admin
-    const isInitiatorAdmin =
-      (s.customerName && s.customerName.toLowerCase().includes('admin')) ||
-      (s.customerEmail && s.customerEmail.toLowerCase().includes('admin')) ||
-      (s.adminName && !s.customerName);
-
-    if (tab === 'customers') {
-      if (isInitiatorAdmin) return false;
-      if (s.targetRole === 'customer') return true;
-      // Inbound customer inquiry addressed to this merchant
-      if (s.targetRole === 'merchant') return true;
-      if (s.customerName && !isInitiatorAdmin) return true;
-      return false;
-    }
     if (tab === 'admin' || tab === 'merchants') {
-      if (isInitiatorAdmin) return true;
-      if (s.targetRole === 'admin') return true;
-      if (!s.targetRole && (!s.customerName || isInitiatorAdmin)) return true;
-      return false;
+      return isInitiatorAdmin || s.targetRole === 'admin';
     }
+    if (tab === 'customers') {
+      return !isInitiatorAdmin && s.targetRole !== 'admin';
+    }
+    return false;
   } else {
     // When Admin is logged in:
     // Tab 1: Customers
     // Tab 2: Merchants
+    if (s.chatType === 'merchant') {
+      return tab === 'merchants' || tab === 'admin';
+    }
+    if (s.chatType === 'admin') {
+      return tab === 'merchants' || tab === 'admin';
+    }
+    if (s.chatType === 'customer') {
+      return tab === 'customers';
+    }
     if (tab === 'customers') {
       if (s.targetRole === 'customer') return true;
       if (s.targetRole === 'merchant') return false;

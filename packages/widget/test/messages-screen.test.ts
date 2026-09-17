@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 
-import { createMessagesScreen } from '../src/ui/messages-screen.js';
+import {
+  createMessagesScreen,
+  sessionBelongsToTab,
+  getRowDisplayName,
+  getRowSubtitle,
+} from '../src/ui/messages-screen.js';
 import { STYLES } from '../src/ui/styles.js';
 
 function summary(overrides: Partial<ChatSessionSummary> = {}): ChatSessionSummary {
@@ -248,3 +253,49 @@ describe('the sticky "New conversation" button — CSS ownership of the scroll b
     expect(listRule).toMatch(/min-height:\s*0/);
   });
 });
+
+describe('sessionBelongsToTab & display info — Admin ↔ Merchant routing', () => {
+  const adminInitiatedSession = summary({
+    id: 's_admin_1',
+    customerName: 'Store Admin',
+    customerEmail: 'admin@dhaam.com',
+    targetRole: 'merchant',
+    targetId: 'outlet_12801',
+    chatType: 'admin',
+  } as any);
+
+  const customerSession = summary({
+    id: 's_cust_1',
+    customerName: 'John Doe',
+    customerEmail: 'john@gmail.com',
+    targetRole: 'merchant',
+    targetId: 'outlet_12801',
+    chatType: 'merchant',
+  } as any);
+
+  it('routes admin-initiated chats to the Admin tab for merchant users', () => {
+    expect(sessionBelongsToTab(adminInitiatedSession, 'admin', 'merchant')).toBe(true);
+    expect(sessionBelongsToTab(adminInitiatedSession, 'customers', 'merchant')).toBe(false);
+  });
+
+  it('routes customer-initiated chats to the Customers tab for merchant users', () => {
+    expect(sessionBelongsToTab(customerSession, 'customers', 'merchant')).toBe(true);
+    expect(sessionBelongsToTab(customerSession, 'admin', 'merchant')).toBe(false);
+  });
+
+  it('routes merchant-targeted chats to the Merchants tab for admin users', () => {
+    expect(sessionBelongsToTab(adminInitiatedSession, 'merchants', 'admin')).toBe(true);
+    expect(sessionBelongsToTab(adminInitiatedSession, 'customers', 'admin')).toBe(false);
+  });
+
+  it('renders correct display name and email without hardcoded "tse"', () => {
+    const displayName = getRowDisplayName(adminInitiatedSession, 'admin', 'merchant');
+    expect(displayName).toBe('Store Admin');
+    expect(displayName).not.toBe('tse');
+
+    const subtitle = getRowSubtitle(adminInitiatedSession, 'admin', 'merchant');
+    expect(subtitle).toBe('Admin • admin@dhaam.com');
+    expect(subtitle).not.toContain('tse@gmail.com');
+  });
+});
+
