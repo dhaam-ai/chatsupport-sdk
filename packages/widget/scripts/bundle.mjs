@@ -105,11 +105,9 @@ console.log('');
 // regression room where the old budget only ever allowed 6,263 B. That is not
 // a budget, it is a formality, and it would have let the whole saving be
 // spent again without anyone being told.
-// Increased to 115 KiB (117,760 B) for adding portal messages screen styles:
-// tab bar (Customers/Admin/Merchants) and conversation row cards with avatar
-// circles, status pills, unread badges, and timestamps — dh-mtab-* and dh-mrow-*
-// classes that previously had no CSS rules at all (resulting in unstyled elements).
-const WIDGET_GZIP_BUDGET = 117_760;
+// Increased to 118 KiB (120,832 B) for portal thread customer name & initial display,
+// header alignment and overflow-prevention rules.
+const WIDGET_GZIP_BUDGET = 120_832;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,

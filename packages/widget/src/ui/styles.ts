@@ -3227,6 +3227,12 @@ button {
   background: linear-gradient(180deg, #2e0854 0%, #4c1d95 35%, #6d28d9 75%, #7c3aed 100%) !important;
   color: #fff !important;
   border-bottom-color: transparent !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 10px 14px !important;
+  gap: 8px !important;
+  overflow: hidden !important;
 }
 
 /* 2. Home & Messages Screen Headers — hide default avatar/status/menu/back */
@@ -3251,7 +3257,10 @@ button {
 .dh-header-identity-wrap {
   display: flex !important;
   align-items: center !important;
-  gap: 12px !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+  flex: 0 1 auto !important;
+  overflow: hidden !important;
 }
 
 /* Collapsed header hero avatars: hidden by default, shown ONLY on Home when hero is collapsed */
@@ -3328,12 +3337,30 @@ button {
 :host([data-screen="conversation"]) .dh-header .dh-icon-button {
   color: #fff !important;
   opacity: 0.95 !important;
+  flex-shrink: 0 !important;
 }
 :host([data-screen="home"]) .dh-header .dh-icon-button:hover,
 :host([data-screen="messages"]) .dh-header .dh-icon-button:hover,
 :host([data-screen="conversation"]) .dh-header .dh-icon-button:hover {
   background: rgba(255, 255, 255, 0.18) !important;
   color: #fff !important;
+}
+
+.dh-header .dh-icon-button,
+.dh-header .dh-hmenu-wrap,
+.dh-header .dh-avatar-host,
+.dh-header .dh-back {
+  flex-shrink: 0 !important;
+}
+
+.dh-header .dh-icon-button[aria-label="Close chat"] {
+  flex-shrink: 0 !important;
+  margin-inline-end: 2px !important;
+}
+
+.dh-header-spacer {
+  flex: 1 1 auto !important;
+  min-width: 6px !important;
 }
 
 /* 3. Bottom navigation bar — show on home & messages, hide only on conversation */
@@ -3364,16 +3391,28 @@ button {
 /* 4. Conversation Header */
 :host([data-screen="conversation"]) .dh-header {
   background: #7c3aed !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 10px 14px !important;
+  gap: 8px !important;
+  overflow: hidden !important;
 }
 :host([data-screen="conversation"]) .dh-title {
   color: #ffffff !important;
   font-weight: 600 !important;
   font-size: 15px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  min-width: 0 !important;
+  flex-shrink: 1 !important;
 }
 :host([data-screen="conversation"]) .dh-status {
   display: flex !important;
   align-items: center !important;
   gap: 5px !important;
+  flex-shrink: 0 !important;
 }
 :host([data-screen="conversation"]) .dh-status-dot {
   width: 7px !important;
@@ -3381,17 +3420,22 @@ button {
   border-radius: 50% !important;
   background: #22c55e !important;
   display: inline-block !important;
+  flex-shrink: 0 !important;
 }
 :host([data-screen="conversation"]) .dh-status-text {
   color: rgba(255, 255, 255, 0.9) !important;
   font-size: 12px !important;
   font-weight: 500 !important;
 }
+:host([data-screen="conversation"]) .dh-status-text:empty {
+  display: none !important;
+}
 :host([data-screen="conversation"]) .dh-avatar {
   border: 2px solid rgba(255, 255, 255, 0.6) !important;
   background: #f59e0b !important;
   color: #ffffff !important;
   font-weight: 700 !important;
+  flex-shrink: 0 !important;
 }
 
 /* 5. Chat thread background: pastel pink-teal gradient */

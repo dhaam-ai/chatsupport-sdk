@@ -22,6 +22,8 @@ export interface PortalThreadView {
   render(state: ChatState | null, opening: boolean): void;
   /** A load/open/send failure banner above the transcript. `null` clears it. */
   setError(message: string | null): void;
+  /** Sets the active customer display name to show on incoming message bubbles. */
+  setCustomerName(name: string | null): void;
   focus(): void;
 }
 
@@ -228,6 +230,7 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
 
   let sendable = false;
   let sending = false;
+  let currentCustomerName: string | null = null;
 
   function syncSendState(): void {
     const hasText = input.value.trim() !== '';
@@ -238,9 +241,9 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     emojiPicker.setEnabled(sendable && !sending);
   }
 
-  function handleReply(msg: ChatMessage): void {
-    const snippet = msg.content.trim().slice(0, 60);
-    input.value = `> ${snippet}\n`;
+  function handleReply(message: ChatMessage): void {
+    const snippet = message.content.trim().slice(0, 60);
+    input.value = `> ${snippet}\n\n`;
     autoGrow();
     input.focus();
     syncSendState();
@@ -283,6 +286,18 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     const isAgent = message.senderType === 'AGENT';
     const avatarClass = isBot ? 'dh-msg-avatar--bot' : (isAgent ? 'dh-msg-avatar--agent' : 'dh-msg-avatar--customer');
     
+    const senderMetadata = message.metadata as Record<string, unknown> | undefined;
+    const metaName =
+      (typeof senderMetadata?.senderName === 'string' ? senderMetadata.senderName : null) ??
+      (typeof senderMetadata?.name === 'string' ? senderMetadata.name : null) ??
+      (typeof senderMetadata?.author === 'string' ? senderMetadata.author : null);
+
+    const resolvedCustomerName = metaName ?? currentCustomerName ?? 'Customer';
+    const authorName = isBot ? '✦ Dhaam Assistant' : (isAgent ? (metaName ?? 'Staff') : resolvedCustomerName);
+    const initial = isAgent
+      ? (authorName.trim().charAt(0).toUpperCase() || 'S')
+      : (resolvedCustomerName.trim().charAt(0).toUpperCase() || 'C');
+
     let avatarEl: HTMLElement;
     if (isBot) {
       avatarEl = el('span', {
@@ -290,14 +305,12 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
         children: [icon(ICONS.sparkle, 16)],
       });
     } else {
-      const initial = isAgent ? 'R' : 'C';
       avatarEl = el('span', {
         attrs: { class: `dh-msg-avatar ${avatarClass}` },
         text: initial,
       });
     }
 
-    const authorName = isBot ? '✦ Dhaam Assistant' : (isAgent ? 'Ravi' : 'Customer');
     const authorEl = el('span', { attrs: { class: 'dh-msg-author' }, text: authorName });
 
     const bubbleWrap = el('div', {
@@ -386,6 +399,10 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     setError(message) {
       errorLine.textContent = message ?? '';
       errorLine.hidden = message === null;
+    },
+
+    setCustomerName(name) {
+      currentCustomerName = name && name.trim() ? name.trim() : null;
     },
 
     focus() {

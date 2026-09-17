@@ -2116,6 +2116,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         portalQueueRows = rows;
         portalQueueIds.clear();
         for (const row of rows) portalQueueIds.add(row.sessionId);
+        if (currentPortalSessionId) {
+          const activeRow = rows.find((r) => r.sessionId === currentPortalSessionId);
+          if (activeRow?.customerName) {
+            portalThread.setCustomerName(activeRow.customerName);
+          }
+        }
         syncSessionSurfaces();
       })
       .catch((error: unknown) => {
@@ -2163,8 +2169,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     activeConversationTitle = resolvedTitle;
     identityHeader.setTitle(resolvedTitle);
     syncHeaderAvatar();
-    subtitle = subtitleText ?? (displayName?.toLowerCase().includes('store') ? 'Merchant' : 'Customer');
-    statusText.textContent = subtitle;
+
+    const row = portalQueueRows.find((r) => r.sessionId === sessionId);
+    const customerName =
+      (displayName && displayName !== 'Conversation' && displayName !== 'Customer' ? displayName : null) ??
+      row?.customerName ??
+      null;
+    portalThread.setCustomerName(customerName);
+
+    // In header section, show only the active customer name (e.g. "bikash"),
+    // do not show "Customer • email" in subtitle
+    subtitle = '';
+    statusText.textContent = '';
+
     portalThread.setError(null);
     portalThread.render(null, true);
     showConversation();
@@ -3936,7 +3953,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // nowhere. A healthy connection is the one state with nothing of its
       // own to report, so it is the one the merchant's words can have.
       statusText.textContent =
-        connectionState === 'connected' && subtitle !== '' ? subtitle : status.label;
+        connectionState === 'connected' && subtitle !== ''
+          ? subtitle
+          : (isPortalStaff && portalConversationActive ? '' : status.label);
       statusDot.style.display = '';
       statusDot.style.color = status.color;
     }
