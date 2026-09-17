@@ -1947,13 +1947,26 @@ button {
    keeps them — but the TOGGLE belongs to the header and inherits from it. */
 :host([data-design="hero"]) .dh-hmenu-toggle { color: inherit; opacity: 0.85; }
 
-/* Per-message reply action. Hidden until the row is hovered or something
-   inside it has focus, so a transcript at rest is text rather than a column
-   of buttons — but ALWAYS present for keyboard and touch, which have no
-   hover: 'opacity' is what is animated, never 'display', so the control
-   stays in the tab order and in the accessibility tree at all times. */
-.dh-msg { position: relative; }
-.dh-msg-actions { position: absolute; top: 2px; inset-inline-end: 2px; }
+/* Per-message reply action. A FLEX SIBLING of the bubble inside
+   .dh-msg-bubble-wrap (already display: flex, align-items: center, gap: 6px
+   — see the [data-mine] rules below), never absolutely positioned: that
+   wrap's own child order is what puts this before the bubble for an
+   outgoing message and after it for an incoming one (message-list.ts's
+   bubbleWrap.replaceChildren(...) calls), so the control sits cleanly beside
+   the bubble rather than floating over one of its corners.
+   Hidden until the row is hovered or something inside it has focus, so a
+   transcript at rest is text rather than a column of buttons — but ALWAYS
+   present for keyboard and touch, which have no hover: 'opacity' is what is
+   animated, never 'display', so the control stays in the tab order and in
+   the accessibility tree at all times. */
+.dh-msg-actions {
+  /* relative, never absolute — this only anchors the tooltip popup
+     below/above the button; it must NOT pull the actions wrapper itself out
+     of .dh-msg-bubble-wrap's flex flow, which is what put the button on top
+     of the bubble's corner instead of beside it. */
+  position: relative;
+  display: flex;
+}
 .dh-msg-reply {
   position: relative;
   display: flex;
