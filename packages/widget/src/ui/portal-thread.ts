@@ -3,12 +3,14 @@
 // `../portal/portal-staff-client.ts` for why this is a second client rather
 // than a branch in the customer one).
 
-import type { ChatMessage, ChatState } from '@dhaam-ccrm/js';
+import type { ChatMessage, ChatState, SendMessageOptions } from '@dhaam-ccrm/js';
 import { ICONS, el, icon } from './dom.js';
 import { createEmojiPicker, insertAtCaret } from './emoji.js';
+import { createMessageActions } from './message-actions.js';
+import { readReplyQuote } from './message-list.js';
 
 export interface PortalThreadCallbacks {
-  readonly onSend: (text: string) => Promise<void>;
+  readonly onSend: (text: string, options?: SendMessageOptions) => Promise<void>;
 }
 
 export interface PortalThreadView {
@@ -215,10 +217,29 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     children: [toolsGroup, sendButton],
   });
 
+  // The quoted message, shown above the input while a reply is being
+  // composed — same shape as the customer composer's own chip
+  // (ui/composer.ts), reused here rather than redesigned so the two
+  // surfaces agree on what "replying" looks like.
+  const replyName = el('span', { attrs: { class: 'dh-reply-name' } });
+  const replyExcerpt = el('span', { attrs: { class: 'dh-reply-excerpt' } });
+  const replyChip = el('div', {
+    attrs: { class: 'dh-reply-chip', hidden: true },
+    children: [
+      el('span', { attrs: { class: 'dh-reply-body' }, children: [replyName, replyExcerpt] }),
+      el('button', {
+        attrs: { class: 'dh-reply-clear', type: 'button', 'aria-label': 'Cancel reply' },
+        children: [icon(ICONS.close, 14)],
+        on: { click: () => cancelReply() },
+      }),
+    ],
+  });
+
   const composerNode = el('div', {
     attrs: { class: 'dh-composer' },
     children: [
       errorLine,
+      replyChip,
       el('div', {
         attrs: { class: 'dh-composer-box' },
         children: [input, composerRow],
@@ -232,6 +253,40 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
   let sending = false;
   let currentCustomerName: string | null = null;
 
+  /**
+   * The message an agent's next send will quote — captured at reply-start,
+   * not re-derived at send time, for the same reason widget.ts's customer
+   * flow captures it: by send time the quoted message may have scrolled out
+   * of the loaded page, and the excerpt sent must match what the chip showed.
+   */
+  let replyingTo: { messageId: string; excerpt: string; senderName: string } | null = null;
+
+  /** The wire cap on a reply excerpt — matches widget.ts's own constant. */
+  const MAX_REPLY_EXCERPT = 120;
+
+  function startReply(message: ChatMessage, senderName: string): void {
+    const raw = (message.content ?? '').trim().replace(/\s+/g, ' ');
+    const text = message.attachment?.url !== undefined && raw === message.attachment.url ? '' : raw;
+    const excerpt =
+      text === ''
+        ? 'Attachment'
+        : text.length > MAX_REPLY_EXCERPT
+          ? `${text.slice(0, MAX_REPLY_EXCERPT - 1)}…`
+          : text;
+
+    replyingTo = { messageId: message.id, excerpt, senderName };
+    replyChip.hidden = false;
+    replyName.textContent = senderName;
+    replyExcerpt.textContent = excerpt;
+    input.focus();
+  }
+
+  function cancelReply(): void {
+    if (replyingTo === null) return;
+    replyingTo = null;
+    replyChip.hidden = true;
+  }
+
   function syncSendState(): void {
     const hasText = input.value.trim() !== '';
     sendButton.disabled = !sendable || sending || !hasText;
@@ -241,33 +296,34 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     emojiPicker.setEnabled(sendable && !sending);
   }
 
-  function handleReply(message: ChatMessage): void {
-    const snippet = message.content.trim().slice(0, 60);
-    input.value = `> ${snippet}\n\n`;
-    autoGrow();
-    input.focus();
-    syncSendState();
-  }
-
   function renderBubble(message: ChatMessage): HTMLElement {
     const outgoing = isOutgoing(message);
     const timeStr = formatTime(message.createdAt);
 
-    const replyBtn = el('button', {
-      attrs: { class: 'dh-msg-reply-btn', type: 'button', 'aria-label': 'Reply' },
-      children: [icon(ICONS.reply, 13)],
-      on: {
-        click: () => handleReply(message),
-      },
-    });
+    // The quoted message this one replies to, drawn from the SAME metadata
+    // shape the customer flow writes and reads (message-list.ts's own
+    // readReplyQuote) — one wire format, read by both surfaces.
+    const replyQuote = readReplyQuote(message.metadata);
+    const quoteName = el('span', { attrs: { class: 'dh-quote-name' } });
+    const quoteText = el('span', { attrs: { class: 'dh-quote-text' } });
+    const quote = el('span', { attrs: { class: 'dh-msg-quote', hidden: true }, children: [quoteName, quoteText] });
+    if (replyQuote !== null) {
+      quote.hidden = false;
+      quoteName.textContent = replyQuote.senderName;
+      quoteText.textContent = replyQuote.excerpt;
+    }
 
     const body = el('span', { attrs: { class: 'dh-msg-body' }, text: message.content });
-    const bubble = el('div', { attrs: { class: 'dh-msg-bubble' }, children: [body] });
+    const bubble = el('div', { attrs: { class: 'dh-msg-bubble' }, children: [quote, body] });
 
     if (outgoing) {
+      // The admin IS the agent here, so the admin's own messages quote as
+      // 'You' — the same word the customer flow's own outgoing rows use.
+      const actions = createMessageActions({ onReply: () => startReply(message, 'You') });
+
       const bubbleWrap = el('div', {
         attrs: { class: 'dh-msg-bubble-wrap' },
-        children: [replyBtn, bubble],
+        children: [actions.node, bubble],
       });
 
       const timeEl = el('time', { attrs: { class: 'dh-msg-time' }, text: timeStr });
@@ -285,7 +341,7 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     const isBot = message.senderType === 'BOT';
     const isAgent = message.senderType === 'AGENT';
     const avatarClass = isBot ? 'dh-msg-avatar--bot' : (isAgent ? 'dh-msg-avatar--agent' : 'dh-msg-avatar--customer');
-    
+
     const senderMetadata = message.metadata as Record<string, unknown> | undefined;
     const metaName =
       (typeof senderMetadata?.senderName === 'string' ? senderMetadata.senderName : null) ??
@@ -314,9 +370,10 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
 
     const authorEl = el('span', { attrs: { class: 'dh-msg-author' }, text: authorName });
 
+    const actions = createMessageActions({ onReply: () => startReply(message, authorName) });
     const bubbleWrap = el('div', {
       attrs: { class: 'dh-msg-bubble-wrap' },
-      children: [bubble, replyBtn],
+      children: [bubble, actions.node],
     });
 
     const timeEl = el('time', { attrs: { class: 'dh-msg-time' }, text: timeStr });
@@ -340,10 +397,30 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     sending = true;
     syncSendState();
     const draft = input.value;
+    // Read and cleared BEFORE the await, same reason widget.ts's customer
+    // flow does it: a send that takes a second must not leave the chip on
+    // screen looking like it still applies to whatever the agent types next.
+    const addressedTo = replyingTo;
+    cancelReply();
     input.value = '';
     autoGrow();
     try {
-      await callbacks.onSend(text);
+      await callbacks.onSend(
+        text,
+        addressedTo === null
+          ? undefined
+          : {
+              replyToMessageId: addressedTo.messageId,
+              metadata: {
+                kind: 'reply',
+                replyTo: {
+                  messageId: addressedTo.messageId,
+                  excerpt: addressedTo.excerpt,
+                  senderName: addressedTo.senderName,
+                },
+              },
+            },
+      );
       errorLine.hidden = true;
     } catch (error) {
       input.value = draft;

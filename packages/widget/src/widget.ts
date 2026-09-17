@@ -2206,9 +2206,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   const portalThread = createPortalThread({
-    onSend: async (text) => {
+    onSend: async (text, options) => {
       if (currentPortalSessionId === null || portalClient === null) return;
-      await portalClient.sendMessage(currentPortalSessionId, text);
+      await portalClient.sendMessage(currentPortalSessionId, text, options);
     },
   });
   let portalConversationActive = false;

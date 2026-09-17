@@ -103,3 +103,95 @@ describe('createPortalThread — customer name and avatar resolution', () => {
     expect(avatarEl?.textContent).toBe('C');
   });
 });
+
+describe('createPortalThread — reply', () => {
+  it('shows the quoted message in the composer chip when the reply icon is clicked', () => {
+    const thread = createPortalThread({ onSend: vi.fn(async () => undefined) });
+    thread.setCustomerName('bikash');
+
+    const msg = buildMessage({ content: 'where is my order' });
+    thread.render(buildState([msg]), false);
+
+    thread.node.querySelector<HTMLButtonElement>('.dh-msg-reply')!.click();
+
+    const chip = thread.node.querySelector<HTMLElement>('.dh-reply-chip')!;
+    expect(chip.hidden).toBe(false);
+    expect(chip.querySelector('.dh-reply-name')?.textContent).toBe('bikash');
+    expect(chip.querySelector('.dh-reply-excerpt')?.textContent).toBe('where is my order');
+  });
+
+  it('names the reply "You" when the agent replies to their own message', () => {
+    const thread = createPortalThread({ onSend: vi.fn(async () => undefined) });
+    const msg = buildMessage({ id: 'm_agent', senderType: 'AGENT', content: 'On its way!' });
+    thread.render(buildState([msg]), false);
+
+    thread.node.querySelector<HTMLButtonElement>('.dh-msg-reply')!.click();
+
+    expect(thread.node.querySelector('.dh-reply-name')?.textContent).toBe('You');
+  });
+
+  it('sends replyToMessageId and reply metadata built from the clicked message', async () => {
+    const onSend = vi.fn(async () => undefined);
+    const thread = createPortalThread({ onSend });
+    thread.setCustomerName('bikash');
+
+    const msg = buildMessage({ id: 'm_target', content: 'where is my order' });
+    thread.render(buildState([msg]), false);
+    thread.node.querySelector<HTMLButtonElement>('.dh-msg-reply')!.click();
+
+    const input = thread.node.querySelector<HTMLTextAreaElement>('.dh-input')!;
+    input.value = 'Refunded, sorry about that!';
+    input.dispatchEvent(new Event('input'));
+    thread.node.querySelector<HTMLButtonElement>('.dh-send')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0]![0]).toBe('Refunded, sorry about that!');
+    expect(onSend.mock.calls[0]![1]).toEqual({
+      replyToMessageId: 'm_target',
+      metadata: {
+        kind: 'reply',
+        replyTo: { messageId: 'm_target', excerpt: 'where is my order', senderName: 'bikash' },
+      },
+    });
+  });
+
+  it('cancelling the reply hides the chip and sends with no reply options', async () => {
+    const onSend = vi.fn(async () => undefined);
+    const thread = createPortalThread({ onSend });
+
+    const msg = buildMessage({ content: 'hello' });
+    thread.render(buildState([msg]), false);
+    thread.node.querySelector<HTMLButtonElement>('.dh-msg-reply')!.click();
+    thread.node.querySelector<HTMLButtonElement>('.dh-reply-clear')!.click();
+
+    expect(thread.node.querySelector<HTMLElement>('.dh-reply-chip')!.hidden).toBe(true);
+
+    const input = thread.node.querySelector<HTMLTextAreaElement>('.dh-input')!;
+    input.value = 'a plain message';
+    input.dispatchEvent(new Event('input'));
+    thread.node.querySelector<HTMLButtonElement>('.dh-send')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSend.mock.calls[0]).toEqual(['a plain message', undefined]);
+  });
+
+  it('renders the quoted strip inside a bubble carrying reply metadata', () => {
+    const thread = createPortalThread({ onSend: vi.fn() });
+    const msg = buildMessage({
+      content: 'Refunded, sorry about that!',
+      metadata: {
+        kind: 'reply',
+        replyTo: { messageId: 'm_target', excerpt: 'where is my order', senderName: 'bikash' },
+      } as any,
+    });
+    thread.render(buildState([msg]), false);
+
+    const quote = thread.node.querySelector<HTMLElement>('.dh-msg-quote')!;
+    expect(quote.hidden).toBe(false);
+    expect(quote.querySelector('.dh-quote-name')?.textContent).toBe('bikash');
+    expect(quote.querySelector('.dh-quote-text')?.textContent).toBe('where is my order');
+  });
+});

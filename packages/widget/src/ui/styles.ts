@@ -3503,7 +3503,7 @@ button {
 :host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-author,
 :host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-meta,
 :host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-actions,
-:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-reply-btn {
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-actions {
   display: none !important;
 }
 .dh-system-pill,
@@ -3658,28 +3658,10 @@ button {
   color: #94a3b8 !important;
 }
 
-/* 10. Reply action button on hover */
-.dh-msg-reply-btn {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  width: 24px !important;
-  height: 24px !important;
-  border-radius: 50% !important;
-  border: 0 !important;
-  background: transparent !important;
-  color: #94a3b8 !important;
-  cursor: pointer !important;
-  opacity: 0 !important;
-  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease !important;
-}
-.dh-msg:hover .dh-msg-reply-btn {
-  opacity: 1 !important;
-}
-.dh-msg-reply-btn:hover {
-  background: rgba(0, 0, 0, 0.06) !important;
-  color: #475569 !important;
-}
+/* 10. Reply action button on hover — portal-thread.ts now reuses
+   ui/message-actions.ts's own .dh-msg-reply/.dh-msg-actions directly (see
+   its base styles above) rather than a separate .dh-msg-reply-btn, so the
+   two surfaces share one implementation instead of two that could drift. */
 
 
 /* 11. Portal Thread Container Layout */
