@@ -171,8 +171,13 @@ describe('portal queue — a CLOSED conversation is off the staff list', () => {
     queueRows = [
       { id: 'sess_open', status: CODE.OPEN, customer: { displayName: 'Jane Doe' } },
       { id: 'sess_closed', status: CODE.CLOSED, customer: { displayName: 'Closed Casey' } },
-      { id: 'sess_m_live', status: CODE.ASSIGNED, targetRole: 'merchant', storeName: 'Acme Store' },
-      { id: 'sess_m_closed', status: CODE.CLOSED, targetRole: 'merchant', storeName: 'Gone Goods' },
+      // `chatType: 'admin'` makes these unambiguously admin-initiated — this
+      // test is about closed-row visibility, not initiator detection, and a
+      // merchant-targeted row with no customer identity at all is no longer
+      // enough on its own to land in the admin's Merchants tab (a customer's
+      // own DM to an outlet shares that same targetRole).
+      { id: 'sess_m_live', status: CODE.ASSIGNED, targetRole: 'merchant', storeName: 'Acme Store', chatType: 'admin' },
+      { id: 'sess_m_closed', status: CODE.CLOSED, targetRole: 'merchant', storeName: 'Gone Goods', chatType: 'admin' },
     ];
 
     mount(config());

@@ -290,28 +290,31 @@ export function sessionBelongsToTab(
     return false;
   } else {
     // When Admin is logged in:
-    // Tab 1: Customers
-    // Tab 2: Merchants
-    if (s.chatType === 'merchant') {
-      return tab === 'merchants' || tab === 'admin';
-    }
+    // Tab 1: Customers — every conversation a genuine customer is a party
+    //   to, INCLUDING a customer's own DM to an outlet (targetRole
+    //   'merchant') — the admin is observing that one, not a participant.
+    // Tab 2: Merchants — only conversations the ADMIN itself started (or is
+    //   addressed by) with a store/outlet. `targetRole === 'merchant'` alone
+    //   cannot tell "admin messaged this outlet" apart from "a customer
+    //   messaged this outlet" — both share it. `isInitiatorAdmin` is the
+    //   signal that can, and this branch used to skip it entirely, which is
+    //   why a customer's own outlet chat used to land here under the
+    //   customer's name instead of in Customers.
     if (s.chatType === 'admin') {
       return tab === 'merchants' || tab === 'admin';
     }
-    if (s.chatType === 'customer') {
-      return tab === 'customers';
+    if ((s.targetRole === 'merchant' || s.chatType === 'merchant') && isInitiatorAdmin) {
+      return tab === 'merchants' || tab === 'admin';
     }
-    if (tab === 'customers') {
-      if (s.targetRole === 'customer') return true;
-      if (s.targetRole === 'merchant') return false;
-      return true;
+    if (s.targetRole === 'admin') {
+      return tab === 'merchants' || tab === 'admin';
     }
     if (tab === 'merchants' || tab === 'admin') {
-      if (s.targetRole === 'merchant') return true;
-      if (s.targetRole === 'admin') return true;
       return false;
     }
-    return false;
+    // tab === 'customers': everything else, including a customer's own DM to
+    // an outlet — see the comment above.
+    return true;
   }
 }
 

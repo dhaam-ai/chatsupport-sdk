@@ -288,6 +288,16 @@ describe('sessionBelongsToTab & display info — Admin ↔ Merchant routing', ()
     expect(sessionBelongsToTab(adminInitiatedSession, 'customers', 'admin')).toBe(false);
   });
 
+  it('routes a CUSTOMER\'s own DM to an outlet to the Customers tab for admin users, never Merchants', () => {
+    // customerSession has targetRole 'merchant' (it IS addressed to an
+    // outlet) but was started by an ordinary customer, not the admin.
+    // targetRole alone used to be enough to land it in Merchants under the
+    // customer's own name — this is the exact bug: a customer talking to an
+    // outlet is not the admin's own merchant conversation.
+    expect(sessionBelongsToTab(customerSession, 'customers', 'admin')).toBe(true);
+    expect(sessionBelongsToTab(customerSession, 'merchants', 'admin')).toBe(false);
+  });
+
   it('renders correct display name and email without hardcoded "tse"', () => {
     const displayName = getRowDisplayName(adminInitiatedSession, 'admin', 'merchant');
     expect(displayName).toBe('Store Admin');
