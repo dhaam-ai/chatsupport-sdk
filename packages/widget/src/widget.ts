@@ -578,11 +578,25 @@ function isUserInitiated(kind: SurfaceKind): boolean {
 function customerVisibleSessions(
   sessions: readonly ChatSessionSummary[],
   joinedSessionId: string | null,
+  target?: { readonly role: string; readonly id: string } | undefined,
 ): readonly ChatSessionSummary[] {
   return sessions.filter((summary) => {
+    const s = summary as any;
+    const hasTarget = s.targetId !== undefined && s.targetId !== null && s.targetId !== '';
+    if (target !== undefined) {
+      // Scoped to a specific merchant outlet
+      if (hasTarget) {
+        if (String(s.targetId) !== String(target.id)) return false;
+      } else if (summary.id !== joinedSessionId) {
+        return false;
+      }
+    } else {
+      // General support (no target): exclude merchant-targeted sessions
+      if (hasTarget) return false;
+    }
+
     if (summary.id === joinedSessionId) return true;
     if (summary.status === 'CLOSED') return false;
-    const s = summary as any;
     if (s.hasMessage === false) return false;
     return true;
   });
@@ -3578,7 +3592,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // "Recent conversation" row and the Messages list. Filtering once here
     // rather than twice downstream is the same "one input, two screens"
     // reason this function exists at all.
-    const customerSessions = customerVisibleSessions(state.pastSessions, joinedSessionId);
+    const customerSessions = customerVisibleSessions(
+      state.pastSessions,
+      joinedSessionId,
+      config.target,
+    );
     const ctaSub = remote.header.ctaSubtitle || config.header.ctaSubtitle || 'We usually reply instantly';
     homeScreen.update(mostRecentSession(customerSessions), ctaSub, entry);
     // Portal (admin) mode: the Customers tab's real rows come from

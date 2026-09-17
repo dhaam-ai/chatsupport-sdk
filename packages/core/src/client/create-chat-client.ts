@@ -964,10 +964,14 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     void messageController.loadMore(sessionId).catch(() => undefined);
   }
 
+  const selectedSessionKey = config.target
+    ? `${SELECTED_SESSION_KEY}:${encodeNamespaceSegment(config.target.role)}:${encodeNamespaceSegment(config.target.id)}`
+    : SELECTED_SESSION_KEY;
+
   /** Reads the persisted selected-session id. A storage fault reads as "none". */
   async function readSelectedSession(): Promise<string | null> {
     try {
-      const value = await queueStorage.get(SELECTED_SESSION_KEY);
+      const value = await queueStorage.get(selectedSessionKey);
       return value === null || value === '' ? null : value;
     } catch {
       // Never fatal: not knowing which session was chosen is exactly the
@@ -980,7 +984,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   /** Records the session the user is in, so a reload comes back to it. */
   async function rememberSelectedSession(sessionId: string): Promise<void> {
     try {
-      await queueStorage.set(SELECTED_SESSION_KEY, sessionId);
+      await queueStorage.set(selectedSessionKey, sessionId);
     } catch {
       // A failed write costs the reload behaviour, nothing else. It must not
       // fail a switch that has already succeeded on the wire.
@@ -1038,7 +1042,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   async function forgetSelectedSession(sessionId?: string): Promise<void> {
     try {
       if (sessionId !== undefined && (await readSelectedSession()) !== sessionId) return;
-      await queueStorage.remove(SELECTED_SESSION_KEY);
+      await queueStorage.remove(selectedSessionKey);
     } catch {
       // Same reasoning as rememberSelectedSession.
     }
