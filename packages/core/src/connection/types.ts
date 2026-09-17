@@ -171,6 +171,9 @@ export interface ConnectionControllerOptions {
   /** Initial conversation subject / store name, if any. */
   readonly subject?: string;
 
+  /** Initial conversation topic, if any. */
+  readonly topic?: string;
+
   /** Credentials (§10.4). */
   readonly getToken: TokenProvider;
 

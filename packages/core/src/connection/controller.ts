@@ -217,6 +217,7 @@ export class ConnectionController {
     this.#target = options.target;
     this.#outletIds = options.outletIds;
     this.#pendingNewSessionSubject = options.subject;
+    this.#pendingNewSessionTopic = options.topic;
     this.#getToken = options.getToken;
     this.#schedule = options.schedule ?? systemTimers;
     this.#transportBackoff = options.transportBackoff ?? new TransportBackoffPolicy();

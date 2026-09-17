@@ -33,7 +33,7 @@ function isOutgoing(message: ChatMessage): boolean {
 }
 
 function isSystemMessage(message: ChatMessage): boolean {
-  if (message.senderType === 'SYSTEM' || message.type === 'system') return true;
+  if (message.senderType === 'SYSTEM' || message.type === 'SYSTEM' || (message.type as string) === 'system') return true;
   const content = message.content.trim();
   if (
     content.endsWith('has joined the chat.') ||

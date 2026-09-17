@@ -59,6 +59,9 @@ describe('listPortalQueue — GET /agent/queue row parsing', () => {
         targetId: null,
         storeName: null,
         merchantName: null,
+        merchantEmail: null,
+        subject: null,
+        topic: null,
       },
     ]);
   });
@@ -101,6 +104,9 @@ describe('listPortalQueue — GET /agent/queue row parsing', () => {
         targetId: null,
         storeName: null,
         merchantName: null,
+        merchantEmail: null,
+        subject: null,
+        topic: null,
       },
     ]);
   });
@@ -137,6 +143,9 @@ describe('listPortalQueue — GET /agent/queue row parsing', () => {
         targetId: null,
         storeName: null,
         merchantName: null,
+        merchantEmail: null,
+        subject: null,
+        topic: null,
       },
     ]);
   });

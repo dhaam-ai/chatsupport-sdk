@@ -131,7 +131,7 @@ export function getRowDisplayName(
       return 'Store Admin';
     } else {
       // Merchant viewing Customer chat
-      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() && !s.customerName.toLowerCase().includes('admin')) {
+      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() && !s.customerName.toLowerCase().includes('admin') && s.customerName.toLowerCase() !== 'tse') {
         return s.customerName.trim();
       }
       if (s.handledBy?.displayName) return s.handledBy.displayName;
@@ -141,29 +141,46 @@ export function getRowDisplayName(
     // Admin user
     if (tab === 'merchants' || tab === 'admin') {
       // Admin viewing Merchant chat
-      if (s.storeName && typeof s.storeName === 'string' && s.storeName.trim() && s.storeName.trim() !== 'Merchant') {
+      let storedTargetName: string | null = null;
+      if (s.targetId && typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('dhaam_target_store_' + s.targetId) || sessionStorage.getItem('dhaam_target_store_' + s.targetId);
+          if (raw) {
+            const p = JSON.parse(raw);
+            storedTargetName = p.storeName || p.merchantName || (p.storeEmail ? p.storeEmail.split('@')[0] : null);
+          }
+        } catch {}
+      }
+
+      if (s.storeName && typeof s.storeName === 'string' && s.storeName.trim() && s.storeName.trim() !== 'Merchant' && s.storeName.trim() !== s.customerName) {
         return s.storeName.trim();
       }
-      if (s.merchantName && typeof s.merchantName === 'string' && s.merchantName.trim() && s.merchantName.trim() !== 'Merchant') {
+      if (s.merchantName && typeof s.merchantName === 'string' && s.merchantName.trim() && s.merchantName.trim() !== 'Merchant' && s.merchantName.trim() !== s.customerName) {
         return s.merchantName.trim();
       }
       if (s.targetName && typeof s.targetName === 'string' && s.targetName.trim() && s.targetName.trim() !== 'Merchant') {
         return s.targetName.trim();
       }
-      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() &&
-          !s.customerName.toLowerCase().includes('admin')) {
-        return s.customerName.trim();
+      if (storedTargetName && storedTargetName.trim()) {
+        return storedTargetName.trim();
+      }
+      if (s.subject && typeof s.subject === 'string' && s.subject.trim() && s.subject.trim() !== 'admin') {
+        return s.subject.trim();
       }
       if (s.merchantEmail && typeof s.merchantEmail === 'string' && s.merchantEmail.includes('@')) {
         return s.merchantEmail.split('@')[0];
       }
-      if (s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@') && !s.customerEmail.toLowerCase().includes('admin')) {
-        return s.customerEmail.split('@')[0];
+      if (s.targetEmail && typeof s.targetEmail === 'string' && s.targetEmail.includes('@')) {
+        return s.targetEmail.split('@')[0];
+      }
+      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() &&
+          !s.customerName.toLowerCase().includes('admin') && s.customerName.toLowerCase() !== 'tse') {
+        return s.customerName.trim();
       }
       if (s.handledBy?.displayName && s.handledBy.displayName !== 'Support Bot' && s.handledBy.displayName !== 'Dhaam Bot') {
         return s.handledBy.displayName;
       }
-      if (s.targetId) return `Merchant #${String(s.targetId).slice(0, 8)}`;
+      if (s.targetId) return `Store #${String(s.targetId).slice(0, 8)}`;
       return 'Merchant';
     } else {
       // Admin viewing Customer chat
@@ -208,9 +225,25 @@ export function getRowSubtitle(
     // Admin user viewing chat
     if (tab === 'merchants' || tab === 'admin') {
       // Admin viewing Merchant chat: display Merchant's email
-      const email = s.merchantEmail || s.storeEmail || (s.customerEmail && !s.customerEmail.toLowerCase().includes('admin') ? s.customerEmail : '') || s.targetEmail || '';
+      let storedEmail: string | null = null;
+      if (s.targetId && typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('dhaam_target_store_' + s.targetId) || sessionStorage.getItem('dhaam_target_store_' + s.targetId);
+          if (raw) {
+            const p = JSON.parse(raw);
+            storedEmail = p.storeEmail || null;
+          }
+        } catch {}
+      }
+
+      const email =
+        s.merchantEmail ||
+        s.storeEmail ||
+        storedEmail ||
+        s.targetEmail ||
+        (s.customerEmail && !s.customerEmail.toLowerCase().includes('admin') && !s.customerEmail.toLowerCase().includes('tse') ? s.customerEmail : '');
       if (email) return `Merchant • ${email}`;
-      return 'Merchant Chat';
+      return s.targetId ? `Outlet #${s.targetId}` : 'Merchant Chat';
     } else {
       // Admin viewing Customer chat: display Customer's email
       if (s.customerEmail) return `Customer • ${s.customerEmail}`;
@@ -238,8 +271,11 @@ export function sessionBelongsToTab(
   const isInitiatorAdmin =
     (typeof s.customerName === 'string' && s.customerName.toLowerCase().includes('admin')) ||
     (typeof s.customerEmail === 'string' && s.customerEmail.toLowerCase().includes('admin')) ||
-    (s.adminName && !s.customerName) ||
-    s.chatType === 'admin';
+    (typeof s.customerName === 'string' && s.customerName.toLowerCase() === 'tse') ||
+    (typeof s.customerEmail === 'string' && s.customerEmail.toLowerCase().includes('tse')) ||
+    s.topic === 'admin' ||
+    s.chatType === 'admin' ||
+    (s.adminName && !s.customerName);
 
   if (isMerchantUser) {
     // When Merchant is logged in:
@@ -272,11 +308,11 @@ export function sessionBelongsToTab(
     }
     if (tab === 'merchants' || tab === 'admin') {
       if (s.targetRole === 'merchant') return true;
+      if (s.targetRole === 'admin') return true;
       return false;
     }
+    return false;
   }
-
-  return true;
 }
 
 /** Whether `session` should stay visible under `query` — `''` matches everything. */

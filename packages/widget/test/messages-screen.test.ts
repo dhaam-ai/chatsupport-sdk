@@ -297,5 +297,37 @@ describe('sessionBelongsToTab & display info — Admin ↔ Merchant routing', ()
     expect(subtitle).toBe('Admin • admin@dhaam.com');
     expect(subtitle).not.toContain('tse@gmail.com');
   });
+
+  it('displays store name (Food Hubs / amit) for admin viewing merchants tab, NEVER admin name "tse"', () => {
+    localStorage.setItem('dhaam_target_store_12801', JSON.stringify({
+      storeName: 'Food Hubs',
+      storeEmail: 'amit@dhaamai.com'
+    }));
+
+    const sessionWithTse = summary({
+      id: 's_admin_tse',
+      customerName: 'tse',
+      customerEmail: 'tse@dhaamai.com',
+      targetRole: 'merchant',
+      targetId: '12801',
+      chatType: 'merchant',
+    } as any);
+
+    // When Admin is viewing Merchants tab:
+    const adminViewName = getRowDisplayName(sessionWithTse, 'merchants', 'admin');
+    expect(adminViewName).toBe('Food Hubs');
+    expect(adminViewName).not.toBe('tse');
+
+    const adminViewSubtitle = getRowSubtitle(sessionWithTse, 'merchants', 'admin');
+    expect(adminViewSubtitle).toBe('Merchant • amit@dhaamai.com');
+    expect(adminViewSubtitle).not.toBe('Merchant • tse@dhaamai.com');
+
+    // When Merchant (amit) is viewing Admin tab:
+    expect(sessionBelongsToTab(sessionWithTse, 'admin', 'merchant')).toBe(true);
+    expect(sessionBelongsToTab(sessionWithTse, 'customers', 'merchant')).toBe(false);
+
+    const merchantViewName = getRowDisplayName(sessionWithTse, 'admin', 'merchant');
+    expect(merchantViewName).toBe('tse');
+  });
 });
 

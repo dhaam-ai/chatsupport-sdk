@@ -259,8 +259,11 @@ export interface WidgetConfig {
   /** Initial conversation subject / store name, if any. */
   readonly subject?: string;
 
+  /** Initial conversation topic, if any. */
+  readonly topic?: string;
+
   /** Target counterparty (e.g. merchant or store), if any. */
-  readonly target?: { readonly role: string; readonly id: string };
+  readonly target?: { readonly role: string; readonly id: string; readonly name?: string; readonly email?: string };
 
   /** The current user's role in the portal ('admin' | 'merchant' | 'customer'). */
   readonly userRole?: 'admin' | 'merchant' | 'customer' | string;

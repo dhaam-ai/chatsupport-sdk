@@ -77,6 +77,9 @@ describe('listPartyConversations — GET /party/conversations (Wire Contract §6
         targetId: 'outlet_128',
         storeName: null,
         merchantName: null,
+        merchantEmail: null,
+        subject: null,
+        topic: null,
       },
     ]);
   });

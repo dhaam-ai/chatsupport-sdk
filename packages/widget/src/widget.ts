@@ -2166,13 +2166,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       unreadCount: 0,
       handledBy: null,
       // Consumed by messages-screen.ts's tab-routing/display-name logic
-      chatType: isMerchant ? 'merchant' : 'customer',
+      chatType: row.chatType ?? (isMerchant ? 'merchant' : 'customer'),
       targetRole: row.targetRole ?? (isMerchant ? 'merchant' : undefined),
       targetId: row.targetId ?? undefined,
       storeName,
       merchantName: isMerchant ? (row.merchantName ?? storeName) : undefined,
+      merchantEmail: row.merchantEmail ?? undefined,
       customerName: row.customerName ?? undefined,
       customerEmail: row.customerEmail ?? undefined,
+      subject: row.subject ?? undefined,
+      topic: row.topic ?? undefined,
       hasMessage: row.hasMessage,
     } as unknown as ChatSessionSummary;
   }

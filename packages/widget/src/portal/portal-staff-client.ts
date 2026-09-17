@@ -153,6 +153,9 @@ export interface PortalQueueRow {
   readonly targetId: string | null;
   readonly storeName: string | null;
   readonly merchantName: string | null;
+  readonly merchantEmail?: string | null;
+  readonly subject?: string | null;
+  readonly topic?: string | null;
 }
 
 // `/agent/queue` is a REST endpoint, not the v2 WS protocol §12.1 talks about
@@ -179,7 +182,10 @@ const QUEUE_STATUS_BY_CODE: Record<number, string> = {
 
 function readQueueStatus(value: unknown): string {
   if (typeof value === 'string' && isChatStatus(value)) return value;
-  if (typeof value === 'number' && value in QUEUE_STATUS_BY_CODE) return QUEUE_STATUS_BY_CODE[value] as string;
+  if (typeof value === 'number') {
+    const named = QUEUE_STATUS_BY_CODE[value];
+    if (named !== undefined) return named;
+  }
   // Neither a known name nor a known code — 'OPEN' rather than the crash
   // above, matching `widget.ts`'s own `?? 'OPEN'` fallback for a missing one.
   return 'OPEN';
@@ -212,19 +218,40 @@ function readQueueRow(row: unknown): PortalQueueRow | null {
 
   const targetRole = typeof source['targetRole'] === 'string' ? source['targetRole'] : null;
   const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
+  const subject = typeof source['subject'] === 'string' ? source['subject'] : null;
+  const topic = typeof source['topic'] === 'string' ? source['topic'] : null;
+
   const chatType =
     typeof source['chatType'] === 'string'
       ? source['chatType']
       : (targetRole?.toLowerCase() === 'merchant' ? 'merchant' : 'customer');
 
+  let storedTargetInfo: { storeName?: string; storeEmail?: string; merchantName?: string } | null = null;
+  if (targetId && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('dhaam_target_store_' + targetId) || sessionStorage.getItem('dhaam_target_store_' + targetId);
+      if (raw) storedTargetInfo = JSON.parse(raw);
+    } catch {}
+  }
+
   const merchantName =
     (typeof source['merchantName'] === 'string' ? source['merchantName'] : null) ??
     (typeof source['storeName'] === 'string' ? source['storeName'] : null) ??
-    (chatType === 'merchant' ? customerName : null);
+    storedTargetInfo?.storeName ??
+    storedTargetInfo?.merchantName ??
+    (subject && subject !== 'admin' ? subject : null) ??
+    (chatType === 'merchant' && customerName && !customerName.toLowerCase().includes('admin') && customerName.toLowerCase() !== 'tse' ? customerName : null);
 
   const storeName =
     (typeof source['storeName'] === 'string' ? source['storeName'] : null) ??
+    storedTargetInfo?.storeName ??
     merchantName;
+
+  const merchantEmail =
+    (typeof source['merchantEmail'] === 'string' ? source['merchantEmail'] : null) ??
+    (typeof source['storeEmail'] === 'string' ? source['storeEmail'] : null) ??
+    storedTargetInfo?.storeEmail ??
+    null;
 
   const hasMessage =
     'lastMessage' in source
@@ -243,6 +270,9 @@ function readQueueRow(row: unknown): PortalQueueRow | null {
     targetId,
     storeName,
     merchantName,
+    merchantEmail,
+    subject,
+    topic,
   };
 }
 
@@ -300,11 +330,39 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     (typeof source['email'] === 'string' ? source['email'] : null);
   const targetRole = typeof source['targetRole'] === 'string' ? source['targetRole'] : 'merchant';
   const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
+  const subject = typeof source['subject'] === 'string' ? source['subject'] : null;
+  const topic = typeof source['topic'] === 'string' ? source['topic'] : null;
 
   const isCustomerAdmin =
     (typeof customerName === 'string' && customerName.toLowerCase().includes('admin')) ||
     (typeof customerEmail === 'string' && customerEmail.toLowerCase().includes('admin')) ||
-    source['chatType'] === 'admin';
+    (typeof customerName === 'string' && customerName.toLowerCase() === 'tse') ||
+    (typeof customerEmail === 'string' && customerEmail.toLowerCase().includes('tse')) ||
+    source['chatType'] === 'admin' ||
+    topic === 'admin';
+
+  let storedTargetInfo: { storeName?: string; storeEmail?: string; merchantName?: string } | null = null;
+  if (targetId && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('dhaam_target_store_' + targetId) || sessionStorage.getItem('dhaam_target_store_' + targetId);
+      if (raw) storedTargetInfo = JSON.parse(raw);
+    } catch {}
+  }
+
+  const storeName =
+    (typeof source['storeName'] === 'string' ? source['storeName'] : null) ??
+    storedTargetInfo?.storeName ??
+    (subject && subject !== 'admin' ? subject : null);
+
+  const merchantName =
+    (typeof source['merchantName'] === 'string' ? source['merchantName'] : null) ??
+    storedTargetInfo?.merchantName ??
+    storeName;
+
+  const merchantEmail =
+    (typeof source['merchantEmail'] === 'string' ? source['merchantEmail'] : null) ??
+    storedTargetInfo?.storeEmail ??
+    null;
 
   return {
     sessionId,
@@ -316,8 +374,11 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     chatType: isCustomerAdmin ? 'admin' : (typeof source['chatType'] === 'string' ? source['chatType'] : 'merchant'),
     targetRole,
     targetId,
-    storeName: null,
-    merchantName: null,
+    storeName,
+    merchantName,
+    merchantEmail,
+    subject,
+    topic,
   };
 }
 

@@ -520,6 +520,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     ...(config.target === undefined ? {} : { target: config.target }),
     ...(config.outletIds === undefined ? {} : { outletIds: config.outletIds }),
     ...(config.subject === undefined ? {} : { subject: config.subject }),
+    ...(config.topic === undefined ? {} : { topic: config.topic }),
     getToken: config.getToken,
     createTransport,
     onFrame: dispatchFrame,

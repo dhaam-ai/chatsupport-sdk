@@ -100,6 +100,7 @@ export function createWidgetStore(config: ResolvedConfig): WidgetStore {
 
     ...(config.target === undefined ? {} : { target: config.target }),
     ...(config.subject === undefined ? {} : { subject: config.subject }),
+    ...(config.topic === undefined ? {} : { topic: config.topic }),
 
     // Identify, for a logged-in user only. A guest has a `userId` too, so
     // `profile` — and nothing else — is the discriminator.
