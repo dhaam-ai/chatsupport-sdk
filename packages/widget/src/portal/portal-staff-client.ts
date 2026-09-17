@@ -156,6 +156,18 @@ export interface PortalQueueRow {
   readonly merchantEmail?: string | null;
   readonly subject?: string | null;
   readonly topic?: string | null;
+  /**
+   * `ConversationType` (Wire Contract §6, integer-only): 2 DM · 4 PARTNER.
+   * Only `/party/conversations` sends this — `/agent/queue` rows leave it
+   * `null`. Present ⇒ the AUTHORITATIVE signal for admin-vs-merchant
+   * routing (see `sessionBelongsToTab`); a PARTNER row can never be
+   * mistaken for a customer's own DM to an outlet, because the two are
+   * different conversation types at the protocol level, not a guess from
+   * the customer's name.
+   */
+  readonly conversationType?: number | null;
+  /** "incoming" | "outgoing" — which side of a partner chat the caller is. */
+  readonly direction?: string | null;
 }
 
 // `/agent/queue` is a REST endpoint, not the v2 WS protocol §12.1 talks about
@@ -332,7 +344,14 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
   const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
   const subject = typeof source['subject'] === 'string' ? source['subject'] : null;
   const topic = typeof source['topic'] === 'string' ? source['topic'] : null;
+  const conversationType = typeof source['conversationType'] === 'number' ? source['conversationType'] : null;
+  const direction = typeof source['direction'] === 'string' ? source['direction'] : null;
 
+  // Pre-partner-chat heuristic — kept ONLY as a fallback for a backend that
+  // does not yet send `conversationType` (customer name/email substring,
+  // topic==='admin'). `conversationType` below, when present, overrides this
+  // completely: it is the protocol telling us the kind, not a guess from the
+  // conversation's content.
   const isCustomerAdmin =
     (typeof customerName === 'string' && customerName.toLowerCase().includes('admin')) ||
     (typeof customerEmail === 'string' && customerEmail.toLowerCase().includes('admin')) ||
@@ -371,7 +390,12 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     customerEmail,
     lastMessage: null,
     hasMessage: true,
-    chatType: isCustomerAdmin ? 'admin' : (typeof source['chatType'] === 'string' ? source['chatType'] : 'merchant'),
+    chatType:
+      conversationType === 4
+        ? 'admin'
+        : conversationType === 2
+          ? 'merchant'
+          : (isCustomerAdmin ? 'admin' : (typeof source['chatType'] === 'string' ? source['chatType'] : 'merchant')),
     targetRole,
     targetId,
     storeName,
@@ -379,12 +403,23 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     merchantEmail,
     subject,
     topic,
+    conversationType,
+    direction,
   };
 }
 
 export interface PartyConversationQuery {
   readonly limit?: number;
   readonly outletIds?: readonly string[];
+  /**
+   * `?with=customer` (default, omitted) — store DMs addressed to the caller.
+   * `?with=partner` — admin/manager ↔ merchant/outlet chats the caller is a
+   * party to, in EITHER direction. The two never mix in one response; a
+   * caller wanting both tabs calls this twice (Wire Contract §6, "Before you
+   * integrate": "Call /party/conversations once with the default and once
+   * with with=partner").
+   */
+  readonly with?: 'customer' | 'partner';
 }
 
 /**
@@ -407,6 +442,13 @@ export async function listPartyConversations(
     if (cleaned.length > 0) {
       queryParams['outletIds'] = cleaned.join(',');
     }
+  }
+
+  // Omitted for 'customer' (the server default) too, not just when unset —
+  // sending an explicit ?with=customer would be a second spelling of the
+  // same request the bare call already makes.
+  if (query?.with === 'partner') {
+    queryParams['with'] = 'partner';
   }
 
   const body = (await getJson(options, '/party/conversations', queryParams)) as {

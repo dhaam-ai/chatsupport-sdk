@@ -80,8 +80,53 @@ describe('listPartyConversations — GET /party/conversations (Wire Contract §6
         merchantEmail: null,
         subject: null,
         topic: null,
+        conversationType: null,
+        direction: null,
       },
     ]);
+  });
+
+  it('requests ?with=partner and trusts conversationType 4 as chatType admin — over the heuristic', async () => {
+    let requestedUrl = '';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: URL) => {
+        requestedUrl = url.toString();
+        return Promise.resolve(
+          jsonResponse({
+            success: true,
+            data: {
+              conversations: [
+                {
+                  sessionId: 'sess_partner_1',
+                  customerId: 'admin_1',
+                  // A name with no 'admin'/'tse' substring anywhere — the OLD
+                  // heuristic would have called this a plain merchant DM.
+                  // conversationType is what has to carry this now.
+                  customerName: 'Rahul Sharma',
+                  status: 1,
+                  targetId: 'outlet_128',
+                  targetRole: 'merchant',
+                  channel: 1,
+                  createdAt: '2026-09-16T12:00:00.000Z',
+                  updatedAt: '2026-09-16T12:05:00.000Z',
+                  conversationType: 4,
+                  direction: 'outgoing',
+                },
+              ],
+            },
+          }),
+        );
+      }),
+    );
+
+    const rows = await listPartyConversations(OPTIONS, { with: 'partner' });
+
+    expect(requestedUrl).toContain('with=partner');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.chatType).toBe('admin');
+    expect(rows[0]!.conversationType).toBe(4);
+    expect(rows[0]!.direction).toBe('outgoing');
   });
 
   it('omits outletIds parameter completely when no outlets are provided', async () => {

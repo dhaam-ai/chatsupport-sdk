@@ -2110,24 +2110,30 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     return client;
   }
 
-  /** GET /agent/queue (for admin) or GET /party/conversations (for merchant/manager) — this tenant's real customer conversations. */
+  /**
+   * GET /agent/queue or GET /party/conversations (customer DMs, `with`
+   * omitted) — this tenant's real customer conversations — PLUS
+   * GET /party/conversations?with=partner — admin/manager ↔ merchant/outlet
+   * chats (`conversationType: 4`). Wire Contract §6 ("Before you integrate"):
+   * "Call /party/conversations once with the default and once with
+   * with=partner" — a PARTNER row is invisible to both /agent/queue and the
+   * default /party/conversations call, so without this second fetch neither
+   * an admin's Merchants tab nor a merchant's Admin tab would ever show one.
+   */
   function refreshPortalQueue(): void {
     if (!isPortalStaff || destroyed) return;
-    const fetchPromise = isMerchantPortal
-      ? listPartyConversations(
-          { apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId },
-          { outletIds: (config as any).outletIds },
-        )
-      : listPortalQueue({
-          apiUrl: config.apiUrl,
-          wsUrl: config.wsUrl,
-          getToken: portalToken,
-          senderId: config.identity.userId,
-        });
+    const portalOptions = { apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId };
+    const outletIds = (config as any).outletIds;
 
-    fetchPromise
-      .then((rows) => {
+    const customerPromise = isMerchantPortal
+      ? listPartyConversations(portalOptions, { outletIds })
+      : listPortalQueue(portalOptions);
+    const partnerPromise = listPartyConversations(portalOptions, { with: 'partner', outletIds });
+
+    Promise.all([customerPromise, partnerPromise])
+      .then(([customerRows, partnerRows]) => {
         if (destroyed) return;
+        const rows = [...customerRows, ...partnerRows];
         portalQueueRows = rows;
         portalQueueIds.clear();
         for (const row of rows) portalQueueIds.add(row.sessionId);
