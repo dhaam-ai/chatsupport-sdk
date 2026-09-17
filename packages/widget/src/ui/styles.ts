@@ -3410,6 +3410,16 @@ button {
   gap: 8px !important;
   overflow: visible !important;
 }
+/* Name and email were sharing one row — the email (flex-shrink: 0) never
+   gave ground, so the name (flex-shrink: 1) was the one that always lost
+   width and got ellipsized first, even when the name was the shorter of
+   the two. Stacking them (name row, then status row) gives the name the
+   wrap's full width instead of whatever the email left over. */
+:host([data-screen="conversation"]) .dh-header-identity-wrap {
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 1px !important;
+}
 :host([data-screen="conversation"]) .dh-title {
   color: #ffffff !important;
   font-weight: 600 !important;
@@ -3418,13 +3428,13 @@ button {
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   min-width: 0 !important;
-  flex-shrink: 1 !important;
+  max-width: 100% !important;
 }
 :host([data-screen="conversation"]) .dh-status {
   display: flex !important;
   align-items: center !important;
   gap: 5px !important;
-  flex-shrink: 0 !important;
+  max-width: 100% !important;
 }
 :host([data-screen="conversation"]) .dh-status-dot {
   width: 7px !important;
@@ -3438,6 +3448,10 @@ button {
   color: rgba(255, 255, 255, 0.9) !important;
   font-size: 12px !important;
   font-weight: 500 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
 }
 :host([data-screen="conversation"]) .dh-status-text:empty {
   display: none !important;
