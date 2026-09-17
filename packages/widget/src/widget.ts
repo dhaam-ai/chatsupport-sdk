@@ -1406,24 +1406,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     composer.setReplyTo(null);
   }
 
-  /**
-   * Puts a message's text on the clipboard.
-   *
-   * Rejects rather than reporting: the caller is a menu item that announces
-   * its own outcome, and `report` would swallow the failure and leave it
-   * silently claiming success. `navigator.clipboard` is genuinely absent in
-   * some embedded webviews and refused outright in others, so the rejection
-   * path is real rather than defensive.
-   */
-  async function copyMessage(message: ChatMessage): Promise<void> {
-    const text = message.content ?? '';
-    if (text === '') throw new Error('Nothing to copy');
-    if (typeof navigator === 'undefined' || navigator.clipboard === undefined) {
-      throw new Error('Clipboard unavailable');
-    }
-    await navigator.clipboard.writeText(text);
-  }
-
   /** The conversation's backdrop, through the same inline-property route. */
   function applyThreadAppearance(thread: ThreadAppearance): void {
     const tokens = threadTokens(thread);
@@ -1745,7 +1727,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the composer's own send path so a suggestion is subject to every rule a
     // typed message is, the consent gate and handoff keywords included.
     onQuickReply: (text) => void composer.submit(text),
-    onCopyMessage: (message) => copyMessage(message),
     onReplyToMessage: (message, senderName) => startReply(message, senderName),
     // Read through `remote` at call time, never captured: a config publish
     // replaces `remote` wholesale, and the suggestion filter must judge by

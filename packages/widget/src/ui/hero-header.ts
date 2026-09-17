@@ -75,7 +75,7 @@
 // animates, and it matters on the way BACK: the band's height returns in one
 // frame and the content fades in over it instead of popping. A snap is not
 // motion in the vestibular sense a slide or a transform is, so it gets no
-// `prefers-reduced-motion` carve-out — same stance as `.dh-msg-more`.
+// `prefers-reduced-motion` carve-out — same stance as `.dh-msg-reply`.
 //
 // ── The trigger: a zero-space marker at the top of `.dh-home` ──────────────
 //

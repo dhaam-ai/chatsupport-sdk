@@ -1947,72 +1947,67 @@ button {
    keeps them — but the TOGGLE belongs to the header and inherits from it. */
 :host([data-design="hero"]) .dh-hmenu-toggle { color: inherit; opacity: 0.85; }
 
-/* Per-message actions. Hidden until the row is hovered or something inside it
-   has focus, so a transcript at rest is text rather than a column of buttons —
-   but ALWAYS present for keyboard and touch, which have no hover: 'opacity' is
-   what is animated, never 'display', so the control stays in the tab order and
-   in the accessibility tree at all times. */
+/* Per-message reply action. Hidden until the row is hovered or something
+   inside it has focus, so a transcript at rest is text rather than a column
+   of buttons — but ALWAYS present for keyboard and touch, which have no
+   hover: 'opacity' is what is animated, never 'display', so the control
+   stays in the tab order and in the accessibility tree at all times. */
 .dh-msg { position: relative; }
 .dh-msg-actions { position: absolute; top: 2px; inset-inline-end: 2px; }
-.dh-msg-more {
+.dh-msg-reply {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px; height: 24px;
+  width: 28px; height: 28px;
   padding: 0;
-  border: 0;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: var(--dh-text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
 }
-.dh-msg:hover .dh-msg-more,
-.dh-msg-more:focus-visible,
-.dh-msg-actions:focus-within .dh-msg-more,
-.dh-msg-more[aria-expanded="true"] { opacity: 1; }
+/* A 44px touch target without inflating the 28px visual — the pseudo-element
+   extends the hit area beyond the drawn circle instead of the circle itself
+   growing. */
+.dh-msg-reply::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 44px; height: 44px;
+  transform: translate(-50%, -50%);
+}
+.dh-msg:hover .dh-msg-reply,
+.dh-msg-reply:focus-visible { opacity: 1; }
 /* Coarse pointers get no hover event at all, so the control would be
    permanently invisible and permanently tappable — the worst combination. */
-@media (hover: none) { .dh-msg-more { opacity: 1; } }
-.dh-msg-more:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 1px; }
+@media (hover: none) { .dh-msg-reply { opacity: 1; } }
+.dh-msg-reply:hover,
+.dh-msg-reply:focus-visible {
+  border-color: var(--dh-border);
+  background: var(--dh-bubble-in);
+  color: var(--dh-text);
+}
+.dh-msg-reply:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 1px; }
 
-.dh-msg-menu {
+.dh-msg-reply-tip {
   position: absolute;
-  top: 26px;
   inset-inline-end: 0;
   z-index: 2;
-  display: flex;
-  flex-direction: column;
-  min-width: 132px;
-  padding: calc(var(--dh-space) * 0.75);
-  border: 1px solid var(--dh-border);
-  border-radius: var(--dh-radius);
-  background: var(--dh-surface);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--dh-text);
+  color: var(--dh-surface);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
   box-shadow: var(--dh-shadow);
 }
-.dh-msg-action {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--dh-space) * 1.5);
-  padding: calc(var(--dh-space) * 1.25) calc(var(--dh-space) * 1.5);
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dh-text);
-  font: inherit;
-  font-size: 13px;
-  text-align: start;
-  cursor: pointer;
-}
-.dh-msg-action:hover { background: var(--dh-bubble-in); }
-.dh-msg-action:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
-/* Copy's in-place confirmation (message-actions.ts): the label swaps to the
-   outcome and the menu lingers just long enough to show it. Colour says which
-   outcome at a glance; the swapped word is what a screen reader gets. */
-.dh-msg-action[data-outcome="ok"] { color: var(--dh-accent); font-weight: 600; }
-.dh-msg-action[data-outcome="failed"] { color: var(--dh-danger); }
-.dh-msg-action:disabled { cursor: default; }
+.dh-msg-reply-tip[data-side="top"] { bottom: calc(100% + 6px); }
+.dh-msg-reply-tip[data-side="bottom"] { top: calc(100% + 6px); }
 
 /* The quoted message above the composer while a reply is being written. */
 .dh-reply-chip {

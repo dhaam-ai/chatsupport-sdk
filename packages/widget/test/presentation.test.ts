@@ -315,11 +315,11 @@ describe('the conversation’s backdrop', () => {
 });
 
 describe('the hidden attribute cannot be defeated by a class rule', () => {
-  // The bug this exists to prevent, seen in a real build: an open Copy/Reply
-  // menu on EVERY message at once, and a permanent "Replying to" chip above
-  // the composer. Every one of those elements is built with `hidden: true`,
-  // and every one had a later `display: flex` class rule of equal specificity
-  // silently overriding the UA's `[hidden] { display: none }`.
+  // The bug this exists to prevent, seen in a real build: a permanent
+  // "Replying to" chip left showing above the composer. Every one of these
+  // elements is built with `hidden: true`, and every one had a later
+  // `display: flex` class rule of equal specificity silently overriding the
+  // UA's `[hidden] { display: none }`.
   it('ships a global [hidden] rule that no later declaration can outrank', () => {
     expect(STYLES).toMatch(/\[hidden\]\s*{\s*display:\s*none\s*!important/);
   });
@@ -327,7 +327,6 @@ describe('the hidden attribute cannot be defeated by a class rule', () => {
   // Answering it per class is what failed: it works only until somebody adds
   // the next flex container, which is exactly what happened.
   it.each([
-    '.dh-msg-menu',
     '.dh-quick-replies',
     '.dh-consent',
     '.dh-reply-chip',

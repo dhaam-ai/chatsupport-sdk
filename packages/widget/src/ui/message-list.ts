@@ -130,8 +130,6 @@ export interface MessageListCallbacks {
   readonly onEmailTranscript: () => Promise<void>;
   /** Sends one of the bot's suggested follow-ups as the customer's next message. */
   readonly onQuickReply: (text: string) => void;
-  /** Puts the message's text on the clipboard. Rejects if the browser refuses. */
-  readonly onCopyMessage: (message: ChatMessage) => Promise<void>;
   /**
    * Starts a reply addressed to this message.
    *
@@ -559,7 +557,6 @@ interface MessageRow {
     senderName: string | null,
     showAuthorName: boolean,
   ): void;
-  /** Releases the row's document-level listeners. See `createMessageActions`. */
   destroy(): void;
 }
 
@@ -611,13 +608,11 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
     children: [time, tickGlyph, tickLabel, failureText, retry],
   });
 
-  // Copy and Reply. Built per row because both act on THIS message; the
-  // menu's own document listener is released through `destroy` below.
+  // Reply. Built per row because it acts on THIS message.
   // `currentSenderLabel` (kept fresh by `update`) is the resolved name the
   // reply quote will carry — the customer's own rows resolve to 'You', which
   // is also what WhatsApp prints when someone quotes themselves.
   const actions = createMessageActions({
-    onCopy: () => callbacks.onCopyMessage(current),
     onReply: () => callbacks.onReplyToMessage(current, currentSenderLabel),
   });
 
