@@ -290,6 +290,7 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     const metaName =
       (typeof senderMetadata?.senderName === 'string' ? senderMetadata.senderName : null) ??
       (typeof senderMetadata?.name === 'string' ? senderMetadata.name : null) ??
+      (typeof senderMetadata?.customerName === 'string' ? senderMetadata.customerName : null) ??
       (typeof senderMetadata?.author === 'string' ? senderMetadata.author : null);
 
     const resolvedCustomerName = metaName ?? currentCustomerName ?? 'Customer';
@@ -361,6 +362,20 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     render(state, opening) {
       sendable = state !== null && state.session !== null;
       syncSendState();
+
+      if (state?.session) {
+        const sessionAny = state.session as any;
+        const sessionCustomerName =
+          sessionAny.customer?.displayName ??
+          sessionAny.customer?.name ??
+          sessionAny.metadata?.customerName ??
+          sessionAny.metadata?.senderName ??
+          sessionAny.customerName ??
+          null;
+        if (sessionCustomerName && typeof sessionCustomerName === 'string' && sessionCustomerName.trim() && !currentCustomerName) {
+          currentCustomerName = sessionCustomerName.trim();
+        }
+      }
 
       if (state === null || state.session === null) {
         log.replaceChildren(

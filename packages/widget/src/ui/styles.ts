@@ -893,6 +893,10 @@ button {
   padding: calc(var(--dh-space) * 3) calc(var(--dh-space) * 4);
   border-bottom: 1px solid var(--dh-border);
   flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 .dh-title { font-size: 15px; font-weight: 600; margin: 0; }
 /* The header's avatar — the merchant's brand face (logo or initials) until an

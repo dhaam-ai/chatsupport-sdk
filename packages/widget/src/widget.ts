@@ -3656,7 +3656,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       syncHeaderAvatar();
     }
     if (subtitleText !== undefined) {
-      subtitle = subtitleText;
+      subtitle = isPortalStaff ? '' : subtitleText;
       statusText.textContent = subtitle;
     }
     showConversation();

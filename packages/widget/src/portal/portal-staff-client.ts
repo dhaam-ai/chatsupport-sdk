@@ -283,8 +283,21 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
   const sessionId = source['sessionId'] ?? source['id'];
   if (typeof sessionId !== 'string') return null;
 
-  const customerName = typeof source['customerName'] === 'string' ? source['customerName'] : null;
-  const customerEmail = typeof source['customerEmail'] === 'string' ? source['customerEmail'] : null;
+  const customer = source['customer'];
+  const customerName =
+    (typeof customer === 'object' && customer !== null
+      ? ((customer as Record<string, unknown>)['displayName'] as string | undefined) ??
+        ((customer as Record<string, unknown>)['name'] as string | undefined) ?? null
+      : null) ??
+    (typeof source['customerName'] === 'string' ? source['customerName'] : null) ??
+    (typeof source['name'] === 'string' ? source['name'] : null);
+
+  const customerEmail =
+    (typeof customer === 'object' && customer !== null
+      ? ((customer as Record<string, unknown>)['email'] as string | undefined) ?? null
+      : null) ??
+    (typeof source['customerEmail'] === 'string' ? source['customerEmail'] : null) ??
+    (typeof source['email'] === 'string' ? source['email'] : null);
   const targetRole = typeof source['targetRole'] === 'string' ? source['targetRole'] : 'merchant';
   const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
 
