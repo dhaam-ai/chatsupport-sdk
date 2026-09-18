@@ -4250,10 +4250,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // instantly and the merchant's configured wait would be invisible.
     const beforeFirstMessage = showingLog && state.messages.length === 0;
     const isStaffOrAdmin = (config as any).userRole === 'admin' || (config as any).userRole === 'merchant';
-    setPaneVisible(
-      greetingBubble,
-      !isStaffOrAdmin && beforeFirstMessage && greetingDue && greetingBubble.textContent !== '',
-    );
+    const greetingShowing =
+      !isStaffOrAdmin && beforeFirstMessage && greetingDue && greetingBubble.textContent !== '';
+    setPaneVisible(greetingBubble, greetingShowing);
+    // The greeting bubble and the transcript's own "No messages yet." both
+    // answer "there's nothing here yet" — see MessageListView.setGreetingShown
+    // for why showing both at once reads as two competing empty-states.
+    messageList.setGreetingShown(greetingShowing);
 
     nav.update(current, state.unreadCount);
   }

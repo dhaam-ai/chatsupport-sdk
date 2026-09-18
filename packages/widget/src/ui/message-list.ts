@@ -154,6 +154,25 @@ export interface MessageListView {
   render(state: ChatState, localParticipantId: string | null): void;
 
   /**
+   * Whether the merchant's greeting bubble (widget.ts's `greetingBubble`) is
+   * about to show above the composer.
+   *
+   * `render`'s own "No messages yet." placeholder and that bubble answer the
+   * exact same question — "there's nothing here yet" — and showing both at
+   * once (one plain gray line, one purple bubble) reads as two competing
+   * empty-states rather than one. The greeting is the friendlier of the two
+   * and the one the merchant wrote, so it wins: this suppresses the
+   * placeholder while it is showing.
+   *
+   * A setter rather than a `render()` parameter because the greeting can flip
+   * on its own timer (`armGreeting`'s `setTimeout`, widget.ts) — a moment
+   * `render()` is not otherwise called for — and threading it through every
+   * OTHER `render()` call site (typing, pagination, …) would mean each of
+   * those call sites re-deriving a value they have no reason to know.
+   */
+  setGreetingShown(shown: boolean): void;
+
+  /**
    * Marks the conversation ended, or `null` to clear it for a new one.
    *
    * The transcript is deliberately left in place: the history is still valid
@@ -291,6 +310,8 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   /** The bot's name for the session in {@link lastBotNameSessionId}. See `render`. */
   let lastBotName: string | null = null;
   let lastBotNameSessionId: string | null = null;
+  /** See {@link MessageListView.setGreetingShown}. */
+  let greetingShown = false;
 
   function render(state: ChatState, localParticipantId: string | null): void {
     // Captured BEFORE mutating: reading `scrollTop` after an append gives the
@@ -304,7 +325,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // year of history that their conversation is empty, for as long as the
     // fetch takes. It is also the window a session switch re-enters, where the
     // wrong answer would flash on every switch.
-    empty.hidden = state.messages.length > 0 || !state.pagination.initialLoaded;
+    empty.hidden = state.messages.length > 0 || !state.pagination.initialLoaded || greetingShown;
     loadOlder.hidden = !state.pagination.hasMore;
     loadOlder.disabled = state.pagination.loadingMore;
     loadOlder.textContent = state.pagination.loadingMore
@@ -487,7 +508,28 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     transcriptAction.hidden = !enabled;
   }
 
-  return { log, liveRegion, render, setClosure, setStartingNewConversation, setTranscriptEmail };
+  function setGreetingShown(shown: boolean): void {
+    greetingShown = shown;
+    // Only the ON direction needs to act immediately: the greeting is only
+    // ever due when the transcript is already empty (widget.ts's
+    // `beforeFirstMessage`), so hiding the placeholder the moment it turns
+    // on is always correct. Turning it back OFF happens either because a
+    // real first message arrived — which fires `render()` on its own via the
+    // `state.messages` subscription and recomputes `empty.hidden` correctly
+    // — or because the panel is closed/torn down, where there is no
+    // placeholder left on screen to matter.
+    if (shown) empty.hidden = true;
+  }
+
+  return {
+    log,
+    liveRegion,
+    render,
+    setGreetingShown,
+    setClosure,
+    setStartingNewConversation,
+    setTranscriptEmail,
+  };
 }
 
 /**
