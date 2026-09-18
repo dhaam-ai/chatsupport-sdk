@@ -163,3 +163,28 @@ describe('the separator changes nothing about the tablist', () => {
     expect(tabs.map((tab) => tab.getAttribute('tabindex'))).toEqual(['0', '-1']);
   });
 });
+
+describe('the nav bar is omitted entirely for the admin/merchant portal', () => {
+  // The portal has no Home screen (createNav's own `includeHome: false`,
+  // widget.ts), which leaves a single "Messages" tab — a tablist of one,
+  // permanently selected, nothing to switch between and nowhere else to
+  // switch FROM. Not a control, so (unlike the customer widget) it must not
+  // be in the DOM at all, not merely hidden.
+  it('mounts no .dh-nav for a merchant/outlet identity', () => {
+    mount(config({ userRole: 'merchant' }));
+
+    expect(shadow().querySelector('.dh-nav')).toBeNull();
+  });
+
+  it('mounts no .dh-nav for an admin identity', () => {
+    mount(config({ userRole: 'admin' }));
+
+    expect(shadow().querySelector('.dh-nav')).toBeNull();
+  });
+
+  it('still mounts the two-tab .dh-nav for an ordinary customer', () => {
+    mount(config());
+
+    expect(shadow().querySelectorAll('.dh-nav-tab')).toHaveLength(2);
+  });
+});

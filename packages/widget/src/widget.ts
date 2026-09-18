@@ -2404,7 +2404,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // conversation is showing — same bottom-of-panel real estate the
       // composer needs there, and a customer typing does not also need a
       // tab bar competing for the same row. See `syncScreens`.
-      nav.node,
+      //
+      // Omitted entirely for the admin/merchant portal: `createNav` was
+      // already called with `includeHome: false` there (no Home screen to
+      // switch to — a staff user lands straight on their queue, see
+      // nav.ts's own doc), which leaves a single "Messages" tab with nothing
+      // to navigate between and nowhere else to navigate FROM — the portal's
+      // one screen, permanently marked "selected". A tablist of one is not
+      // a control, so it is not mounted.
+      ...(isStaffOrAdmin ? [] : [nav.node]),
       messageList.liveRegion,
       // Its own channel, deliberately not folded into `status` or the message
       // log's region: `status` re-announces on every connection change, and
