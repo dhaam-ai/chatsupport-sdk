@@ -1131,7 +1131,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // here: a host that asked for an open panel has already got one, and a
     // console setting cannot un-ask for it.
     armAutoOpen(next.autoOpen, next.autoOpenDelaySec);
-    armGreeting(next.greeting ?? '', next.greetingDelaySec);
+    // See WidgetConfig.hideGreeting's doc: a host opt-out, not a console
+    // setting, so it overrides whatever the console holds rather than
+    // depending on the merchant having left the field blank there. Armed
+    // with an empty string — never skipped — so a config republish that
+    // used to carry text still clears `greetingBubble.textContent` and
+    // `syncScreens`'s `greetingBubble.textContent !== ''` check keeps
+    // failing closed, the same as a merchant who genuinely wrote nothing.
+    armGreeting((config as any).hideGreeting === true ? '' : next.greeting ?? '', next.greetingDelaySec);
     consent.update(next.consentRequired, next.consentText ?? '');
     messageList.setTranscriptEmail(next.transcriptEmail);
     reportButton.hidden = !next.reportIssue;

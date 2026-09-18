@@ -349,6 +349,27 @@ export interface WidgetConfig {
   readonly treatSubjectAsTarget?: boolean;
 
   /**
+   * Suppresses `behaviour.greeting` — the console's configured "first
+   * message" bubble that otherwise appears above the composer once an empty
+   * conversation's `greetingDelaySec` has elapsed (`armGreeting`, widget.ts).
+   *
+   * A HOST decision, not a per-tenant one: the console's own greeting text
+   * is written with general platform support in mind ("Ask us anything —
+   * orders, refunds, account…"), and reads oddly sitting above a
+   * store-targeted conversation ("reem", "vikash") where it was never
+   * authored for that context. Rather than have the host maintain its own
+   * copy of "is this a context the greeting fits", this opts the whole
+   * mounted widget out — general support included — leaving the plain
+   * "No messages yet." placeholder as the only empty-state.
+   *
+   * Off by default: most hosts DO want the console's configured greeting,
+   * and a merchant who wants none can already say so there by leaving the
+   * field blank — this exists for a host that wants to keep ignoring
+   * whatever the console holds, without relying on it staying empty.
+   */
+  readonly hideGreeting?: boolean;
+
+  /**
    * The line under the title — a response-time promise, typically. Defaults to
    * `''`, which leaves the connection status alone.
    *
