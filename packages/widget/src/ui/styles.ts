@@ -3406,7 +3406,13 @@ button {
   box-sizing: border-box !important;
   width: 100% !important;
   max-width: 100% !important;
-  padding: 10px 14px !important;
+  /* Bottom padding raised 10px -> 26px: room for '.dh-status', which is
+     positioned below the title rather than stacked in normal flow (see its
+     own rule) so that centering the title against the avatar isn't thrown
+     off by a second line's height. Padding is outside the flex content box
+     either way, so this extra space is purely cosmetic breathing room for
+     the status line and does not itself move the avatar or title. */
+  padding: 10px 14px 26px !important;
   gap: 8px !important;
   overflow: visible !important;
 }
@@ -3419,6 +3425,14 @@ button {
   flex-direction: column !important;
   align-items: flex-start !important;
   gap: 1px !important;
+  /* Anchors '.dh-status' below, once it's taken out of flow — see that
+     rule's own comment for why. Deliberately no extra padding here: this
+     box's OWN height is what '.dh-header''s 'align-items: center' centers
+     against the avatar, and it must stay exactly the title's height (one
+     line) for that centering to land on the title rather than on some
+     taller box that includes room for the status line too — that room is
+     reserved on '.dh-header' itself instead, below. */
+  position: relative !important;
 }
 :host([data-screen="conversation"]) .dh-title {
   color: #ffffff !important;
@@ -3435,6 +3449,18 @@ button {
   align-items: center !important;
   gap: 5px !important;
   max-width: 100% !important;
+  /* Taken out of normal flow so '.dh-header-identity-wrap''s own box — what
+     '.dh-header''s 'align-items: center' actually centers against the
+     avatar — shrinks to the TITLE's height alone. Centering a wrap that
+     still included this status line centered the two-line BLOCK's midpoint
+     against the avatar instead, which put the title above true center and
+     the status below it — not what "Assistant" lined up with the avatar
+     means. 'width: 100%' keeps the same truncation box the status text's
+     own 'text-overflow: ellipsis' (below) already relied on. */
+  position: absolute !important;
+  top: 100% !important;
+  left: 0 !important;
+  width: 100% !important;
 }
 :host([data-screen="conversation"]) .dh-status-dot {
   width: 7px !important;
