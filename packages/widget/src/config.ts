@@ -290,6 +290,20 @@ export interface WidgetConfig {
   readonly outletId?: string;
 
   /**
+   * Keeps the portal (admin/merchant/manager) view's Customers tab visible
+   * but empty: its `/agent/queue` or `/party/conversations` (customer-DM)
+   * fetch is skipped, so it never lists or opens a real end-customer
+   * conversation. Only the partner (Merchants/Admin) tab gets real data.
+   *
+   * For an `admin` identity on a host that is a store/outlet management
+   * console rather than the tenant's support console — this app's own admin
+   * should talk to outlets, not read or reply to end-customer conversations,
+   * which belongs to a dedicated support surface. Has no effect on
+   * `userRole: 'customer'` or when `userRole` is omitted.
+   */
+  readonly partnerOnly?: boolean;
+
+  /**
    * The line under the title — a response-time promise, typically. Defaults to
    * `''`, which leaves the connection status alone.
    *

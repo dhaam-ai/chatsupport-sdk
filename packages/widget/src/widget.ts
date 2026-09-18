@@ -2140,7 +2140,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     const portalOptions = { apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId };
     const outletIds = (config as any).outletIds;
 
-    const customerPromise = isMerchantPortal
+    // See WidgetConfig.partnerOnly: the Customers tab stays visible and
+    // clickable, it just never gets real customer rows — an empty tab, not
+    // a missing one.
+    const customerPromise = (config as any).partnerOnly === true
+      ? Promise.resolve([])
+      : isMerchantPortal
       ? listPartyConversations(portalOptions, { outletIds })
       : listPortalQueue(portalOptions);
     const partnerPromise = listPartyConversations(portalOptions, { with: 'partner', outletIds });
@@ -3566,6 +3571,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   function refreshSessions(): void {
     if (destroyed) return;
+    // Portal (admin/merchant/manager) mode never reads `pastSessions` — see
+    // `syncSessionSurfaces`'s comment on why the customer-flow store's own
+    // list is unused there. Skips the `GET /chat/sessions/customer` round
+    // trip every caller above would otherwise fire for a result nothing
+    // renders.
+    if (isPortalStaff) return;
     sessionsRequested = true;
     if (sessionsInFlight) {
       sessionsRefreshQueued = true;
