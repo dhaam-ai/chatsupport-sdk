@@ -304,6 +304,51 @@ export interface WidgetConfig {
   readonly partnerOnly?: boolean;
 
   /**
+   * A merchant/outlet identity clicked "Message Admin" on the portal Admin
+   * tab, wanting to start a conversation with the tenant's admin FIRST —
+   * before any admin has messaged them. Fired with no arguments.
+   *
+   * This SDK cannot resolve that on its own: opening a targeted conversation
+   * means a `target: { role, id }` (see `target` above), and there is no
+   * single `id` this widget can name for "the tenant's admin" — a tenant may
+   * have more than one, and nothing here has a list of them. The host is
+   * expected to open (or re-mount) a conversation targeted at
+   * `{ role: 'admin', id: <whatever the backend resolves "the tenant's
+   * admin" to> }` in response — the same way it already opens one targeted
+   * at a specific outlet for the reverse direction.
+   *
+   * No effect when unset: the button itself is omitted for `userRole:
+   * 'merchant'` until this is provided (see `ui/messages-screen.ts`'s
+   * `onStartNewPartner`), rather than shown and silently doing nothing.
+   */
+  readonly onStartPartnerConversation?: () => void;
+
+  /**
+   * Treats a customer session's non-empty `subject` as if it were a
+   * merchant/outlet target, for the purpose of what Home's "Recent
+   * conversation" card and the Messages list show.
+   *
+   * Exists because `GET /chat/sessions/customer` (what `state.pastSessions`
+   * is built from) never sends `targetId`/`targetRole` at all — only
+   * `subject`/`topic` — so the widget has no real way to tell a store-
+   * targeted session apart from a generic support one once it is back in
+   * this list. `subject` is a stand-in ONLY for a host where it is reliably
+   * set for a targeted session and reliably absent otherwise — true for a
+   * host whose `target`-ed mount always also sets `title` (this SDK defaults
+   * `subject` from `title` for a non-generic session — see `resolveConfig`)
+   * and whose GENERAL mount never sets a `subject`/`title` of its own.
+   *
+   * Off by default: `subject` is not a target on every host (a generic
+   * ticket may legitimately carry one, e.g. a chosen topic), so this stays
+   * opt-in rather than becoming a second, silently-wrong rule everywhere
+   * `targetId` already covers correctly. The real fix is chat-service-node
+   * adding `targetId`/`targetRole` to that endpoint's response, at which
+   * point this flag stops being necessary — it is a stand-in, not a second
+   * source of truth to keep maintaining alongside a real one.
+   */
+  readonly treatSubjectAsTarget?: boolean;
+
+  /**
    * The line under the title — a response-time promise, typically. Defaults to
    * `''`, which leaves the connection status alone.
    *

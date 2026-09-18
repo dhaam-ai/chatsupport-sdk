@@ -341,3 +341,51 @@ describe('sessionBelongsToTab & display info — Admin ↔ Merchant routing', ()
   });
 });
 
+describe('"Message Admin" — a merchant/outlet starting a partner conversation first', () => {
+  function tabs(node: HTMLElement) {
+    return Array.from(node.querySelectorAll<HTMLButtonElement>('.dh-mtab'));
+  }
+
+  it('is shown for a merchant, only fires onStartNewPartner, and only on the Admin tab', () => {
+    const onStartNewPartner = vi.fn();
+    const screen = createMessagesScreen({
+      onOpenConversation: vi.fn(),
+      userRole: 'merchant',
+      onStartNewPartner,
+    });
+    document.body.appendChild(screen.node);
+
+    const button = screen.node.querySelector<HTMLButtonElement>('.dh-messages-new');
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toContain('Message Admin');
+    // Customers is the default-active tab — the button belongs to Admin only.
+    expect(button?.hidden).toBe(true);
+
+    const adminTab = tabs(screen.node)[1];
+    if (adminTab === undefined) throw new Error('admin tab not found');
+    adminTab.click();
+    expect(button?.hidden).toBeFalsy();
+
+    button?.click();
+    expect(onStartNewPartner).toHaveBeenCalledTimes(1);
+  });
+
+  it('is omitted entirely when the host has not wired onStartNewPartner', () => {
+    const screen = createMessagesScreen({ onOpenConversation: vi.fn(), userRole: 'merchant' });
+    document.body.appendChild(screen.node);
+
+    expect(screen.node.querySelector('.dh-messages-new')).toBeNull();
+  });
+
+  it('is never shown for an admin viewer — OutletChatModal already covers starting a new outlet chat', () => {
+    const screen = createMessagesScreen({
+      onOpenConversation: vi.fn(),
+      userRole: 'admin',
+      onStartNewPartner: vi.fn(),
+    });
+    document.body.appendChild(screen.node);
+
+    expect(screen.node.querySelector('.dh-messages-new')).toBeNull();
+  });
+});
+

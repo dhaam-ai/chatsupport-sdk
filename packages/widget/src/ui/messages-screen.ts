@@ -66,6 +66,13 @@ export interface MessagesScreenCallbacks {
   readonly onOpenConversation: (sessionId: string, displayName?: string, subtitle?: string) => void;
   /** Optional start-new callback. */
   readonly onStartNew?: () => void;
+  /**
+   * Portal (merchant/outlet) Admin tab's "Message Admin" button. Fires with
+   * no arguments — this screen has no `role: 'admin'` target id to hand
+   * over, so resolving one (the host's job; see `WidgetConfig.onStartPartnerConversation`)
+   * is entirely on whoever set this callback.
+   */
+  readonly onStartNewPartner?: () => void;
   /** Current user role in the portal ('admin' | 'merchant' | 'customer'). */
   readonly userRole?: string;
 }
@@ -834,7 +841,38 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
     attrs: { class: 'dh-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
   });
 
-  const node = el('div', { attrs: { class: 'dh-messages' }, children: [tabBar, search, list] });
+  // ── "Message Admin" — a merchant/outlet's own way to reach out FIRST ────
+  //
+  // Admin's side of this pairing already has one: `OutletChatModal` (the
+  // host app) lets an admin pick a store/outlet and open a chat targeted at
+  // it. A merchant/outlet had no equivalent — this screen's Admin tab could
+  // only ever show a conversation an admin had already started, same as
+  // `onStartNew` not existing at all here until now (see the module header,
+  // "'New conversation' button is removed").
+  //
+  // `callbacks.onStartNewPartner` — not `onStartNew`, which is the customer
+  // screen's own callback with a different shape and no equivalent here —
+  // is left to `widget.ts`/the host to actually resolve a target for
+  // `role: 'admin'`: this screen has no way to know which id that is (a
+  // tenant may have more than one admin), so it only ever fires the request.
+  //
+  // Merchant-only (never 'admin' or 'manager' itself): admin's own
+  // "Merchants" tab already has `OutletChatModal` for starting new outlet
+  // conversations, so this would be a second, redundant entry point there.
+  const messageAdminButton = isMerchantUser && callbacks.onStartNewPartner
+    ? el('button', {
+        attrs: { class: 'dh-messages-new', type: 'button' },
+        children: [icon(ICONS.chat, 18), el('span', { text: 'Message Admin' })],
+        on: { click: () => callbacks.onStartNewPartner?.() },
+      })
+    : null;
+
+  const node = el('div', {
+    attrs: { class: 'dh-messages' },
+    children: messageAdminButton
+      ? [tabBar, search, list, messageAdminButton]
+      : [tabBar, search, list],
+  });
 
   const rows = new Map<string, MessageRow>();
   let allSessions: readonly ChatSessionSummary[] = [];
@@ -855,6 +893,7 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
 
   function switchTab(tab: ActiveConversationTab): void {
     activeTab = tab;
+    if (messageAdminButton) messageAdminButton.hidden = tab !== secondTabKey;
     if (tab === 'customers') {
       customersTab.classList.add('dh-mtab--active');
       customersTab.setAttribute('aria-selected', 'true');

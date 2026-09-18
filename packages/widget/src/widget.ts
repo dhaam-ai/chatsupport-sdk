@@ -579,10 +579,20 @@ function customerVisibleSessions(
   sessions: readonly ChatSessionSummary[],
   joinedSessionId: string | null,
   target?: { readonly role: string; readonly id: string } | undefined,
+  // See WidgetConfig.treatSubjectAsTarget's doc for why this exists:
+  // `GET /chat/sessions/customer` (what `state.pastSessions` is built from)
+  // never sends `targetId`/`targetRole` at all — chat.routes.ts's
+  // `CustomerSessionHistoryRow` has no such fields — so `hasTarget` below is
+  // always `false` for every row this function ever sees, on every host,
+  // regardless of whether the session actually has one. This makes a store-
+  // targeted session look exactly like a generic support one to this filter.
+  treatSubjectAsTarget = false,
 ): readonly ChatSessionSummary[] {
   return sessions.filter((summary) => {
     const s = summary as any;
-    const hasTarget = s.targetId !== undefined && s.targetId !== null && s.targetId !== '';
+    const hasTarget =
+      (s.targetId !== undefined && s.targetId !== null && s.targetId !== '') ||
+      (treatSubjectAsTarget && typeof s.subject === 'string' && s.subject.trim() !== '');
     if (target !== undefined) {
       // Scoped to a specific merchant outlet
       if (hasTarget) {
@@ -2033,6 +2043,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       }
     },
     onStartNew: () => openNewConversationFlow(),
+    ...((config as any).onStartPartnerConversation === undefined
+      ? {}
+      : { onStartNewPartner: () => (config as any).onStartPartnerConversation() }),
     userRole: (config as any).userRole,
   });
 
@@ -3643,6 +3656,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       state.pastSessions,
       joinedSessionId,
       config.target,
+      (config as any).treatSubjectAsTarget === true,
     );
     const ctaSub = remote.header.ctaSubtitle || config.header.ctaSubtitle || 'We usually reply instantly';
     homeScreen.update(mostRecentSession(customerSessions), ctaSub, entry);
