@@ -446,8 +446,21 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
 
 /**
  * Resolves the name of the entity the customer is chatting with:
- * Store name, Merchant name, assigned Agent name, or Support.
- * NEVER returns the user's message/subject.
+ * Store name, Merchant name, assigned Agent name, this conversation's own
+ * subject, or Support.
+ *
+ * `GET /chat/sessions/customer` (the customer's own session list) sends none
+ * of `storeName`/`merchantName`/`targetName`/`adminName` — those are portal
+ * (`/party/*`, `/agent/*`) enrichment fields this same function is also
+ * asked to read (see the call sites in widget.ts), and a customer's own
+ * list carries no such row. `subject` is what IS on that response, and for a
+ * store-targeted chat it already IS the entity's name: `resolveConfig`
+ * defaults a mint's `subject` to its `title` when the title isn't one of the
+ * SDK's own generic defaults (config.ts), and a store-targeted mount's title
+ * is `storeTarget.outletName` — so `subject` reaching here already went
+ * through that same "not a generic placeholder" filter once, at mint time.
+ * Read below `handledBy` deliberately: an agent who is actually on the
+ * conversation right now outranks what it was originally about.
  */
 export function getCustomerConversationTitle(summary: ChatSessionSummary, fallbackTitle = 'Support'): string {
   const s = summary as any;
@@ -465,6 +478,9 @@ export function getCustomerConversationTitle(summary: ChatSessionSummary, fallba
   }
   if (s.adminName && typeof s.adminName === 'string' && s.adminName.trim() && s.adminName.trim() !== 'Admin') {
     return s.adminName.trim();
+  }
+  if (s.subject && typeof s.subject === 'string' && s.subject.trim() && s.subject.trim().toLowerCase() !== 'admin') {
+    return s.subject.trim();
   }
   return fallbackTitle;
 }

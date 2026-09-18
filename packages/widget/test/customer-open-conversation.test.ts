@@ -304,4 +304,23 @@ describe('characterization — what the customer then reads in the header', () =
 
     expect(query('.dh-title').textContent).toBe('Acme Support');
   });
+
+  // The real shape `GET /chat/sessions/customer` actually sends: no
+  // `storeName`, no `merchantName`, no `targetName` — those are portal
+  // enrichment fields this same session list never carries. `subject` is
+  // what IS present for a store-targeted chat (a mint's `subject` defaults
+  // to its `title`, and a store-targeted mount's title is the outlet's own
+  // name — see getCustomerConversationTitle's doc), so it is the one real
+  // signal available here for "which outlet is this". Before this test both
+  // the row and the header read the generic 'Support' fallback regardless.
+  it('names the row and the header after the session\'s own subject when nothing else is offered', async () => {
+    sessionRows = [summaryRow(PAST, { subject: 'outlet tests', lastMessagePreview: 'Hi 👋 Ask us anything' })];
+    await boot({ title: 'Chat with us' });
+    await goToMessages();
+
+    rowFor('outlet tests').click();
+    await settle();
+
+    expect(query('.dh-title').textContent).toBe('outlet tests');
+  });
 });
