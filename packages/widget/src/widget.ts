@@ -2069,6 +2069,25 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   let portalClient: ConversationClient | null = null;
   let portalUnsubscribe: (() => void) | null = null;
+  // `open()` sends `session.join` immediately, with no wait of its own for the
+  // socket to be up (registry.ts's `open()` has no such check) — so the FIRST
+  // conversation opened right after `ensurePortalClient()` creates the client
+  // raced the still-connecting socket and failed
+  // ("session.join was not sent: the connection is not open"). A second open
+  // (or a reopen after close/reopen) never showed it, because by then
+  // `connect()` had already settled.
+  // ponytail: no automated test covers this race — packages/widget/test's
+  // portal harnesses (portal-open-conversation.test.ts,
+  // portal-staff-client.test.ts) exercise messages-screen.ts and the REST
+  // history source in isolation, neither of which touches the keyless
+  // ConversationClient/transport this bug lives in; connecting-state.test.ts
+  // has that transport harness but only for the customer flow. Add a portal
+  // equivalent (StubSocketFactory, assert `open()` awaits a pending
+  // `connect()`) if this regresses.
+  // Held here so `openPortalConversation` can await the SAME connect() only
+  // once — every open after the first is an
+  // already-resolved await, effectively free.
+  let portalConnecting: Promise<void> | null = null;
   // EVERY row `/agent/queue` or `/party/conversations` returned, CLOSED ones included.
   // What the two tabs actually render is `portalVisibleSessions(...)` of this, in
   // `syncSessionSurfaces` — kept apart on purpose, because `portalQueueIds`
@@ -2095,7 +2114,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       if (currentPortalSessionId === null) return;
       portalThread.render(state.conversations[currentPortalSessionId] ?? null, false);
     });
-    client.connect().catch(report);
+    // Reported here exactly as before (`.catch(report)`), and re-thrown so
+    // `portalConnecting` still carries the rejection to whoever awaits it —
+    // `openPortalConversation`'s own catch already renders that without a
+    // second report.
+    portalConnecting = client.connect().catch((error: unknown) => {
+      report(error);
+      throw error;
+    });
     return client;
   }
 
@@ -2202,6 +2228,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
     const client = ensurePortalClient();
     try {
+      // `open()` sends session.join immediately with no wait of its own —
+      // see `portalConnecting`'s own doc. Already-resolved on every open past
+      // the first, so this is a no-op wait in the ordinary case.
+      await portalConnecting;
       await client.open({ conversationId: sessionId });
       if (currentPortalSessionId === sessionId) {
         portalThread.render(client.getState().conversations[sessionId] ?? null, false);
