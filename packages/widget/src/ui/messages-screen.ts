@@ -823,13 +823,18 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
   const rows = new Map<string, MessageRow>();
   let allSessions: readonly ChatSessionSummary[] = [];
   let currentId: string | null = null;
-  // Merchant viewers keep their prior default (their own second tab —
-  // 'admin' — is the real, working conversation). Admin viewers default
-  // straight to 'customers': it is the tab with real data (see widget.ts's
-  // portal wiring); 'merchants' is not wired to anything for an admin
-  // viewer, so opening there first showed an always-empty tab ahead of the
-  // one that actually works.
-  const initialTab: ActiveConversationTab = isMerchantUser ? secondTabKey : 'customers';
+  // Both viewers default to 'customers'. This used to read `isMerchantUser
+  // ? secondTabKey : 'customers'` — a merchant/outlet's 'admin' tab was the
+  // only one with real data back when GET /party/conversations (default,
+  // no `with=partner`) 401'd for that identity (the dh-auth outlet-role gap
+  // — see chat-service-node's role-mapping.ts / session-access.ts history).
+  // Now that that's fixed, 'customers' is real for a merchant/outlet too,
+  // and is the tab a store owner actually wants first: their own shoppers,
+  // not the platform admin. Admin viewers were already defaulting here —
+  // 'merchants' has never been wired to anything for an admin viewer, so
+  // opening there first showed an always-empty tab ahead of the one that
+  // works.
+  const initialTab: ActiveConversationTab = 'customers';
   let activeTab: ActiveConversationTab = initialTab;
 
   function switchTab(tab: ActiveConversationTab): void {

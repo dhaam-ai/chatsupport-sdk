@@ -145,4 +145,26 @@ describe('characterization — what the PORTAL Messages row hands the widget', (
     expect(call).toHaveLength(3);
     expect(call[1]).toBe('Customer');
   });
+
+  // Used to read `isMerchantUser ? secondTabKey : 'customers'` — a
+  // merchant/outlet viewer opened on 'admin' by default, back when the
+  // Customers tab (GET /party/conversations, no `with=partner`) 401'd for
+  // that identity and 'admin' (`with=partner`) was the only tab with real
+  // data. Both are wired correctly now, and a store owner wants their own
+  // shoppers first, not the platform admin — see messages-screen.ts's
+  // `initialTab`.
+  it('defaults a merchant/outlet viewer to the Customers tab too, not Admin', () => {
+    const { screen } = build('merchant');
+    screen.render([queueRow()], null);
+
+    const row = screen.node.querySelector<HTMLButtonElement>('.dh-mrow-btn');
+    expect(row).not.toBeNull();
+    // Visible with no tab switch: a customer-type row is only ever shown on
+    // the Customers tab, so this is only true if that tab is already active.
+    expect(row!.closest<HTMLElement>('.dh-mrow-item')!.hidden).toBe(false);
+
+    const customersTab = screen.node.querySelectorAll<HTMLButtonElement>('.dh-mtab')[0]!;
+    expect(customersTab.textContent).toContain('Customers');
+    expect(customersTab.getAttribute('aria-selected')).toBe('true');
+  });
 });
