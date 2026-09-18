@@ -993,6 +993,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const chime = createChime(config.onError);
 
   /**
+   * Safety net for the client-only "bot is thinking" indicator — see the
+   * `state.messages` subscription below for why it exists and
+   * `MessageListView.setBotThinking` for the DOM it drives. Cleared and
+   * re-armed on every messages change; if it ever fires, the reply the
+   * customer's message was waiting on never arrived (a swallowed error, a
+   * slow provider), and the dots must not animate forever over nothing.
+   */
+  let botThinkingTimer: ReturnType<typeof setTimeout> | undefined;
+  const BOT_THINKING_TIMEOUT_MS = 20_000;
+
+  /**
    * This VISITOR's own preference about noise, remembered per browser.
    *
    * Not a merchant setting and not synced anywhere: `behaviour.sound` is the
@@ -2606,7 +2617,32 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const unsubscribers = [
     store.select(
       (state) => state.messages,
-      () => messageList.render(store.getState(), localParticipantId),
+      () => {
+        const state = store.getState();
+        // chat-service only ever emits a real `typing.start` for a human
+        // AGENT composing (bridge.ts/websocket-server.ts's broadcastTyping)
+        // — the AI bot sends no such signal before its reply, so a BOT-mode
+        // conversation showed nothing at all during the 1-3s a reply takes
+        // to generate. This synthesises the same "someone is responding"
+        // cue for exactly that gap: due the moment the customer's own
+        // message is the newest thing in the transcript on a BOT-mode
+        // session, cleared the moment anything else arrives (the reply
+        // itself re-fires this same subscription). Never armed for a HUMAN
+        // session — an agent's own typing state already covers that, and
+        // stacking a synthetic cue under a real one would tell the customer
+        // two different things about the same wait.
+        const last = state.messages[state.messages.length - 1];
+        const thinking = state.session?.mode === 'BOT' && last?.senderType === 'CUSTOMER';
+        clearTimeout(botThinkingTimer);
+        messageList.setBotThinking(thinking);
+        if (thinking) {
+          botThinkingTimer = setTimeout(() => {
+            messageList.setBotThinking(false);
+            messageList.render(store.getState(), localParticipantId);
+          }, BOT_THINKING_TIMEOUT_MS);
+        }
+        messageList.render(state, localParticipantId);
+      },
       { immediate: true },
     ),
     store.select(
@@ -4953,6 +4989,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // would otherwise outlive the shadow root.
       releaseAutoOpen();
       clearTimeout(greetingTimer);
+      clearTimeout(botThinkingTimer);
       window.removeEventListener('resize', onResize);
       // Both hold a window listener or a timer that would otherwise outlive
       // the shadow root. The pump goes first: it subscribes to `network`.

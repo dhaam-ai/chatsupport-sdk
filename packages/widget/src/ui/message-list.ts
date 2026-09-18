@@ -173,6 +173,17 @@ export interface MessageListView {
   setGreetingShown(shown: boolean): void;
 
   /**
+   * The client-only "bot is thinking" cue — see widget.ts's `state.messages`
+   * subscription for why it exists (chat-service sends no real typing
+   * signal for the AI bot). Reuses the SAME animated-dots element the real,
+   * server-driven typing indicator uses (`createTypingIndicator`): to the
+   * customer both mean exactly the same thing, "someone is about to reply",
+   * and a second visually-distinct spinner for the bot case would be a
+   * second thing to learn for no difference that matters to them.
+   */
+  setBotThinking(thinking: boolean): void;
+
+  /**
    * Marks the conversation ended, or `null` to clear it for a new one.
    *
    * The transcript is deliberately left in place: the history is still valid
@@ -312,6 +323,14 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   let lastBotNameSessionId: string | null = null;
   /** See {@link MessageListView.setGreetingShown}. */
   let greetingShown = false;
+  /**
+   * See {@link MessageListView.setBotThinking}. Unlike `greetingShown`, every
+   * caller (widget.ts's `state.messages` subscription, both the "on" branch
+   * and the safety-timeout's "off" branch) already pairs a `setBotThinking`
+   * call with a `render()` right after it, so this stays a plain flag with
+   * no DOM write of its own.
+   */
+  let botThinking = false;
 
   function render(state: ChatState, localParticipantId: string | null): void {
     // Captured BEFORE mutating: reading `scrollTop` after an append gives the
@@ -437,7 +456,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // Typing bubble stays last so it reads as "someone is composing the next
     // message", not as an interruption in the middle of history.
     log.appendChild(typing.node);
-    typing.update(state, handlerName(state, lastBotName));
+    typing.update(state, handlerName(state, lastBotName), botThinking);
 
     announce(state, localParticipantId);
 
@@ -521,11 +540,16 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     if (shown) empty.hidden = true;
   }
 
+  function setBotThinking(thinking: boolean): void {
+    botThinking = thinking;
+  }
+
   return {
     log,
     liveRegion,
     render,
     setGreetingShown,
+    setBotThinking,
     setClosure,
     setStartingNewConversation,
     setTranscriptEmail,
@@ -899,8 +923,14 @@ function renderAttachment(attachment: AttachmentMetadata): HTMLElement {
 
 function createTypingIndicator(): {
   node: HTMLElement;
-  /** @param who the name of whoever is typing — see `handlerName`. */
-  update(state: ChatState, who: string): void;
+  /**
+   * @param who the name of whoever is typing — see `handlerName`.
+   * @param botThinking the client-only synthetic cue — see
+   *   `MessageListView.setBotThinking`. Shows the exact same dots as real
+   *   `state.typing.isTyping`; the two are never meaningfully different to
+   *   the customer, so there is one visual for both, not two.
+   */
+  update(state: ChatState, who: string, botThinking: boolean): void;
 } {
   const dots = [0, 1, 2].map(() => el('span', { attrs: { class: 'dh-typing-dot' } }));
   // Screen-reader-only, and named: the three animated dots say SOMEONE is
@@ -922,8 +952,8 @@ function createTypingIndicator(): {
 
   return {
     node,
-    update(state, who) {
-      node.hidden = !state.typing.isTyping;
+    update(state, who, botThinking) {
+      node.hidden = !(state.typing.isTyping || botThinking);
       const text = `${who} is typing`;
       if (label.textContent !== text) label.textContent = text;
     },

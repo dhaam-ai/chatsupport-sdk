@@ -781,6 +781,31 @@ describe('a conversation the agent closed', () => {
   });
 });
 
+describe('the client-only "bot is thinking" cue', () => {
+  it('shows the typing dots even though nobody sent a real isTyping frame', () => {
+    const { view } = build();
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    const typing = view.log.querySelector('.dh-typing') as HTMLElement;
+    expect(typing.hidden).toBe(true);
+
+    view.setBotThinking(true);
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    expect(typing.hidden).toBe(false);
+  });
+
+  it('hides again once cleared', () => {
+    const { view } = build();
+    view.setBotThinking(true);
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    const typing = view.log.querySelector('.dh-typing') as HTMLElement;
+    expect(typing.hidden).toBe(false);
+
+    view.setBotThinking(false);
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    expect(typing.hidden).toBe(true);
+  });
+});
+
 describe('the emailed transcript', () => {
   // Off until the merchant's config says otherwise: a build whose config never
   // landed must show no control rather than one that fails when pressed.
