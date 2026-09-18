@@ -2087,6 +2087,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       wsUrl: config.wsUrl,
       getToken: portalToken,
       senderId: config.identity.userId,
+      isMerchantPortal,
       ...(portalOutletId === undefined ? {} : { outletId: portalOutletId }),
     });
     portalClient = client;

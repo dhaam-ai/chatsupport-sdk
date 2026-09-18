@@ -56,9 +56,20 @@ export interface PortalStaffOptions {
    * this outlet (a customer's store DM, or an admin-started partner chat)
    * isn't refused `SESSION_NOT_FOUND` just because dh-auth's `/validate`
    * proves the outlet only by its role id, not by this one. Unused for an
-   * admin/manager identity.
+   * admin/manager identity. Also sent as `/party/sessions/{id}/messages`'s
+   * own `outletId` query param — same unverified fallback, same reason.
    */
   readonly outletId?: string;
+  /**
+   * Whether this portal client belongs to a merchant/outlet identity rather
+   * than admin/manager/staff — decides which history route `listMessages`
+   * calls. `/agent/*` is strictly staff-only (401/403 for merchant/manager);
+   * `/party/sessions/{id}/messages` is the merchant/outlet counterpart —
+   * message history for a conversation the caller may read (a customer DM or
+   * a partner chat), added specifically because staff had `/agent/*` and
+   * merchant/outlet had nothing.
+   */
+  readonly isMerchantPortal?: boolean;
 }
 
 /** Anything the staff REST surface refused, with the HTTP status attached. */
@@ -99,20 +110,41 @@ async function getJson(options: PortalStaffOptions, path: string, query: Record<
   return (await response.json()) as unknown;
 }
 
-/** The `history` seam `createConversationClient` requires at construction. */
-function createStaffHistorySource(options: PortalStaffOptions): MessageHistorySource {
+/**
+ * The `history` seam `createConversationClient` requires at construction.
+ * Exported for direct testing, same reason `listPortalQueue` is — the
+ * routing between `/agent/*` and `/party/*` has no other seam to test it
+ * through short of standing up a whole `ConversationClient`.
+ */
+export function createStaffHistorySource(options: PortalStaffOptions): MessageHistorySource {
+  // Two different routes for two different identities — see
+  // `PortalStaffOptions.isMerchantPortal`'s doc. `/party/sessions/{id}/messages`
+  // answers the SAME envelope shape as `/agent/sessions/{id}/messages`
+  // (`{ messages, hasMore }`), so the rest of this function is identical
+  // either way; only the path and the merchant/outlet fallback id differ.
+  const path = (sessionId: string): string =>
+    options.isMerchantPortal
+      ? `/party/sessions/${encodeURIComponent(sessionId)}/messages`
+      : `/agent/sessions/${encodeURIComponent(sessionId)}/messages`;
+  const routeLabel = options.isMerchantPortal
+    ? 'GET /party/sessions/{sessionId}/messages'
+    : 'GET /agent/sessions/{sessionId}/messages';
+
   return {
     async listMessages(query) {
       try {
-        const body = await getJson(options, `/agent/sessions/${encodeURIComponent(query.sessionId)}/messages`, {
+        const body = await getJson(options, path(query.sessionId), {
           limit: String(query.limit),
           ...(query.before === undefined ? {} : { before: query.before }),
+          // Same unverified fallback as session.join.outletId — tried only
+          // when the token's own proof isn't already enough. Meaningless (and
+          // ignored server-side) on the admin/manager `/agent/*` route.
+          ...(options.isMerchantPortal && options.outletId !== undefined
+            ? { outletId: options.outletId }
+            : {}),
         });
 
-        const page = unwrapEnvelope<{ messages?: unknown; hasMore?: unknown }>(
-          body,
-          'GET /agent/sessions/{sessionId}/messages',
-        );
+        const page = unwrapEnvelope<{ messages?: unknown; hasMore?: unknown }>(body, routeLabel);
 
         const rows = Array.isArray(page.messages) ? page.messages : [];
         const messages = rows
@@ -124,9 +156,11 @@ function createStaffHistorySource(options: PortalStaffOptions): MessageHistorySo
           hasMore: page.hasMore === true,
         };
       } catch (error) {
-        // Merchant/manager identities are admitted to WebSocket v2 keyless hello
-        // and session.join, but /agent/* REST routes are strictly staff-only (401/403).
-        // Catch gracefully so conversation open & live pushes remain functional.
+        // Defense in depth, not the expected case any more now that
+        // `/party/sessions/{id}/messages` exists for merchant/outlet: a role
+        // this SDK build doesn't yet know how to route still degrades to an
+        // empty transcript rather than breaking conversation open & live
+        // pushes.
         if (error instanceof PortalApiError && (error.status === 401 || error.status === 403)) {
           return { messages: [], hasMore: false };
         }
