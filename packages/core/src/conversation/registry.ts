@@ -94,6 +94,9 @@ export interface ConversationRegistryOptions {
   readonly pageSize?: number;
   readonly schedule?: ScheduleTimer;
   readonly now?: Clock;
+
+  /** See {@link ConversationClientConfig.outletId} — sent on every `session.join` this registry makes. */
+  readonly outletId?: string;
   readonly logger?: ConversationLogger;
 }
 
@@ -413,6 +416,10 @@ export class ConversationRegistry {
       // `exactOptionalPropertyTypes` and would serialise the same only by
       // accident of the encoder.
       ...(resumeFrom === null ? {} : { resumeFrom }),
+      // The server caches this per connection after the first join that
+      // carries it, so resending it on every join (rather than tracking
+      // "have I sent it on this socket yet") is simply harmless, not wrong.
+      ...(this.#options.outletId === undefined ? {} : { outletId: this.#options.outletId }),
     };
 
     const outcome = await this.#options.transport().send('session.join', payload).ack;

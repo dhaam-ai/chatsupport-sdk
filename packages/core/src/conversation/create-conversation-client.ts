@@ -168,6 +168,7 @@ export function createConversationClient(config: ConversationClientConfig): Conv
     ...(config.schedule === undefined ? {} : { schedule: config.schedule }),
     ...(config.now === undefined ? {} : { now: config.now }),
     ...(config.logger === undefined ? {} : { logger: config.logger }),
+    ...(config.outletId === undefined ? {} : { outletId: config.outletId }),
   });
 
   // -------------------------------------------------------------------------

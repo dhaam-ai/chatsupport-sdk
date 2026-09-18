@@ -215,6 +215,14 @@ export interface SessionJoinPayload {
    * Omit to plan a `fresh` join, which replays nothing.
    */
   resumeFrom?: number;
+
+  /**
+   * The outlet's own id, as a fallback ID proof for a merchant/outlet
+   * identity — see `ConversationClientConfig.outletId`'s doc. Max 128 chars.
+   * Ignored by the server for any other identity. Tried only when the
+   * token's own verified proof does not already grant access.
+   */
+  outletId?: string;
 }
 
 /**

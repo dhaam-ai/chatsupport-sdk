@@ -50,6 +50,15 @@ export interface PortalStaffOptions {
   readonly getToken: () => Promise<string>;
   /** Local-echo hint only; the server derives the real sender from the token. */
   readonly senderId: string;
+  /**
+   * See `ConversationClientConfig.outletId` — the merchant/outlet's own id,
+   * sent as `session.join.outletId` so a conversation genuinely addressed to
+   * this outlet (a customer's store DM, or an admin-started partner chat)
+   * isn't refused `SESSION_NOT_FOUND` just because dh-auth's `/validate`
+   * proves the outlet only by its role id, not by this one. Unused for an
+   * admin/manager identity.
+   */
+  readonly outletId?: string;
 }
 
 /** Anything the staff REST surface refused, with the HTTP status attached. */
@@ -137,6 +146,7 @@ export function createPortalConversationClient(options: PortalStaffOptions): Con
     localSender: { senderId: options.senderId, senderType: 'AGENT' },
     history: createStaffHistorySource(options),
     pageSize: 20,
+    ...(options.outletId === undefined ? {} : { outletId: options.outletId }),
   });
 }
 

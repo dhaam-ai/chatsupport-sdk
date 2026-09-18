@@ -457,7 +457,8 @@ function validateSessionJoin(d: unknown, path: string, frameType: string): Frame
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
   return (
     requireField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType) ??
-    optionalField(d, 'resumeFrom', isInteger, path, 'an integer', frameType)
+    optionalField(d, 'resumeFrom', isInteger, path, 'an integer', frameType) ??
+    optionalField(d, 'outletId', isNonEmptyString, path, 'a non-empty string', frameType)
   );
 }
 

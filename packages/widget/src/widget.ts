@@ -2055,6 +2055,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     config.auth.getToken !== undefined &&
     (config as any).target === undefined;
   const isMerchantPortal = portalUserRole === 'merchant' || portalUserRole === 'manager';
+  // See WidgetConfig.outletId's doc: the outlet's own id, for session.join's
+  // fallback. Falls back to outletIds[0] — the array is already ordered so
+  // its first entry is this same id — for a host that has not yet been
+  // updated to pass the singular field explicitly.
+  const portalOutletId: string | undefined =
+    (config as any).outletId ?? (config as any).outletIds?.[0];
 
   async function portalToken(): Promise<string> {
     const resolved = await config.auth.getToken!();
@@ -2081,6 +2087,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       wsUrl: config.wsUrl,
       getToken: portalToken,
       senderId: config.identity.userId,
+      ...(portalOutletId === undefined ? {} : { outletId: portalOutletId }),
     });
     portalClient = client;
     portalUnsubscribe = client.subscribe((state) => {

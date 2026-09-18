@@ -272,6 +272,24 @@ export interface WidgetConfig {
   readonly outletIds?: readonly string[];
 
   /**
+   * This merchant/outlet identity's own id, as the host's storefront already
+   * holds it — sent as `session.join.outletId`, a fallback the server tries
+   * only when the token's own verified proof does not already grant access
+   * (Wire Contract, "An outlet may need to claim its own id on
+   * session.join"). Without it, a conversation genuinely addressed to this
+   * outlet (a customer's store DM, or an admin-started partner chat) can be
+   * refused `SESSION_NOT_FOUND` even on a valid token, because dh-auth's
+   * `/validate` proves an outlet only by its per-tenant role id, never by
+   * the id `chat_sessions.target_id` is actually addressed in.
+   *
+   * Defaults to `outletIds[0]` when omitted — the array is already ordered
+   * so its first entry is this same id (see the host's own candidate-id
+   * collection) — but naming it explicitly here is preferred over relying on
+   * that ordering.
+   */
+  readonly outletId?: string;
+
+  /**
    * The line under the title — a response-time promise, typically. Defaults to
    * `''`, which leaves the connection status alone.
    *

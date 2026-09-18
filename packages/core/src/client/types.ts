@@ -305,6 +305,20 @@ export interface ChatClientConfig {
   /** Multi-outlet subscription for merchant / manager console. */
   readonly outletIds?: readonly string[];
 
+  /**
+   * This merchant/outlet identity's own id, sent as `session.join.outletId`
+   * on every `session.join` this client makes (`joinSession`, `switchSession`,
+   * and the reconnect re-join alike) — see
+   * `ConversationClientConfig.outletId`'s doc for why: dh-auth's `/validate`
+   * proves an outlet only by its per-tenant role id, never by the id
+   * `chat_sessions.target_id` is actually addressed in, so a conversation
+   * genuinely addressed to this outlet can otherwise be refused
+   * `SESSION_NOT_FOUND` on a perfectly valid token.
+   *
+   * Defaults to `outletIds[0]` when omitted.
+   */
+  readonly outletId?: string;
+
   /** Initial conversation subject / store name, if any. */
   readonly subject?: string;
 

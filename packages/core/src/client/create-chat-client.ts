@@ -171,6 +171,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     );
   }
 
+  // See ChatClientConfig.outletId's doc — sent on every session.join this
+  // client makes, as the fallback ID proof an outlet identity may need.
+  const outletId = config.outletId ?? config.outletIds?.[0];
+
   const resolveLocalSender = normalizeLocalSender(config.localSender);
   // Resolved once, eagerly, so presence/typing/watermark identity (below) is
   // seeded correctly from construction — not just at send time. See
@@ -755,7 +759,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
    * with no signal at all — this is what closes that gap.
    */
   function joinSessionFrame(sessionId: string): void {
-    const { ack } = realTransport.send('session.join', { sessionId });
+    const { ack } = realTransport.send('session.join', {
+      sessionId,
+      ...(outletId === undefined ? {} : { outletId }),
+    });
     void ack.then((outcome) => {
       // Only an ACK is the server saying `conn.sessionId` moved. A refusal, a
       // timeout and a `disconnected` write all leave the connection exactly
@@ -1066,7 +1073,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
    * the same thing.
    */
   async function joinSessionAwaited(sessionId: string): Promise<void> {
-    const { ack } = realTransport.send('session.join', { sessionId });
+    const { ack } = realTransport.send('session.join', {
+      sessionId,
+      ...(outletId === undefined ? {} : { outletId }),
+    });
     const outcome = await ack;
     if (outcome.status === 'acked') {
       // The server has moved `conn.sessionId`. Recorded here and nowhere else
@@ -1130,7 +1140,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     if (onScreen === joinedSessionId) return;
 
     if (onScreen !== null) {
-      const { ack } = realTransport.send('session.join', { sessionId: onScreen });
+      const { ack } = realTransport.send('session.join', {
+        sessionId: onScreen,
+        ...(outletId === undefined ? {} : { outletId }),
+      });
       const outcome = await ack;
       if (outcome.status === 'acked') {
         joinedSessionId = onScreen;

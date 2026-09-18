@@ -300,6 +300,28 @@ export interface ConversationClientConfig {
   /** Protocol version to speak. Defaults to the transport's. */
   readonly protocolVersion?: number;
 
+  /**
+   * The merchant/outlet's own id, as the host's storefront frontend already
+   * holds it — sent as `session.join.outletId` on every join this client
+   * makes (Wire Contract, "An outlet may need to claim its own id on
+   * session.join").
+   *
+   * dh-auth's `/validate` proves an outlet only by its per-tenant role id
+   * (the 101 family), never by the id `chat_sessions.target_id` is actually
+   * addressed in — that's whatever id the storefront already has for this
+   * outlet. Without this, `session.join` on a conversation the outlet is
+   * genuinely addressed on (a customer's store DM, or an admin-started
+   * partner chat) can be refused `SESSION_NOT_FOUND` even though the token
+   * is otherwise valid.
+   *
+   * Tried ONLY as a fallback, when the token's own proof does not already
+   * grant access, and has no effect for a customer or staff identity — the
+   * backend still derives tenant and role from the verified token; only the
+   * id half is trusted from this. Same accepted-risk shape as `outletIds` on
+   * `GET /party/conversations`.
+   */
+  readonly outletId?: string;
+
   /** Diagnostics. Never called with credential material. See {@link ConversationLogger}. */
   readonly logger?: ConversationLogger;
 }
