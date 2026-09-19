@@ -4970,7 +4970,32 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // to keep could do neither: it could not re-arm when the customer switched
   // conversations, which is why picking a past session left the previous
   // session's transcript on screen.
-  const connecting = isPortalStaff ? Promise.resolve() : store.client.connect();
+  //
+  // ── Skipped only for ADMIN, not merchant/manager, despite both being
+  // `isPortalStaff` ────────────────────────────────────────────────────────
+  // An admin's live channel for an untargeted mount is `portalClient`
+  // (`ensurePortalClient`, below) — its own separate connection, dialled
+  // lazily when a queue row is opened. This one (`store.client`) would only
+  // duplicate it, and an untargeted `connection.hello` from ANY staff/party
+  // identity resolves to a SUPPORT-type session under that identity's own id
+  // (chat-service-node's `resolveConversationKind`) — connecting it for
+  // nothing an admin needs is a session an admin never asked for.
+  //
+  // A merchant/manager has no such duplicate: `portalClient`'s underlying
+  // socket is the "staff flow" hello (`publishableKey` absent), which
+  // chat-service-node's server refuses for a merchant/manager token outright
+  // (see `ensurePortalClient`'s own comment, a server-side mapping gap this
+  // widget cannot route around). Skipping `store.client.connect()` for a
+  // merchant/manager therefore left them with NO live connection AT ALL
+  // while untargeted — the incidental SUPPORT-session row this connects
+  // costs is far cheaper than a merchant/outlet unable to reach a partner
+  // conversation an admin started until they happen to click into it (which,
+  // for the same server-side gap, does not work either): switching this
+  // connection into that session via `switchSession` afterward (see the
+  // host's own "surface an incoming partner message" flow) is what actually
+  // needs a live `store.client` to switch.
+  const skipCustomerFlowConnect = isPortalStaff && portalUserRole === 'admin';
+  const connecting = skipCustomerFlowConnect ? Promise.resolve() : store.client.connect();
 
   // Portal (staff/merchant) mode: the Customers tab needs its first real data before
   // the user ever opens Messages, not only once they navigate there — see
