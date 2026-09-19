@@ -983,22 +983,30 @@ function handlerName(state: ChatState, lastBotName: string | null): string {
 /**
  * Whose bubble this is, visually — right/"mine" vs left/theirs.
  *
- * `senderType === 'CUSTOMER'` alone only works for the plain end-customer
- * widget, where the two sides of a conversation are always CUSTOMER vs
- * AGENT/BOT. It silently breaks for a partner chat (admin/manager <->
- * merchant/outlet): per the wire contract's "Partner chats" section, BOTH
- * sides send as senderType AGENT there, so that check can never tell the two
- * apart and every bubble in the thread ends up "outgoing". Comparing
- * `senderId` against `localParticipantId` (== `config.identity.userId`,
- * always known — see widget.ts) works for every persona, customer included,
- * since a customer's own messages carry their own senderId too. The
- * CUSTOMER-type check survives only as a fallback for the one case
- * `localParticipantId` is unavailable.
+ * `senderType` alone decides CUSTOMER and BOT: a customer's own messages are
+ * always senderType CUSTOMER and never sent by anyone else, and a BOT
+ * message is never the customer's — neither side of that is ambiguous in
+ * ANY conversation this widget renders, partner chat included. Only AGENT is
+ * ambiguous: per the wire contract's "Partner chats" section, BOTH sides of
+ * a partner chat (admin/manager <-> merchant/outlet) send as senderType
+ * AGENT, so that's the one case `senderType` cannot tell apart and `senderId
+ * === localParticipantId` (== `config.identity.userId`, see widget.ts) is
+ * needed to break the tie.
+ *
+ * Deciding CUSTOMER/BOT by type FIRST, rather than falling through the same
+ * id comparison every case, matters beyond tidiness: `localParticipantId` is
+ * resolved once at widget construction from the host's own identity
+ * resolution (ChatWidgetMount.tsx, for this app), which can still be mid-
+ * flight on a fresh page load. Routing the unambiguous 95% of messages
+ * through id comparison too made every one of a customer's own messages
+ * flip to "incoming" the moment that identity was not yet settled — id
+ * comparison is scoped to exactly the one case that has no other way to
+ * decide.
  */
 function isOutgoing(message: ChatMessage, localParticipantId: string | null): boolean {
-  return localParticipantId !== null
-    ? message.senderId === localParticipantId
-    : message.senderType === 'CUSTOMER';
+  if (message.senderType === 'CUSTOMER') return true;
+  if (message.senderType === 'BOT') return false;
+  return localParticipantId !== null && message.senderId === localParticipantId;
 }
 
 /**

@@ -335,6 +335,39 @@ describe('the live region', () => {
 });
 
 describe('rendering', () => {
+  // Regression: `isOutgoing` was rewritten to compare `senderId` against
+  // `localParticipantId` so a partner chat (both sides senderType AGENT)
+  // could tell its two parties apart. For the plain customer widget this
+  // added a NEW failure mode the old `senderType === 'CUSTOMER'` check never
+  // had: any hiccup in resolving `localParticipantId` (a guest-id fallback
+  // still in flight on a fresh page load, for instance) now flips every one
+  // of the customer's own messages to the "incoming" side. `senderType` is
+  // never ambiguous for CUSTOMER or BOT — only AGENT is, in a partner chat —
+  // so those two must stay decided by type alone, with id comparison used
+  // only to break the AGENT/AGENT tie.
+  it('a CUSTOMER-typed message renders as outgoing even when localParticipantId cannot be matched', () => {
+    const { view } = build();
+    const row = () => view.log.querySelector<HTMLElement>('.dh-msg');
+
+    view.render(
+      state({
+        messages: [message({ senderId: ME, senderType: 'CUSTOMER' })],
+        pagination: { hasMore: false, loadingMore: false, initialLoaded: true },
+      }),
+      null, // localParticipantId not resolved yet
+    );
+    expect(row()?.getAttribute('data-mine')).toBe('true');
+
+    view.render(
+      state({
+        messages: [message({ senderId: 'guest-abc', senderType: 'CUSTOMER' })],
+        pagination: { hasMore: false, loadingMore: false, initialLoaded: true },
+      }),
+      ME, // resolved, but to a different id than the message was sent under
+    );
+    expect(row()?.getAttribute('data-mine')).toBe('true');
+  });
+
   it('says "no messages yet" only once it knows there are none', () => {
     const { view } = build();
     const empty = view.log.querySelector<HTMLElement>('.dh-empty');
