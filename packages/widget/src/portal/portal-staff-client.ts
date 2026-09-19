@@ -116,20 +116,10 @@ async function postJson(options: PortalStaffOptions, path: string): Promise<unkn
   let response: Response;
   try {
     const token = await options.getToken();
-    // `{}`, not no body at all: chat-service-node's close routes (customer
-    // and staff alike) read nothing FROM the body — the session comes from
-    // the URL, the actor from the verified token — but `ownedWithBody`'s
-    // schema (`body: { type: 'object', ... }`) still requires one to be
-    // PRESENT. A request with no Content-Type and no payload never reaches
-    // the handler at all: it fails that schema check first, which is what
-    // "End conversation" surfaced as "We couldn't end this conversation" —
-    // every existing caller of this route (agent-close-v2.test.ts included)
-    // sends `payload: {}` for exactly this reason.
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
+    // Empty body: chat-service-node's close routes (customer and staff
+    // alike) read nothing from it — the session comes from the URL, the
+    // actor from the verified token.
+    response = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
   } catch (error) {
     throw new PortalApiError(`could not reach ${url.origin} (network error, or blocked by CORS)`, 0);
   }

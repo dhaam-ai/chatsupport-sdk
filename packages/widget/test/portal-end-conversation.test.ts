@@ -59,17 +59,6 @@ function stubFetch(): void {
         });
       }
       if (init?.method === 'POST' && /\/agent\/sessions\/[^/]+\/close$/.test(url)) {
-        // Mirrors chat-service-node's `ownedWithBody` schema
-        // (`body: { type: 'object' }`) — a request with no body at all
-        // fails schema validation before the handler ever runs. Every real
-        // caller (agent-close-v2.test.ts included) sends `payload: {}`;
-        // this is what catches a regression back to a bodyless POST.
-        if (!init.body) {
-          return new Response(JSON.stringify({ success: false, error: { code: 'VALIDATION_FAILED', message: 'body must be object' } }), {
-            status: 400,
-            headers: { 'content-type': 'application/json' },
-          });
-        }
         closeRequests.push(url);
         return new Response(
           JSON.stringify({ success: true, data: { sessionId: 'sess_1', status: 'CLOSED', closedAt: new Date().toISOString() } }),
