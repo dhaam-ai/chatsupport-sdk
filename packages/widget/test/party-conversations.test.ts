@@ -1,3 +1,9 @@
+// @vitest-environment jsdom
+//
+// jsdom, not this suite's default 'node', so `window`/`localStorage` exist —
+// needed by the "cached store name" tests below: `readPartyConversationRow`
+// gates its cache read on `typeof window !== 'undefined'` and would silently
+// skip it (never reading the seeded cache) under plain Node.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -68,6 +74,7 @@ describe('listPartyConversations — GET /party/conversations (Wire Contract §6
       {
         sessionId: 'sess_dm_1',
         status: 'OPEN',
+        customerId: 'cust_9',
         customerName: 'Aarav',
         customerEmail: null,
         lastMessage: null,
@@ -127,6 +134,86 @@ describe('listPartyConversations — GET /party/conversations (Wire Contract §6
     expect(rows[0]!.chatType).toBe('admin');
     expect(rows[0]!.conversationType).toBe(4);
     expect(rows[0]!.direction).toBe('outgoing');
+  });
+
+  describe('the cached store name (`dhaam_target_store_<outletId>`, written by storeChatManager.openStoreChat)', () => {
+    afterEach(() => {
+      localStorage.clear();
+    });
+
+    it('resolves it for an admin-started row — cache keyed by targetId, which IS the outlet there', async () => {
+      localStorage.setItem(
+        'dhaam_target_store_outlet_128',
+        JSON.stringify({ storeName: 'Design Mart', storeEmail: 'store@example.com' }),
+      );
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          jsonResponse({
+            success: true,
+            data: {
+              conversations: [
+                {
+                  sessionId: 'sess_1',
+                  customerId: 'admin_1',
+                  customerName: 'Dhaam Admin',
+                  status: 1,
+                  targetId: 'outlet_128',
+                  targetRole: 'merchant',
+                  channel: 1,
+                  createdAt: '2026-09-19T10:00:00.000Z',
+                  updatedAt: '2026-09-19T10:05:00.000Z',
+                  conversationType: 4,
+                  direction: 'outgoing',
+                },
+              ],
+            },
+          }),
+        ),
+      );
+
+      const rows = await listPartyConversations(OPTIONS, { with: 'partner' });
+      expect(rows[0]!.storeName).toBe('Design Mart');
+    });
+
+    it("resolves it for an OUTLET-started row too — cache keyed by the row's own customerId, not targetId (which is the admin's id there)", async () => {
+      // Reported bug: an outlet messaging first always fell back to
+      // "Store #<id>" however many times the admin had genuinely opened
+      // that exact outlet's chat before — the lookup used `targetId`, which
+      // for this direction is the ADMIN's id, never the outlet's.
+      localStorage.setItem(
+        'dhaam_target_store_outlet_128',
+        JSON.stringify({ storeName: 'Design Mart', storeEmail: 'store@example.com' }),
+      );
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          jsonResponse({
+            success: true,
+            data: {
+              conversations: [
+                {
+                  sessionId: 'sess_2',
+                  customerId: 'outlet_128',
+                  customerName: 'am345345it',
+                  status: 1,
+                  targetId: 'admin_1',
+                  targetRole: 'admin',
+                  channel: 1,
+                  createdAt: '2026-09-19T10:00:00.000Z',
+                  updatedAt: '2026-09-19T10:05:00.000Z',
+                  conversationType: 4,
+                  direction: 'incoming',
+                },
+              ],
+            },
+          }),
+        ),
+      );
+
+      const rows = await listPartyConversations(OPTIONS, { with: 'partner' });
+      expect(rows[0]!.storeName).toBe('Design Mart');
+    });
   });
 
   it('omits outletIds parameter completely when no outlets are provided', async () => {

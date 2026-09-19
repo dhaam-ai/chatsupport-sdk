@@ -195,6 +195,17 @@ export interface PortalQueueRow {
   readonly chatType: string | null;
   readonly targetRole: string | null;
   readonly targetId: string | null;
+  /**
+   * `/party/conversations` only — the row's STARTER id (`partner-conversation.ts`'s
+   * header: "the starter's user id is `customerId`"), never null there. `null`
+   * for an `/agent/queue` row, which has no PARTNER concept.
+   *
+   * Needed because a PARTNER row's `targetId` names the merchant/outlet ONLY
+   * when the ADMIN side started it (`targetRole: 'merchant'`) — for the
+   * reverse direction (the outlet messaged first, `targetRole: 'admin'`) the
+   * outlet IS this row's `customerId`, not its target. See `merchantIdOf`.
+   */
+  readonly customerId?: string | null;
   readonly storeName: string | null;
   readonly merchantName: string | null;
   readonly merchantEmail?: string | null;
@@ -369,6 +380,7 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
   const sessionId = source['sessionId'] ?? source['id'];
   if (typeof sessionId !== 'string') return null;
 
+  const customerId = typeof source['customerId'] === 'string' ? source['customerId'] : null;
   const customer = source['customer'];
   const customerName =
     (typeof customer === 'object' && customer !== null
@@ -423,10 +435,21 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     source['chatType'] === 'admin' ||
     topic === 'admin';
 
+  // The cache `storeChatManager.openStoreChat` writes (`dhaam_target_store_<outletId>`)
+  // is keyed by the OUTLET's own id — which is `targetId` only when the ADMIN
+  // side started this row (`targetRole: 'merchant'`, target = the outlet).
+  // For the reverse direction (outlet messaged first, `targetRole: 'admin'`)
+  // the outlet IS this row's own `customerId`, not its target — looking the
+  // cache up by `targetId` there was looking up the ADMIN's id and could
+  // never hit, which is why an outlet-started conversation always fell
+  // through to the bare "Store #<id>" fallback however many times an admin
+  // had genuinely opened that exact outlet's chat before.
+  const merchantId = targetRole === 'merchant' ? targetId : customerId;
+
   let storedTargetInfo: { storeName?: string; storeEmail?: string; merchantName?: string } | null = null;
-  if (targetId && typeof window !== 'undefined') {
+  if (merchantId && typeof window !== 'undefined') {
     try {
-      const raw = localStorage.getItem('dhaam_target_store_' + targetId) || sessionStorage.getItem('dhaam_target_store_' + targetId);
+      const raw = localStorage.getItem('dhaam_target_store_' + merchantId) || sessionStorage.getItem('dhaam_target_store_' + merchantId);
       if (raw) storedTargetInfo = JSON.parse(raw);
     } catch {}
   }
@@ -449,6 +472,7 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
   return {
     sessionId,
     status: readQueueStatus(source['status']),
+    customerId,
     customerName,
     customerEmail,
     lastMessage: null,

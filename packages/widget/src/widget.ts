@@ -2157,6 +2157,61 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
+   * The (role, id) pair a PARTNER row is WITH, from THIS side's point of
+   * view, regardless of which side started it. `targetRole: 'merchant'`
+   * means the admin side started it (target = the outlet); any other
+   * `targetRole` (`'admin'`/`'manager'`) means the outlet started it, so the
+   * outlet IS this row's own `customerId`. `null` when neither half is
+   * known — a row this cannot key never collides with anything and always
+   * survives dedup untouched.
+   */
+  function partnerCounterpartyId(row: PortalQueueRow): string | null {
+    return row.targetRole === 'merchant' ? row.targetId : (row.customerId ?? null);
+  }
+
+  /**
+   * One row per (admin, outlet) PAIR, not one per SESSION. The two sides can
+   * each independently start a conversation with the other before either
+   * finds the other's existing thread — an admin picking the same outlet
+   * from `OutletChatModal` a second time resumes the one open session for
+   * that pair (chat-service-node's `createSession` does that server-side),
+   * but the OUTLET starting one first, going quiet, and the admin later
+   * starting their own is a genuinely different session row for the same
+   * real-world counterparty. Both then sat in the Merchants tab forever as
+   * separate rows for what a human reads as one relationship.
+   *
+   * Kept per pair: the OPEN one, if any — an admin replying should land in
+   * whichever thread with that outlet is still live, not an arbitrary one of
+   * several. Rows arrive newest-activity-first (party.routes.ts), so among
+   * several OPEN (or several CLOSED, with none open) rows for the same pair,
+   * the first one this sees is already the most recently active — no
+   * separate recency comparison needed.
+   */
+  function dedupePartnerRowsByCounterparty(rows: readonly PortalQueueRow[]): PortalQueueRow[] {
+    const chosen = new Map<string, PortalQueueRow>();
+    const unkeyed: PortalQueueRow[] = [];
+    for (const row of rows) {
+      const counterpartyId = partnerCounterpartyId(row);
+      if (counterpartyId === null) {
+        unkeyed.push(row);
+        continue;
+      }
+      const existing = chosen.get(counterpartyId);
+      if (existing === undefined) {
+        chosen.set(counterpartyId, row);
+        continue;
+      }
+      // Newest-first order already picked the best CLOSED candidate (if
+      // that's all there is) on first sight; only an OPEN row arriving later
+      // can still improve on an already-CLOSED pick.
+      if (row.status !== 'CLOSED' && existing.status === 'CLOSED') {
+        chosen.set(counterpartyId, row);
+      }
+    }
+    return [...chosen.values(), ...unkeyed];
+  }
+
+  /**
    * GET /agent/queue or GET /party/conversations (customer DMs, `with`
    * omitted) — this tenant's real customer conversations — PLUS
    * GET /party/conversations?with=partner — admin/manager ↔ merchant/outlet
@@ -2184,7 +2239,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     Promise.all([customerPromise, partnerPromise])
       .then(([customerRows, partnerRows]) => {
         if (destroyed) return;
-        const rows = [...customerRows, ...partnerRows];
+        const rows = [...customerRows, ...dedupePartnerRowsByCounterparty(partnerRows)];
         portalQueueRows = rows;
         portalQueueIds.clear();
         for (const row of rows) portalQueueIds.add(row.sessionId);
