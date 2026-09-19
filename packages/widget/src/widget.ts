@@ -73,7 +73,6 @@ import {
   createPortalConversationClient,
   listPortalQueue,
   listPartyConversations,
-  closePortalSession,
   PortalApiError,
 } from './portal/portal-staff-client.js';
 import type { PortalQueueRow } from './portal/portal-staff-client.js';
@@ -488,15 +487,7 @@ function buildAgentAvatar(displayName: string): HTMLElement | null {
 }
 
 /** Which surface is standing in for the chat. */
-type SurfaceKind =
-  | 'preChat'
-  | 'offline'
-  | 'csat'
-  | 'report'
-  | 'composingNew'
-  | 'confirmEnd'
-  | 'confirmEndPortal'
-  | 'webform';
+type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report' | 'composingNew' | 'confirmEnd' | 'webform';
 
 /** What is known about one session's CSAT rating — see `csatBySession`. */
 type CsatLookup =
@@ -549,7 +540,6 @@ const USER_INITIATED_SURFACES: ReadonlySet<SurfaceKind> = new Set([
   'composingNew',
   'report',
   'confirmEnd',
-  'confirmEndPortal',
   // Holds a half-typed message, the identical reason the three above do —
   // see the gate-1 carve-out in syncProductSurfaces for the one place that
   // rule alone is not enough.
@@ -1042,7 +1032,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   const headerMenu = createHeaderMenu({
     onStartNew: () => openNewConversationFlow(),
-    onEndConversation: () => (portalConversationActive ? endPortalConversation() : endConversation()),
+    onEndConversation: () => endConversation(),
     onReportIssue: () => openReportIssue(),
     onMuteChange: (next) => {
       muted = next;
@@ -2154,10 +2144,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     portalUnsubscribe = client.subscribe((state) => {
       if (currentPortalSessionId === null) return;
       portalThread.render(state.conversations[currentPortalSessionId] ?? null, false);
-      // The header's "End conversation" reads this same conversation's
-      // status — see `syncHeaderMenu`'s own doc on why it cannot rely on
-      // `store.client`'s session subscription for a portal-opened thread.
-      syncHeaderMenu();
     });
     // Reported here exactly as before (`.catch(report)`), and re-thrown so
     // `portalConnecting` still carries the rejection to whoever awaits it —
@@ -2320,11 +2306,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     activeConversationTitle = resolvedTitle;
     identityHeader.setTitle(resolvedTitle);
     syncHeaderAvatar();
-    // Re-sourced from the portal conversation, not `store.client`, the
-    // moment this becomes the active surface — otherwise the menu keeps
-    // showing whatever `store.client`'s own (unrelated) session said until
-    // the subscription below happens to fire.
-    syncHeaderMenu();
 
     const row = portalQueueRows.find((r) => r.sessionId === sessionId);
     const customerName =
@@ -2359,57 +2340,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       portalThread.setError(error instanceof Error ? error.message : 'Could not open this conversation.');
     }
   }
-
-  /**
-   * "End conversation" for a thread opened from the Merchants/Customers tab
-   * LIST (`openPortalConversation`), as opposed to `endConversation()`
-   * above, which closes whatever `store.client` currently holds.
-   *
-   * `ConversationClient` (the keyless staff client `portalThread` reads
-   * from) has no closing action of its own — see `closePortalSession`'s own
-   * doc — so this calls the REST route directly and lets the reactive
-   * `client.subscribe` in `ensurePortalClient` (which already re-renders
-   * `portalThread` and now also `syncHeaderMenu` on every state change) pick
-   * up the `session.closed` push the close causes, the same way a live
-   * agent-console tab would. Nothing here patches local state by hand.
-   *
-   * Deliberately not `endConversation()`'s twin in every respect: no CSAT,
-   * no SWITCHED-parking, no ended-footer reactivation — none of that exists
-   * on this protocol in this SDK slice (see this file's own header on
-   * `portalThread`), so the confirmation and the close call are all this
-   * needs.
-   */
-  function endPortalConversation(): void {
-    if (endingPortalConversation) return;
-    if (currentPortalSessionId === null || portalClient === null) return;
-    const targetId = currentPortalSessionId;
-    const live = portalClient.getState().conversations[targetId]?.session ?? null;
-    if (live === null || live.status === 'CLOSED' || live.status === 'RESOLVED') return;
-
-    const view = openSurface(
-      'confirmEndPortal',
-      () =>
-        createEndConversationConfirm({
-          onConfirm: async () => {
-            if (endingPortalConversation) return;
-            endingPortalConversation = true;
-            try {
-              await closePortalSession(
-                { apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId },
-                targetId,
-              );
-              releaseSurface(view);
-            } finally {
-              endingPortalConversation = false;
-            }
-          },
-          onCancel: () => releaseSurface(view),
-          onError: (error) => report(error),
-        }),
-      targetId,
-    );
-  }
-  let endingPortalConversation = false;
 
   const portalThread = createPortalThread(
     {
@@ -4318,24 +4248,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * "End conversation" is conditional on there BEING a live one — offering it
    * over a session that is already closed is a control that does nothing, and
    * the menu's whole contract is that every item does something.
-   *
-   * ── Two session sources, because a conversation opened from the
-   * Merchants/Customers tab list is not on `store.client` at all ──────────
-   * `openPortalConversation` reads and sends through the SEPARATE keyless
-   * `portalClient` (see its own header), never through `store.client` — so
-   * `store.getState().session` is simply the wrong session to ask while
-   * `portalConversationActive` is true; it is whatever (if anything)
-   * `store.client`'s own, unrelated connection happens to hold, which for an
-   * admin's general portal mount is nothing at all. Every list-opened
-   * conversation therefore read as "not live" regardless of its real
-   * status, and "End conversation" never appeared for one — reported bug.
    */
   function syncHeaderMenu(): void {
-    const session = portalConversationActive
-      ? (currentPortalSessionId === null
-          ? null
-          : portalClient?.getState().conversations[currentPortalSessionId]?.session ?? null)
-      : store.getState().session;
+    const session = store.getState().session;
     const live =
       session !== null && session.status !== 'CLOSED' && session.status !== 'RESOLVED';
     headerMenu.update({
@@ -4419,22 +4334,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     const csatDue = csatCard(state) !== null;
     const showingEndedFooter = showingLog && ended && !csatDue;
 
-    // The one exception to "surfaceHost and the portal thread are never
-    // stacked" (comment below): `confirmEndPortal` IS a surface raised WHILE
-    // a portal conversation is open (see `endPortalConversation`), so it has
-    // to display over it rather than lose to it.
-    const portalEndConfirmActive = activeSurface?.kind === 'confirmEndPortal';
-
     setPaneVisible(homeScreen.node, onHome);
     setPaneVisible(messagesScreen.node, onMessages);
-    setPaneVisible(
-      surfaceHost,
-      onConversation && activeSurface !== null && (!portalConversationActive || portalEndConfirmActive),
-    );
+    setPaneVisible(surfaceHost, onConversation && activeSurface !== null && !portalConversationActive);
     // The portal thread stands in for the transcript+composer exactly the
     // way `surfaceHost` stands in for them elsewhere — one at a time, never
     // stacked. See `openPortalConversation`/`portalConversationActive`.
-    setPaneVisible(portalThread.node, onConversation && portalConversationActive && !portalEndConfirmActive);
+    setPaneVisible(portalThread.node, onConversation && portalConversationActive);
     setPaneVisible(messageList.log, showingLog);
     composer.node.hidden = !showingLog || showingEndedFooter;
     endedFooter.node.hidden = !showingEndedFooter;

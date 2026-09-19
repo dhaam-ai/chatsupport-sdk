@@ -110,42 +110,6 @@ async function getJson(options: PortalStaffOptions, path: string, query: Record<
   return (await response.json()) as unknown;
 }
 
-async function postJson(options: PortalStaffOptions, path: string): Promise<unknown> {
-  const url = new URL(`${trimOrigin(options.apiUrl)}${BASE_PATH}${path}`);
-
-  let response: Response;
-  try {
-    const token = await options.getToken();
-    // Empty body: chat-service-node's close routes (customer and staff
-    // alike) read nothing from it — the session comes from the URL, the
-    // actor from the verified token.
-    response = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
-  } catch (error) {
-    throw new PortalApiError(`could not reach ${url.origin} (network error, or blocked by CORS)`, 0);
-  }
-
-  if (!response.ok) {
-    throw new PortalApiError(`${path} returned ${response.status}`, response.status);
-  }
-
-  return (await response.json()) as unknown;
-}
-
-/**
- * `POST /agent/sessions/{sessionId}/close` — ends a conversation from the
- * Merchants/Customers tab's list-opened thread (`ui/portal-thread.ts`),
- * which `ConversationClient` (the keyless staff client that thread reads
- * from) has no closing action of its own for.
- *
- * Staff-only (`authenticateAgent` — `isStaffIdentity`): this is the admin
- * side of "End conversation" for a portal-opened thread. A merchant/outlet
- * identity has no equivalent route yet — `/party/*` is read-only today — so
- * this is never called for `isMerchantPortal`.
- */
-export async function closePortalSession(options: PortalStaffOptions, sessionId: string): Promise<void> {
-  await postJson(options, `/agent/sessions/${encodeURIComponent(sessionId)}/close`);
-}
-
 /**
  * The `history` seam `createConversationClient` requires at construction.
  * Exported for direct testing, same reason `listPortalQueue` is — the
