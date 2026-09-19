@@ -22,6 +22,7 @@ library;
 import 'dart:typed_data';
 
 import 'package:dhaam_chat/dhaam_chat.dart' show AttachmentMetadata;
+import 'package:dhaam_chat_rest/dhaam_chat_rest.dart' show MediaApi, RestClient;
 
 /// The largest file this widget will hand to `POST /upload`.
 ///
@@ -246,3 +247,35 @@ typedef AttachmentPicker = Future<PickedAttachment?> Function();
 typedef AttachmentUploader = Future<AttachmentMetadata> Function(
   PickedAttachment file,
 );
+
+/// The real uploader: `POST /upload`, through the REST client.
+///
+/// [sessionId] is a callback rather than a value because the seam's signature
+/// is `Future<AttachmentMetadata> Function(PickedAttachment)` — the session is
+/// not one of its parameters, and the conversation a file belongs to can
+/// change under a long-lived controller. Reading it at upload time is what
+/// keeps a file from being posted against the session that was open when the
+/// composer was built.
+///
+/// Note the absence of any `?? 'application/octet-stream'` on `mimeType`. That
+/// is deliberate and is `uploadAttachment`'s own rule: an empty type means
+/// "the platform said nothing" and gets the fallback inside that method, while
+/// a non-empty malformed one still raises. Substituting here would collapse
+/// the two cases at the one seam that can still tell them apart.
+AttachmentUploader restAttachmentUploader({
+  required RestClient client,
+  required String? Function() sessionId,
+}) {
+  return (PickedAttachment file) async {
+    final String? id = sessionId();
+    if (id == null || id.trim().isEmpty) {
+      throw StateError('No conversation to upload against');
+    }
+    return client.uploadAttachment(
+      sessionId: id,
+      bytes: file.bytes,
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+    );
+  };
+}

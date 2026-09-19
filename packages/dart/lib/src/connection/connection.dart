@@ -18,6 +18,30 @@ import '../resume/resume_tracker.dart';
 import 'backoff.dart';
 import 'socket.dart';
 
+/// The counterparty a customer chat should be addressed to.
+final class ChatTarget {
+  const ChatTarget._({required this.role, required this.id});
+
+  /// A direct conversation with a merchant outlet.
+  factory ChatTarget.merchantOutlet(String outletId) {
+    final String trimmed = outletId.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError.value(null, 'outletId', 'must not be empty');
+    }
+    if (trimmed.length > 128) {
+      throw ArgumentError.value(
+        null,
+        'outletId',
+        'must be at most 128 characters',
+      );
+    }
+    return ChatTarget._(role: 'merchant', id: trimmed);
+  }
+
+  final String role;
+  final String id;
+}
+
 /// §8.1 states.
 enum ConnectionState {
   /// No connection attempted yet.
@@ -83,6 +107,7 @@ class ConnectionController {
     required Uri wsUrl,
     required PublishableKey publishableKey,
     required TokenProvider getToken,
+    ChatTarget? target,
     ChatSocketFactory? socketFactory,
     Scheduler scheduler = const SystemScheduler(),
     Backoff? backoff,
@@ -91,18 +116,20 @@ class ConnectionController {
     this.connectTimeout = const Duration(seconds: 10),
     this.handshakeTimeout = const Duration(seconds: 10),
     this.heartbeatInterval = const Duration(seconds: 25),
-  })  : _wsUrl = wsUrl,
-        _publishableKey = publishableKey,
-        _getToken = getToken,
-        _socketFactory = socketFactory ?? WebSocketChatSocket.connect,
-        _scheduler = scheduler,
-        _backoff = backoff ?? Backoff(),
-        _resume = resumeTracker ?? ResumeTracker(),
-        _ulids = ulids ?? UlidGenerator();
+  }) : _wsUrl = wsUrl,
+       _publishableKey = publishableKey,
+       _getToken = getToken,
+       _target = target,
+       _socketFactory = socketFactory ?? WebSocketChatSocket.connect,
+       _scheduler = scheduler,
+       _backoff = backoff ?? Backoff(),
+       _resume = resumeTracker ?? ResumeTracker(),
+       _ulids = ulids ?? UlidGenerator();
 
   final Uri _wsUrl;
   final PublishableKey _publishableKey;
   final TokenProvider _getToken;
+  final ChatTarget? _target;
   final ChatSocketFactory _socketFactory;
   final Scheduler _scheduler;
   final Backoff _backoff;
@@ -533,6 +560,8 @@ class ConnectionController {
         connectionHelloPayload(
           token: token,
           publishableKey: _publishableKey.value,
+          targetRole: _target?.role,
+          targetId: _target?.id,
           // Omitted, not null, when this client has never applied a seq. The
           // server reads absent as "fresh" and 0 as "replay everything".
           resumeFrom: _resume.anchor,
@@ -628,7 +657,8 @@ class ConnectionController {
       _emitError(
         const ErrorPayload(
           code: ErrorCode.protocolVersionUnsupported,
-          message: 'server negotiated a protocol version this client does not '
+          message:
+              'server negotiated a protocol version this client does not '
               'implement',
           retryable: false,
         ),
@@ -640,8 +670,10 @@ class ConnectionController {
     // replayed frames and a gap the ack merely claimed are both reported, and
     // in that order. Ordering is by `seq`; `ts` is never consulted (D2).
     final List<ServerFrame> replay = List<ServerFrame>.of(ack.replay)
-      ..sort((ServerFrame a, ServerFrame b) =>
-          (seqOf(a) ?? 0).compareTo(seqOf(b) ?? 0));
+      ..sort(
+        (ServerFrame a, ServerFrame b) =>
+            (seqOf(a) ?? 0).compareTo(seqOf(b) ?? 0),
+      );
 
     for (final ServerFrame replayed in replay) {
       _deliver(replayed);
@@ -809,8 +841,9 @@ class ConnectionController {
 
     final Duration delay = _backoff.nextDelay(_transportAttempt);
     if (!_reconnectingController.isClosed) {
-      _reconnectingController
-          .add(ReconnectingEvent(attempt: _transportAttempt, delay: delay));
+      _reconnectingController.add(
+        ReconnectingEvent(attempt: _transportAttempt, delay: delay),
+      );
     }
     _transportAttempt++;
 

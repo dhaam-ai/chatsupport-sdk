@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../state/fake_widget_chat_client.dart';
+import 'csat/fake_session_actions.dart';
 
 /// Lets a queued stream event actually reach its listener before the next
 /// pump captures a frame.
@@ -36,10 +37,14 @@ Future<void> flush(WidgetTester tester) async {
   await tester.pump();
 }
 
-Widget _wrap(ChatWidgetCubit cubit) {
+Widget _wrap(ChatWidgetCubit cubit, {VoidCallback? onConversationEnded}) {
   return BlocProvider<ChatWidgetCubit>.value(
     value: cubit,
-    child: const MaterialApp(home: Scaffold(body: ConversationScreen())),
+    child: MaterialApp(
+      home: Scaffold(
+        body: ConversationScreen(onConversationEnded: onConversationEnded),
+      ),
+    ),
   );
 }
 
@@ -111,6 +116,39 @@ void main() {
     await tester.pumpWidget(_wrap(cubit));
     expect(find.byType(NewConversationView), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
+  });
+
+  testWidgets('ends the conversation, then calls the host close callback',
+      (tester) async {
+    final FakeSessionActions actions = FakeSessionActions();
+    final ChatWidgetCubit endCubit = ChatWidgetCubit(
+      client: client,
+      sessionActions: actions,
+    );
+    addTearDown(endCubit.close);
+
+    int closedPanel = 0;
+    await tester.pumpWidget(_wrap(
+      endCubit,
+      onConversationEnded: () {
+        closedPanel += 1;
+      },
+    ));
+
+    client.emitSession(testSession(id: 's-close', status: ChatStatus.assigned));
+    await flush(tester);
+    endCubit.openEndConversation();
+    expect(endCubit.state.activeSurface, isA<ConfirmEndSurface>());
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('End this conversation?'), findsOneWidget);
+
+    await tester.tap(find.byType(FormSubmitButton));
+    await tester.pump();
+    await tester.pump();
+
+    expect(actions.closed, <String>['s-close']);
+    expect(closedPanel, 1);
   });
 
   testWidgets(

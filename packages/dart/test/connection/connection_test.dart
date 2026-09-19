@@ -21,25 +21,24 @@ String ackJson({
   int seq = 5,
   int protocolVersion = 1,
   List<Map<String, Object?>>? replay,
-}) =>
-    jsonEncode(<String, Object?>{
-      'v': 1,
-      't': 'connection.ack',
-      'id': _serverUlid,
-      'ts': 1700000000000,
-      'd': <String, Object?>{
-        'protocolVersion': protocolVersion,
-        'seq': seq,
-        'session': <String, Object?>{
-          'sessionId': 's1',
-          'status': 'OPEN',
-          'mode': 'BOT',
-          'participants': <Object?>[],
-          'createdAt': '2026-08-19T10:00:00.000Z',
-        },
-        if (replay != null) 'replay': replay,
-      },
-    });
+}) => jsonEncode(<String, Object?>{
+  'v': 1,
+  't': 'connection.ack',
+  'id': _serverUlid,
+  'ts': 1700000000000,
+  'd': <String, Object?>{
+    'protocolVersion': protocolVersion,
+    'seq': seq,
+    'session': <String, Object?>{
+      'sessionId': 's1',
+      'status': 'OPEN',
+      'mode': 'BOT',
+      'participants': <Object?>[],
+      'createdAt': '2026-08-19T10:00:00.000Z',
+    },
+    if (replay != null) 'replay': replay,
+  },
+});
 
 /// A `message.new` frame at [seq].
 ///
@@ -49,32 +48,32 @@ String ackJson({
 /// produces it would let a dedup assertion — the thing D1 exists for — pass
 /// by collapsing two genuinely different messages.
 Map<String, Object?> messageFrame(int seq) => <String, Object?>{
-      'v': 1,
-      't': 'message.new',
-      'id': _serverUlid,
-      'ts': 1700000000000,
-      'd': <String, Object?>{
-        'id': '01ARZ3NDEKTSV4RRFFQ69G${seq.toString().padLeft(4, '0')}',
-        'sessionId': 's1',
-        'senderId': 'u1',
-        'senderType': 'AGENT',
-        'type': 'TEXT',
-        'content': 'hi',
-        'seq': seq,
-        'createdAt': '2026-08-19T12:00:00.000Z',
-      },
-    };
+  'v': 1,
+  't': 'message.new',
+  'id': _serverUlid,
+  'ts': 1700000000000,
+  'd': <String, Object?>{
+    'id': '01ARZ3NDEKTSV4RRFFQ69G${seq.toString().padLeft(4, '0')}',
+    'sessionId': 's1',
+    'senderId': 'u1',
+    'senderType': 'AGENT',
+    'type': 'TEXT',
+    'content': 'hi',
+    'seq': seq,
+    'createdAt': '2026-08-19T12:00:00.000Z',
+  },
+};
 
 /// A `connection.ack` this client REJECTS: no `d.session`, which
 /// `ConnectionAck.fromJson` requires. Used to prove the new-session latch
 /// survives an ack that never established a connection.
 String malformedAckJson() => jsonEncode(<String, Object?>{
-      'v': 1,
-      't': 'connection.ack',
-      'id': _serverUlid,
-      'ts': 1700000000000,
-      'd': <String, Object?>{'protocolVersion': 1, 'seq': 5},
-    });
+  'v': 1,
+  't': 'connection.ack',
+  'id': _serverUlid,
+  'ts': 1700000000000,
+  'd': <String, Object?>{'protocolVersion': 1, 'seq': 5},
+});
 
 String errorJson(String code, {bool retryable = false}) =>
     jsonEncode(<String, Object?>{
@@ -95,12 +94,14 @@ class Harness {
     TokenProvider? getToken,
     ResumeTracker? resumeTracker,
     Backoff? backoff,
+    ChatTarget? target,
   }) {
     scheduler = FakeScheduler();
     controller = ConnectionController(
       wsUrl: Uri.parse('wss://example.test/v2'),
       publishableKey: testKey,
       getToken: getToken ?? () async => 'jwt-token',
+      target: target,
       scheduler: scheduler,
       backoff: backoff ?? Backoff(random: Random(1)),
       resumeTracker: resumeTracker,
@@ -190,8 +191,7 @@ void main() {
       await harness.controller.dispose();
     });
 
-    test('a silent server does not strand the client in authenticating',
-        () async {
+    test('a silent server does not strand the client in authenticating', () async {
       // SPEC GAP: §8.1 never bounds the authenticating wait. A half-open
       // connection through a NAT that dropped state is routine on mobile.
       final Harness harness = Harness();
@@ -239,7 +239,9 @@ void main() {
       // failure, which §8.2 retries indefinitely rather than suspending.
       expect(harness.sockets, hasLength(2));
       expect(
-          harness.controller.state, isNot(equals(ConnectionState.suspended)));
+        harness.controller.state,
+        isNot(equals(ConnectionState.suspended)),
+      );
 
       await harness.controller.dispose();
     });
@@ -247,8 +249,9 @@ void main() {
 
   group('resume', () {
     test('delivers replayed frames in seq order and reports no gap', () async {
-      final Harness harness =
-          Harness(resumeTracker: ResumeTracker()..settleAck(10));
+      final Harness harness = Harness(
+        resumeTracker: ResumeTracker()..settleAck(10),
+      );
       final List<ResumeGap> gaps = <ResumeGap>[];
       harness.controller.gaps.listen(gaps.add);
 
@@ -280,8 +283,9 @@ void main() {
     test('surfaces the over-cap span as exactly one gap', () async {
       // D2: more than 200 behind, the server sends NO replay and a truthful
       // seq. Only the ack's own number reveals the span.
-      final Harness harness =
-          Harness(resumeTracker: ResumeTracker()..settleAck(10));
+      final Harness harness = Harness(
+        resumeTracker: ResumeTracker()..settleAck(10),
+      );
       final List<ResumeGap> gaps = <ResumeGap>[];
       harness.controller.gaps.listen(gaps.add);
 
@@ -291,7 +295,9 @@ void main() {
       await flush();
 
       expect(
-          gaps, equals(<ResumeGap>[const ResumeGap(fromSeq: 11, toSeq: 300)]));
+        gaps,
+        equals(<ResumeGap>[const ResumeGap(fromSeq: 11, toSeq: 300)]),
+      );
 
       await harness.controller.dispose();
     });
@@ -360,10 +366,7 @@ void main() {
 
       expect(events, hasLength(1));
       expect(events.single.attempt, equals(0));
-      expect(
-        events.single.delay.inMilliseconds,
-        lessThanOrEqualTo(500),
-      );
+      expect(events.single.delay.inMilliseconds, lessThanOrEqualTo(500));
 
       await harness.controller.dispose();
     });
@@ -413,8 +416,9 @@ void main() {
 
     test('counts a throwing getToken as an auth failure', () async {
       // §10.6: getToken throwing IS an auth failure, not a transport one.
-      final Harness harness =
-          Harness(getToken: () async => throw StateError('no'));
+      final Harness harness = Harness(
+        getToken: () async => throw StateError('no'),
+      );
       unawaited(harness.controller.connect().catchError((Object _) {}));
       await flush();
       await harness.scheduler.advance(const Duration(seconds: 60));
@@ -444,31 +448,33 @@ void main() {
       await harness.controller.dispose();
     });
 
-    test('an explicit connect() clears suspension and resets the counter',
-        () async {
-      final Harness harness = Harness();
-      unawaited(harness.controller.connect().catchError((Object _) {}));
-      await flush();
-      for (int i = 0; i < 3; i++) {
-        harness.socket.deliver(errorJson('AUTH_INVALID'));
+    test(
+      'an explicit connect() clears suspension and resets the counter',
+      () async {
+        final Harness harness = Harness();
+        unawaited(harness.controller.connect().catchError((Object _) {}));
         await flush();
-        // The retry and nothing after it — see the note in the reconnect
-        // group. Running the fresh attempt's handshake deadline as well would
-        // turn the next AUTH_INVALID into a transport reconnect and the auth
-        // counter would never reach its cap.
-        await harness.scheduler.advanceToNextTimer();
+        for (int i = 0; i < 3; i++) {
+          harness.socket.deliver(errorJson('AUTH_INVALID'));
+          await flush();
+          // The retry and nothing after it — see the note in the reconnect
+          // group. Running the fresh attempt's handshake deadline as well would
+          // turn the next AUTH_INVALID into a transport reconnect and the auth
+          // counter would never reach its cap.
+          await harness.scheduler.advanceToNextTimer();
+          await flush();
+        }
+        expect(harness.controller.state, equals(ConnectionState.suspended));
+
+        final Future<void> reconnected = harness.controller.connect();
         await flush();
-      }
-      expect(harness.controller.state, equals(ConnectionState.suspended));
+        harness.socket.deliver(ackJson());
+        await reconnected;
+        expect(harness.controller.state, equals(ConnectionState.connected));
 
-      final Future<void> reconnected = harness.controller.connect();
-      await flush();
-      harness.socket.deliver(ackJson());
-      await reconnected;
-      expect(harness.controller.state, equals(ConnectionState.connected));
-
-      await harness.controller.dispose();
-    });
+        await harness.controller.dispose();
+      },
+    );
 
     test('a single auth rejection retries rather than suspending', () async {
       // A merely expired token must recover on its own — getToken is invoked
@@ -490,89 +496,100 @@ void main() {
   });
 
   group('protocol version', () {
-    test('suspends rather than retry-looping on an unsupported version',
-        () async {
-      // §7.5: "Core must surface this as a suspended state, not retry-loop
-      // against a version it cannot speak."
-      final Harness harness = Harness();
-      unawaited(harness.controller.connect().catchError((Object _) {}));
-      await flush();
-      harness.socket.deliver(errorJson('PROTOCOL_VERSION_UNSUPPORTED'));
-      await flush();
+    test(
+      'suspends rather than retry-looping on an unsupported version',
+      () async {
+        // §7.5: "Core must surface this as a suspended state, not retry-loop
+        // against a version it cannot speak."
+        final Harness harness = Harness();
+        unawaited(harness.controller.connect().catchError((Object _) {}));
+        await flush();
+        harness.socket.deliver(errorJson('PROTOCOL_VERSION_UNSUPPORTED'));
+        await flush();
 
-      expect(harness.controller.state, equals(ConnectionState.suspended));
-      expect(
-        harness.controller.suspendReason,
-        equals(SuspendReason.protocolUnsupported),
-      );
+        expect(harness.controller.state, equals(ConnectionState.suspended));
+        expect(
+          harness.controller.suspendReason,
+          equals(SuspendReason.protocolUnsupported),
+        );
 
-      await harness.scheduler.advance(const Duration(minutes: 10));
-      await flush();
-      expect(harness.sockets.length, equals(1));
+        await harness.scheduler.advance(const Duration(minutes: 10));
+        await flush();
+        expect(harness.sockets.length, equals(1));
 
-      await harness.controller.dispose();
-    });
+        await harness.controller.dispose();
+      },
+    );
 
-    test('suspends if the ack negotiates a version we do not implement',
-        () async {
-      final Harness harness = Harness();
-      unawaited(harness.controller.connect().catchError((Object _) {}));
-      await flush();
-      harness.socket.deliver(ackJson(protocolVersion: 2));
-      await flush();
+    test(
+      'suspends if the ack negotiates a version we do not implement',
+      () async {
+        final Harness harness = Harness();
+        unawaited(harness.controller.connect().catchError((Object _) {}));
+        await flush();
+        harness.socket.deliver(ackJson(protocolVersion: 2));
+        await flush();
 
-      expect(harness.controller.state, equals(ConnectionState.suspended));
+        expect(harness.controller.state, equals(ConnectionState.suspended));
 
-      await harness.controller.dispose();
-    });
+        await harness.controller.dispose();
+      },
+    );
   });
 
   group('robustness', () {
-    test('a malformed frame is surfaced but does not drop the connection',
-        () async {
-      final Harness harness = Harness();
-      final List<ErrorPayload> errors = <ErrorPayload>[];
-      harness.controller.errors.listen(errors.add);
+    test(
+      'a malformed frame is surfaced but does not drop the connection',
+      () async {
+        final Harness harness = Harness();
+        final List<ErrorPayload> errors = <ErrorPayload>[];
+        harness.controller.errors.listen(errors.add);
 
-      unawaited(harness.controller.connect());
-      await flush();
-      harness.socket.deliver(ackJson());
-      await flush();
+        unawaited(harness.controller.connect());
+        await flush();
+        harness.socket.deliver(ackJson());
+        await flush();
 
-      harness.socket.deliver('{not json');
-      harness.socket
-          .deliver(jsonEncode(<String, Object?>{'v': 1, 't': 'nope'}));
-      await flush();
+        harness.socket.deliver('{not json');
+        harness.socket.deliver(
+          jsonEncode(<String, Object?>{'v': 1, 't': 'nope'}),
+        );
+        await flush();
 
-      expect(errors, hasLength(2));
-      expect(
-          errors
-              .every((ErrorPayload e) => e.code == ErrorCode.validationFailed),
-          isTrue);
-      // One bad frame from an otherwise healthy server is not a reason to
-      // reconnect the whole fleet.
-      expect(harness.controller.state, equals(ConnectionState.connected));
+        expect(errors, hasLength(2));
+        expect(
+          errors.every(
+            (ErrorPayload e) => e.code == ErrorCode.validationFailed,
+          ),
+          isTrue,
+        );
+        // One bad frame from an otherwise healthy server is not a reason to
+        // reconnect the whole fleet.
+        expect(harness.controller.state, equals(ConnectionState.connected));
 
-      await harness.controller.dispose();
-    });
+        await harness.controller.dispose();
+      },
+    );
 
-    test('a standalone VALIDATION_FAILED does not tear down the socket',
-        () async {
-      // The server sends exactly this, without closing, when resumeFrom is
-      // ahead of its own last_seq.
-      final Harness harness = Harness();
-      unawaited(harness.controller.connect());
-      await flush();
-      harness.socket.deliver(ackJson());
-      await flush();
+    test(
+      'a standalone VALIDATION_FAILED does not tear down the socket',
+      () async {
+        // The server sends exactly this, without closing, when resumeFrom is
+        // ahead of its own last_seq.
+        final Harness harness = Harness();
+        unawaited(harness.controller.connect());
+        await flush();
+        harness.socket.deliver(ackJson());
+        await flush();
 
-      harness.socket.deliver(errorJson('VALIDATION_FAILED'));
-      await flush();
+        harness.socket.deliver(errorJson('VALIDATION_FAILED'));
+        await flush();
 
-      expect(harness.controller.state, equals(ConnectionState.connected));
+        expect(harness.controller.state, equals(ConnectionState.connected));
 
-      await harness.controller.dispose();
-    });
+        await harness.controller.dispose();
+      },
+    );
 
     test('sends a heartbeat on the interval once connected', () async {
       final Harness harness = Harness();
@@ -595,8 +612,10 @@ void main() {
 
     test('send() reports false when not connected', () async {
       final Harness harness = Harness();
-      final ClientFrame frame =
-          harness.controller.buildFrame('typing.start', <String, Object?>{});
+      final ClientFrame frame = harness.controller.buildFrame(
+        'typing.start',
+        <String, Object?>{},
+      );
       // §8.4 wants unacked frames queued durably; that queue is out of scope,
       // so this reports the drop rather than pretending it went.
       expect(harness.controller.send(frame), isFalse);
@@ -609,7 +628,8 @@ void main() {
     /// The `d` of the hello on socket [index].
     Map<String, Object?> helloOf(Harness harness, int index) =>
         (jsonDecode(harness.sockets[index].sent[0])
-            as Map<String, Object?>)['d']! as Map<String, Object?>;
+                as Map<String, Object?>)['d']!
+            as Map<String, Object?>;
 
     test('an ordinary connect asks for no new session', () async {
       // The control. Every assertion below is only worth anything if the
@@ -628,119 +648,152 @@ void main() {
       await harness.controller.dispose();
     });
 
-    test('requestNewSession puts newSession, subject and topic on the hello',
-        () async {
-      final Harness harness = Harness();
-      harness.controller
-          .requestNewSession(topic: 'Billing', subject: 'Refund for order 41');
+    test('a targeted customer connect addresses the merchant outlet', () async {
+      final Harness harness = Harness(
+        target: ChatTarget.merchantOutlet('outlet-42'),
+      );
       unawaited(harness.controller.connect());
       await flush();
 
       final Map<String, Object?> hello = helloOf(harness, 0);
-      expect(hello['newSession'], isTrue);
-      expect(hello['topic'], equals('Billing'));
-      expect(hello['subject'], equals('Refund for order 41'));
+      expect(hello['targetRole'], equals('merchant'));
+      expect(hello['targetId'], equals('outlet-42'));
 
       harness.socket.deliver(ackJson());
       await flush();
       await harness.controller.dispose();
     });
 
-    test('a failed first attempt still carries the request on the retry',
-        () async {
-      // THE reason this is a latch and not a parameter. A first connect that
-      // dies before the ack is the ordinary case on a phone — a tunnel, a
-      // handover, a backgrounded app. If the request were spent when the hello
-      // was SENT, the retry would carry a plain hello, the server would
-      // resolve the customer straight back into the session they asked to
-      // leave, and nothing anywhere would report a failure. The customer
-      // pressed "Start a new conversation" and kept talking in the old one.
-      final Harness harness = Harness();
-      harness.controller
-          .requestNewSession(topic: 'Billing', subject: 'Refund for order 41');
-      unawaited(harness.controller.connect().catchError((Object _) {}));
-      await flush();
-      expect(helloOf(harness, 0)['newSession'], isTrue);
+    test(
+      'requestNewSession puts newSession, subject and topic on the hello',
+      () async {
+        final Harness harness = Harness();
+        harness.controller.requestNewSession(
+          topic: 'Billing',
+          subject: 'Refund for order 41',
+        );
+        unawaited(harness.controller.connect());
+        await flush();
 
-      // Dies before any ack.
-      await harness.socket.drop();
-      await flush();
-      expect(harness.controller.state, equals(ConnectionState.reconnecting));
+        final Map<String, Object?> hello = helloOf(harness, 0);
+        expect(hello['newSession'], isTrue);
+        expect(hello['topic'], equals('Billing'));
+        expect(hello['subject'], equals('Refund for order 41'));
 
-      // Exactly the retry — see the note in the reconnect group.
-      await harness.scheduler.advanceToNextTimer();
-      await flush();
-      expect(harness.sockets.length, equals(2));
+        harness.socket.deliver(ackJson());
+        await flush();
+        await harness.controller.dispose();
+      },
+    );
 
-      final Map<String, Object?> retryHello = helloOf(harness, 1);
-      expect(retryHello['newSession'], isTrue);
-      // The topic too. A retry that kept `newSession` but dropped these would
-      // half-fulfil the request: a fresh session with no subject, which the
-      // customer never chose to omit.
-      expect(retryHello['topic'], equals('Billing'));
-      expect(retryHello['subject'], equals('Refund for order 41'));
+    test(
+      'a failed first attempt still carries the request on the retry',
+      () async {
+        // THE reason this is a latch and not a parameter. A first connect that
+        // dies before the ack is the ordinary case on a phone — a tunnel, a
+        // handover, a backgrounded app. If the request were spent when the hello
+        // was SENT, the retry would carry a plain hello, the server would
+        // resolve the customer straight back into the session they asked to
+        // leave, and nothing anywhere would report a failure. The customer
+        // pressed "Start a new conversation" and kept talking in the old one.
+        final Harness harness = Harness();
+        harness.controller.requestNewSession(
+          topic: 'Billing',
+          subject: 'Refund for order 41',
+        );
+        unawaited(harness.controller.connect().catchError((Object _) {}));
+        await flush();
+        expect(helloOf(harness, 0)['newSession'], isTrue);
 
-      harness.socket.deliver(ackJson());
-      await flush();
-      await harness.controller.dispose();
-    });
+        // Dies before any ack.
+        await harness.socket.drop();
+        await flush();
+        expect(harness.controller.state, equals(ConnectionState.reconnecting));
 
-    test('the request survives several failed attempts, not just one',
-        () async {
-      final Harness harness = Harness();
-      harness.controller.requestNewSession(topic: 'Billing');
-      unawaited(harness.controller.connect().catchError((Object _) {}));
-      await flush();
+        // Exactly the retry — see the note in the reconnect group.
+        await harness.scheduler.advanceToNextTimer();
+        await flush();
+        expect(harness.sockets.length, equals(2));
 
-      for (int i = 0; i < 4; i++) {
-        expect(helloOf(harness, i)['newSession'], isTrue,
-            reason: 'attempt $i must still ask for a new session');
+        final Map<String, Object?> retryHello = helloOf(harness, 1);
+        expect(retryHello['newSession'], isTrue);
+        // The topic too. A retry that kept `newSession` but dropped these would
+        // half-fulfil the request: a fresh session with no subject, which the
+        // customer never chose to omit.
+        expect(retryHello['topic'], equals('Billing'));
+        expect(retryHello['subject'], equals('Refund for order 41'));
+
+        harness.socket.deliver(ackJson());
+        await flush();
+        await harness.controller.dispose();
+      },
+    );
+
+    test(
+      'the request survives several failed attempts, not just one',
+      () async {
+        final Harness harness = Harness();
+        harness.controller.requestNewSession(topic: 'Billing');
+        unawaited(harness.controller.connect().catchError((Object _) {}));
+        await flush();
+
+        for (int i = 0; i < 4; i++) {
+          expect(
+            helloOf(harness, i)['newSession'],
+            isTrue,
+            reason: 'attempt $i must still ask for a new session',
+          );
+          await harness.socket.drop();
+          await flush();
+          await harness.scheduler.advanceToNextTimer();
+          await flush();
+        }
+
+        expect(helloOf(harness, 4)['newSession'], isTrue);
+        expect(helloOf(harness, 4)['topic'], equals('Billing'));
+
+        harness.socket.deliver(ackJson());
+        await flush();
+        await harness.controller.dispose();
+      },
+    );
+
+    test(
+      'connection.ack clears it, so a later reconnect asks for nothing',
+      () async {
+        // The other half. A latch that never cleared would close the customer's
+        // live conversation behind them on the next tunnel — the same bug in the
+        // opposite direction, and a worse one, because it destroys a session
+        // that was working.
+        final Harness harness = Harness();
+        harness.controller.requestNewSession(
+          topic: 'Billing',
+          subject: 'Refund for order 41',
+        );
+        unawaited(harness.controller.connect());
+        await flush();
+        expect(helloOf(harness, 0)['newSession'], isTrue);
+
+        harness.socket.deliver(ackJson());
+        await flush();
+        expect(harness.controller.state, equals(ConnectionState.connected));
+
+        // An ordinary drop, long after the new session was established.
         await harness.socket.drop();
         await flush();
         await harness.scheduler.advanceToNextTimer();
         await flush();
-      }
 
-      expect(helloOf(harness, 4)['newSession'], isTrue);
-      expect(helloOf(harness, 4)['topic'], equals('Billing'));
+        final Map<String, Object?> reconnectHello = helloOf(harness, 1);
+        expect(reconnectHello.containsKey('newSession'), isFalse);
+        expect(reconnectHello.containsKey('topic'), isFalse);
+        expect(reconnectHello.containsKey('subject'), isFalse);
 
-      harness.socket.deliver(ackJson());
-      await flush();
-      await harness.controller.dispose();
-    });
-
-    test('connection.ack clears it, so a later reconnect asks for nothing',
-        () async {
-      // The other half. A latch that never cleared would close the customer's
-      // live conversation behind them on the next tunnel — the same bug in the
-      // opposite direction, and a worse one, because it destroys a session
-      // that was working.
-      final Harness harness = Harness();
-      harness.controller
-          .requestNewSession(topic: 'Billing', subject: 'Refund for order 41');
-      unawaited(harness.controller.connect());
-      await flush();
-      expect(helloOf(harness, 0)['newSession'], isTrue);
-
-      harness.socket.deliver(ackJson());
-      await flush();
-      expect(harness.controller.state, equals(ConnectionState.connected));
-
-      // An ordinary drop, long after the new session was established.
-      await harness.socket.drop();
-      await flush();
-      await harness.scheduler.advanceToNextTimer();
-      await flush();
-
-      final Map<String, Object?> reconnectHello = helloOf(harness, 1);
-      expect(reconnectHello.containsKey('newSession'), isFalse);
-      expect(reconnectHello.containsKey('topic'), isFalse);
-      expect(reconnectHello.containsKey('subject'), isFalse);
-
-      harness.socket.deliver(ackJson());
-      await flush();
-      await harness.controller.dispose();
-    });
+        harness.socket.deliver(ackJson());
+        await flush();
+        await harness.controller.dispose();
+      },
+    );
 
     test('an ack this client rejects does not clear it', () async {
       // "Cleared by connection.ack" means an ack that actually established the
@@ -767,34 +820,36 @@ void main() {
       await harness.controller.dispose();
     });
 
-    test('forgetResumeAnchor drops the anchor so the next hello omits it',
-        () async {
-      // Without this the next hello carries a resumeFrom from a history this
-      // client no longer holds, and the v2 endpoint answers that with a
-      // NON-RETRYABLE VALIDATION_FAILED — suspended, rather than the new
-      // session that was asked for.
-      final Harness harness = Harness();
-      unawaited(harness.controller.connect());
-      await flush();
-      harness.socket.deliver(ackJson(seq: 12));
-      await flush();
-      expect(harness.controller.resumeFrom, equals(12));
+    test(
+      'forgetResumeAnchor drops the anchor so the next hello omits it',
+      () async {
+        // Without this the next hello carries a resumeFrom from a history this
+        // client no longer holds, and the v2 endpoint answers that with a
+        // NON-RETRYABLE VALIDATION_FAILED — suspended, rather than the new
+        // session that was asked for.
+        final Harness harness = Harness();
+        unawaited(harness.controller.connect());
+        await flush();
+        harness.socket.deliver(ackJson(seq: 12));
+        await flush();
+        expect(harness.controller.resumeFrom, equals(12));
 
-      harness.controller.forgetResumeAnchor();
-      expect(harness.controller.resumeFrom, isNull);
+        harness.controller.forgetResumeAnchor();
+        expect(harness.controller.resumeFrom, isNull);
 
-      await harness.socket.drop();
-      await flush();
-      await harness.scheduler.advanceToNextTimer();
-      await flush();
+        await harness.socket.drop();
+        await flush();
+        await harness.scheduler.advanceToNextTimer();
+        await flush();
 
-      // Absent, not 0 — 0 means "replay everything" (D2).
-      expect(helloOf(harness, 1).containsKey('resumeFrom'), isFalse);
+        // Absent, not 0 — 0 means "replay everything" (D2).
+        expect(helloOf(harness, 1).containsKey('resumeFrom'), isFalse);
 
-      harness.socket.deliver(ackJson());
-      await flush();
-      await harness.controller.dispose();
-    });
+        harness.socket.deliver(ackJson());
+        await flush();
+        await harness.controller.dispose();
+      },
+    );
 
     test('the last request wins, topic included', () async {
       // Two presses of "Start a new conversation" before either handshake
@@ -812,24 +867,26 @@ void main() {
       await harness.controller.dispose();
     });
 
-    test('a request with no topic or subject still asks for a new session',
-        () async {
-      // The ordinary case: the customer wants a fresh conversation and picked
-      // no topic. The absence of a topic must not read as the absence of a
-      // request.
-      final Harness harness = Harness();
-      harness.controller.requestNewSession();
-      unawaited(harness.controller.connect());
-      await flush();
+    test(
+      'a request with no topic or subject still asks for a new session',
+      () async {
+        // The ordinary case: the customer wants a fresh conversation and picked
+        // no topic. The absence of a topic must not read as the absence of a
+        // request.
+        final Harness harness = Harness();
+        harness.controller.requestNewSession();
+        unawaited(harness.controller.connect());
+        await flush();
 
-      final Map<String, Object?> hello = helloOf(harness, 0);
-      expect(hello['newSession'], isTrue);
-      expect(hello.containsKey('topic'), isFalse);
-      expect(hello.containsKey('subject'), isFalse);
+        final Map<String, Object?> hello = helloOf(harness, 0);
+        expect(hello['newSession'], isTrue);
+        expect(hello.containsKey('topic'), isFalse);
+        expect(hello.containsKey('subject'), isFalse);
 
-      harness.socket.deliver(ackJson());
-      await flush();
-      await harness.controller.dispose();
-    });
+        harness.socket.deliver(ackJson());
+        await flush();
+        await harness.controller.dispose();
+      },
+    );
   });
 }

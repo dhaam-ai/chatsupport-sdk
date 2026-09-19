@@ -4,8 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../support/remote_config_fixtures.dart';
 
-Widget _wrap(RemoteConfig config) =>
-    MaterialApp(home: Scaffold(body: HeroHeader(config: config)));
+Widget _wrap(RemoteConfig config, {VoidCallback? onClose}) => MaterialApp(
+    home: Scaffold(body: HeroHeader(config: config, onClose: onClose)));
 
 void main() {
   testWidgets(
@@ -30,6 +30,20 @@ void main() {
     );
     expect(find.text('Hi there'), findsOneWidget);
     expect(find.text('How can we help?'), findsOneWidget);
+  });
+
+  testWidgets('renders a close button when the host supplies onClose',
+      (tester) async {
+    int closeCalls = 0;
+    await tester
+        .pumpWidget(_wrap(testRemoteConfig(), onClose: () => closeCalls += 1));
+
+    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_back), findsNothing);
+    await tester.tap(find.byTooltip('Close chat'));
+    await tester.pump();
+
+    expect(closeCalls, 1);
   });
 
   testWidgets(

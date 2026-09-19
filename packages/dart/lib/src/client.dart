@@ -202,6 +202,10 @@ class ChatClient {
     required Uri wsUrl,
     required PublishableKey publishableKey,
     required TokenProvider getToken,
+    // Optional customer-DM address. `null` keeps the ordinary support chat;
+    // `ChatTarget.merchantOutlet(outletId)` asks chat-service to mint or resume
+    // a conversation addressed to that outlet.
+    ChatTarget? target,
     ChatSocketFactory? socketFactory,
     Scheduler scheduler = const SystemScheduler(),
     BackoffPolicy backoffPolicy = const BackoffPolicy(),
@@ -212,6 +216,7 @@ class ChatClient {
           wsUrl: wsUrl,
           publishableKey: publishableKey,
           getToken: getToken,
+          target: target,
           socketFactory: socketFactory,
           scheduler: scheduler,
           backoff: Backoff(policy: backoffPolicy),
@@ -745,8 +750,9 @@ class ChatClient {
 
   /// Leaves the current session (§6.2).
   void leaveSession() {
-    _connection
-        .send(_connection.buildFrame('session.leave', <String, Object?>{}));
+    _connection.send(
+      _connection.buildFrame('session.leave', <String, Object?>{}),
+    );
     _sessionId = null;
     // Same reason as the id beside it: an `agent.left` arriving after this
     // must not fold onto — and re-publish — a snapshot for the conversation
@@ -926,7 +932,9 @@ class ChatClient {
   void setPresence(PresenceStatus status) {
     _connection.send(
       _connection.buildFrame(
-          'presence.set', presenceSetPayload(status: status)),
+        'presence.set',
+        presenceSetPayload(status: status),
+      ),
     );
   }
 

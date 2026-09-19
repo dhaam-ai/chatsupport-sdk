@@ -40,6 +40,7 @@ export 'src/client.dart'
 export 'src/connection/backoff.dart' show Backoff, BackoffPolicy;
 export 'src/connection/connection.dart'
     show
+        ChatTarget,
         ConnectionClosedError,
         ConnectionController,
         ConnectionState,

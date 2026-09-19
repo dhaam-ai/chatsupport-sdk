@@ -105,34 +105,37 @@ Map<String, Object?> connectionHelloPayload({
   bool newSession = false,
   String? subject,
   String? topic,
+  String? targetRole,
+  String? targetId,
   String? ip,
   String? ipWatermark,
   String? userAgent,
   ContactGeo? geo,
-}) =>
-    <String, Object?>{
-      'token': token,
-      'publishableKey': publishableKey,
-      'protocolVersion': protocolVersion,
-      if (resumeFrom != null) 'resumeFrom': resumeFrom,
-      if (newSession) 'newSession': true,
-      if (subject != null) 'subject': subject,
-      if (topic != null) 'topic': topic,
-      // ── Contact-info enrichment (§ not in 7.3; recovered from the server) ─
-      //
-      // Whatever is known AT THE MOMENT this hello is built. A capture that
-      // resolves later simply misses this hello and rides the next one — see
-      // [ChatClient.setContactInfo], which explains why that is the accepted
-      // trade rather than something to await.
-      //
-      // Flat, not nested under a `contactInfo` key: that is the shape
-      // `controller.ts:511` sends, and the server reads these as four
-      // top-level siblings.
-      if (ip != null) 'ip': ip,
-      if (ipWatermark != null) 'ipWatermark': ipWatermark,
-      if (userAgent != null) 'userAgent': userAgent,
-      if (geo != null) 'geo': geo.toJson(),
-    };
+}) => <String, Object?>{
+  'token': token,
+  'publishableKey': publishableKey,
+  'protocolVersion': protocolVersion,
+  if (resumeFrom != null) 'resumeFrom': resumeFrom,
+  if (newSession) 'newSession': true,
+  if (subject != null) 'subject': subject,
+  if (topic != null) 'topic': topic,
+  if (targetRole != null && targetId != null) 'targetRole': targetRole,
+  if (targetRole != null && targetId != null) 'targetId': targetId,
+  // ── Contact-info enrichment (§ not in 7.3; recovered from the server) ─
+  //
+  // Whatever is known AT THE MOMENT this hello is built. A capture that
+  // resolves later simply misses this hello and rides the next one — see
+  // [ChatClient.setContactInfo], which explains why that is the accepted
+  // trade rather than something to await.
+  //
+  // Flat, not nested under a `contactInfo` key: that is the shape
+  // `controller.ts:511` sends, and the server reads these as four
+  // top-level siblings.
+  if (ip != null) 'ip': ip,
+  if (ipWatermark != null) 'ipWatermark': ipWatermark,
+  if (userAgent != null) 'userAgent': userAgent,
+  if (geo != null) 'geo': geo.toJson(),
+};
 
 /// Builds `connection.reauth.d` (§7.3, §10.5, D3).
 Map<String, Object?> connectionReauthPayload({required String token}) =>
@@ -178,18 +181,17 @@ Map<String, Object?> messageSendPayload({
   String? replyToMessageId,
   AttachmentMetadata? attachment,
   Map<String, Object?>? metadata,
-}) =>
-    <String, Object?>{
-      'content': content,
-      'type': type.wire,
-      if (sessionId != null) 'sessionId': sessionId,
-      if (replyToMessageId != null) 'replyToMessageId': replyToMessageId,
-      // Top-level, never nested under `metadata` — one canonical location
-      // (D4). v1 read `message.attachment` and `message.metadata.attachment`
-      // interchangeably (§12.2/§12.10) and that is the mistake being avoided.
-      if (attachment != null) 'attachment': attachment.toJson(),
-      if (metadata != null) 'metadata': metadata,
-    };
+}) => <String, Object?>{
+  'content': content,
+  'type': type.wire,
+  if (sessionId != null) 'sessionId': sessionId,
+  if (replyToMessageId != null) 'replyToMessageId': replyToMessageId,
+  // Top-level, never nested under `metadata` — one canonical location
+  // (D4). v1 read `message.attachment` and `message.metadata.attachment`
+  // interchangeably (§12.2/§12.10) and that is the mistake being avoided.
+  if (attachment != null) 'attachment': attachment.toJson(),
+  if (metadata != null) 'metadata': metadata,
+};
 
 /// Builds `message.markRead.d` (§7.3, §9.5).
 Map<String, Object?> messageMarkReadPayload({String? upToMessageId}) =>
@@ -233,21 +235,28 @@ class AttachmentMetadata {
     Map<String, Object?> json,
     String path, {
     String? frameType,
-  }) =>
-      AttachmentMetadata(
-        url: requireNonEmptyString(json, 'url', path, frameType: frameType),
-        fileName:
-            requireNonEmptyString(json, 'fileName', path, frameType: frameType),
-        mimeType:
-            requireNonEmptyString(json, 'mimeType', path, frameType: frameType),
-        size: requireInt(json, 'size', path, frameType: frameType),
-        mediaType: requireNonEmptyString(
-          json,
-          'mediaType',
-          path,
-          frameType: frameType,
-        ),
-      );
+  }) => AttachmentMetadata(
+    url: requireNonEmptyString(json, 'url', path, frameType: frameType),
+    fileName: requireNonEmptyString(
+      json,
+      'fileName',
+      path,
+      frameType: frameType,
+    ),
+    mimeType: requireNonEmptyString(
+      json,
+      'mimeType',
+      path,
+      frameType: frameType,
+    ),
+    size: requireInt(json, 'size', path, frameType: frameType),
+    mediaType: requireNonEmptyString(
+      json,
+      'mediaType',
+      path,
+      frameType: frameType,
+    ),
+  );
 
   final String url;
   final String fileName;
@@ -256,12 +265,12 @@ class AttachmentMetadata {
   final String mediaType;
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'url': url,
-        'fileName': fileName,
-        'mimeType': mimeType,
-        'size': size,
-        'mediaType': mediaType,
-      };
+    'url': url,
+    'fileName': fileName,
+    'mimeType': mimeType,
+    'size': size,
+    'mediaType': mediaType,
+  };
 }
 
 /// Who is currently handling a session for the customer — a human agent or
@@ -293,29 +302,28 @@ class HandledBy {
     Map<String, Object?> json,
     String path, {
     String? frameType,
-  }) =>
-      HandledBy(
-        kind: requireEnum(
-          json,
-          'kind',
-          path,
-          HandledByKind.fromWire,
-          'HandledByKind',
-          frameType: frameType,
-        ),
-        id: requireNonEmptyString(json, 'id', path, frameType: frameType),
-        // REQUIRED here, unlike the `agentName?` this shape replaced and
-        // unlike [ParticipantSnapshot.displayName]. A HandledBy exists to be
-        // rendered; one without a name is not a degraded HandledBy, it is a
-        // frame the server should not have sent. requireNonEmptyString already
-        // refuses `null` and `""` along with every other non-string.
-        displayName: requireNonEmptyString(
-          json,
-          'displayName',
-          path,
-          frameType: frameType,
-        ),
-      );
+  }) => HandledBy(
+    kind: requireEnum(
+      json,
+      'kind',
+      path,
+      HandledByKind.fromWire,
+      'HandledByKind',
+      frameType: frameType,
+    ),
+    id: requireNonEmptyString(json, 'id', path, frameType: frameType),
+    // REQUIRED here, unlike the `agentName?` this shape replaced and
+    // unlike [ParticipantSnapshot.displayName]. A HandledBy exists to be
+    // rendered; one without a name is not a degraded HandledBy, it is a
+    // frame the server should not have sent. requireNonEmptyString already
+    // refuses `null` and `""` along with every other non-string.
+    displayName: requireNonEmptyString(
+      json,
+      'displayName',
+      path,
+      frameType: frameType,
+    ),
+  );
 
   /// `'AGENT'` or `'BOT'` on the wire — always the string, never the
   /// backend's integer (D4). [HandledByKind] is a string-valued enum for
@@ -357,31 +365,34 @@ class ParticipantSnapshot {
     Map<String, Object?> json,
     String path, {
     String? frameType,
-  }) =>
-      ParticipantSnapshot(
-        participantId: requireNonEmptyString(
-          json,
-          'participantId',
-          path,
-          frameType: frameType,
-        ),
-        type: requireEnum(
-          json,
-          'type',
-          path,
-          ParticipantType.fromWire,
-          'ParticipantType',
-          frameType: frameType,
-        ),
-        lastReadAt: optionalIsoTimestamp(json, 'lastReadAt', path,
-            frameType: frameType),
-        displayName: optionalNonEmptyString(
-          json,
-          'displayName',
-          path,
-          frameType: frameType,
-        ),
-      );
+  }) => ParticipantSnapshot(
+    participantId: requireNonEmptyString(
+      json,
+      'participantId',
+      path,
+      frameType: frameType,
+    ),
+    type: requireEnum(
+      json,
+      'type',
+      path,
+      ParticipantType.fromWire,
+      'ParticipantType',
+      frameType: frameType,
+    ),
+    lastReadAt: optionalIsoTimestamp(
+      json,
+      'lastReadAt',
+      path,
+      frameType: frameType,
+    ),
+    displayName: optionalNonEmptyString(
+      json,
+      'displayName',
+      path,
+      frameType: frameType,
+    ),
+  );
 
   final String participantId;
   final ParticipantType type;
@@ -432,8 +443,12 @@ class SessionSnapshot {
       );
     }
     return SessionSnapshot(
-      sessionId:
-          requireNonEmptyString(json, 'sessionId', path, frameType: frameType),
+      sessionId: requireNonEmptyString(
+        json,
+        'sessionId',
+        path,
+        frameType: frameType,
+      ),
       status: requireEnum(
         json,
         'status',
@@ -462,8 +477,12 @@ class SessionSnapshot {
             frameType: frameType,
           ),
       ],
-      createdAt:
-          requireIsoTimestamp(json, 'createdAt', path, frameType: frameType),
+      createdAt: requireIsoTimestamp(
+        json,
+        'createdAt',
+        path,
+        frameType: frameType,
+      ),
       ticketId: optionalString(json, 'ticketId', path, frameType: frameType),
       // Additive: a server that predates the identity contract sends no
       // `handledBy` at all and still produces a valid snapshot, so an old
@@ -515,17 +534,18 @@ class SessionSnapshot {
   /// fields. Passing both is the caller contradicting itself, and the clear
   /// wins — the safe direction, since a stale name is the bug this whole
   /// path exists to close.
-  SessionSnapshot copyWith(
-          {HandledBy? handledBy, bool clearHandledBy = false}) =>
-      SessionSnapshot(
-        sessionId: sessionId,
-        status: status,
-        mode: mode,
-        participants: participants,
-        createdAt: createdAt,
-        ticketId: ticketId,
-        handledBy: clearHandledBy ? null : (handledBy ?? this.handledBy),
-      );
+  SessionSnapshot copyWith({
+    HandledBy? handledBy,
+    bool clearHandledBy = false,
+  }) => SessionSnapshot(
+    sessionId: sessionId,
+    status: status,
+    mode: mode,
+    participants: participants,
+    createdAt: createdAt,
+    ticketId: ticketId,
+    handledBy: clearHandledBy ? null : (handledBy ?? this.handledBy),
+  );
 }
 
 /// A message (`message.new.d`, and every entry of a replay array).
@@ -554,10 +574,18 @@ class ChatMessage {
     final Object? rawMetadata = json['metadata'];
     return ChatMessage(
       id: requireNonEmptyString(json, 'id', path, frameType: frameType),
-      sessionId:
-          requireNonEmptyString(json, 'sessionId', path, frameType: frameType),
-      senderId:
-          requireNonEmptyString(json, 'senderId', path, frameType: frameType),
+      sessionId: requireNonEmptyString(
+        json,
+        'sessionId',
+        path,
+        frameType: frameType,
+      ),
+      senderId: requireNonEmptyString(
+        json,
+        'senderId',
+        path,
+        frameType: frameType,
+      ),
       senderType: requireEnum(
         json,
         'senderType',
@@ -576,10 +604,18 @@ class ChatMessage {
       ),
       content: requireString(json, 'content', path, frameType: frameType),
       seq: requireSeq(json, 'seq', path, frameType: frameType),
-      createdAt:
-          requireIsoTimestamp(json, 'createdAt', path, frameType: frameType),
-      replyToMessageId:
-          optionalString(json, 'replyToMessageId', path, frameType: frameType),
+      createdAt: requireIsoTimestamp(
+        json,
+        'createdAt',
+        path,
+        frameType: frameType,
+      ),
+      replyToMessageId: optionalString(
+        json,
+        'replyToMessageId',
+        path,
+        frameType: frameType,
+      ),
       attachment: rawAttachment == null
           ? null
           : AttachmentMetadata.fromJson(
@@ -635,19 +671,19 @@ class ChatMessage {
   /// The id is NOT a parameter and cannot change: under D1 a message's
   /// identity is fixed at creation and there is no id-swap path (§9.3).
   ChatMessage settled({required int seq}) => ChatMessage(
-        id: id,
-        sessionId: sessionId,
-        senderId: senderId,
-        senderType: senderType,
-        type: type,
-        content: content,
-        seq: seq,
-        createdAt: createdAt,
-        replyToMessageId: replyToMessageId,
-        attachment: attachment,
-        metadata: metadata,
-        delivery: MessageDelivery.confirmed,
-      );
+    id: id,
+    sessionId: sessionId,
+    senderId: senderId,
+    senderType: senderType,
+    type: type,
+    content: content,
+    seq: seq,
+    createdAt: createdAt,
+    replyToMessageId: replyToMessageId,
+    attachment: attachment,
+    metadata: metadata,
+    delivery: MessageDelivery.confirmed,
+  );
 
   /// A copy marked [MessageQueued] — held for the connection to come back,
   /// not lost.
@@ -658,19 +694,19 @@ class ChatMessage {
   /// that could re-mint an id would turn one held message into two delivered
   /// ones.
   ChatMessage queued() => ChatMessage(
-        id: id,
-        sessionId: sessionId,
-        senderId: senderId,
-        senderType: senderType,
-        type: type,
-        content: content,
-        seq: seq,
-        createdAt: createdAt,
-        replyToMessageId: replyToMessageId,
-        attachment: attachment,
-        metadata: metadata,
-        delivery: MessageDelivery.queued,
-      );
+    id: id,
+    sessionId: sessionId,
+    senderId: senderId,
+    senderType: senderType,
+    type: type,
+    content: content,
+    seq: seq,
+    createdAt: createdAt,
+    replyToMessageId: replyToMessageId,
+    attachment: attachment,
+    metadata: metadata,
+    delivery: MessageDelivery.queued,
+  );
 
   /// A copy marked failed, WITH the reason and the verdict.
   ///
@@ -687,25 +723,20 @@ class ChatMessage {
     required SendFailureReason reason,
     required bool retryable,
     ErrorCode? code,
-  }) =>
-      ChatMessage(
-        id: id,
-        sessionId: sessionId,
-        senderId: senderId,
-        senderType: senderType,
-        type: type,
-        content: content,
-        seq: seq,
-        createdAt: createdAt,
-        replyToMessageId: replyToMessageId,
-        attachment: attachment,
-        metadata: metadata,
-        delivery: MessageFailed(
-          reason: reason,
-          retryable: retryable,
-          code: code,
-        ),
-      );
+  }) => ChatMessage(
+    id: id,
+    sessionId: sessionId,
+    senderId: senderId,
+    senderType: senderType,
+    type: type,
+    content: content,
+    seq: seq,
+    createdAt: createdAt,
+    replyToMessageId: replyToMessageId,
+    attachment: attachment,
+    metadata: metadata,
+    delivery: MessageFailed(reason: reason, retryable: retryable, code: code),
+  );
 
   /// A copy back to [MessageDelivery.pending] — the retry path.
   ///
@@ -718,19 +749,19 @@ class ChatMessage {
   /// in flight again, and a failure that is no longer true must not survive
   /// alongside it.
   ChatMessage retrying() => ChatMessage(
-        id: id,
-        sessionId: sessionId,
-        senderId: senderId,
-        senderType: senderType,
-        type: type,
-        content: content,
-        seq: seq,
-        createdAt: createdAt,
-        replyToMessageId: replyToMessageId,
-        attachment: attachment,
-        metadata: metadata,
-        delivery: MessageDelivery.pending,
-      );
+    id: id,
+    sessionId: sessionId,
+    senderId: senderId,
+    senderType: senderType,
+    type: type,
+    content: content,
+    seq: seq,
+    createdAt: createdAt,
+    replyToMessageId: replyToMessageId,
+    attachment: attachment,
+    metadata: metadata,
+    delivery: MessageDelivery.pending,
+  );
 }
 
 /// Whether a message has reached the server.
@@ -926,25 +957,28 @@ class PresenceEntry {
     Map<String, Object?> json,
     String path, {
     String? frameType,
-  }) =>
-      PresenceEntry(
-        participantId: requireNonEmptyString(
-          json,
-          'participantId',
-          path,
-          frameType: frameType,
-        ),
-        status: requireEnum(
-          json,
-          'status',
-          path,
-          PresenceStatus.fromWire,
-          'PresenceStatus',
-          frameType: frameType,
-        ),
-        lastSeen:
-            optionalIsoTimestamp(json, 'lastSeen', path, frameType: frameType),
-      );
+  }) => PresenceEntry(
+    participantId: requireNonEmptyString(
+      json,
+      'participantId',
+      path,
+      frameType: frameType,
+    ),
+    status: requireEnum(
+      json,
+      'status',
+      path,
+      PresenceStatus.fromWire,
+      'PresenceStatus',
+      frameType: frameType,
+    ),
+    lastSeen: optionalIsoTimestamp(
+      json,
+      'lastSeen',
+      path,
+      frameType: frameType,
+    ),
+  );
 
   final String participantId;
   final PresenceStatus status;
@@ -995,8 +1029,12 @@ class ConnectionAck {
     }
 
     return ConnectionAck(
-      protocolVersion:
-          requireInt(d, 'protocolVersion', 'd', frameType: frameType),
+      protocolVersion: requireInt(
+        d,
+        'protocolVersion',
+        'd',
+        frameType: frameType,
+      ),
       session: SessionSnapshot.fromJson(
         requireObject(d['session'], 'd.session', frameType: frameType),
         'd.session',
@@ -1031,21 +1069,21 @@ class SessionClosed {
   const SessionClosed({required this.sessionId, required this.closeReason});
 
   factory SessionClosed.fromJson(Map<String, Object?> d) => SessionClosed(
-        sessionId: requireNonEmptyString(
-          d,
-          'sessionId',
-          'd',
-          frameType: 'session.closed',
-        ),
-        closeReason: requireEnum(
-          d,
-          'closeReason',
-          'd',
-          CloseReason.fromWire,
-          'CloseReason',
-          frameType: 'session.closed',
-        ),
-      );
+    sessionId: requireNonEmptyString(
+      d,
+      'sessionId',
+      'd',
+      frameType: 'session.closed',
+    ),
+    closeReason: requireEnum(
+      d,
+      'closeReason',
+      'd',
+      CloseReason.fromWire,
+      'CloseReason',
+      frameType: 'session.closed',
+    ),
+  );
 
   final String sessionId;
 
@@ -1059,19 +1097,14 @@ class MessageRead {
   const MessageRead({required this.participantId, required this.readAt});
 
   factory MessageRead.fromJson(Map<String, Object?> d) => MessageRead(
-        participantId: requireNonEmptyString(
-          d,
-          'participantId',
-          'd',
-          frameType: 'message.read',
-        ),
-        readAt: requireIsoTimestamp(
-          d,
-          'readAt',
-          'd',
-          frameType: 'message.read',
-        ),
-      );
+    participantId: requireNonEmptyString(
+      d,
+      'participantId',
+      'd',
+      frameType: 'message.read',
+    ),
+    readAt: requireIsoTimestamp(d, 'readAt', 'd', frameType: 'message.read'),
+  );
 
   final String participantId;
 
@@ -1103,33 +1136,33 @@ class MessageDelivered {
   });
 
   factory MessageDelivered.fromJson(Map<String, Object?> d) => MessageDelivered(
-        participantId: requireNonEmptyString(
-          d,
-          'participantId',
-          'd',
-          frameType: 'message.delivered',
-        ),
-        // [requireSeq], not [requireInt]. The TypeScript validator
-        // (`validateMessageDelivered`) checks only `isInteger` here, which
-        // lets a negative through to `maxDeliveredWatermark` and lets it be
-        // adopted as a watermark when the participant has none yet. The
-        // server allocates `seq` from 1, so a negative is not a value an
-        // honest peer can hold, and refusing it at the edge is the same
-        // decision this package already made for `connection.ack.d.seq` and
-        // `message.new.d.seq`. Deliberately stricter than the reference.
-        deliveredUpToSeq: requireSeq(
-          d,
-          'deliveredUpToSeq',
-          'd',
-          frameType: 'message.delivered',
-        ),
-        deliveredAt: requireIsoTimestamp(
-          d,
-          'deliveredAt',
-          'd',
-          frameType: 'message.delivered',
-        ),
-      );
+    participantId: requireNonEmptyString(
+      d,
+      'participantId',
+      'd',
+      frameType: 'message.delivered',
+    ),
+    // [requireSeq], not [requireInt]. The TypeScript validator
+    // (`validateMessageDelivered`) checks only `isInteger` here, which
+    // lets a negative through to `maxDeliveredWatermark` and lets it be
+    // adopted as a watermark when the participant has none yet. The
+    // server allocates `seq` from 1, so a negative is not a value an
+    // honest peer can hold, and refusing it at the edge is the same
+    // decision this package already made for `connection.ack.d.seq` and
+    // `message.new.d.seq`. Deliberately stricter than the reference.
+    deliveredUpToSeq: requireSeq(
+      d,
+      'deliveredUpToSeq',
+      'd',
+      frameType: 'message.delivered',
+    ),
+    deliveredAt: requireIsoTimestamp(
+      d,
+      'deliveredAt',
+      'd',
+      frameType: 'message.delivered',
+    ),
+  );
 
   final String participantId;
 
@@ -1152,15 +1185,14 @@ class TicketLinked {
   const TicketLinked({required this.ticketId, this.ticketUrl});
 
   factory TicketLinked.fromJson(Map<String, Object?> d) => TicketLinked(
-        ticketId: requireNonEmptyString(
-          d,
-          'ticketId',
-          'd',
-          frameType: 'ticket.linked',
-        ),
-        ticketUrl:
-            optionalString(d, 'ticketUrl', 'd', frameType: 'ticket.linked'),
-      );
+    ticketId: requireNonEmptyString(
+      d,
+      'ticketId',
+      'd',
+      frameType: 'ticket.linked',
+    ),
+    ticketUrl: optionalString(d, 'ticketUrl', 'd', frameType: 'ticket.linked'),
+  );
 
   final String ticketId;
   final String? ticketUrl;

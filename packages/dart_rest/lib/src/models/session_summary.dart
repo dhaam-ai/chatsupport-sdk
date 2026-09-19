@@ -36,6 +36,8 @@ class RestChatSessionSummary {
     this.subject,
     this.topic,
     this.handledBy,
+    this.targetRole,
+    this.targetId,
   });
 
   /// Decodes one `sessions[]` item.
@@ -47,8 +49,7 @@ class RestChatSessionSummary {
   factory RestChatSessionSummary.fromJson(
     Map<String, Object?> json,
     String context,
-  ) =>
-      decodeRestChatSessionSummary(json, context);
+  ) => decodeRestChatSessionSummary(json, context);
 
   final String id;
   final ChatStatus status;
@@ -79,6 +80,8 @@ class RestChatSessionSummary {
 
   final String? subject;
   final String? topic;
+  final String? targetRole;
+  final String? targetId;
 
   /// `null` — never a placeholder — when nobody has picked the session up yet.
   ///

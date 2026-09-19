@@ -36,40 +36,22 @@ import 'package:dhaam_chat/dhaam_chat.dart'
 /// The names are spelled out as constants rather than inlined so the setup
 /// page can print the exact string a person has to type, and so a rename
 /// cannot leave the two out of step.
-const String kWsUrlKey = 'DHAAM_WS_URL';
+const String kWsUrlKey = 'CHAT_WS_URL';
+const String _kLegacyWsUrlKey = 'DHAAM_WS_URL';
 
 /// The `--dart-define` key naming the REST origin (`http://`/`https://`).
 ///
 /// The ORIGIN only — `RestClient` appends `/chat-services/api/v1` itself, and
 /// so do `fetchRemoteConfig` and `fetchIpWatermark`. Passing a value that
 /// already carries the base path produces a doubled one.
-const String kApiUrlKey = 'DHAAM_API_URL';
+const String kApiUrlKey = 'CHAT_API_URL';
+const String _kLegacyApiUrlKey = 'DHAAM_API_URL';
 
 /// The `--dart-define` key naming the tenant's publishable key.
-const String kPublishableKeyKey = 'DHAAM_PUBLISHABLE_KEY';
+const String kPublishableKeyKey = 'CHAT_PUBLISHABLE_KEY';
+const String _kLegacyPublishableKeyKey = 'DHAAM_PUBLISHABLE_KEY';
 
 /// The `--dart-define` key naming a user JWT for this run.
-///
-/// ── A guest needs one of these too ───────────────────────────────────────
-///
-/// This is the misconception the setup page exists to head off, and this app
-/// is what taught it: the token was presented as a flat requirement next to
-/// three deployment facts, with nothing said about what it identifies, so
-/// "there is no logged-in user yet" reads as "so there is nothing to
-/// authenticate".
-///
-/// Every visitor needs a token. `resolveConfig` in `packages/widget` refuses a
-/// config with neither a `tokenEndpoint` nor a `getToken` for the reason it
-/// states outright — "the browser is never given a secret key, so a token has
-/// to come from your own backend" — and a Flutter app is in exactly the same
-/// position: it ships to devices, so it cannot hold the secret key either.
-///
-/// What a guest's token differs in is WHO it says they are: it identifies an
-/// anonymous VISITOR. What marks somebody as a known customer is
-/// `ChatIdentity.profile`, which is a different input entirely and travels
-/// nowhere near this one — see `example_identity.dart`. The two are
-/// independent, which is why there are two switches on the host screen and
-/// only one of them is a credential.
 ///
 /// ── A static token here is an EXAMPLE-ONLY shortcut ──────────────────────
 ///
@@ -84,7 +66,8 @@ const String kPublishableKeyKey = 'DHAAM_PUBLISHABLE_KEY';
 /// endpoint is not what a person opening this app is trying to test. What it
 /// does NOT do is pretend that is the design — see `exampleTokenProvider` in
 /// `seams.dart`, which is the callback, and says so.
-const String kAccessTokenKey = 'DHAAM_ACCESS_TOKEN';
+const String kAccessTokenKey = 'ACCESS_TOKEN';
+const String _kLegacyAccessTokenKey = 'DHAAM_ACCESS_TOKEN';
 
 /// The `--dart-define` key naming a conversation to open on. Optional.
 ///
@@ -93,15 +76,30 @@ const String kAccessTokenKey = 'DHAAM_ACCESS_TOKEN';
 /// conversation from the first frame. Leave it unset to land on Home, which is
 /// what a visitor arriving fresh sees.
 const String kSessionIdKey = 'DHAAM_SESSION_ID';
+const String kOutletIdKey = 'CHAT_OUTLET_ID';
 
 // Read in a const context so the values are resolved at compile time, which is
 // what `--dart-define` means. Each defaults to `''` — see this library's
 // header on why no default here looks like a real value.
 const String _wsUrl = String.fromEnvironment(kWsUrlKey);
+const String _legacyWsUrl = String.fromEnvironment(_kLegacyWsUrlKey);
 const String _apiUrl = String.fromEnvironment(kApiUrlKey);
+const String _legacyApiUrl = String.fromEnvironment(_kLegacyApiUrlKey);
 const String _publishableKey = String.fromEnvironment(kPublishableKeyKey);
+const String _legacyPublishableKey =
+    String.fromEnvironment(_kLegacyPublishableKeyKey);
 const String _accessToken = String.fromEnvironment(kAccessTokenKey);
+const String _legacyAccessToken =
+    String.fromEnvironment(_kLegacyAccessTokenKey);
 const String _sessionId = String.fromEnvironment(kSessionIdKey);
+const String _outletId = String.fromEnvironment(kOutletIdKey);
+
+String get _resolvedWsUrl => _wsUrl.isNotEmpty ? _wsUrl : _legacyWsUrl;
+String get _resolvedApiUrl => _apiUrl.isNotEmpty ? _apiUrl : _legacyApiUrl;
+String get _resolvedPublishableKey =>
+    _publishableKey.isNotEmpty ? _publishableKey : _legacyPublishableKey;
+String get _resolvedAccessToken =>
+    _accessToken.isNotEmpty ? _accessToken : _legacyAccessToken;
 
 /// One thing wrong with the configuration, in words a person can act on.
 ///
@@ -130,6 +128,7 @@ final class ExampleConfigReady extends ExampleConfig {
     required this.publishableKey,
     required this.accessToken,
     required this.sessionId,
+    required this.outletId,
   });
 
   final Uri wsUrl;
@@ -141,6 +140,9 @@ final class ExampleConfigReady extends ExampleConfig {
 
   /// The conversation to open on, or null to land on Home.
   final String? sessionId;
+
+  /// The merchant outlet to address, or null for the ordinary support chat.
+  final String? outletId;
 }
 
 /// At least one value missing or malformed. Carries every problem, not the
@@ -164,15 +166,15 @@ ExampleConfig readExampleConfig() {
   final String? apiUrl = _validateApiUrl(problems);
   final PublishableKey? key = _validatePublishableKey(problems);
 
-  if (_accessToken.isEmpty) {
+  final String accessToken = _resolvedAccessToken;
+  final String? outletId = _validateOutletId(problems);
+
+  if (accessToken.isEmpty) {
     problems.add(
       const ConfigProblem(
         kAccessTokenKey,
-        'not set. Every visitor needs one, guests included — this token says '
-        'WHICH visitor, and a guest is simply an anonymous one. What marks '
-        'somebody as a known customer is identity.profile, which is a '
-        'separate input and not a credential. See the README on how a real '
-        'host mints this from its own backend.',
+        'not set. A user JWT for this run — see the README on how a real host '
+        'mints one from its own backend instead.',
       ),
     );
   }
@@ -185,16 +187,34 @@ ExampleConfig readExampleConfig() {
     wsUrl: wsUrl,
     apiUrl: apiUrl,
     publishableKey: key,
-    accessToken: _accessToken,
+    accessToken: accessToken,
     // Absent and blank are the same answer to `ChatWidgetCubit`: no session
     // was named. Collapsing them here means the Cubit never sees a `''` that
     // would land it on the conversation screen with nothing to show.
     sessionId: _sessionId.isEmpty ? null : _sessionId,
+    outletId: outletId,
   );
 }
 
+String? _validateOutletId(List<ConfigProblem> problems) {
+  final String outletId = _outletId.trim();
+  if (outletId.isEmpty) return null;
+  if (outletId.length > 128) {
+    problems.add(
+      const ConfigProblem(
+        kOutletIdKey,
+        'is too long. Expected a merchant outlet id of at most 128 characters.',
+      ),
+    );
+    return null;
+  }
+  return outletId;
+}
+
 Uri? _validateWsUrl(List<ConfigProblem> problems) {
-  if (_wsUrl.isEmpty) {
+  final String wsUrl = _resolvedWsUrl;
+
+  if (wsUrl.isEmpty) {
     problems.add(
       const ConfigProblem(
           kWsUrlKey, 'not set. Expected a ws:// or wss:// URL.'),
@@ -204,7 +224,7 @@ Uri? _validateWsUrl(List<ConfigProblem> problems) {
 
   // `Uri.tryParse` rather than `Uri.parse`: this function's whole job is to
   // turn a bad value into a sentence, and letting it throw would defeat that.
-  final Uri? parsed = Uri.tryParse(_wsUrl);
+  final Uri? parsed = Uri.tryParse(wsUrl);
   if (parsed == null) {
     problems.add(const ConfigProblem(kWsUrlKey, 'is not a parseable URL.'));
     return null;
@@ -223,7 +243,9 @@ Uri? _validateWsUrl(List<ConfigProblem> problems) {
 }
 
 String? _validateApiUrl(List<ConfigProblem> problems) {
-  if (_apiUrl.isEmpty) {
+  final String apiUrl = _resolvedApiUrl;
+
+  if (apiUrl.isEmpty) {
     problems.add(
       const ConfigProblem(
         kApiUrlKey,
@@ -234,7 +256,7 @@ String? _validateApiUrl(List<ConfigProblem> problems) {
     return null;
   }
 
-  final Uri? parsed = Uri.tryParse(_apiUrl);
+  final Uri? parsed = Uri.tryParse(apiUrl);
   if (parsed == null) {
     problems.add(const ConfigProblem(kApiUrlKey, 'is not a parseable URL.'));
     return null;
@@ -263,22 +285,17 @@ String? _validateApiUrl(List<ConfigProblem> problems) {
     );
     return null;
   }
-  return _apiUrl;
+  return apiUrl;
 }
 
 PublishableKey? _validatePublishableKey(List<ConfigProblem> problems) {
-  if (_publishableKey.isEmpty) {
+  final String publishableKey = _resolvedPublishableKey;
+
+  if (publishableKey.isEmpty) {
     problems.add(
       const ConfigProblem(
         kPublishableKeyKey,
-        // The prefixes `keys.dart` actually accepts. It refuses `pk_`
-        // deliberately — a bare `pk_test_` is Stripe's shape, and secret
-        // scanners report such a key as a Stripe key — so a placeholder
-        // spelled `pk_test_…` sends someone to look for a key that is not
-        // the one they have, and the SDK's own refusal then names a third
-        // string. See `keys.dart`'s closing note on the naming decision.
-        'not set. Expected the tenant publishable key '
-        '(dhp_live_… or dhp_test_…).',
+        'not set. Expected the tenant publishable key (dhp_live_… or dhp_test_…).',
       ),
     );
     return null;
@@ -289,7 +306,7 @@ PublishableKey? _validatePublishableKey(List<ConfigProblem> problems) {
   // tell the two apart must use `parse`. Here they must be told apart —
   // "rotate this credential" and "fix this typo" are different instructions.
   try {
-    return PublishableKey.parse(_publishableKey);
+    return PublishableKey.parse(publishableKey);
   } on SecretKeyInClientError {
     problems.add(
       const ConfigProblem(
