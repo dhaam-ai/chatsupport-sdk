@@ -398,7 +398,9 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       // already aligned and coloured as theirs. `senderName` (unlike
       // `showAuthorName` below) is not suppressed for a continued run — the
       // avatar draws from it on every row; see `MessageRow.update`'s doc.
-      const senderName = isOutgoing(message) ? null : senderLabel(message, state, lastBotName);
+      const senderName = isOutgoing(message, localParticipantId)
+        ? null
+        : senderLabel(message, state, lastBotName);
       const showAuthorName = senderName !== null && senderName !== previousAuthor;
       previousAuthor = senderName;
 
@@ -407,7 +409,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
         localParticipantId,
         deliveredWatermarks: state.deliveredWatermarks,
         readWatermarks: state.readWatermarks,
-      }), senderName, showAuthorName);
+      }), senderName, showAuthorName, localParticipantId);
 
       // Keeps DOM order equal to core's array order without a full rebuild.
       // Core may reorder on a `seq` arriving late (D2), so position is
@@ -443,7 +445,9 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // reopen nothing is a dead control.
     const newestMessage = state.messages[state.messages.length - 1];
     const suggestions =
-      closedReason === null && newestMessage !== undefined && !isOutgoing(newestMessage)
+      closedReason === null &&
+      newestMessage !== undefined &&
+      !isOutgoing(newestMessage, localParticipantId)
         ? readQuickReplies(newestMessage.metadata, callbacks.handoffKeywords?.() ?? [])
         : [];
     quickReplies.update(suggestions);
@@ -622,6 +626,7 @@ interface MessageRow {
     tick: MessageTickState | null,
     senderName: string | null,
     showAuthorName: boolean,
+    localParticipantId: string | null,
   ): void;
   destroy(): void;
 }
@@ -730,7 +735,7 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
     destroy() {
       actions.destroy();
     },
-    update(message, tick, senderName, showAuthorName) {
+    update(message, tick, senderName, showAuthorName, localParticipantId) {
       current = message;
       currentSenderLabel = senderName ?? 'You';
 
@@ -769,7 +774,7 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
 
       const isBot = message.senderType === 'BOT';
       const isAgent = message.senderType === 'AGENT';
-      const outgoing = isOutgoing(message);
+      const outgoing = isOutgoing(message, localParticipantId);
 
       node.setAttribute('data-mine', String(outgoing));
       node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
@@ -975,8 +980,25 @@ function handlerName(state: ChatState, lastBotName: string | null): string {
   return state.session?.assignedAgent?.displayName ?? lastBotName ?? 'Agent';
 }
 
-function isOutgoing(message: ChatMessage): boolean {
-  return message.senderType === 'CUSTOMER';
+/**
+ * Whose bubble this is, visually — right/"mine" vs left/theirs.
+ *
+ * `senderType === 'CUSTOMER'` alone only works for the plain end-customer
+ * widget, where the two sides of a conversation are always CUSTOMER vs
+ * AGENT/BOT. It silently breaks for a partner chat (admin/manager <->
+ * merchant/outlet): per the wire contract's "Partner chats" section, BOTH
+ * sides send as senderType AGENT there, so that check can never tell the two
+ * apart and every bubble in the thread ends up "outgoing". Comparing
+ * `senderId` against `localParticipantId` (== `config.identity.userId`,
+ * always known — see widget.ts) works for every persona, customer included,
+ * since a customer's own messages carry their own senderId too. The
+ * CUSTOMER-type check survives only as a fallback for the one case
+ * `localParticipantId` is unavailable.
+ */
+function isOutgoing(message: ChatMessage, localParticipantId: string | null): boolean {
+  return localParticipantId !== null
+    ? message.senderId === localParticipantId
+    : message.senderType === 'CUSTOMER';
 }
 
 /**

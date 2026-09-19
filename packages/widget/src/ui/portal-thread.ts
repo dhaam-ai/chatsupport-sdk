@@ -29,8 +29,30 @@ export interface PortalThreadView {
   focus(): void;
 }
 
-/** The admin IS the agent on this surface — the inverse of `message-list.ts`'s own `isOutgoing`. */
-function isOutgoing(message: ChatMessage): boolean {
+/**
+ * The admin IS the agent on this surface — the inverse of `message-list.ts`'s
+ * own `isOutgoing` — for an ordinary support/DM conversation, where the only
+ * CUSTOMER-typed party is the one real end-customer and every AGENT-typed
+ * message is "our side" no matter which staff member sent it (shared-inbox
+ * semantics: a coworker's reply belongs on the same side as mine).
+ *
+ * That collapses for a PARTNER conversation (admin/manager <-> merchant/
+ * outlet): per the wire contract's "Partner chats" section, BOTH parties
+ * send as senderType AGENT there, so `senderType === 'AGENT'` can no longer
+ * tell "us" from "them" — every message in the thread would be "outgoing".
+ * `isPartnerConversation` (the caller passes `state.session.customer ===
+ * null` — see `packages/core/src/client/session.ts`'s `customer:
+ * findParticipant(..., 'CUSTOMER')`, which is null exactly when no
+ * participant is CUSTOMER-typed, i.e. never for a real customer
+ * conversation) switches to comparing `senderId` against this viewer's own
+ * id instead, matching the doc's "place messages by senderId".
+ */
+function isOutgoing(
+  message: ChatMessage,
+  isPartnerConversation: boolean,
+  localParticipantId: string | null,
+): boolean {
+  if (isPartnerConversation) return message.senderId === localParticipantId;
   return message.senderType === 'AGENT';
 }
 
@@ -100,7 +122,10 @@ function createSystemRow(text: string): HTMLElement {
   return el('div', { attrs: { class: 'dh-system-row' }, children: [pill] });
 }
 
-export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThreadView {
+export function createPortalThread(
+  callbacks: PortalThreadCallbacks,
+  localParticipantId: string | null = null,
+): PortalThreadView {
   const log = el('div', { attrs: { class: 'dh-log dh-message-log dh-portal-log', role: 'log' } });
   const errorLine = el('p', { attrs: { class: 'dh-composer-error', hidden: true } });
 
@@ -296,8 +321,8 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
     emojiPicker.setEnabled(sendable && !sending);
   }
 
-  function renderBubble(message: ChatMessage): HTMLElement {
-    const outgoing = isOutgoing(message);
+  function renderBubble(message: ChatMessage, isPartnerConversation: boolean): HTMLElement {
+    const outgoing = isOutgoing(message, isPartnerConversation, localParticipantId);
     const timeStr = formatTime(message.createdAt);
 
     // The quoted message this one replies to, drawn from the SAME metadata
@@ -467,6 +492,7 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
         return;
       }
 
+      const isPartnerConversation = state.session.customer === null;
       const elements: HTMLElement[] = [];
       let lastDayKey = '';
 
@@ -480,7 +506,7 @@ export function createPortalThread(callbacks: PortalThreadCallbacks): PortalThre
         if (isSystemMessage(msg)) {
           elements.push(createSystemRow(msg.content));
         } else {
-          elements.push(renderBubble(msg));
+          elements.push(renderBubble(msg, isPartnerConversation));
         }
       }
 

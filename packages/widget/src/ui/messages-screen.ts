@@ -120,16 +120,31 @@ export function getRowDisplayName(
 
   if (isMerchantUser) {
     if (tab === 'admin' || tab === 'merchants') {
-      // Merchant viewing Admin chat
+      // Merchant viewing Admin chat.
+      //
+      // `customerName`/`customerEmail` are only the ADMIN's real identity
+      // when the ADMIN started this conversation (`direction` absent, or
+      // `'incoming'` from this merchant/outlet's own point of view — the
+      // wire contract's `/party/conversations` `direction` field). When the
+      // merchant/outlet itself started it instead (`'outgoing'`, e.g. via
+      // "Message Admin"), those same fields are the VIEWER's own name and
+      // email — the backend reuses the `customerId`/`customerName` columns
+      // for whoever started the chat, regardless of role — so trusting them
+      // here showed the outlet its own name back at itself instead of the
+      // admin's. `direction` was previously dropped between the wire
+      // response and this summary (see widget.ts's `portalQueueRowToSummary`);
+      // `undefined` (never sent, e.g. a legacy/non-partner row) keeps the
+      // old behaviour so nothing else regresses.
+      const startedByMe = s.direction === 'outgoing';
       if (s.adminName && typeof s.adminName === 'string' && s.adminName.trim()) return s.adminName.trim();
-      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim()) {
+      if (!startedByMe && s.customerName && typeof s.customerName === 'string' && s.customerName.trim()) {
         const cName = s.customerName.trim();
         if (cName.toLowerCase().includes('admin') || cName !== 'Customer') return cName;
       }
       if (s.targetName && typeof s.targetName === 'string' && s.targetName.trim() && s.targetName.toLowerCase().includes('admin')) {
         return s.targetName.trim();
       }
-      if (s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@')) {
+      if (!startedByMe && s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@')) {
         return s.customerEmail.split('@')[0];
       }
       if (s.handledBy?.displayName && s.handledBy.displayName !== 'Support Bot' && s.handledBy.displayName !== 'Dhaam Bot') {
@@ -214,10 +229,13 @@ export function getRowSubtitle(
 
   if (isMerchantUser) {
     if (tab === 'admin' || tab === 'merchants') {
-      // Merchant viewing Admin chat: display Admin's email
+      // Merchant viewing Admin chat: display Admin's email. Same
+      // `direction` caveat as getRowDisplayName above — `customerEmail` is
+      // the viewer's OWN email when they started the conversation.
+      const startedByMe = s.direction === 'outgoing';
       const email =
         s.adminEmail ||
-        (s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@') ? s.customerEmail : null) ||
+        (!startedByMe && s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@') ? s.customerEmail : null) ||
         s.targetEmail ||
         (s.handledBy?.email) ||
         '';

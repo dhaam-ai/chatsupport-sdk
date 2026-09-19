@@ -151,6 +151,70 @@ describe('listPartyConversations — GET /party/conversations (Wire Contract §6
     expect(requestedUrl).not.toContain('outletIds');
   });
 
+  it('flags an untouched conversation (createdAt === updatedAt, never messaged) as hasMessage: false', async () => {
+    // Reported bug: `/party/conversations` (Wire Contract §6) has no
+    // lastMessage/message-count field at all, unlike `/agent/queue` — a row
+    // here is minted the instant a chat is OPENED (e.g. an admin clicking
+    // through outlets in OutletChatModal, or the widget's own
+    // connection.hello with targetRole/targetId), before either side has
+    // typed a word. `hasMessage` used to be hardcoded `true`, so every such
+    // empty session sat in the Merchants/Admin tab forever. Confirmed
+    // against real production data: a genuinely untouched session has
+    // `createdAt` and `updatedAt` byte-identical; a real one does not.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          success: true,
+          data: {
+            conversations: [
+              {
+                sessionId: 'sess_never_messaged',
+                customerId: 'admin_1',
+                customerName: 'tse',
+                status: 1,
+                targetId: 'outlet_999',
+                targetRole: 'merchant',
+                channel: 1,
+                createdAt: '2026-09-18T13:16:55.811Z',
+                updatedAt: '2026-09-18T13:16:55.811Z', // identical — opened, nothing sent
+                conversationType: 4,
+                direction: 'outgoing',
+              },
+              {
+                sessionId: 'sess_real_conversation',
+                customerId: 'outlet_14660',
+                customerName: 'am345345it',
+                status: 1,
+                targetId: 'admin_1',
+                targetRole: 'admin',
+                channel: 1,
+                createdAt: '2026-09-18T13:34:30.238Z',
+                updatedAt: '2026-09-19T04:46:12.301Z', // moved — a message landed
+                conversationType: 4,
+                direction: 'incoming',
+              },
+              {
+                sessionId: 'sess_missing_timestamps',
+                customerId: 'outlet_1',
+                status: 1,
+                // no createdAt/updatedAt at all — an unexpected wire shape
+                // must fail OPEN (still shown), never hide a row it can't
+                // actually evaluate.
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    const rows = await listPartyConversations(OPTIONS, { with: 'partner' });
+
+    expect(rows.find((r) => r.sessionId === 'sess_never_messaged')?.hasMessage).toBe(false);
+    expect(rows.find((r) => r.sessionId === 'sess_real_conversation')?.hasMessage).toBe(true);
+    expect(rows.find((r) => r.sessionId === 'sess_missing_timestamps')?.hasMessage).toBe(true);
+  });
+
   it('maps REST status integers 1..6 correctly to UI string names', async () => {
     vi.stubGlobal(
       'fetch',

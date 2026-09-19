@@ -391,6 +391,25 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
   const conversationType = typeof source['conversationType'] === 'number' ? source['conversationType'] : null;
   const direction = typeof source['direction'] === 'string' ? source['direction'] : null;
 
+  // `/party/conversations` (Wire Contract §6) has no `lastMessage`/message-
+  // count field at all — unlike `/agent/queue` below (`readQueueRow`), whose
+  // rows carry a real `lastMessage` this function can check for presence.
+  // A row here is minted the instant a chat is OPENED (`connection.hello`
+  // with targetRole/targetId, or POST /chat/sessions), before anyone has
+  // typed a word — e.g. an admin merely clicking through several outlets in
+  // OutletChatModal. Those empty sessions used to sit in the Merchants/
+  // Admin tab forever (`hasMessage` was hardcoded `true`), because the
+  // existing `hasMessage === false` filter (messages-screen.ts) had nothing
+  // to work with here. `createdAt === updatedAt` (exact string equality) is
+  // the best available proxy: confirmed against real data — a session with
+  // real message history has `updatedAt` matching its last message's
+  // timestamp, strictly after `createdAt`; an untouched one has the two
+  // fields byte-identical. Defaults to `true` (never hides a row) if either
+  // timestamp is missing, so an unexpected wire shape fails open, not shut.
+  const createdAt = typeof source['createdAt'] === 'string' ? source['createdAt'] : null;
+  const updatedAt = typeof source['updatedAt'] === 'string' ? source['updatedAt'] : null;
+  const hasMessage = createdAt === null || updatedAt === null ? true : createdAt !== updatedAt;
+
   // Pre-partner-chat heuristic — kept ONLY as a fallback for a backend that
   // does not yet send `conversationType` (customer name/email substring,
   // topic==='admin'). `conversationType` below, when present, overrides this
@@ -433,7 +452,7 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     customerName,
     customerEmail,
     lastMessage: null,
-    hasMessage: true,
+    hasMessage,
     chatType:
       conversationType === 4
         ? 'admin'

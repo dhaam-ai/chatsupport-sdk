@@ -195,3 +195,84 @@ describe('createPortalThread — reply', () => {
     expect(quote.querySelector('.dh-quote-text')?.textContent).toBe('where is my order');
   });
 });
+
+describe('createPortalThread — partner chat (admin/manager <-> merchant/outlet)', () => {
+  /**
+   * The reported bug: a partner conversation has NO CUSTOMER-typed
+   * participant (both sides send as senderType AGENT — wire contract
+   * "Partner chats"), so `state.session.customer` is `null` (see
+   * `packages/core/src/client/session.ts`'s `findParticipant(...,
+   * 'CUSTOMER')`). `isOutgoing`'s old `senderType === 'AGENT'` check could
+   * not tell the two sides apart and rendered EVERY message as "mine" —
+   * both the admin's own messages AND the outlet's replies landed with
+   * `data-mine="true"`, all on the same side of the transcript.
+   */
+  function buildPartnerState(messages: ChatMessage[]): ChatState {
+    return {
+      session: {
+        id: 'sess_partner',
+        status: 'OPEN',
+        mode: 'HUMAN',
+        createdAt: '2026-09-19T04:00:00.000Z',
+        closedAt: null,
+        handledBy: null,
+        customer: null, // <- the partner-conversation signal
+        targetRole: 'merchant',
+        targetId: 'outlet_14660',
+      },
+      messages,
+      connectionState: 'connected',
+      activeConversationId: 'sess_partner',
+      conversations: {},
+      pendingQueue: [],
+    } as unknown as ChatState;
+  }
+
+  it('tells admin from outlet by senderId, not by senderType, once localParticipantId is known', () => {
+    const admin = buildMessage({
+      id: 'm_admin',
+      senderId: '12775',
+      senderType: 'AGENT',
+      content: 'hello outlet',
+    });
+    const outlet = buildMessage({
+      id: 'm_outlet',
+      senderId: '14660',
+      senderType: 'AGENT',
+      content: 'helo admin',
+    });
+
+    // Mounted as the admin (identity.userId "12775").
+    const thread = createPortalThread({ onSend: vi.fn() }, '12775');
+    thread.render(buildPartnerState([admin, outlet]), false);
+
+    const rows = thread.node.querySelectorAll<HTMLElement>('.dh-msg');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.getAttribute('data-mine')).toBe('true'); // admin's own message
+    expect(rows[1]!.getAttribute('data-mine')).toBe('false'); // the outlet's reply
+  });
+
+  it('flips sides on the outlet’s own mount of the exact same conversation', () => {
+    const admin = buildMessage({ id: 'm_admin', senderId: '12775', senderType: 'AGENT', content: 'hello outlet' });
+    const outlet = buildMessage({ id: 'm_outlet', senderId: '14660', senderType: 'AGENT', content: 'helo admin' });
+
+    // Mounted as the outlet (identity.userId "14660").
+    const thread = createPortalThread({ onSend: vi.fn() }, '14660');
+    thread.render(buildPartnerState([admin, outlet]), false);
+
+    const rows = thread.node.querySelectorAll<HTMLElement>('.dh-msg');
+    expect(rows[0]!.getAttribute('data-mine')).toBe('false'); // admin's message, not mine
+    expect(rows[1]!.getAttribute('data-mine')).toBe('true'); // my own reply
+  });
+
+  it('leaves the ordinary shared-inbox support conversation alone: any AGENT reply is still "our side"', () => {
+    // Same shape as buildState() above — session.customer is set, so this is
+    // NOT a partner conversation, and the old any-AGENT-is-outgoing rule
+    // must still apply even for a coworker's reply that isn't literally me.
+    const coworkerReply = buildMessage({ id: 'm2', senderId: 'agent_someone_else', senderType: 'AGENT', content: 'on it' });
+    const thread = createPortalThread({ onSend: vi.fn() }, 'agent_me');
+    thread.render(buildState([coworkerReply]), false);
+
+    expect(thread.node.querySelector<HTMLElement>('.dh-msg')?.getAttribute('data-mine')).toBe('true');
+  });
+});

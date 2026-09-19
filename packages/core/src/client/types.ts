@@ -229,7 +229,11 @@ export interface CsatSubmission {
  * uses an empty array to decide not to render at all.
  */
 export interface SessionSummarySource {
-  listSessions(query?: { readonly limit?: number }): Promise<readonly ChatSessionSummary[]>;
+  listSessions(query?: {
+    readonly limit?: number;
+    /** `?with=` on `GET /chat/sessions/customer` — e.g. `'agent'` for support-only. See chat.validator.ts's `CUSTOMER_COUNTERPARTIES`. */
+    readonly with?: string;
+  }): Promise<readonly ChatSessionSummary[]>;
 }
 
 /** Thrown when a `ChatClient` operation needs configuration that was not supplied. */
@@ -761,7 +765,11 @@ export interface ChatClient {
    * see {@link SessionSummarySource}'s doc for why the wire itself makes no
    * such distinction.
    */
-  listSessions(query?: { readonly limit?: number }): Promise<readonly ChatSessionSummary[]>;
+  listSessions(query?: {
+    readonly limit?: number;
+    /** `?with=` on `GET /chat/sessions/customer` — e.g. `'agent'` for support-only. See chat.validator.ts's `CUSTOMER_COUNTERPARTIES`. */
+    readonly with?: string;
+  }): Promise<readonly ChatSessionSummary[]>;
 
   // ---- §6.3 message operations ----
   sendMessage(content: string, opts?: SendMessageOptions): Promise<void>;

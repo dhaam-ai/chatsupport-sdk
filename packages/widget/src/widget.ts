@@ -2234,6 +2234,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       subject: row.subject ?? undefined,
       topic: row.topic ?? undefined,
       hasMessage: row.hasMessage,
+      // Dropping this used to make getRowDisplayName's merchant/outlet-
+      // viewing-Admin-tab branch trust `customerName` unconditionally — for
+      // a partner chat the VIEWER started themselves ("outgoing"), that
+      // field is the viewer's OWN name (the backend reuses the `customerId`
+      // column for whoever started the chat), so the outlet saw its own
+      // name where the admin's name belonged. See messages-screen.ts.
+      direction: row.direction ?? undefined,
     } as unknown as ChatSessionSummary;
   }
 
@@ -2279,12 +2286,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
   }
 
-  const portalThread = createPortalThread({
-    onSend: async (text, options) => {
-      if (currentPortalSessionId === null || portalClient === null) return;
-      await portalClient.sendMessage(currentPortalSessionId, text, options);
+  const portalThread = createPortalThread(
+    {
+      onSend: async (text, options) => {
+        if (currentPortalSessionId === null || portalClient === null) return;
+        await portalClient.sendMessage(currentPortalSessionId, text, options);
+      },
     },
-  });
+    localParticipantId,
+  );
   let portalConversationActive = false;
 
   const backButton = el('button', {
@@ -3640,7 +3650,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
     sessionsInFlight = true;
     store.client
-      .listSessions({ limit: SESSION_PICKER_LIMIT })
+      // `with: 'agent'` only for a GENERAL (untargeted) mount: Home/Messages
+      // there are the support picker, and store DMs showing up beside it is
+      // exactly the leak `customerVisibleSessions` above tries (and, per its
+      // own comment, currently fails) to filter client-side — the server can
+      // do this precisely, the client heuristic cannot. An outlet-targeted
+      // mount (`config.target` set) leaves this unset: `?with=` has no way to
+      // name one specific outlet, only a role, so filtering by role there
+      // would drop the very store DM the mount exists to show.
+      .listSessions({
+        limit: SESSION_PICKER_LIMIT,
+        ...(config.target === undefined ? { with: 'agent' } : {}),
+      })
       .catch((error: unknown) => {
         // An embed whose client has no `sessionSummarySource` is a
         // CONFIGURATION fact, not a fault: core is telling us this deployment

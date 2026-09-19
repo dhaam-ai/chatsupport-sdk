@@ -475,14 +475,14 @@ function validateSessionSummaryLimit(limit: number | undefined): number | undefi
  * identified" — the wire does not either.
  */
 export function createSessionSummarySource<TSessionSummary>(client: RestClient): {
-  listSessions(query?: { readonly limit?: number }): Promise<readonly TSessionSummary[]>;
+  listSessions(query?: { readonly limit?: number; readonly with?: string }): Promise<readonly TSessionSummary[]>;
 } {
   return {
     async listSessions(query = {}) {
       const limit = validateSessionSummaryLimit(query.limit);
 
       const body = await client.request<unknown>('GET', '/chat/sessions/customer', {
-        query: { limit },
+        query: { limit, with: query.with },
       });
 
       const page = unwrapEnvelope<{ sessions?: unknown }>(body, 'GET /chat/sessions/customer');

@@ -339,6 +339,46 @@ describe('sessionBelongsToTab & display info — Admin ↔ Merchant routing', ()
     const merchantViewName = getRowDisplayName(sessionWithTse, 'admin', 'merchant');
     expect(merchantViewName).toBe('tse');
   });
+
+  it('never shows the outlet its own name when IT started the "Message Admin" chat', () => {
+    // Reported bug: an outlet clicks "Message Admin" (direction: 'outgoing'
+    // from the outlet's own /party/conversations?with=partner row — the
+    // wire contract reuses customerId/customerName for whoever STARTED the
+    // chat, not for "the admin" specifically). Every row on the outlet's
+    // own Admin tab showed "am345345it" — the outlet's OWN name — instead
+    // of anything referring to the admin.
+    const outletStartedSession = summary({
+      id: 's_outlet_started',
+      customerName: 'am345345it', // the OUTLET's own name, not the admin's
+      customerEmail: 'am345345it@dhaamai.com',
+      targetRole: 'admin',
+      targetId: '12775',
+      chatType: 'admin',
+      direction: 'outgoing',
+    } as any);
+
+    const displayName = getRowDisplayName(outletStartedSession, 'admin', 'merchant');
+    expect(displayName).not.toBe('am345345it');
+    expect(displayName).toBe('Store Admin'); // the generic fallback, absent a real admin name
+
+    const subtitle = getRowSubtitle(outletStartedSession, 'admin', 'merchant');
+    expect(subtitle).not.toContain('am345345it');
+
+    // The admin-started case (direction 'incoming', or unset on older rows)
+    // must still show the real admin name — this is the exact case the
+    // "tse" test above already covers, restated here to pin both directions
+    // side by side.
+    const adminStartedSession = summary({
+      id: 's_admin_started',
+      customerName: 'tse',
+      customerEmail: 'tse@dhaamai.com',
+      targetRole: 'merchant',
+      targetId: 'outlet_14660',
+      chatType: 'admin',
+      direction: 'incoming',
+    } as any);
+    expect(getRowDisplayName(adminStartedSession, 'admin', 'merchant')).toBe('tse');
+  });
 });
 
 describe('"Message Admin" — a merchant/outlet starting a partner conversation first', () => {
