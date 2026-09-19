@@ -1440,7 +1440,7 @@ button {
   flex-direction: column;
   /* Stacks with each '.dh-msg''s own top/bottom margin below — the two
      together are the actual gap between two bubbles, not this alone. */
-  gap: calc(var(--dh-space) * 1);
+  gap: calc(var(--dh-space) * 0.5);
   /* The merchant-configurable backdrop. Defaults to '--dh-surface' through
      themeCss, so a widget nobody has configured is unchanged.
 
@@ -1539,7 +1539,7 @@ button {
   display: flex;
   align-items: center;
   gap: calc(var(--dh-space) * 1.5);
-  margin-top: calc(var(--dh-space) * 1);
+  margin-top: calc(var(--dh-space) * 0.5);
   font-size: 11px;
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
@@ -3604,7 +3604,7 @@ button {
   display: flex !important;
   flex-direction: column !important;
   align-items: flex-end !important;
-  margin: 2px 0 2px auto !important;
+  margin: 1px 0 1px auto !important;
   max-width: 82% !important;
   position: relative !important;
 }
@@ -3632,7 +3632,7 @@ button {
   align-items: center !important;
   justify-content: flex-end !important;
   gap: 4px !important;
-  margin-top: 3px !important;
+  margin-top: 1px !important;
   padding-right: 2px !important;
   font-size: 11px !important;
   color: #64748b !important;
@@ -3657,7 +3657,7 @@ button {
   flex-direction: row !important;
   align-items: flex-start !important;
   gap: 8px !important;
-  margin: 2px 0 2px 0 !important;
+  margin: 1px 0 1px 0 !important;
   max-width: 85% !important;
   position: relative !important;
 }
@@ -3727,7 +3727,7 @@ button {
   align-items: center !important;
   justify-content: flex-start !important;
   gap: 4px !important;
-  margin-top: 3px !important;
+  margin-top: 1px !important;
   padding-left: 2px !important;
   font-size: 11px !important;
   color: #94a3b8 !important;

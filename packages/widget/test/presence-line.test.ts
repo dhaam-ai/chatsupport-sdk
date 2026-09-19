@@ -51,6 +51,19 @@ function config(overrides: Partial<WidgetConfig> = {}): WidgetConfig {
   } as WidgetConfig;
 }
 
+/** A plain customer mount — built from scratch, not via `config()`'s
+ * overrides: `target`/`userRole` are absent keys here, not `undefined`
+ * values, which is what `exactOptionalPropertyTypes` demands. */
+function customerConfig(): WidgetConfig {
+  return {
+    auth: { publishableKey: PK_TEST, getToken: async () => 'admin-token' },
+    identity: { userId: 'cus_1' },
+    apiUrl: 'https://chat.example.com',
+    wsUrl: 'wss://chat.example.com',
+    onError: () => undefined,
+  } as WidgetConfig;
+}
+
 function shadow(): ShadowRoot {
   const element = document.querySelector<HTMLElement>('dh-chat-widget');
   if (element === null || element.shadowRoot === null) throw new Error('widget shadow root not found');
@@ -158,7 +171,7 @@ describe('the counterparty presence line (targeted mount only)', () => {
   });
 
   it('stays hidden for a plain customer mount — no presenceTargetId to query', async () => {
-    mount(config({ target: undefined, userRole: undefined, identity: { userId: 'cus_1' } }));
+    mount(customerConfig());
     await driveConnected();
 
     const line = shadow().querySelector<HTMLElement>('.dh-presence-line');

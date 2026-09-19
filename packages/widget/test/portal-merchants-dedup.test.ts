@@ -216,6 +216,6 @@ describe('the Merchants tab collapses to one row per counterparty', () => {
     await merchantsRendered('2');
 
     merchantsTab().click();
-    expect(visibleRowNames().sort()).toEqual(['Acme Store', 'Design Mart']);
+    expect([...visibleRowNames()].sort()).toEqual(['Acme Store', 'Design Mart']);
   });
 });

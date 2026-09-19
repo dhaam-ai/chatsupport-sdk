@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatMessage, ChatState } from '@dhaam-ccrm/js';
+import type { ChatMessage, ChatState, SendMessageOptions } from '@dhaam-ccrm/js';
 import { createPortalThread } from '../src/ui/portal-thread.js';
 
 function buildMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -131,7 +131,7 @@ describe('createPortalThread — reply', () => {
   });
 
   it('sends replyToMessageId and reply metadata built from the clicked message', async () => {
-    const onSend = vi.fn(async () => undefined);
+    const onSend = vi.fn(async (_text: string, _options?: SendMessageOptions) => undefined);
     const thread = createPortalThread({ onSend });
     thread.setCustomerName('bikash');
 
@@ -158,7 +158,7 @@ describe('createPortalThread — reply', () => {
   });
 
   it('cancelling the reply hides the chip and sends with no reply options', async () => {
-    const onSend = vi.fn(async () => undefined);
+    const onSend = vi.fn(async (_text: string, _options?: SendMessageOptions) => undefined);
     const thread = createPortalThread({ onSend });
 
     const msg = buildMessage({ content: 'hello' });
