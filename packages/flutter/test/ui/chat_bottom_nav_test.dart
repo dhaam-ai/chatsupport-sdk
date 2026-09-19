@@ -16,6 +16,19 @@ void main() {
     expect(find.text('Messages'), findsOneWidget);
   });
 
+  testWidgets('can hide the Home destination for targeted chat',
+      (tester) async {
+    await tester.pumpWidget(_wrap(ChatBottomNav(
+      active: ScreenName.conversation,
+      unreadCount: 0,
+      showHome: false,
+      onSelect: (_) {},
+    )));
+
+    expect(find.text('Home'), findsNothing);
+    expect(find.text('Messages'), findsOneWidget);
+  });
+
   testWidgets('tapping Home calls onSelect(ScreenName.home)', (tester) async {
     ScreenName? selected;
     await tester.pumpWidget(

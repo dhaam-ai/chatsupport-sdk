@@ -31,12 +31,14 @@ class ChatBottomNav extends StatelessWidget {
     required this.active,
     required this.unreadCount,
     required this.onSelect,
+    this.showHome = true,
   });
 
   /// The screen showing right now. Only [ScreenName.home] and
   /// [ScreenName.messages] ever read as selected — see this file's header.
   final ScreenName active;
   final int unreadCount;
+  final bool showHome;
 
   /// Always called with [ScreenName.home] or [ScreenName.messages] — the
   /// same restriction `nav.ts`'s own `NavTab` type encodes, enforced here by
@@ -53,14 +55,15 @@ class ChatBottomNav extends StatelessWidget {
         top: false,
         child: Row(
           children: <Widget>[
-            Expanded(
-              child: _NavTab(
-                icon: Icons.home_rounded,
-                label: 'Home',
-                selected: active == ScreenName.home,
-                onTap: () => onSelect(ScreenName.home),
+            if (showHome)
+              Expanded(
+                child: _NavTab(
+                  icon: Icons.home_rounded,
+                  label: 'Home',
+                  selected: active == ScreenName.home,
+                  onTap: () => onSelect(ScreenName.home),
+                ),
               ),
-            ),
             Expanded(
               child: _NavTab(
                 icon: Icons.forum_outlined,

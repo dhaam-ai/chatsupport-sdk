@@ -22,8 +22,11 @@ RestChatSessionSummary decodeRestChatSessionSummary(
   Object? row,
   String context,
 ) {
-  final Map<String, Object?> source =
-      requireObject(row, 'a session summary row', context: context);
+  final Map<String, Object?> source = requireObject(
+    row,
+    'a session summary row',
+    context: context,
+  );
 
   return RestChatSessionSummary(
     id: requireNonEmptyString(source, 'id', 'summary', context: context),
@@ -41,8 +44,12 @@ RestChatSessionSummary decodeRestChatSessionSummary(
       'summary',
       context: context,
     ),
-    createdAt:
-        requireTimestamp(source, 'createdAt', 'summary', context: context),
+    createdAt: requireTimestamp(
+      source,
+      'createdAt',
+      'summary',
+      context: context,
+    ),
     // `null` is a valid, documented value on both of these — "still open" and
     // "no public message yet" — not a parse failure.
     closedAt: optionalTimestamp(source, 'closedAt'),
@@ -60,6 +67,8 @@ RestChatSessionSummary decodeRestChatSessionSummary(
     subject: optionalString(source, 'subject'),
     topic: optionalString(source, 'topic'),
     handledBy: _readHandledBy(source['handledBy']),
+    targetRole: optionalString(source, 'targetRole'),
+    targetId: optionalString(source, 'targetId'),
   );
 }
 
@@ -87,8 +96,9 @@ HandledBy? _readHandledBy(Object? value) {
   if (value is! Map<String, Object?>) return null;
 
   final Object? rawKind = value['kind'];
-  final HandledByKind? kind =
-      rawKind is String ? HandledByKind.fromWire(rawKind) : null;
+  final HandledByKind? kind = rawKind is String
+      ? HandledByKind.fromWire(rawKind)
+      : null;
   if (kind == null) return null;
 
   final String? id = optionalStringValue(value['id']);

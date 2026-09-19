@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -24,6 +26,31 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record a voice message to send to the support team.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneClassName</key>
+					<string>UIWindowScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>flutter</string>
+					<key>UISceneDelegateClassName</key>
+					<string>FlutterSceneDelegate</string>
+					<key>UISceneStoryboardFile</key>
+					<string>Main</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -41,29 +68,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>CADisableMinimumFrameDurationOnPhone</key>
-	<true/>
-	<key>UIApplicationSupportsIndirectInputEvents</key>
-	<true/>
-	<!-- The microphone string `record` requires for the composer's voice
-	     note button. `record_ios` links AVFoundation, so this is needed by
-	     any host that BUILDS against this SDK — not only one that shows the
-	     button — and App Store review rejects a binary that links the
-	     framework without it. The SDK cannot add it for its host, which is
-	     why it is here and named in packages/flutter/README.md.
-
-	     Written for the person reading the prompt, not for us: it says what
-	     the recording is for. Apple rejects boilerplate like "This app needs
-	     microphone access".
-	     https://pub.dev/packages/record#ios -->
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Record a voice message to send to the support team.</string>
-	<!-- NSSpeechRecognitionUsageDescription is deliberately ABSENT. It
-	     belongs to speech recognition, which this SDK does not do: the voice
-	     button records audio and uploads it for an agent to listen to, and
-	     nothing here transcribes anything. Declaring it would ask this host
-	     to justify a capability to Apple that its binary does not have. See
-	     packages/flutter/lib/src/ui/voice/voice.dart on why `speech_to_text`
-	     was rejected rather than deferred. -->
 </dict>
 </plist>

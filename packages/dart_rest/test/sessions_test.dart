@@ -975,6 +975,64 @@ void main() {
     });
   });
 
+  group('openTargetSession', () {
+    test('posts the target pair and returns the settled session id', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{
+              'sessionId': 'sess_outlet',
+              'status': 1,
+              'mode': 2,
+              'conversationType': 2,
+            },
+          }),
+        ),
+      );
+
+      final String sessionId = await client.openTargetSession(
+        targetRole: 'merchant',
+        targetId: 'outlet-42',
+      );
+
+      expect(sessionId, 'sess_outlet');
+      expect(
+        recorder.trace,
+        <String>['POST /chat-services/api/v1/chat/sessions'],
+      );
+      expect(jsonDecode(recorder.calls.single.body), <String, Object?>{
+        'targetRole': 'merchant',
+        'targetId': 'outlet-42',
+      });
+    });
+
+    test('sends forceNew only when requested', () async {
+      final _Recorder recorder = _Recorder();
+      final RestClient client = _clientOver(
+        recorder.client(
+          (_) => _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{'sessionId': 'sess_new'},
+          }),
+        ),
+      );
+
+      await client.openTargetSession(
+        targetRole: 'merchant',
+        targetId: 'outlet-42',
+        forceNew: true,
+      );
+
+      expect(jsonDecode(recorder.calls.single.body), <String, Object?>{
+        'targetRole': 'merchant',
+        'targetId': 'outlet-42',
+        'forceNew': true,
+      });
+    });
+  });
+
   group('listSessions', () {
     test('requests GET /chat/sessions/customer under the correct base path',
         () async {

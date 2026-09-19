@@ -40,7 +40,7 @@ android {
         // API 23 is Android 6.0. It is also where runtime permissions were
         // introduced, which is the model `record`'s `hasPermission(request:
         // true)` relies on — so the floor and the feature arrived together.
-        minSdk = 23
+        minSdkVersion = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

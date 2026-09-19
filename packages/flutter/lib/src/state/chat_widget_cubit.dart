@@ -19,10 +19,13 @@ library;
 import 'dart:async';
 
 import 'package:dhaam_chat/dhaam_chat.dart';
-// Only for the [rest] parameter's TYPE. The fetch itself is built by
-// `restSessionSource` in the session module, which is the one file that talks
-// to this package's routes — see the import of it below.
-import 'package:dhaam_chat_rest/dhaam_chat_rest.dart' show RestClient;
+import 'package:dhaam_chat_rest/dhaam_chat_rest.dart'
+    show
+        MediaApi,
+        RestChatSessionSummary,
+        RestClient,
+        SessionApi,
+        kSessionSummaryLimitMax;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -32,24 +35,6 @@ import '../config/remote_config.dart';
 import '../config/remote_config_client.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
-// For `ContactIdentifier` and `restContactIdentifier` — the seam that
-// forwards the device details a HOST supplies to `POST /identify`, and the
-// REST-backed one this class builds for itself. Both in one file, unlike the
-// two pairs below: this seam's own parameter is a REST type, so splitting it
-// would buy no REST-free declaration. See [contactProfile].
-import '../session/contact_identity.dart';
-// For `MessageHistoryFetch` and `restMessageHistory` — the transcript's own
-// seam and the REST-backed fetch this class builds for itself, split across
-// two files for the same reason the session list's pair is: only the second
-// of them imports the REST package. See [messageHistory].
-import '../session/message_history_source.dart';
-import '../session/rest_message_history.dart';
-// For `restSessionSource` — the REST-backed `SessionListFetch` this class
-// builds for itself when a host hands over a client instead of a closure.
-// Importing `dhaam_chat_rest` for `RestClient` adds nothing to anyone's
-// graph: this package already declares it as a direct runtime dependency
-// (`pubspec.yaml`, decision D22). See [rest].
-import '../session/rest_session_source.dart';
 import '../surfaces/product_surface_slot.dart';
 import '../ui/attachments/attachments.dart';
 import '../ui/voice/voice.dart';
@@ -61,17 +46,9 @@ import '../ui/csat/session_actions.dart';
 // and `RestIssueReport`, which that file re-exports. Same shape as the CSAT
 // import above: a function type declared where its widget lives, consumed
 // here, so this class still constructs no network client of its own.
-// For `MuteMemory` — the remembered half of the local mute switch, declared
-// beside the chime it silences for the same reason `ConsentGate` is declared
-// beside the notice it gates. See `ui/header/chime.dart`.
-import '../ui/header/chime.dart';
 import '../ui/header/transcript_email.dart';
 import '../forms/forms.dart' show FormErrorReporter;
 import '../ui/pre_chat/pre_chat.dart';
-// For `SessionListFetch` and `SessionListRefresher` — the collaborator that
-// already owns the two cadence rules a session list needs (serialise
-// concurrent fetches; re-issue rather than drop an ask that arrives
-// mid-flight). See [sessionSource].
 import '../ui/session_picker/session_list_refresher.dart';
 import 'chat_widget_state.dart';
 import 'widget_chat_client.dart';
@@ -108,252 +85,19 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   ///
   /// [initialScreen] still overrides the screen half for a host that wants
   /// to land on Messages, and is what the existing callers pass.
-  ///
-  /// [identity] is what the host knows about the visitor, and its DEFAULT is
-  /// [ChatIdentity.guest]. A host that omits it has said "anonymous visitor",
-  /// however signed in that customer is elsewhere: the token is opaque to this
-  /// package and `userId` belongs to guests too, so [ChatIdentity.profile] is
-  /// the only thing that can say otherwise. Left as a default rather than made
-  /// required — that would break every existing caller for the sake of the
-  /// ones getting it wrong — so the wrong answer is instead said out loud in
-  /// debug builds by `warnIfAskingAGuestForDetails`
-  /// (`ui/pre_chat/guest_pre_chat_warning.dart`), at the moment it starts
-  /// costing the customer something: when one of the three surfaces that ask
-  /// these questions is about to ask them.
-  ///
-  /// [sessionSource] is the OPTIONAL seam that fills the Messages and Home
-  /// session lists.
-  ///
-  /// ── The reported bug this parameter answers ────────────────────────────
-  ///
-  /// "The list of past conversations is empty", twice, from two different
-  /// integrators, both signed in and both correctly configured. It was empty
-  /// because nothing had called [updateSessionSummaries] — the only way a
-  /// list could ever appear before this existed. `dhaam_chat` has no HTTP
-  /// layer and cannot list sessions at all, so the Cubit genuinely could not
-  /// do it alone; but nothing said so, and an unwired host got a silently
-  /// empty list that is indistinguishable from "this customer has no
-  /// conversations".
-  ///
-  /// So a host now hands over the FETCH and this Cubit owns the triggers:
-  ///
-  /// ```dart
-  /// ChatWidgetCubit(
-  ///   client: client,
-  ///   // `toChatSessionSummary` is a field copy the HOST owns -- see
-  ///   // `example/lib/session_list.dart`. It is not exported from this
-  ///   // package: a host proxying chat through its own backend maps from
-  ///   // something that is not `RestChatSessionSummary` at all.
-  ///   sessionSource: () async => (await rest.listSessions(limit: 10))
-  ///       .map(toChatSessionSummary)
-  ///       .toList(growable: false),
-  /// );
-  /// ```
-  ///
-  /// ── Why a function and not a REST client ───────────────────────────────
-  ///
-  /// Not for dependency reasons — this package already declares
-  /// `dhaam_chat_rest` as a direct dependency (see `pubspec.yaml`, decision
-  /// D22), so taking a client here would add nothing to anyone's graph.
-  ///
-  /// It is that a host proxying chat through its own backend fills this list
-  /// from something that is NOT `dhaam_chat_rest`, and a client-typed
-  /// parameter has no shape for that host to satisfy. It is also the pattern
-  /// the other three host seams on this class already follow —
-  /// `AttachmentUploader`, `TranscriptEmailer`, `IssueReporter` are all
-  /// function-typed for the same reason, and are what keeps every test here
-  /// runnable with a closure and no network.
-  /// A `Future<List<ChatSessionSummary>> Function()` is the whole contract:
-  /// one call, one page.
-  ///
-  /// ── What it does and does not change ───────────────────────────────────
-  ///
-  /// Absent, nothing about this class differs from before it existed:
-  /// [updateSessionSummaries] stays public and stays the way a host that
-  /// already pushes its own list keeps working. Supplied, the page is
-  /// refetched when the widget opens ([connect]) and whenever a session
-  /// snapshot changes something a list ROW is built from — its ID, its
-  /// status, or the name in its `handledBy`, and nothing else. Routine
-  /// live-conversation traffic does not refetch; see [_onSession].
-  ///
-  /// An EMPTY page is ordinary success and is the guest signal — `listSessions`
-  /// answers a guest with `[]`, never a 403 — so it is stored as an empty
-  /// list and never turned into an error. A FAILED fetch is reported to
-  /// `FlutterError`, leaves whatever page is already on screen alone, and
-  /// does NOT consume the trigger that asked for it: the next snapshot tries
-  /// again. See [_listedSessionKey].
-  ///
-  /// [rest] is the SAME list, for a host that would rather not write even
-  /// that closure — and it is the recommended way in.
-  ///
-  /// ── Why this exists on top of [sessionSource] ──────────────────────────
-  ///
-  /// Because the report came back. "Conversation list not appearing", twice
-  /// again, from two more people, both holding a valid signed-in customer
-  /// token — and [sessionSource] does not help anyone who never writes it.
-  /// A seam nobody fills is indistinguishable, from the customer's side, from
-  /// the bug it was added to fix.
-  ///
-  /// So a host that already holds a `RestClient` passes it and writes
-  /// nothing:
-  ///
-  /// ```dart
-  /// ChatWidgetCubit(client: client, rest: rest);
-  /// ```
-  ///
-  /// This Cubit then builds `restSessionSource(rest: rest)` itself — the
-  /// fetch, the field copy ([toChatSessionSummary]) and the page size
-  /// ([kSessionListPageSize]) all included. Nothing else about the list
-  /// changes: the same `SessionListRefresher` serialises it and the same two
-  /// triggers ask for it.
-  ///
-  /// Costs nothing in dependency terms — `dhaam_chat_rest` is already a
-  /// direct dependency of this package (`pubspec.yaml`, decision D22), so
-  /// naming its client here adds nothing to any host's graph.
-  ///
-  /// ── When both are supplied, [sessionSource] wins ───────────────────────
-  ///
-  /// Exactly one source is ever built, so the list is never fetched twice.
-  /// The closure wins because it is the MORE SPECIFIC instruction: a host
-  /// that wrote one said precisely where its conversations come from, while
-  /// [rest] is a convenience default for a client it may be holding for
-  /// uploads or transcripts anyway. Resolving it the other way would let a
-  /// generic parameter silently discard hand-written intent and fill the list
-  /// from the wrong place, which is a worse failure than ignoring a default —
-  /// and the wrong rows are far harder to notice than no rows.
-  ///
-  /// To keep the REST fetch but change the page size, go through
-  /// [sessionSource] and say so:
-  /// `sessionSource: restSessionSource(rest: rest, limit: 5)`.
-  ///
-  /// [messageHistory] is the OPTIONAL seam that fills the TRANSCRIPT of a
-  /// conversation the customer has just opened, and it resolves against
-  /// [rest] by exactly the same rule [sessionSource] does — see below.
-  ///
-  /// ── The reported bug this parameter answers ────────────────────────────
-  ///
-  /// "Opening any past conversation shows the same previous transcript." Half
-  /// of that was the message store never being cleared, which [_onSession]
-  /// now does on replacement. The other half is this: a cleared transcript
-  /// that nothing refills is a permanently blank pane, so the customer went
-  /// from reading somebody else's conversation to reading nothing at all.
-  /// `createChatClient`'s `seedReplacedSession` (packages/core) names that
-  /// failure in those words and answers it the same way — page one, issued by
-  /// the commit itself, for every replacement that has no seed of its own.
-  ///
-  /// `dhaam_chat` cannot read history — it is the WebSocket slice, and
-  /// history is `GET /chat/sessions/{id}/messages` — so, exactly as with the
-  /// session list, this Cubit genuinely cannot do it alone.
-  ///
-  /// ── Resolved exactly as [sessionSource] is ─────────────────────────────
-  ///
-  /// One source, `??`, closure wins:
-  ///
-  /// ```dart
-  /// ChatWidgetCubit(client: client, rest: rest);                 // both
-  /// ChatWidgetCubit(client: client, messageHistory: myFetch);    // mine
-  /// ```
-  ///
-  /// The closure wins for the reason stated above for the list, unchanged: it
-  /// is the MORE SPECIFIC instruction, and letting a convenience default
-  /// silently discard hand-written intent would fill the pane from the wrong
-  /// place — and the wrong messages are far harder to notice than no
-  /// messages.
-  ///
-  /// Absent — no closure and no [rest] — a replaced conversation opens
-  /// EMPTY, silently and without an error, which is the same way the session
-  /// list degrades when nothing fills it.
-  ///
-  /// Empty is not, however, what that host used to see, and this is the one
-  /// place to say so. The replacement clear in [_onSession] lands whether or
-  /// not this seam is wired: before either change, opening a past
-  /// conversation left the PREVIOUS one's messages painted under the new
-  /// id — the reported bug — and now it leaves nothing. That is the blank
-  /// pane `seedReplacedSession` names, and this parameter is the only thing
-  /// that refills it. A host on `sessionSource` alone therefore has to wire
-  /// this too; the package README says so beside the `sessionSource` wiring
-  /// it would otherwise be copied from.
-  ///
-  /// A FAILED fetch is reported to `FlutterError` and leaves the transcript
-  /// as it is. It never reaches the customer's screen, and it never empties
-  /// anything: this seed only ever ADDS.
-  ///
-  /// [contactProfile] is what the HOST already knows about this visitor and
-  /// this device, forwarded verbatim to `POST /identify`.
-  ///
-  /// ── The line this parameter draws ──────────────────────────────────────
-  ///
-  /// "The integrated developer will append these details to the SDK — we will
-  /// not. We use that detail, send to API backend via SDK." So this package
-  /// ACCEPTS these values and FORWARDS them, and discovers none of them: no
-  /// `device_info_plus`, no Firebase, no plugin of any kind was added for
-  /// this, and nothing here asks a platform channel what handset it is on.
-  /// The host holds a device id and a push token already — that is what
-  /// minted the token in the first place — and this is where they go.
-  ///
-  /// ```dart
-  /// ChatWidgetCubit(
-  ///   client: client,
-  ///   rest: rest,
-  ///   contactProfile: RestIdentityProfile(
-  ///     name: user.name,
-  ///     email: user.email,
-  ///     device: RestIdentityDevice(
-  ///       deviceId: myDeviceId,
-  ///       deviceToken: myPushToken,
-  ///       // Lowercase on the wire — the route's own spelling. The enum is
-  ///       // what makes `'IOS'` unspellable rather than a 400.
-  ///       platform: RestDevicePlatform.ios,
-  ///     ),
-  ///   ),
-  /// );
-  /// ```
-  ///
-  /// Nothing about it is derived from [identity]. `ChatIdentity.profile` is a
-  /// `ChatParticipantProfile` — what the socket is told about the visitor —
-  /// and this is the CRM body; filling one from the other would be this
-  /// package inventing a value the host did not supply, at the one seam whose
-  /// whole point is that it does not.
-  ///
-  /// ── Optional, and never on the path of anything ───────────────────────
-  ///
-  /// Absent, no identify is issued and this class behaves exactly as it did
-  /// before the parameter existed. Present, it goes out ONCE from [connect] —
-  /// fire-and-forget, so nothing about opening the panel waits on it. See
-  /// [ChatClient.setContactInfo]'s own note on why a slow capture must not
-  /// delay the socket; the same rule applies with more force to a CRM write,
-  /// which no part of talking to an agent depends on.
-  ///
-  /// A failed identify is reported to `FlutterError` — the host's channel,
-  /// never the customer's screen, where every other error in this class goes
-  /// — and re-arms, so the next [connect] (a customer pressing "Try again")
-  /// asks again. The reported error carries no device token: `dart_rest`'s
-  /// exceptions deliberately keep the request body and URL out of
-  /// `toString()`, and nothing here interpolates the profile into a message.
-  ///
-  /// [contactIdentifier] is the SEAM that carries it, resolved against [rest]
-  /// by exactly the rule [sessionSource] and [messageHistory] follow: one
-  /// source, `??`, the closure winning over the convenience default. A host
-  /// that passes [rest] and a [contactProfile] writes nothing else; a host
-  /// proxying chat through its own backend passes its own upsert instead.
-  /// Supplying an identifier with no profile forwards nothing — there is
-  /// nothing host-supplied to forward, and this package will not invent one.
   ChatWidgetCubit({
     required WidgetChatClient client,
     RemoteConfig initialConfig = defaultRemoteConfig,
     ScreenName? initialScreen,
     String? sessionId,
+    RestClient? rest,
+    ChatTarget? target,
+    int initialHistoryLimit = 30,
     ChatIdentity identity = ChatIdentity.guest,
     Scheduler scheduler = const SystemScheduler(),
     Duration reconnectInterval = kReconnectInterval,
     ChatSessionActions? sessionActions,
-    SessionListFetch? sessionSource,
-    MessageHistoryFetch? messageHistory,
-    RestIdentityProfile? contactProfile,
-    ContactIdentifier? contactIdentifier,
-    RestClient? rest,
     ConsentGate? consent,
-    MuteMemory? mute,
     IssueReporter? issueReporter,
     AttachmentUploader? attachmentUploader,
     AttachmentPicker attachmentPicker = filePickerAttachmentPicker,
@@ -361,12 +105,14 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   })  : _client = client,
         _createVoiceDevice = createVoiceDevice,
         _consent = consent ?? ConsentGate.unremembered(),
-        _mute = mute ?? MuteMemory.unremembered(),
+        _rest = rest,
+        _target = target,
+        _initialHistoryLimit = initialHistoryLimit,
         _sessionActions = sessionActions,
-        _contactProfile = contactProfile,
         _issueReporter = issueReporter,
         _attachmentUploader = attachmentUploader,
         _attachmentPicker = attachmentPicker,
+        _initialSessionId = sessionId,
         _screens = ChatScreens(
           initial: initialScreen ??
               (sessionId == null ? ScreenName.home : ScreenName.conversation),
@@ -391,7 +137,6 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     _messagesSub = _client.messages.listen(_onMessage);
     _sessionsSub = _client.sessions.listen(_onSession);
     _typingSub = _client.typing.listen(_onTyping);
-    _errorsSub = _client.errors.listen(_onProtocolError);
     _reconnectingSub = _client.reconnecting.listen(_onReconnecting);
     _sessionClosedSub = _client.sessionClosed.listen(_onSessionClosed);
     final ChatSessionActions? actions = sessionActions;
@@ -420,58 +165,26 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     // construction awaited I/O would be untestable by construction (the same
     // reason [connect] is not called from here either).
     unawaited(_restoreConsent());
-    // The same shape, and the same reasons, for the other per-visitor
-    // decision this widget remembers — see [_restoreMuted].
-    unawaited(_restoreMuted());
-    // The seam whose ABSENCE is the reported "conversation list not
-    // appearing". Built here rather than in the initializer list because its
-    // writer is this Cubit's own [updateSessionSummaries] — see
-    // [sessionSource].
-    //
-    // ONE source, resolved once: `??` is what makes "both supplied" mean one
-    // fetch rather than two of the same page. The closure wins because it is
-    // the more specific instruction — see the [rest] section of this
-    // constructor's doc. A host that supplied neither gets null here and this
-    // class behaves exactly as it did before either parameter existed.
     final RestClient? restClient = rest;
-    final SessionListFetch? source = sessionSource ??
-        (restClient == null ? null : restSessionSource(rest: restClient));
-    // The transcript's own source, resolved by the SAME rule one line up and
-    // deliberately spelled the same way: one `??`, the closure winning over
-    // the convenience default. Two seams that resolve alike should read
-    // alike, or the next person has to check whether the difference meant
-    // something.
-    _messageHistory = messageHistory ??
-        (restClient == null ? null : restMessageHistory(rest: restClient));
-    // And the CRM upsert's, by the same rule again. Resolved even when no
-    // [contactProfile] was supplied — it costs a closure and nothing else,
-    // and [_identifyContact] is the one place that decides there is nothing
-    // to send, so "did the host give me values" is asked once rather than
-    // half-answered here and half-answered there.
-    _contactIdentifier = contactIdentifier ??
-        (restClient == null ? null : restContactIdentifier(rest: restClient));
-    if (source != null) {
+    if (restClient != null) {
       _sessionList = SessionListRefresher(
-        fetch: source,
-        // The one hop that puts a page on screen. Everything else in this
-        // wiring is scheduling; [_onSessionPage] is the wire, and cutting the
-        // `updateSessionSummaries` call inside it is the mutation
-        // `session_source_test.dart` exists to catch.
-        onSessions: _onSessionPage,
-        // The host's channel, never the customer's screen — where every other
-        // error in this class goes. Nothing here empties the list: the
-        // refresher does not call `onSessions` for a failed fetch, because a
-        // stale list still describes conversations that exist and an emptied
-        // one claims they do not.
-        onError: (Object error, StackTrace stackTrace) =>
-            FlutterError.reportError(
-          FlutterErrorDetails(exception: error, stack: stackTrace),
-        ),
+        fetch: () => _fetchRestSessionSummaries(restClient),
+        onSessions: updateSessionSummaries,
+        onError: (Object error, StackTrace stackTrace) {
+          FlutterError.reportError(
+            FlutterErrorDetails(exception: error, stack: stackTrace),
+          );
+        },
       );
     }
   }
 
   final WidgetChatClient _client;
+  final RestClient? _rest;
+  final ChatTarget? _target;
+  final int _initialHistoryLimit;
+  String? _resolvedInitialSessionId;
+  final String? _initialSessionId;
   final ChatScreens _screens;
 
   /// The REST slice the end-of-conversation surfaces need, or null when the
@@ -480,139 +193,19 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// card whose submit silently discarded the answer would be worse.
   final ChatSessionActions? _sessionActions;
 
-  /// The host's [SessionListFetch], wrapped in the refresher that serialises
-  /// it, or null when the host wired none up.
-  ///
-  /// Null means exactly what it meant before this field existed: the list is
-  /// the host's to push in through [updateSessionSummaries], and this Cubit
-  /// fetches nothing. Every existing host is that case and is unaffected.
-  ///
-  /// Not `final`: the refresher's writer is [_onSessionPage], which is
-  /// `this`, so it cannot be built in the initializer list.
+  /// REST-backed source for the Messages/Home conversation list.
   SessionListRefresher? _sessionList;
 
-  /// The host's [MessageHistoryFetch], or null when the host wired none up.
-  ///
-  /// Null means a replaced conversation opens EMPTY — silently, with no error
-  /// and no crash, exactly as an unwired session list stays empty. That is
-  /// this package's standing answer for an unfilled seam: off, not broken.
-  ///
-  /// Plain, not `late final`, to match [_sessionList] — and only for that
-  /// reason. `late final` would in fact be legal on THIS field, because the
-  /// constructor body assigns it on every path; it is not legal on
-  /// [_sessionList], which is assigned only when a source exists, so a host
-  /// that wires none would fault on the first read. Two seams resolved by
-  /// the same rule one line apart are spelled the same way, rather than
-  /// differing over something that says nothing about either of them.
-  MessageHistoryFetch? _messageHistory;
+  /// Monotonic guard for in-flight transcript history loads.
+  int _historyEpoch = 0;
 
-  /// The device details the HOST handed over, or null when it handed none.
-  ///
-  /// Held exactly as supplied and never read for anything but forwarding: no
-  /// field of it reaches [state], no field of it is logged, and the push
-  /// token in particular goes nowhere but the seam. See [contactProfile].
-  final RestIdentityProfile? _contactProfile;
-
-  /// Where [_contactProfile] is forwarded to, or null when neither a
-  /// [ContactIdentifier] nor a [RestClient] was supplied.
-  ///
-  /// Plain rather than `late final`, matching [_messageHistory] one field up
-  /// and for the same reason: two seams resolved by the same rule two lines
-  /// apart are spelled the same way.
-  ContactIdentifier? _contactIdentifier;
-
-  /// Whether an identify has been asked for and not since failed.
-  ///
-  /// Set BEFORE the call rather than after it, so a second [connect] landing
-  /// while the first upsert is in flight does not issue a duplicate; cleared
-  /// again by a FAILURE, so the next [connect] — the customer pressing "Try
-  /// again" on the unavailable panel — asks once more. That ordering is what
-  /// makes it correct for a seam that throws SYNCHRONOUSLY too: the clear
-  /// runs after the set, never before it.
-  ///
-  /// A settled success is never re-sent. The values are the host's and cannot
-  /// change for this Cubit's lifetime — [contactProfile] is a constructor
-  /// argument — so a second upsert would carry byte-identical data and buy
-  /// nothing, which is a different question from the session list's, where
-  /// every refetch can bring new rows.
-  bool _contactIdentifySent = false;
-
-  /// Which transcript is on screen, as a number that only ever goes up.
-  ///
-  /// The port of `switchEpoch`/`stale()` in `createChatClient` (packages/core)
-  /// — and the reason a history page cannot repaint a conversation the
-  /// customer has already left.
-  ///
-  /// A seed is a round trip. The customer can open s2, wait a moment, and
-  /// open s3 before s2's page has landed; on a slow connection they can do it
-  /// several times. Nothing about the page that comes back says which of
-  /// those conversations it belongs to by the time it arrives — the fetch
-  /// took an id, but `_byId` has been cleared and refilled since. So the
-  /// generation is captured BEFORE the fetch and re-read after: unequal means
-  /// this page is for a transcript nobody is looking at, and it writes
-  /// nothing at all.
-  ///
-  /// Bumped by every path that makes the transcript stop belonging to the
-  /// session a seed in flight was issued for — [_onSession]'s replacement
-  /// branch, [startConversationFrom]'s pre-mint clear, and [close]. Comparing
-  /// session ids instead would be subtly weaker: open s2, leave for s3, come
-  /// BACK to s2, and s2's first (abandoned) page would match the id again and
-  /// repaint a transcript the second join has already refilled.
-  int _transcriptEpoch = 0;
-
-  /// Everything about a snapshot that a summary ROW is drawn from, for the
-  /// snapshot whose page has actually LANDED — or null before any has.
-  ///
-  /// ── What is in the key, and why nothing else is ────────────────────────
-  ///
-  /// Three fields, and they are three because three is what the row widgets
-  /// read: `id` (a conversation this widget has not listed yet), `status`
-  /// (the "still reading With an agent two minutes after it ended" report),
-  /// and the display name inside `handledBy` — which `session_row_list.dart`
-  /// draws as "with Priya", `session_row_description.dart` puts in the
-  /// accessible name, `home_screen.dart` uses as the Home row's HEADING and
-  /// `messages_screen.dart` indexes for search. An agent-to-agent handover
-  /// moves only that field, so a key without it leaves the previous agent's
-  /// name as a row title and reads it out to a screen reader.
-  ///
-  /// `handledBy`'s `id` and `kind` are deliberately absent, as is `mode`: no
-  /// row is built from any of them, so a change to one redraws identically
-  /// and a page fetched for it would be a request that changes nothing. The
-  /// rule is what a row RENDERS, not what a snapshot carries — add a field
-  /// here when, and only when, a row starts drawing it.
-  ///
-  /// A record rather than an interpolated string: `handledBy.displayName` is
-  /// free text a human typed, so a separator-joined key can be forged by a
-  /// name with a space in it, and the record compares the parts as parts.
-  ///
-  /// ── Why it records the LANDING and not the ask ─────────────────────────
-  ///
-  /// Written by [_onSessionPage] when a page arrives, never by [_onSession]
-  /// when one is asked for. Recording at ask time consumes the trigger even
-  /// when the fetch fails, and nothing comes back to re-ask: socket recovery
-  /// runs on the client's own backoff and never re-enters [connect], and the
-  /// post-reconnect `connection.ack` snapshot replays the SAME id and status,
-  /// so a burnt key matches it and stays quiet. That is the reported bug
-  /// rebuilt — a list stuck on "With an agent" for a conversation that ended,
-  /// or, when it happens on first open, the silently empty list this whole
-  /// parameter exists to fix.
-  ///
-  /// Left unrecorded, a failure simply means the next snapshot to arrive
-  /// tries again. Retries therefore ride on session traffic rather than a
-  /// timer this class would then have to own, cancel and test.
-  (String, ChatStatus, String?)? _listedSessionKey;
-
-  /// The key of the ask currently out, promoted into [_listedSessionKey] once
-  /// its page lands. Null when the ask came from [connect], which is not for
-  /// any particular snapshot.
-  (String, ChatStatus, String?)? _pendingSessionKey;
-
-  /// The raw `POST /chat/sessions/{id}/report-issue` route, or null when the
-  /// host wired none up — in which case the ⋯ menu does not offer the row at
-  /// all. Off, not broken, exactly as [_sessionActions] is: `header_menu.dart`
-  /// states the rule ("an unbacked item is absent from `headerMenuEntries`
-  /// entirely"), because a disabled row still reads as a feature the customer
-  /// is somehow not allowed to use.
+  /// The raw `POST /chat/sessions/{id}/report-issue` route the host supplied,
+  /// or null when the SDK should derive the REST-backed one from [_rest].
+  /// If neither exists, the ⋯ menu does not offer the row at all. Off, not
+  /// broken, exactly as [_sessionActions] is: `header_menu.dart` states the
+  /// rule ("an unbacked item is absent from `headerMenuEntries` entirely"),
+  /// because a disabled row still reads as a feature the customer is somehow
+  /// not allowed to use.
   ///
   /// ── Why the host closes the session id over, rather than this passing it ──
   ///
@@ -638,8 +231,9 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// construction — only when a report is actually filed.
   final IssueReporter? _issueReporter;
 
-  /// `POST /upload`, or null when the host wired none up — in which case the
-  /// composer grows no paperclip at all.
+  /// `POST /upload` override supplied by the host, or null when the SDK should
+  /// derive the REST-backed one from [_rest]. If neither exists, the composer
+  /// grows no paperclip at all.
   ///
   /// Off, not broken, exactly as [_issueReporter] and [_sessionActions] are.
   /// An attach button that opened a picker and then had nowhere to send the
@@ -694,6 +288,27 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// whole voice module is exercised without a microphone.
   final VoiceDeviceFactory _createVoiceDevice;
 
+  String? get _currentSessionId => state.session?.sessionId ?? endedSessionId;
+
+  IssueReporter? get _effectiveIssueReporter {
+    final IssueReporter? reporter = _issueReporter;
+    if (reporter != null) return reporter;
+    final RestClient? rest = _rest;
+    if (rest == null) return null;
+    return restIssueReporter(client: rest, sessionId: () => _currentSessionId);
+  }
+
+  AttachmentUploader? get _effectiveAttachmentUploader {
+    final AttachmentUploader? uploader = _attachmentUploader;
+    if (uploader != null) return uploader;
+    final RestClient? rest = _rest;
+    if (rest == null) return null;
+    return restAttachmentUploader(
+      client: rest,
+      sessionId: () => _currentSessionId,
+    );
+  }
+
   /// The server-truth memory of who has rated what. Null alongside
   /// [_sessionActions], since it has nothing to ask.
   CsatMachine? _csat;
@@ -706,14 +321,6 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// documented behaviour for a browser with site data blocked, not a
   /// degraded mode — so there is no "consent is off" case to branch on here.
   final ConsentGate _consent;
-
-  /// The remembered answer to "has this visitor silenced the chime".
-  ///
-  /// Never null, for the reason [_consent] is never null: a host that wired
-  /// no durable store gets [MuteMemory.unremembered], which is precisely the
-  /// session-only behaviour [ChatWidgetState.muted] has always had, not a
-  /// degraded mode to branch on.
-  final MuteMemory _mute;
 
   /// [_csat]'s verdicts, mirrored for [ChatWidgetState.csatBySession]. The
   /// `emit` override below is the only writer of the state half.
@@ -789,33 +396,19 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// Keyed by id so the optimistic-echo-then-confirmed pair `ChatClient`
   /// emits for one send (see its class doc) collapses to one entry rather
   /// than appearing twice. A `Map` preserves insertion order even when an
-  /// existing key's value is replaced, which is what keeps LIVE traffic in
-  /// arrival order without [_onMessage] sorting anything — see
-  /// [ChatWidgetState.messages].
+  /// existing key's value is replaced, which is what keeps the transcript in
+  /// arrival order without a separate sort — see [ChatWidgetState.messages].
   ///
-  /// Insertion order is also the trap, and [_mergeHistoryPage] is where it is
-  /// answered: a page of HISTORY is older than everything already here, and a
-  /// `Map` has no way to put it in front. That one path rebuilds this store in
-  /// `seq` order rather than inserting into it.
-  ///
-  /// The rebuild is of the WHOLE store, not of the page alone: the two
-  /// sources genuinely interleave — a `message.new` for the joined session
-  /// can land while page one is still out — so a merge can and does reorder
-  /// rows that are already on screen. What stays true is that [_onMessage]
-  /// never sorts: live traffic on its own is pure insertion order, and only
-  /// a history page ever moves anything.
-  ///
-  /// What this does NOT do: reorder around gaps. `dhaam_chat` surfaces those
-  /// as `client.gaps` for a host to refetch over REST (see its README) — out
-  /// of scope here, and a different question from seeding a conversation the
-  /// customer has just opened.
+  /// What this does NOT do: reorder around gaps or resumed history.
+  /// `dhaam_chat` surfaces those as `client.gaps` for a host to refetch over
+  /// REST (see its README) — out of scope here for the same reason the
+  /// config fetch is the only REST this package adds.
   final Map<String, ChatMessage> _byId = <String, ChatMessage>{};
 
   late final StreamSubscription<ConnectionState> _connectionSub;
   late final StreamSubscription<ChatMessage> _messagesSub;
   late final StreamSubscription<SessionSnapshot> _sessionsSub;
   late final StreamSubscription<TypingEvent> _typingSub;
-  late final StreamSubscription<ErrorPayload> _errorsSub;
   late final StreamSubscription<ReconnectingEvent> _reconnectingSub;
   late final StreamSubscription<SessionClosed> _sessionClosedSub;
   StreamSubscription<String>? _csatSub;
@@ -930,96 +523,91 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// network I/O as a side effect of being constructed is untestable by
   /// construction, and the root widget (which owns this Cubit's lifetime)
   /// is the natural, single place to call this once, from `initState`.
-  Future<void> connect() {
-    // The panel-open fetch, and the first of the two triggers a host would
-    // otherwise have to remember. This is the widget's own "we are open now"
-    // hop — `ChatWidget.initState` calls it — so the list arrives without the
-    // host wiring a second thing to the same moment.
+  Future<void> connect() async {
     _refreshSessionList();
-    _identifyContact();
-    return _client.connect();
-  }
-
-  /// Forwards the host's [contactProfile] to `POST /identify`, if there is
-  /// one and something to forward it with.
-  ///
-  /// Not awaited and never awaited: a CRM upsert is not on the path of
-  /// anything the customer is waiting for, and [ChatClient.setContactInfo]'s
-  /// own note applies with more force here than it does to a contact-info
-  /// capture — nothing about talking to an agent depends on this landing.
-  ///
-  /// Both halves have to be present. No profile means the host supplied
-  /// nothing to forward and this package will not invent one; no identifier
-  /// means there is nowhere to send it. Either way this is off, not broken.
-  /// [connect] is the trigger and can fire more than once — the unavailable
-  /// panel's "Try again" is the same call — so [_contactIdentifySent] is what
-  /// keeps a settled upsert from being re-sent with byte-identical values,
-  /// and what lets a REJECTED one be asked again. Set before the call, so a
-  /// second [connect] during the flight does not duplicate it.
-  void _identifyContact() {
-    final ContactIdentifier? identify = _contactIdentifier;
-    final RestIdentityProfile? profile = _contactProfile;
-    if (identify == null || profile == null || _contactIdentifySent) return;
-    _contactIdentifySent = true;
-    unawaited(_runIdentify(identify, profile));
-  }
-
-  /// One identify attempt, with its failure kept off the customer's screen.
-  Future<void> _runIdentify(
-    ContactIdentifier identify,
-    RestIdentityProfile profile,
-  ) async {
-    try {
-      await identify(profile);
-    } catch (error, stackTrace) {
-      // Re-armed, so the next [connect] — a customer pressing "Try again" —
-      // asks once more. The same rule the session list follows: a failed
-      // fetch does not consume the trigger that asked for it. Cleared HERE
-      // and never anywhere else, which is also what makes the flag correct
-      // for a seam that throws SYNCHRONOUSLY: [_identifyContact] sets it
-      // before the call, so this clear can only ever run after that set.
-      _contactIdentifySent = false;
-      // The host's channel, where every other error in this class goes.
-      //
-      // The ERROR is reported and the profile is not. Nothing here
-      // interpolates [profile] into a message, and `dhaam_chat_rest`'s own
-      // exceptions keep the request body and URL out of `toString()` for
-      // exactly this reason — so a device token, which is a push credential
-      // the backend's own schema says is never logged, cannot ride a failure
-      // into a host's crash reporter.
-      FlutterError.reportError(
-        FlutterErrorDetails(exception: error, stack: stackTrace),
-      );
+    final String? sessionId = await _resolveInitialSessionId();
+    await _client.connect();
+    if (sessionId != null) {
+      _client.joinSession(sessionId);
+      unawaited(_loadInitialMessageHistory(sessionId));
     }
   }
 
-  /// Asks [sessionSource] for a fresh page, if the host supplied one.
-  ///
-  /// Not awaited and never awaited: a session list is not on the path of
-  /// anything the customer is waiting for, and `SessionListRefresher.refresh`
-  /// never throws — a failed fetch reaches `onError` and leaves the page
-  /// already on screen alone.
+  Future<String?> _resolveInitialSessionId() async {
+    final String? explicit = _initialSessionId;
+    if (explicit != null) return explicit;
+
+    final String? cached = _resolvedInitialSessionId;
+    if (cached != null) return cached;
+
+    final RestClient? rest = _rest;
+    final ChatTarget? target = _target;
+    if (rest == null || target == null) return null;
+
+    try {
+      final String sessionId = await rest.openTargetSession(
+        targetRole: target.role,
+        targetId: target.id,
+      );
+      _resolvedInitialSessionId = sessionId;
+      return sessionId;
+    } catch (error, stackTrace) {
+      FlutterError.reportError(FlutterErrorDetails(
+        exception: error,
+        stack: stackTrace,
+        context: ErrorDescription('opening or resuming targeted chat'),
+      ));
+      return null;
+    }
+  }
+
+  Future<void> _loadInitialMessageHistory(String sessionId) async {
+    final RestClient? rest = _rest;
+    if (rest == null || _initialHistoryLimit <= 0) return;
+    final int epoch = ++_historyEpoch;
+
+    try {
+      final page = await rest.listMessages(
+          sessionId: sessionId, limit: _initialHistoryLimit);
+      if (isClosed || epoch != _historyEpoch) return;
+      loadMessageHistory(page.messages);
+    } catch (error, stackTrace) {
+      if (isClosed || epoch != _historyEpoch) return;
+      FlutterError.reportError(FlutterErrorDetails(
+        exception: error,
+        stack: stackTrace,
+        context: ErrorDescription('loading chat history'),
+      ));
+    }
+  }
+
+  Future<List<ChatSessionSummary>> _fetchRestSessionSummaries(
+    RestClient rest,
+  ) async {
+    final List<RestChatSessionSummary> rows =
+        await rest.listSessions(limit: kSessionSummaryLimitMax);
+    return rows.map(_toChatSessionSummary).toList(growable: false);
+  }
+
+  ChatSessionSummary _toChatSessionSummary(RestChatSessionSummary row) =>
+      ChatSessionSummary(
+        id: row.id,
+        status: row.status,
+        mode: row.mode,
+        createdAt: row.createdAt,
+        closedAt: row.closedAt,
+        lastMessageAt: row.lastMessageAt,
+        lastMessagePreview: row.lastMessagePreview,
+        unreadCount: row.unreadCount,
+        handledBy: row.handledBy,
+        subject: row.subject,
+        topic: row.topic,
+      );
+
   void _refreshSessionList() {
     final SessionListRefresher? sessions = _sessionList;
     if (sessions == null) return;
     unawaited(sessions.refresh());
-  }
-
-  /// A page from [sessionSource], on its way to the screen.
-  ///
-  /// The write is the whole point; the line under it is the bookkeeping that
-  /// makes a FAILED fetch retryable — see [_listedSessionKey] on why the key
-  /// is recorded here rather than where the fetch is asked for.
-  void _onSessionPage(List<ChatSessionSummary> sessions) {
-    updateSessionSummaries(sessions);
-    // Not yet, if the refresher already owes a re-issue: an ask that arrived
-    // DURING this fetch means this page predates it, and claiming the newer
-    // key for it would burn that key on a page that never reflected it. The
-    // re-issue's own landing records it — and if the re-issue fails, nothing
-    // is recorded and the next snapshot asks again, which is the same rule
-    // one level down.
-    if (_sessionList?.isRefreshQueued ?? false) return;
-    _listedSessionKey = _pendingSessionKey;
   }
 
   // ── Connectivity ──────────────────────────────────────────────────────
@@ -1076,27 +664,28 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     _syncSurfaces();
   }
 
-  /// Supplies the Messages/Home screens' session list.
-  ///
-  /// Stored whole, exactly as handed over: this is the page the host
-  /// supplied, not the page a customer is shown. Which of these rows reach a
-  /// screen is decided at render, by
-  /// [ChatWidgetState.customerVisibleSessions] — filtering here instead
-  /// would throw away the record and would have to guess, at fetch time,
-  /// which conversation the customer would be in by the time it was drawn.
-  ///
-  /// The direct route, for a host that already fetches its own page and wants
-  /// to decide when. A host that would rather not own that timing can hand
-  /// the fetch over instead — see the `sessionSource` constructor parameter,
-  /// which drives this same method from inside.
-  ///
-  /// Either way the page comes from OUTSIDE: `dhaam_chat` cannot list
-  /// sessions at all, so this Cubit never invents one. See
-  /// [ChatSessionSummary]'s header.
+  /// Supplies the Messages/Home screens' session list. See
+  /// [ChatSessionSummary]'s header on why this Cubit cannot populate this
+  /// itself — `dhaam_chat` cannot list sessions, so a host that has its own
+  /// backend calls this with what it fetched there.
   void updateSessionSummaries(List<ChatSessionSummary> summaries) {
     final int unread = summaries.fold(
         0, (int sum, ChatSessionSummary s) => sum + s.unreadCount);
     emit(state.copyWith(sessionSummaries: summaries, unreadCount: unread));
+  }
+
+  /// Merges a REST history page into the transcript.
+  ///
+  /// Live socket messages and history rows share ids, so the same [_byId] map
+  /// dedupes them. Sequenced rows are ordered by `seq`; optimistic local rows
+  /// with no `seq` stay after confirmed history until their ack replaces them.
+  void loadMessageHistory(Iterable<ChatMessage> messages) {
+    for (final ChatMessage message in messages) {
+      _byId[message.id] = message;
+    }
+    final List<ChatMessage> ordered = _orderedMessages();
+    emit(state.copyWith(messages: ordered));
+    _syncSurfaces();
   }
 
   // ── Navigation ────────────────────────────────────────────────────────
@@ -1106,6 +695,16 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     assert(tab == ScreenName.home || tab == ScreenName.messages,
         'not a tab: $tab');
     _screens.swap(tab);
+    _syncScreen();
+  }
+
+  /// Returns from a tab surface to the current conversation without creating
+  /// a drill-down back entry.
+  ///
+  /// Used by targeted outlet chat, where Home is intentionally absent and the
+  /// Messages screen needs a local way back to the transcript.
+  void showConversation() {
+    _screens.swap(ScreenName.conversation);
     _syncScreen();
   }
 
@@ -1176,18 +775,25 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// Clears [ChatWidgetState.selectedTopic] — a topic chip belongs to a
   /// prospective NEW conversation and has nothing to do with re-opening one.
   void openConversation(String sessionId) {
+    final bool switchingSessions =
+        state.session?.sessionId != sessionId && state.messages.isNotEmpty;
     _client.joinSession(sessionId);
     _surfaces.discardUserSurface();
     _composingTicket = null;
     _screens.go(ScreenName.conversation);
+    if (switchingSessions) {
+      _byId.clear();
+    }
     emit(
       state.copyWith(
         screen: _screens.current,
         canGoBack: _screens.canGoBack,
         conversationOpened: true,
         clearSelectedTopic: true,
+        messages: switchingSessions ? const <ChatMessage>[] : null,
       ),
     );
+    unawaited(_loadInitialMessageHistory(sessionId));
     _syncSurfaces();
   }
 
@@ -1376,7 +982,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   AttachmentDraftController? createAttachmentDraft({
     required FormErrorReporter onError,
   }) {
-    final AttachmentUploader? uploader = _attachmentUploader;
+    final AttachmentUploader? uploader = _effectiveAttachmentUploader;
     if (uploader == null) return null;
     return AttachmentDraftController(
       picker: _attachmentPicker,
@@ -1560,21 +1166,6 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// first, and the latch holds the pre-chat gate down across the whole
   /// exchange: the first send lands with an empty transcript, which is
   /// precisely the window the gate would otherwise flash in.
-  ///
-  /// ── Why this returns a Future now ─────────────────────────────────────
-  ///
-  /// Because minting a session is a round trip, and everything below it has
-  /// to happen on the far side. `WidgetChatClient.startNewSession` resolves
-  /// on the new session's `connection.ack`, so awaiting it is what makes the
-  /// sends that follow addressed to the NEW conversation rather than racing
-  /// the handshake. The latch is taken before that await and released in the
-  /// `finally` after it, so it spans the whole mint — releasing it any
-  /// earlier would re-arm the pre-chat gate in exactly the window the ack
-  /// lands in, which is the window the latch exists for.
-  ///
-  /// Callers need not await it: the form's Start handler is synchronous and
-  /// stays that way, the surface it is holding is handed back from in here,
-  /// and a customer is not made to watch a spinner for a handshake.
   Future<void> startConversationFrom({
     required String message,
     String? topic,
@@ -1582,77 +1173,11 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   }) async {
     final OpeningLineLatch latch = _surfaces.beginOpeningLine();
     try {
-      // ── The conversation this one replaces ────────────────────────────
-      //
-      // The reported bug: "when we try to start a new conversation from
-      // inside a chat, it takes the user back to the same chat." Sending was
-      // the whole of this method, and a send is addressed to whatever session
-      // this client is in — so from inside a conversation the opening line
-      // landed in the conversation the customer was asking to leave.
-      // `ChatClient.startNewSession` is the half that closes it (SWITCHED)
-      // and mints a fresh one; see it for why a disconnect/connect pair is
-      // not the same thing.
-      //
-      // Conditional on there BEING a session, because this is a teardown. It
-      // fails every undelivered send, drops the resume anchor and cycles the
-      // socket — a price worth paying to leave a conversation, and pure cost
-      // when there is none to leave. From Home before any snapshot has
-      // landed this client is in no session: the server mints one on the
-      // hello and the opening line lands in it, which is the path that
-      // always worked and is left exactly as it was.
-      //
-      // The topic is the PARAMETER, not `state.startedTopicLabel` — that
-      // field still holds the label of the conversation being left, because
-      // the emit below is what writes this start's own. They are the same
-      // value one statement apart, and reading the stale one here would
-      // stamp the previous conversation's topic onto the new one.
-      //
-      // No `subject`: `startNewSession` takes one and this screen collects
-      // nothing that is a subject — a topic chip and an opening line are not
-      // one under another name — so it is left absent rather than invented.
       if (state.session != null) {
-        // ── And it goes off screen HERE, not when the ack lands ─────────
-        //
-        // [_onSession] resets on replacement, but it can only act when a
-        // snapshot ARRIVES — and this is a round trip: `startNewSession`
-        // resolves on the NEW session's `connection.ack`. Without this the
-        // conversation the customer just asked to leave stays painted for
-        // the whole flight, which is the half of the reported bug that
-        // survived the wire fix: pressing "new conversation" appeared to do
-        // nothing at all.
-        //
-        // The same projections `_onSession` clears, and `_byId` first —
-        // [_onMessage] rebuilds `messages` from it, so an uncleared store
-        // would have the opening line's echo resurrect the whole of the old
-        // transcript alongside it. `replyingTo` is not housekeeping either:
-        // [sendMessage] reads it and puts it on the frame, so a target left
-        // over from the old conversation would make the customer's next
-        // message a reply to something in a conversation they have left.
-        //
-        // `state.session` deliberately still names the OLD session until the
-        // snapshot replaces it: this Cubit has no way to say "no session"
-        // (`copyWith` has no clearing sentinel for it, by that field's own
-        // note) and does not need one — the transcript being empty is what
-        // the customer sees, and `dueCsatCard` already answers null for an
-        // empty one, so no survey can appear for the conversation being left
-        // during the flight. The snapshot that lands then takes the ordinary
-        // replacement path and clears an already-empty state.
-        //
-        // No `_syncSurfaces()`: the opening-line latch above owns this whole
-        // window precisely so the pre-chat gate cannot flash at an empty
-        // transcript mid-mint, and the sends below re-sync on arrival.
         _byId.clear();
-        // Same rule as the replacement branch in [_onSession], at the other
-        // end of the round trip: what is on screen has stopped being the
-        // conversation any seed in flight was reading for, so that seed must
-        // not be able to repaint it. Without this, opening a past
-        // conversation and immediately pressing "new conversation" would put
-        // the past one's history into the brand-new chat.
-        _transcriptEpoch += 1;
         emit(
           state.copyWith(
             messages: const <ChatMessage>[],
-            isTyping: false,
             clearReplyingTo: true,
           ),
         );
@@ -1897,7 +1422,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// same shape [canReopen] and [canEndConversation] have, and the rule
   /// `header_menu.dart` states for itself: an unbacked item is absent from
   /// `headerMenuEntries` entirely.
-  bool get canReportIssue => _issueReporter != null;
+  bool get canReportIssue => _effectiveIssueReporter != null;
 
   /// Raises the "Report an issue" form in place of the conversation.
   ///
@@ -1923,7 +1448,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// that recoverable, explained failure into a menu row that appears to do
   /// nothing at all.
   void openReportIssue() {
-    if (_issueReporter == null) return;
+    if (_effectiveIssueReporter == null) return;
     _reportTicket = _surfaces.open(
       const ReportSurface(),
       from: _screens.current,
@@ -1957,7 +1482,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// when it explains why [IssueReporter] rejects instead of reporting.
   /// Unreachable in practice: the surface cannot be opened without one.
   Future<void> fileIssueReport(RestIssueReport report) async {
-    final IssueReporter? reporter = _issueReporter;
+    final IssueReporter? reporter = _effectiveIssueReporter;
     if (reporter == null) {
       throw StateError('No issue reporter is wired up');
     }
@@ -2051,20 +1576,11 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// the same fact, and the two can disagree the moment a menu is rebuilt
   /// from a state that changed underneath it.
   ///
-  /// ── Honoured first, recorded second ─────────────────────────────────
-  ///
-  /// The switch moves on this frame and the write follows, exactly as
-  /// [agreeToConsent] does. A failed write does not take the switch back: a
-  /// device that blocks app data is a setting the visitor is entitled to, and
-  /// the cost of the failure is only that the chime is audible again on the
-  /// next launch. [MuteMemory.recordMuted] therefore never rejects.
-  ///
-  /// The early return is what keeps a menu rebuilding with the value it
-  /// already holds from writing to the store on every frame.
+  /// Nothing is persisted — see [ChatWidgetState.muted] for where that
+  /// belongs and why it is not here.
   void setMuted(bool muted) {
     if (state.muted == muted) return;
     emit(state.copyWith(muted: muted));
-    unawaited(_mute.recordMuted(muted));
   }
 
   /// Whether there is a live conversation for the header menu to offer to end.
@@ -2122,24 +1638,6 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     if (state.consentAgreed) return;
     emit(state.copyWith(consentAgreed: true));
     unawaited(_consent.recordAgreed());
-  }
-
-  // ── Mute ──────────────────────────────────────────────────────────────
-
-  /// Applies the one stored-mute read to the chime.
-  ///
-  /// Only ever SILENCES, never restores — the mirror of [_restoreConsent]'s
-  /// "only ever opens the gate", and load-bearing for the same reason. The
-  /// read is asynchronous and the header menu is not, so a visitor who
-  /// reaches for the switch before this lands must not have it moved back
-  /// underneath them. `false` is already what [ChatWidgetState.muted] says at
-  /// construction, so there is nothing a stored `false` could restore and
-  /// nothing an unreadable store could take away: an un-mute persists by
-  /// leaving the default alone, not by overwriting a decision.
-  Future<void> _restoreMuted() async {
-    if (await _mute.readMuted()) {
-      emit(state.copyWith(muted: true));
-    }
   }
 
   // ── Inbound ───────────────────────────────────────────────────────────
@@ -2201,7 +1699,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     _byId[message.id] = message;
     emit(
       state.copyWith(
-        messages: _byId.values.toList(growable: false),
+        messages: _orderedMessages(),
         // Read on every message rather than tracked separately: a send joins
         // the queue and leaves it without any connection transition, and the
         // client is the one place that knows the real number.
@@ -2213,184 +1711,28 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     _syncSurfaces();
   }
 
-  /// Page one for a session that has just REPLACED the one on screen.
-  ///
-  /// Fire-and-forget: nothing the customer is waiting on blocks behind this,
-  /// and [_readHistory] never throws.
-  ///
-  /// A no-op when no history source is wired, which is what makes an unwired
-  /// host behave exactly as it did before this existed — see
-  /// [_messageHistory].
-  ///
-  /// ── A brand-new conversation is seeded too, deliberately ──────────────
-  ///
-  /// Pressing "new conversation" mints a session, and the snapshot for it is
-  /// a replacement like any other, so this fires a GET for a conversation
-  /// created moments ago. Left that way rather than suppressed: the page
-  /// comes back empty, [_mergeHistoryPage] writes nothing at all for an
-  /// empty one — no emit, no repaint — and the cost is one request per
-  /// deliberate press, not per event. Suppressing it would mean a flag saying
-  /// "the next replacement is mine", carried across the mint's round trip;
-  /// a flag that outlived its snapshot would swallow the seed for whatever
-  /// replacement arrived next, which is the blank pane this whole seam
-  /// exists to remove. Not an unconditional freebie, though — that page can
-  /// carry the opening line the customer has already typed, and it is the
-  /// skip rule in [_mergeHistoryPage] that keeps them from seeing it twice.
-  ///
-  /// One asymmetry with the session list, recorded rather than fixed: the
-  /// refresher collapses a burst of triggers into a single re-issue, while
-  /// every replacement here issues a seed of its own and [_transcriptEpoch]
-  /// discards all but the last page — same outcome on screen, more requests
-  /// in flight for a customer switching conversations quickly.
-  void _seedTranscript(String sessionId) {
-    final MessageHistoryFetch? history = _messageHistory;
-    if (history == null) return;
-    unawaited(_readHistory(history, sessionId));
-  }
-
-  Future<void> _readHistory(
-    MessageHistoryFetch history,
-    String sessionId,
-  ) async {
-    // Captured before the fetch and re-read after it — `switchEpoch`/`stale()`
-    // in packages/core. See [_transcriptEpoch].
-    final int epoch = _transcriptEpoch;
-    final List<ChatMessage> page;
-    try {
-      page = await history(sessionId);
-    } catch (error, stackTrace) {
-      // Staleness first, and the failure is then swallowed with the page:
-      // this read no longer owns the transcript, so it writes nothing and
-      // says nothing. `SessionListRefresher` states the same rule for a
-      // fetch that lands after `dispose`.
-      if (epoch != _transcriptEpoch) return;
-      // The host's channel, never the customer's screen — where every other
-      // error in this class goes. Nothing is emptied and nothing is retried:
-      // this seed only ever ADDS, so a failure leaves the transcript exactly
-      // as it was, which for a freshly opened conversation is empty. That is
-      // the same thing the customer saw before any of this existed.
-      FlutterError.reportError(
-        FlutterErrorDetails(exception: error, stack: stackTrace),
-      );
-      return;
-    }
-    if (epoch != _transcriptEpoch) return;
-    _mergeHistoryPage(page);
-  }
-
-  /// Merges an older page into the transcript, the port of `prependPage` and
-  /// `sortMessages` in packages/core.
-  ///
-  /// ── Why the store is REBUILT and not written into ──────────────────────
-  ///
-  /// Because [_byId] is a `Map`, and a Dart `Map` iterates in INSERTION
-  /// order. That is what [_onMessage] relies on and it is exactly right for
-  /// live traffic, where each message is newer than the last. It is exactly
-  /// wrong for a page of history, which is OLDER than everything already
-  /// there: inserting it puts yesterday's messages after one that arrived a
-  /// second ago, and the customer opens a conversation whose first line is at
-  /// the bottom. There is no "insert at the front" for a `Map`, so the store
-  /// is cleared and re-added in the order the transcript should read in.
-  ///
-  /// ── The order, and its one key ─────────────────────────────────────────
-  ///
-  /// `seq`, ascending — `ChatMessage.seq`'s own doc: "The ordering key (D2).
-  /// Order by this. NEVER by [createdAt] and never by the envelope's `ts`."
-  /// This is the only place in this class that orders anything, and it is
-  /// needed because the two sources genuinely interleave: a `message.new` for
-  /// the joined session can land while page one is still out.
-  ///
-  /// A message with NO `seq` sorts after every message that has one. That is
-  /// §6.4's rule, not a tiebreak: the server allocates `seq`, so a message
-  /// without one was written locally moments ago and belongs at the live end.
-  ///
-  /// Everything else compares equal and falls back to the position it came in
-  /// at — history first, then what was already on screen, each in its own
-  /// order. Written out rather than left to the sort, because Dart's
-  /// `List.sort` is NOT documented stable (it is an introsort for lists above
-  /// a small threshold), so equal elements could otherwise be reordered
-  /// arbitrarily between runs. That fallback is also what carries a page of
-  /// rows that predate sequencing and therefore carry no `seq` at all
-  /// (`projectHistoryRow` keeps it only "when present"): they hold the
-  /// oldest-first order [MessageHistoryFetch] promises.
-  ///
-  /// ── An id already on screen is SKIPPED, never replaced ─────────────────
-  ///
-  /// `prependPage`'s rule, and it answers both halves of the same race at
-  /// once. The page may well contain a message the socket has already
-  /// delivered — the customer sees one entry, not two, because identity is
-  /// the id (D1). And the copy that stays is the LIVE one, because a page
-  /// built server-side before that frame went out describes an older view of
-  /// it; letting the page win would roll a delivered message back to how it
-  /// looked a moment earlier.
-  ///
-  /// ── What that skip DEPENDS on, stated because nothing else states it ───
-  ///
-  /// D1 in the strong sense: the id `ChatClient` mints for an optimistic
-  /// echo IS the permanent message id, so the server's copy of the same
-  /// message comes back under the same key (`client.dart`'s `_pending`: "the
-  /// entire optimistic-id-swap machinery v1 needed (§12.9) does not exist
-  /// here"). Nothing in THIS file could detect a violation — an echo under a
-  /// temporary id and its server copy under a permanent one are two rows
-  /// with two ids, and the skip above would have no reason to fire.
-  ///
-  /// It is load-bearing on the path nobody looks at: pressing "new
-  /// conversation" mints a session, and [_onSession] seeds the brand-new
-  /// conversation like any other replacement (see [_seedTranscript] on why
-  /// that seed is not suppressed). If the customer's opening line is already
-  /// echoed on screen when that page lands, an id swap would show it TWICE —
-  /// the first thing they ever typed, duplicated. `session_history_seed_test`
-  /// pins exactly that sequence, so a change to D1 fails here rather than in
-  /// a screenshot.
-  ///
-  /// A page that adds nothing writes nothing at all — no emit, no repaint.
-  void _mergeHistoryPage(List<ChatMessage> page) {
-    final List<ChatMessage> additions = <ChatMessage>[
-      for (final ChatMessage row in page)
-        if (!_byId.containsKey(row.id)) row,
-    ];
-    if (additions.isEmpty) return;
-
-    final List<ChatMessage> merged = <ChatMessage>[
-      ...additions,
-      ..._byId.values,
-    ];
-    // The position each message came in at, which is the order the sort falls
-    // back to. Built before the sort, off `merged`, so it describes the
-    // arrangement above and nothing else.
-    final Map<String, int> placed = <String, int>{
-      for (int index = 0; index < merged.length; index += 1)
-        merged[index].id: index,
-    };
-    merged.sort((ChatMessage a, ChatMessage b) {
-      final int? aSeq = a.seq;
-      final int? bSeq = b.seq;
-      if (aSeq != null && bSeq != null && aSeq != bSeq) {
-        return aSeq.compareTo(bSeq);
-      }
-      if (aSeq == null && bSeq != null) return 1;
-      if (aSeq != null && bSeq == null) return -1;
-      // `!` is safe by construction: every id in `merged` was just put in
-      // `placed`. A page carrying the same id twice maps both to one index,
-      // which compares them equal — and the rebuild below then collapses
-      // them to the one entry that id is entitled to.
-      return placed[a.id]!.compareTo(placed[b.id]!);
+  List<ChatMessage> _orderedMessages() {
+    final List<MapEntry<int, ChatMessage>> entries =
+        _byId.values.toList(growable: false).asMap().entries.toList();
+    entries.sort((MapEntry<int, ChatMessage> a, MapEntry<int, ChatMessage> b) {
+      final ChatMessage leftMessage = a.value;
+      final ChatMessage rightMessage = b.value;
+      final int? left = leftMessage.seq;
+      final int? right = rightMessage.seq;
+      final int ordered = _compareMessageSeq(left, right);
+      if (ordered != 0) return ordered;
+      return a.key.compareTo(b.key);
     });
+    return entries
+        .map((MapEntry<int, ChatMessage> entry) => entry.value)
+        .toList(growable: false);
+  }
 
-    _byId
-      ..clear()
-      ..addEntries(
-        merged.map(
-          (ChatMessage m) => MapEntry<String, ChatMessage>(m.id, m),
-        ),
-      );
-
-    emit(state.copyWith(messages: _byId.values.toList(growable: false)));
-    // A transcript that just stopped being empty closes the pre-chat gate's
-    // own precondition, exactly as it does in [_onMessage] — and it is what
-    // raises the rating card for a conversation the customer opened that had
-    // already ended. See [dueCsatCard].
-    _syncSurfaces();
+  int _compareMessageSeq(int? left, int? right) {
+    if (left != null && right != null) return left.compareTo(right);
+    if (left != null) return -1;
+    if (right != null) return 1;
+    return 0;
   }
 
   void _onSession(SessionSnapshot session) {
@@ -2400,138 +1742,21 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     // recovery, or the survey and the footer both arrive for a conversation
     // nobody ended.
     if (session.sessionId != _parkedSessionId) _parkedSessionId = null;
-    // ── The commit: identity and transcript move in ONE emit ──────────
-    //
-    // The reported bug, second round: pressing "new conversation" landed on
-    // the OLD chat, and opening ANY past conversation showed the SAME
-    // previous transcript. The wire was already right — the server really
-    // did mint a new session — but `_byId` was written by [_onMessage] and
-    // cleared by nothing, so this line swapped the id and left the previous
-    // conversation's messages painted underneath it.
-    //
-    // The rule is `createChatClient`'s `commitSession` (packages/core): a
-    // snapshot whose id DIFFERS from the one on screen is a replacement and
-    // clears the per-session projections, and it does so in the SAME emit
-    // that installs the session — so no observer ever reads one
-    // conversation's id against another's transcript.
-    //
-    // `previous != null` is the same guard the reference carries: the FIRST
-    // snapshot is not a replacement. Clearing an empty transcript would be
-    // harmless, but "there was nothing there before" and "what was there
-    // belonged to someone else" are different facts and only the second one
-    // is this branch's business.
-    //
-    // A snapshot for the session ALREADY on screen is a REFRESH and clears
-    // nothing. That is not a nicety: ending a conversation pushes a same-id
-    // snapshot with status CLOSED, and [dueCsatCard] requires a non-empty
-    // transcript — clear on that and the rating survey silently disappears
-    // for every conversation the customer ends.
-    final SessionSnapshot? previous = state.session;
-    final bool replacing =
-        previous != null && previous.sessionId != session.sessionId;
-    if (replacing) {
+    final String? currentSessionId = state.session?.sessionId;
+    if (currentSessionId != null && currentSessionId != session.sessionId) {
       _byId.clear();
-      // The transcript on screen is now a different conversation's, so any
-      // seed still in flight is reading for one nobody is looking at. Bumped
-      // HERE, with the clear, and before the seed below is issued — so that
-      // seed captures the new generation and the abandoned one can never
-      // match it again. See [_transcriptEpoch].
-      _transcriptEpoch += 1;
+      emit(
+        state.copyWith(
+          session: session,
+          messages: const <ChatMessage>[],
+          clearReplyingTo: true,
+        ),
+      );
+    } else {
+      emit(state.copyWith(session: session));
     }
-    emit(
-      replacing
-          ? state.copyWith(
-              session: session,
-              messages: const <ChatMessage>[],
-              // Both are statements ABOUT the conversation being left: who
-              // was typing in it, and which of its messages the composer was
-              // pointed at. Carried across, the indicator reports a
-              // stranger's keystrokes and the next send silently becomes a
-              // reply to a message in a conversation the customer has left.
-              isTyping: false,
-              clearReplyingTo: true,
-            )
-          : state.copyWith(session: session),
-    );
-    // ── And the transcript that belongs to it ─────────────────────────
-    //
-    // The other half of the same bug. The commit above clears the message
-    // store — that is the whole point of it — so a replacement that nothing
-    // then seeds is what `seedReplacedSession` calls "a permanently blank
-    // pane": the customer stops seeing somebody else's conversation and
-    // starts seeing none at all. Opening a conversation from the picker is
-    // exactly that path.
-    //
-    // AFTER the commit, never before, and by EXPLICIT id — `joinAndSeed`'s
-    // two rules. After, so the page writes into an already-reset transcript
-    // that belongs to the session it was read for; by id, so it stays that
-    // session's page even if another frame moves `state.session` while the
-    // request is out.
-    //
-    // Only on REPLACEMENT, matching `commitSession`'s own
-    // `if (replacing) seedReplacedSession(next.id)`. A refresh for the
-    // session already on screen cleared nothing, so there is nothing to
-    // refill — and re-reading page one on every routine snapshot would be a
-    // request per event that repaints the same rows.
-    if (replacing) _seedTranscript(session.sessionId);
-    // ── Deliberately NOT cleared, against the TS reference ────────────
-    //
-    // `unreadCount`: unlike the reference, this Cubit derives it from
-    // `sessionSummaries` — see [updateSessionSummaries], which sums it
-    // across the whole LIST. It is a fact about every conversation, not
-    // about this one, and `sessionSummaries` is NOT cleared here, so zeroing
-    // it would leave the field contradicting the very list it was summed
-    // from until the next page landed: a whole-page total below the visible
-    // subset [ChatWidgetState.customerVisibleUnreadCount] folds out of those
-    // same rows, which is impossible by construction.
-    //
-    // Neither surface that once justified this reads the field any more.
-    // The Messages tab badge counts `customerVisibleUnreadCount`, and so
-    // does the reply chime, narrowed to match it on 2026-09-15; both fold
-    // straight over `sessionSummaries` and would survive this clause
-    // whatever it did. That is a reason to keep the field honest, not a
-    // reason to stop keeping it.
-    //
-    // `lastError`: the reference clears it because there it is per-session.
-    // Here its only writer is [_onProtocolError], and what reaches that is
-    // transport- and protocol-level — `authInvalid`, `rateLimited` — a
-    // condition of the CONNECTION, which a new session does not fix. It is
-    // also written on the same tick as `suspendReason`, which cannot be
-    // cleared here (the client is still suspended), so clearing one of the
-    // pair would leave the widget saying "gave up" with the reason gone —
-    // the exact "endless Connecting… with the reason available nowhere"
-    // that put the field on the state to begin with. Left alone, and so no
-    // `clearLastError` sentinel is added to `copyWith`.
+    _refreshSessionList();
     _syncSurfaces();
-    // The second trigger. A snapshot arrives for every session change this
-    // Cubit can see, and most of them are routine live-conversation traffic
-    // that leaves the list looking exactly as it already does; refetching a
-    // whole page for each would be a request per event to redraw the same
-    // rows. So the ask is filtered down to the fields a summary ROW is drawn
-    // from — [_listedSessionKey] is where those three are named and where
-    // the rule for adding a fourth is.
-    //
-    // A field of its own rather than a read of the previous `state.session`,
-    // which is the same value today only because this line is that field's
-    // only writer. This one names what it actually is — the last snapshot
-    // the LIST actually got a page for — so a future write of
-    // `state.session` from somewhere else cannot silently change the list's
-    // cadence.
-    //
-    // Asking DURING a flight is not dropped: the refresher re-issues once
-    // that flight lands, and a burst collapses into one re-issue.
-    final (String, ChatStatus, String?) key = (
-      session.sessionId,
-      session.status,
-      session.handledBy?.displayName,
-    );
-    if (key != _listedSessionKey) {
-      // Recorded as PENDING, not as listed. The promotion happens in
-      // [_onSessionPage] when a page actually lands, so a fetch that fails
-      // leaves this trigger armed for the next snapshot to fire again.
-      _pendingSessionKey = key;
-      _refreshSessionList();
-    }
   }
 
   /// A `session.closed` push (§12.5).
@@ -2556,52 +1781,14 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     _syncSurfaces();
   }
 
-  /// A §6.5 protocol error reached the client.
-  ///
-  /// Recorded on the state rather than only reported, because the two answer
-  /// different questions: `onError` tells the HOST something went wrong, and
-  /// this lets the WIDGET say so. Without it a misconfigured endpoint renders
-  /// as an endless "Connecting…" with the reason available nowhere — which is
-  /// exactly how this landed as a bug report.
-  ///
-  /// [WidgetChatClient.suspendReason] is read on the same tick because an
-  /// error and the decision to give up arrive separately: the cap is reached
-  /// by the LAST of several failures, and only then does the client stop.
-  void _onProtocolError(ErrorPayload error) => emit(
-        state.copyWith(
-          lastError: error,
-          suspendReason: _client.suspendReason,
-        ),
-      );
-
-  /// A typing event landed. The indicator follows WHO is typing, not the
-  /// flag on the event that happened to arrive last.
-  ///
-  /// Reading `event.isTyping` here looks right and is not: each event speaks
-  /// for one participant. Agent A starts, agent B starts, A stops — and the
-  /// last event says `false` while B is still mid-sentence. That is exactly
-  /// the bug `TypingController`'s per-participant map exists to prevent, and
-  /// collapsing the stream by hand reintroduces it one layer above the fix.
-  ///
-  /// So the answer comes from the client's own fold, which is also what makes
-  /// the 5s auto-clear work end to end: a manufactured stop removes one
-  /// participant from that map and the indicator stays up for the others.
   void _onTyping(TypingEvent event) =>
-      emit(state.copyWith(isTyping: _client.typingParticipants.isNotEmpty));
+      emit(state.copyWith(isTyping: event.isTyping));
 
   @override
   Future<void> close() async {
-    // First: a page landing after `super.close()` would be an emit on a
-    // closed Cubit. An in-flight fetch is not cancellable, so its answer is
-    // dropped on arrival instead.
-    _sessionList?.dispose();
-    // The same rule for the transcript's own fetch, through the one mechanism
-    // this class already has for "that page is not for what is on screen any
-    // more": every seed in flight is made STALE, so its page is dropped on
-    // arrival rather than emitted onto a closed Cubit. See [_transcriptEpoch].
-    _transcriptEpoch += 1;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _sessionList?.dispose();
     await _csatSub?.cancel();
     await _csat?.dispose();
     await _sessionClosedSub.cancel();
@@ -2610,7 +1797,6 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     await _messagesSub.cancel();
     await _sessionsSub.cancel();
     await _typingSub.cancel();
-    await _errorsSub.cancel();
     return super.close();
   }
 }

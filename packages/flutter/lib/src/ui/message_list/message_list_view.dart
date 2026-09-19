@@ -159,7 +159,11 @@ class _MessageListViewState extends State<MessageListView> {
       // last text instead would swallow the second of two identical
       // messages, which is a real thing an agent sends.
       if (announcement != null) {
-        SemanticsService.announce(announcement, Directionality.of(context));
+        SemanticsService.sendAnnouncement(
+          View.of(context),
+          announcement,
+          Directionality.of(context),
+        );
       }
     });
   }
@@ -387,7 +391,7 @@ class _QuoteStrip extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.only(left: 8),
       decoration: BoxDecoration(
-        border: Border(left: BorderSide(color: color.withOpacity(0.5))),
+        border: Border(left: BorderSide(color: color.withValues(alpha: 0.5))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,7 +411,7 @@ class _QuoteStrip extends StatelessWidget {
             style: Theme.of(context)
                 .textTheme
                 .bodySmall
-                ?.copyWith(color: color.withOpacity(0.85)),
+                ?.copyWith(color: color.withValues(alpha: 0.85)),
           ),
         ],
       ),

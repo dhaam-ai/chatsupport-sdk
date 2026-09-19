@@ -54,9 +54,10 @@ const int kMaxHeroAvatars = 3;
 /// choice relies on does not hold here, and hiding it would remove real
 /// content from a screen-reader user instead of skipping a repeat.
 class HeroHeader extends StatelessWidget {
-  const HeroHeader({super.key, required this.config});
+  const HeroHeader({super.key, required this.config, this.onClose});
 
   final RemoteConfig config;
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -75,8 +76,11 @@ class HeroHeader extends StatelessWidget {
     final String greeting = header.greeting ?? '';
     final String subGreeting = header.subGreeting ?? '';
 
-    final bool isEmpty =
-        !showLogo && avatars.isEmpty && greeting.isEmpty && subGreeting.isEmpty;
+    final bool isEmpty = onClose == null &&
+        !showLogo &&
+        avatars.isEmpty &&
+        greeting.isEmpty &&
+        subGreeting.isEmpty;
     if (isEmpty) return const SizedBox.shrink();
 
     final Color accent = Theme.of(context).colorScheme.primary;
@@ -98,6 +102,16 @@ class HeroHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
+              if (onClose != null)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton(
+                    tooltip: 'Close chat',
+                    onPressed: onClose,
+                    color: foregroundColor,
+                    icon: const Icon(Icons.close),
+                  ),
+                ),
               if (showLogo)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
@@ -269,9 +283,11 @@ class CollapsingHeroHeader extends StatefulWidget {
     super.key,
     required this.config,
     required this.child,
+    this.onClose,
   });
 
   final RemoteConfig config;
+  final VoidCallback? onClose;
 
   /// The scrolling content the hero sits above. Given the remaining height.
   final Widget child;
@@ -332,7 +348,11 @@ class _CollapsingHeroHeaderState extends State<CollapsingHeroHeader> {
             child: Align(
               alignment: Alignment.topCenter,
               heightFactor: _collapsed ? 0.0 : 1.0,
-              child: HeroHeader(key: _heroKey, config: widget.config),
+              child: HeroHeader(
+                key: _heroKey,
+                config: widget.config,
+                onClose: widget.onClose,
+              ),
             ),
           ),
           Expanded(child: widget.child),

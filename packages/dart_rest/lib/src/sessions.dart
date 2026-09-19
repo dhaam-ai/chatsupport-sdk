@@ -49,6 +49,7 @@ import 'models/session_summary.dart';
 /// response content in it, and a route name that is never interpolated is how
 /// that stays true by construction rather than by review.
 const String _kListSessionsRoute = 'GET /chat/sessions/customer';
+const String _kOpenTargetSessionRoute = 'POST /chat/sessions';
 const String _kSubmitCsatRoute = 'POST /chat/sessions/{sessionId}/csat';
 const String _kGetCsatRoute = 'GET /chat/sessions/{sessionId}/csat';
 const String _kCloseRoute = 'POST /chat/sessions/{sessionId}/close';
@@ -63,6 +64,38 @@ const String _kFullSessionRoute = 'GET /chat/sessions/{sessionId}/full';
 /// survives an `export`" is a language property worth pinning rather than
 /// assuming.
 extension SessionApi on RestClient {
+  /// `POST /chat/sessions` — opens, or resumes, the pair addressed by
+  /// [targetRole] + [targetId].
+  ///
+  /// `forceNew` asks the server to create a fresh conversation rather than
+  /// resuming the pair's open one. The body deliberately sends both target
+  /// fields together; callers wanting ordinary support chat should keep using
+  /// the socket handshake without a target instead.
+  Future<String> openTargetSession({
+    required String targetRole,
+    required String targetId,
+    bool forceNew = false,
+  }) async {
+    final Object? body = await request(
+      'POST',
+      '/chat/sessions',
+      jsonBody: <String, Object?>{
+        'targetRole': targetRole,
+        'targetId': targetId,
+        if (forceNew) 'forceNew': true,
+      },
+    );
+
+    final Map<String, Object?> receipt =
+        unwrapEnvelope(body, _kOpenTargetSessionRoute);
+    return requireNonEmptyString(
+      receipt,
+      'sessionId',
+      'session',
+      context: _kOpenTargetSessionRoute,
+    );
+  }
+
   /// `POST /chat/sessions/{id}/close`, then a read-back of
   /// `GET /chat/sessions/{id}/full` — TWO round trips, never one.
   ///

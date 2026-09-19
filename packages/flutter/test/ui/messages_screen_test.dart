@@ -6,10 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../state/fake_widget_chat_client.dart';
 
-Widget _wrap(ChatWidgetCubit cubit) {
+Widget _wrap(ChatWidgetCubit cubit, {VoidCallback? onBack}) {
   return BlocProvider<ChatWidgetCubit>.value(
     value: cubit,
-    child: const MaterialApp(home: Scaffold(body: MessagesScreen())),
+    child: MaterialApp(home: Scaffold(body: MessagesScreen(onBack: onBack))),
   );
 }
 
@@ -63,6 +63,17 @@ void main() {
     expect(cubit.state.screen, ScreenName.conversation);
     expect(cubit.state.composingNew, isTrue);
     expect(cubit.state.activeSurface, isA<ComposingNewSurface>());
+  });
+
+  testWidgets('renders an inline back button when supplied', (tester) async {
+    int backCalls = 0;
+    await tester.pumpWidget(_wrap(cubit, onBack: () => backCalls += 1));
+
+    expect(find.byTooltip('Back'), findsOneWidget);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pump();
+
+    expect(backCalls, 1);
   });
 
   group(

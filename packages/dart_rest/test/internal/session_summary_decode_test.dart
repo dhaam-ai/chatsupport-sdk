@@ -23,6 +23,8 @@ Map<String, Object?> summaryRow([Map<String, Object?> overrides = const {}]) =>
       'unreadCount': 3,
       'subject': 'Order never arrived',
       'topic': 'Delivery issue',
+      'targetRole': 'merchant',
+      'targetId': 'outlet-42',
       'handledBy': <String, Object?>{
         'kind': 'AGENT',
         'id': 'agent-9',
@@ -32,8 +34,7 @@ Map<String, Object?> summaryRow([Map<String, Object?> overrides = const {}]) =>
     };
 
 void main() {
-  group('decodeRestChatSessionSummary — string enums, already v2-projected',
-      () {
+  group('decodeRestChatSessionSummary — string enums, already v2-projected', () {
     for (final ChatStatus status in ChatStatus.values) {
       test('accepts status ${status.wire} verbatim', () {
         expect(
@@ -61,12 +62,16 @@ void main() {
     test('rejects an unmappable status or mode rather than guessing', () {
       expect(
         () => decodeRestChatSessionSummary(
-            summaryRow(<String, Object?>{'status': 'BOGUS'}), _ctx),
+          summaryRow(<String, Object?>{'status': 'BOGUS'}),
+          _ctx,
+        ),
         throwsA(isA<RestMalformedResponseException>()),
       );
       expect(
         () => decodeRestChatSessionSummary(
-            summaryRow(<String, Object?>{'mode': 'BOGUS'}), _ctx),
+          summaryRow(<String, Object?>{'mode': 'BOGUS'}),
+          _ctx,
+        ),
         throwsA(isA<RestMalformedResponseException>()),
       );
     });
@@ -77,7 +82,9 @@ void main() {
       // unmappable as a bogus string, and refused identically.
       expect(
         () => decodeRestChatSessionSummary(
-            summaryRow(<String, Object?>{'status': 3}), _ctx),
+          summaryRow(<String, Object?>{'status': 3}),
+          _ctx,
+        ),
         throwsA(isA<RestMalformedResponseException>()),
       );
     });
@@ -85,8 +92,10 @@ void main() {
 
   group('decodeRestChatSessionSummary — full mapping', () {
     test('parses every field, including subject/topic and handledBy', () {
-      final RestChatSessionSummary summary =
-          decodeRestChatSessionSummary(summaryRow(), _ctx);
+      final RestChatSessionSummary summary = decodeRestChatSessionSummary(
+        summaryRow(),
+        _ctx,
+      );
 
       expect(summary.id, 'sum-1');
       expect(summary.status, ChatStatus.assigned);
@@ -98,6 +107,8 @@ void main() {
       expect(summary.unreadCount, 3);
       expect(summary.subject, 'Order never arrived');
       expect(summary.topic, 'Delivery issue');
+      expect(summary.targetRole, 'merchant');
+      expect(summary.targetId, 'outlet-42');
       expect(summary.handledBy?.kind, HandledByKind.agent);
       expect(summary.handledBy?.id, 'agent-9');
       expect(summary.handledBy?.displayName, 'Ada');
@@ -128,8 +139,10 @@ void main() {
       row.remove('topic');
       row.remove('handledBy');
 
-      final RestChatSessionSummary summary =
-          decodeRestChatSessionSummary(row, _ctx);
+      final RestChatSessionSummary summary = decodeRestChatSessionSummary(
+        row,
+        _ctx,
+      );
 
       expect(summary.lastMessagePreview, isNull);
       expect(summary.subject, isNull);
@@ -171,14 +184,10 @@ void main() {
       expect(topicOnly.subject, isNull);
     });
 
-    test(
-        'keeps closedAt and lastMessageAt null rather than treating null as a '
+    test('keeps closedAt and lastMessageAt null rather than treating null as a '
         'parse failure', () {
       final RestChatSessionSummary summary = decodeRestChatSessionSummary(
-        summaryRow(<String, Object?>{
-          'closedAt': null,
-          'lastMessageAt': null,
-        }),
+        summaryRow(<String, Object?>{'closedAt': null, 'lastMessageAt': null}),
         _ctx,
       );
 
@@ -216,18 +225,18 @@ void main() {
       ('is missing its id and displayName', <String, Object?>{'kind': 'AGENT'}),
       (
         'has an unrecognized kind',
-        <String, Object?>{'kind': 'BOGUS', 'id': 'x', 'displayName': 'x'}
+        <String, Object?>{'kind': 'BOGUS', 'id': 'x', 'displayName': 'x'},
       ),
       // CUSTOMER specifically: a customer is who a session is FOR, never who
       // handles it. HandledByKind refuses it, and reusing that enum is what
       // makes the refusal free here.
       (
         'names CUSTOMER as the handler',
-        <String, Object?>{'kind': 'CUSTOMER', 'id': 'x', 'displayName': 'x'}
+        <String, Object?>{'kind': 'CUSTOMER', 'id': 'x', 'displayName': 'x'},
       ),
       (
         'has an empty displayName',
-        <String, Object?>{'kind': 'AGENT', 'id': 'a', 'displayName': ''}
+        <String, Object?>{'kind': 'AGENT', 'id': 'a', 'displayName': ''},
       ),
       ('is not an object', 'AGENT'),
       ('is an array', <Object?>[]),
@@ -247,10 +256,7 @@ void main() {
     }
 
     test('the fromJson factory is the same decode', () {
-      expect(
-        RestChatSessionSummary.fromJson(summaryRow(), _ctx).id,
-        'sum-1',
-      );
+      expect(RestChatSessionSummary.fromJson(summaryRow(), _ctx).id, 'sum-1');
     });
   });
 
@@ -266,7 +272,8 @@ void main() {
 
       final List<RestChatSessionSummary?> projected = rows
           .map(
-              (Map<String, Object?> row) => projectSessionSummaryRow(row, _ctx))
+            (Map<String, Object?> row) => projectSessionSummaryRow(row, _ctx),
+          )
           .toList();
 
       expect(
@@ -275,15 +282,16 @@ void main() {
       );
     });
 
-    test(
-        'omits rather than replaces — unlike a message, which gets a '
+    test('omits rather than replaces — unlike a message, which gets a '
         'placeholder', () {
       // The one place this package's two page-level projectors deliberately
       // differ. There is no "unsupported session" row a picker could render
       // that a customer would not simply tap.
       expect(
         projectSessionSummaryRow(
-            summaryRow(<String, Object?>{'status': 'BOGUS'}), _ctx),
+          summaryRow(<String, Object?>{'status': 'BOGUS'}),
+          _ctx,
+        ),
         isNull,
       );
     });

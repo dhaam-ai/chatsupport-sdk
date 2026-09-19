@@ -49,7 +49,11 @@ void _report(Object error, StackTrace stackTrace) => FlutterError.reportError(
     );
 
 class ConversationScreen extends StatefulWidget {
-  const ConversationScreen({super.key});
+  const ConversationScreen({super.key, this.onConversationEnded});
+
+  /// Called after the customer confirms "End conversation" and the close
+  /// request succeeds.
+  final VoidCallback? onConversationEnded;
 
   @override
   State<ConversationScreen> createState() => _ConversationScreenState();
@@ -215,7 +219,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
             );
           case ConfirmEndSurface(:final String sessionId):
             return EndConversationConfirm(
-              onConfirm: () => cubit.confirmEndConversation(sessionId),
+              onConfirm: () async {
+                await cubit.confirmEndConversation(sessionId);
+                widget.onConversationEnded?.call();
+              },
               onCancel: cubit.cancelEndConversation,
               onError: _report,
             );

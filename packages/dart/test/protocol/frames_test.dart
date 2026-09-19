@@ -19,26 +19,26 @@ Map<String, Object?> messageJson({int seq = 1, String id = _ulid}) =>
     };
 
 Map<String, Object?> replayFrame(int seq) => <String, Object?>{
-      'v': 1,
-      't': 'message.new',
-      'id': _ulid,
-      'ts': 1700000000000,
-      'd': messageJson(seq: seq),
-    };
+  'v': 1,
+  't': 'message.new',
+  'id': _ulid,
+  'ts': 1700000000000,
+  'd': messageJson(seq: seq),
+};
 
 Map<String, Object?> sessionJson() => <String, Object?>{
-      'sessionId': 's1',
-      'status': 'ASSIGNED',
-      'mode': 'HUMAN',
-      'participants': <Object?>[
-        <String, Object?>{
-          'participantId': 'p1',
-          'type': 'AGENT',
-          'lastReadAt': '2026-08-19T11:00:00.000Z',
-        },
-      ],
-      'createdAt': '2026-08-19T10:00:00.000Z',
-    };
+  'sessionId': 's1',
+  'status': 'ASSIGNED',
+  'mode': 'HUMAN',
+  'participants': <Object?>[
+    <String, Object?>{
+      'participantId': 'p1',
+      'type': 'AGENT',
+      'lastReadAt': '2026-08-19T11:00:00.000Z',
+    },
+  ],
+  'createdAt': '2026-08-19T10:00:00.000Z',
+};
 
 void main() {
   group('outbound payloads', () {
@@ -58,8 +58,10 @@ void main() {
     test('connection.hello omits resumeFrom entirely on a fresh connect', () {
       // Absent means "fresh". Sending an explicit null or a 0 would be read as
       // a resume claim, and 0 specifically means "replay everything".
-      final Map<String, Object?> d =
-          connectionHelloPayload(token: 't', publishableKey: 'k');
+      final Map<String, Object?> d = connectionHelloPayload(
+        token: 't',
+        publishableKey: 'k',
+      );
       expect(d.containsKey('resumeFrom'), isFalse);
       expect(d['protocolVersion'], equals(kProtocolVersion));
     });
@@ -69,8 +71,10 @@ void main() {
       // presence, so a hello that always carried `newSession: false` would
       // differ on the wire from every hello this client sent before the field
       // existed — for a request nobody made.
-      final Map<String, Object?> d =
-          connectionHelloPayload(token: 't', publishableKey: 'k');
+      final Map<String, Object?> d = connectionHelloPayload(
+        token: 't',
+        publishableKey: 'k',
+      );
       expect(d.containsKey('newSession'), isFalse);
       expect(d.containsKey('subject'), isFalse);
       expect(d.containsKey('topic'), isFalse);
@@ -102,6 +106,25 @@ void main() {
       expect(d.containsKey('topic'), isFalse);
     });
 
+    test('connection.hello carries a target only as a complete pair', () {
+      final Map<String, Object?> targeted = connectionHelloPayload(
+        token: 't',
+        publishableKey: 'k',
+        targetRole: 'merchant',
+        targetId: 'outlet-42',
+      );
+      expect(targeted['targetRole'], equals('merchant'));
+      expect(targeted['targetId'], equals('outlet-42'));
+
+      final Map<String, Object?> halfPair = connectionHelloPayload(
+        token: 't',
+        publishableKey: 'k',
+        targetRole: 'merchant',
+      );
+      expect(halfPair.containsKey('targetRole'), isFalse);
+      expect(halfPair.containsKey('targetId'), isFalse);
+    });
+
     test('message.send always emits type, which the server requires', () {
       // §6.3 shows type as optional (`opts?: { type?: MessageType }`). The
       // server requires it. A client that follows §6.3 literally fails every
@@ -111,25 +134,27 @@ void main() {
       expect(d['content'], equals('hi'));
     });
 
-    test('message.send puts an attachment at the top level, not in metadata',
-        () {
-      final Map<String, Object?> d = messageSendPayload(
-        content: '',
-        type: MessageType.image,
-        attachment: const AttachmentMetadata(
-          url: 'https://example.test/a.png',
-          fileName: 'a.png',
-          mimeType: 'image/png',
-          size: 10,
-          mediaType: 'IMAGE',
-        ),
-        metadata: const <String, Object?>{'caption': 'x'},
-      );
-      expect(d.containsKey('attachment'), isTrue);
-      final Map<String, Object?> metadata =
-          d['metadata']! as Map<String, Object?>;
-      expect(metadata.containsKey('attachment'), isFalse);
-    });
+    test(
+      'message.send puts an attachment at the top level, not in metadata',
+      () {
+        final Map<String, Object?> d = messageSendPayload(
+          content: '',
+          type: MessageType.image,
+          attachment: const AttachmentMetadata(
+            url: 'https://example.test/a.png',
+            fileName: 'a.png',
+            mimeType: 'image/png',
+            size: 10,
+            mediaType: 'IMAGE',
+          ),
+          metadata: const <String, Object?>{'caption': 'x'},
+        );
+        expect(d.containsKey('attachment'), isTrue);
+        final Map<String, Object?> metadata =
+            d['metadata']! as Map<String, Object?>;
+        expect(metadata.containsKey('attachment'), isFalse);
+      },
+    );
 
     test('typing and heartbeat payloads are empty objects, not null', () {
       // The server requires `d` to be an object for both. Sending null earns
@@ -141,8 +166,10 @@ void main() {
 
   group('ChatMessage', () {
     test('decodes and exposes seq as the ordering key', () {
-      final ChatMessage message =
-          ChatMessage.fromJson(messageJson(seq: 7), 'd');
+      final ChatMessage message = ChatMessage.fromJson(
+        messageJson(seq: 7),
+        'd',
+      );
       expect(message.seq, equals(7));
       expect(message.senderType, equals(SenderType.customer));
       expect(message.createdAt.isUtc, isTrue);
@@ -285,27 +312,29 @@ void main() {
     test('message.delivered watermarks on seq, and carries a display time', () {
       final MessageDelivered delivered =
           MessageDelivered.fromJson(<String, Object?>{
-        'participantId': 'p1',
-        'deliveredUpToSeq': 7,
-        'deliveredAt': '2026-08-19T12:00:00Z',
-      });
+            'participantId': 'p1',
+            'deliveredUpToSeq': 7,
+            'deliveredAt': '2026-08-19T12:00:00Z',
+          });
       expect(delivered.participantId, equals('p1'));
       expect(delivered.deliveredUpToSeq, equals(7));
       expect(delivered.deliveredAt.isUtc, isTrue);
     });
 
-    test('message.delivered accepts an integral double for deliveredUpToSeq',
-        () {
-      // On Flutter Web every Dart number is a double, so `"deliveredUpToSeq":
-      // 7` arrives as 7.0 on exactly one of the three target platforms.
-      final MessageDelivered delivered =
-          MessageDelivered.fromJson(<String, Object?>{
-        'participantId': 'p1',
-        'deliveredUpToSeq': 7.0,
-        'deliveredAt': '2026-08-19T12:00:00Z',
-      });
-      expect(delivered.deliveredUpToSeq, equals(7));
-    });
+    test(
+      'message.delivered accepts an integral double for deliveredUpToSeq',
+      () {
+        // On Flutter Web every Dart number is a double, so `"deliveredUpToSeq":
+        // 7` arrives as 7.0 on exactly one of the three target platforms.
+        final MessageDelivered delivered =
+            MessageDelivered.fromJson(<String, Object?>{
+              'participantId': 'p1',
+              'deliveredUpToSeq': 7.0,
+              'deliveredAt': '2026-08-19T12:00:00Z',
+            });
+        expect(delivered.deliveredUpToSeq, equals(7));
+      },
+    );
 
     test('message.delivered requires deliveredUpToSeq — the ordering key', () {
       expect(
@@ -391,10 +420,10 @@ void main() {
     });
 
     test('presence.update leaves lastSeen absent while online', () {
-      final PresenceEntry entry = PresenceEntry.fromJson(
-        <String, Object?>{'participantId': 'p1', 'status': 'ONLINE'},
-        'd',
-      );
+      final PresenceEntry entry = PresenceEntry.fromJson(<String, Object?>{
+        'participantId': 'p1',
+        'status': 'ONLINE',
+      }, 'd');
       expect(entry.status, equals(PresenceStatus.online));
       expect(entry.lastSeen, isNull);
     });

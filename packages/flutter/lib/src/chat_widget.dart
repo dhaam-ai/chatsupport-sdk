@@ -50,7 +50,6 @@ import 'ui/header/header.dart';
 import 'ui/home_screen.dart';
 import 'ui/messages_screen.dart';
 import 'ui/offline_banner.dart';
-import 'ui/session_picker/session_picker.dart';
 import 'ui/unavailable_view.dart';
 
 /// The [ConnectionState]s that mean the client has stopped on purpose rather
@@ -73,58 +72,39 @@ class ChatWidget extends StatefulWidget {
     required this.cubit,
     this.chime,
     this.onClose,
+    this.showHomeTab = true,
+    this.showBottomNav = true,
   });
 
   final ChatWidgetCubit cubit;
-
-  /// The customer asked to leave the panel. Null — the default — draws no
-  /// close control at all.
-  ///
-  /// ── This package never pops a route, and that is the whole point ─────
-  ///
-  /// The reported gap: "add in home view or message view in SDK to close —
-  /// `Navigator.pop`, so it will go back to the original screen." The pop
-  /// belongs to the HOST and this callback is where it goes:
-  ///
-  /// ```dart
-  /// ChatWidget(cubit: cubit, onClose: () => Navigator.of(context).pop());
-  /// ```
-  ///
-  /// Calling [Navigator.pop] from inside this widget would be this package
-  /// dismissing a route it did not push. It mounts no [MaterialApp] and
-  /// therefore no [Navigator] of its own (see this library's header), so the
-  /// only navigator in scope is the host's — and this widget may not be on a
-  /// pushed route at all: a panel embedded in a page, or shown in a sheet
-  /// the host closes its own way, would have some unrelated screen popped
-  /// out from under it. The conversation app bar already makes exactly this
-  /// refusal one screen in, with `automaticallyImplyLeading: false`.
-  ///
-  /// ── Optional for the same reason every other seam here is ───────────
-  ///
-  /// Absent means OFF, not broken — the rule the ⋯ menu applies to an
-  /// unbacked row and [ChatWidgetCubit] applies to an unwired
-  /// `sessionSource`. A host that mounts this panel as a tab of its own app
-  /// has nothing to close and passes nothing, and gets the same two screens
-  /// it had before this parameter existed. A control that appeared anyway
-  /// and did nothing would be the survey-that-discards-the-answer bug
-  /// wearing another face.
-  ///
-  /// Reaches Home and Messages, and not the conversation screen: those two
-  /// are where a customer is between conversations, and the conversation
-  /// already has a header with its own controls. Pinned by
-  /// `test/ui/close_affordance_test.dart`.
-  final VoidCallback? onClose;
 
   /// The reply chime, or null to build the default one.
   ///
   /// Injectable for the reason every other platform-touching thing in this
   /// package is (`AttachmentPicker`, `ChimePlayer`, `GeolocationProbe`): a
   /// widget that reaches a platform channel directly is a widget whose tests
-  /// cannot run in CI. The default player bundles this package's own
-  /// `assets/chime.wav` through `audioplayers` — see `chime.dart` on why that
-  /// replaced `SystemSound`, which Flutter ignores on Android, iOS and web,
-  /// and on how a host supplies its own player instead.
+  /// cannot run in CI. See `chime.dart` on why the default player is
+  /// [SystemSound] rather than an audio plugin, and how a host replaces it.
   final Chime? chime;
+
+  /// Called when the customer taps the Home hero's close affordance.
+  ///
+  /// The host owns how this widget is mounted — route, sheet, pane, overlay —
+  /// so the close action is also a host callback rather than a Cubit operation.
+  final VoidCallback? onClose;
+
+  /// Whether the bottom navigation exposes the Home destination.
+  ///
+  /// Targeted outlet chat can mount the widget as a single conversation flow,
+  /// where returning to the general support Home would be the wrong product
+  /// surface.
+  final bool showHomeTab;
+
+  /// Whether to show the Home/Messages bottom navigation at all.
+  ///
+  /// Targeted outlet chat can use the widget as a single conversation surface,
+  /// with no route back to the general conversation list.
+  final bool showBottomNav;
 
   @override
   State<ChatWidget> createState() => _ChatWidgetState();
@@ -132,14 +112,6 @@ class ChatWidget extends StatefulWidget {
 
 class _ChatWidgetState extends State<ChatWidget> {
   late final Chime _chime = widget.chime ?? Chime();
-
-  /// The session the chime last saw the customer in.
-  ///
-  /// Only the chime reads it, and only to tell "the visible unread total
-  /// changed because a message arrived" apart from "it changed because
-  /// joining a conversation revealed one". See the listener in [build]; the
-  /// second is not an arrival and must not sound.
-  String? _lastJoinedSessionId;
 
   @override
   void initState() {
@@ -151,28 +123,14 @@ class _ChatWidgetState extends State<ChatWidget> {
     // reading and stay silent for it.
     //
     // `playOnUnreadRise` enforces "strictly on the way up, never on the
-    // first observation": the count also FALLS (to zero, when the panel is
-    // read), and a restored session's backlog must not greet a returning
+    // first observation": `unreadCount` also FALLS (to zero, when the panel
+    // is read), and a restored session's backlog must not greet a returning
     // visitor with a noise about messages they have already read.
-    //
-    // ── The SAME number the listener reads, and why it has to be ────────
-    //
-    // `customerVisibleUnreadCount`, not the whole-page `unreadCount` — the
-    // two sites are one mechanism. The watermark seeded here is what every
-    // later rise is compared against, so a seed taken from the wider count
-    // while the listener read the narrower one would compare a real reply
-    // against a number it can never exceed and stay silent for it. Pinned
-    // by `chime_mount_test.dart`'s "seeds its first silent reading from the
-    // VISIBLE count", which fails if only one of the two is narrowed.
     _chime.playOnUnreadRise(
-      unread: widget.cubit.state.customerVisibleUnreadCount,
+      unread: widget.cubit.state.unreadCount,
       sound: widget.cubit.state.config.sound,
       muted: widget.cubit.state.muted,
     );
-    // Taken at the same moment as the seed above, so a widget mounted with a
-    // session already joined does not read its first emission as a join and
-    // record a jump that never happened.
-    _lastJoinedSessionId = widget.cubit.state.session?.sessionId;
     // Not in the Cubit's own constructor — see ChatWidgetCubit.connect's
     // doc: network I/O as a side effect of construction is untestable by
     // construction, and this widget (which owns nothing about the Cubit's
@@ -196,69 +154,18 @@ class _ChatWidgetState extends State<ChatWidget> {
         // CHANGE and a rebuild happens for a hundred reasons that are not
         // one. `listenWhen` is the selector; the initial reading is taken in
         // `initState` instead.
-        //
-        // ── The chime obeys the same rule as the badge ─────────────────
-        //
-        // The number watched is `customerVisibleUnreadCount`, the same one
-        // the Messages tab badge counts — NOT the whole-page
-        // `unreadCount`. A conversation the merchant has CLOSED is on none
-        // of this widget's surfaces, so an unread rise confined to one
-        // moves no badge, shows no row and leads nowhere: a sound for it is
-        // a promise the customer can neither explain nor act on, and the
-        // sound is the louder half of that promise, not the exempt one.
-        // The selector is narrowed WITH the value, deliberately: one
-        // number, watched and recorded in the same place, so the watermark
-        // cannot drift away from what is being handed over. A selector left
-        // on the whole page would record the visible count only on the
-        // ticks the page happened to move, stranding the watermark above it
-        // and swallowing the next real reply — the same failure the
-        // `initState` seed's own note describes, from the other end.
-        //
-        // ── The price this used to carry, and how it is paid ───────────
-        //
-        // The exception in [ChatWidgetState.customerVisibleSessions] moves
-        // this number too: joining a conversation that was ALREADY closed
-        // brings its unread into the sum, so the count jumps for a
-        // navigation rather than an arrival. That was accepted as the lesser
-        // of two evils when the chime was narrowed — "not a case anybody
-        // decided was wanted" — and it is no longer accepted, because it did
-        // not have to be. Confirmed by probe, then by a failing test on this
-        // very code: a host opening such a conversation got a chime for four
-        // messages that were already sitting there.
-        //
-        // So the session id is watched ALONGSIDE the count, and when that is
-        // what moved the jump is RECORDED instead of played — see
-        // `Chime.recordWithoutPlaying`. The reveal is silent; the next real
-        // message is still compared against the recorded value and still
-        // sounds.
-        //
-        // The id belongs in the SELECTOR, not only in the listener body.
-        // Were it read only on ticks where the count moved, a join that left
-        // the count unchanged would strand `_lastJoinedSessionId` stale, and
-        // the next genuine arrival would then look like a join and be
-        // swallowed. Silencing a real reply is the worse failure of the two,
-        // which is why the cheap extra wake-up is taken.
         listenWhen: (ChatWidgetState previous, ChatWidgetState current) =>
-            previous.customerVisibleUnreadCount !=
-                current.customerVisibleUnreadCount ||
-            previous.session?.sessionId != current.session?.sessionId,
-        listener: (BuildContext context, ChatWidgetState state) {
-          final String? joined = state.session?.sessionId;
-          if (joined != _lastJoinedSessionId) {
-            _lastJoinedSessionId = joined;
-            _chime.recordWithoutPlaying(state.customerVisibleUnreadCount);
-            return;
-          }
-          _chime.playOnUnreadRise(
-            unread: state.customerVisibleUnreadCount,
-            // BOTH have to agree: `config.sound` is the merchant enabling a
-            // chime at all, `muted` is this visitor silencing it. `Chime` is
-            // the one place the two are combined, so no caller can satisfy
-            // one and forget the other.
-            sound: state.config.sound,
-            muted: state.muted,
-          );
-        },
+            previous.unreadCount != current.unreadCount,
+        listener: (BuildContext context, ChatWidgetState state) =>
+            _chime.playOnUnreadRise(
+          unread: state.unreadCount,
+          // BOTH have to agree: `config.sound` is the merchant enabling a
+          // chime at all, `muted` is this visitor silencing it. `Chime` is
+          // the one place the two are combined, so no caller can satisfy one
+          // and forget the other.
+          sound: state.config.sound,
+          muted: state.muted,
+        ),
         builder: (BuildContext context, ChatWidgetState state) {
           final ThemeData theme = chatThemeData(
               state.config, MediaQuery.platformBrightnessOf(context));
@@ -276,62 +183,18 @@ class _ChatWidgetState extends State<ChatWidget> {
                 if (!didPop) widget.cubit.back();
               },
               child: Scaffold(
-                // The conversation gets a header; Home and Messages do not.
-                // They are tabs, not drill-downs, and Home already greets the
-                // customer via its own HeroHeader — a second, generic bar
-                // above it would be a redundant header, not a helpful one.
-                //
-                // ── The gate is the SCREEN, not the back history ──────────
-                //
-                // This used to read `state.canGoBack`, and the two are not the
-                // same fact. `canGoBack` is `ChatScreens._stack.isNotEmpty` —
-                // whether the customer DRILLED IN from somewhere — while what
-                // decides whether this bar has anything to say is whether
-                // they are looking at a conversation at all.
-                //
-                // The two only agree for a customer who arrived through Home
-                // or Messages. A host that opens the panel directly ON a
-                // conversation — `ChatWidgetCubit(sessionId: …)`, which
-                // `example/lib/main.dart:472` passes straight through from
-                // its own config, or `initialScreen: ScreenName.conversation`
-                // — starts with an EMPTY stack (`ChatScreens` is CONSTRUCTED
-                // at that screen rather than pushed to it), so `canGoBack`
-                // was false from the first frame and
-                // this header never mounted at all. That took the ⋯ menu with
-                // it: no End conversation (and so no route to the rating card
-                // that follows one), no Start new, no Privacy, no session
-                // switcher and no identity — on a live conversation where
-                // `cubit.canEndConversation` was true the whole time. The row
-                // was backed; there was simply nowhere to press it. Pinned by
-                // `header_menu_mount_test.dart`.
-                //
-                // ── The old gate was wrong in BOTH directions ─────────────
-                //
-                // It is tempting to read this as a pure widening — every
-                // `ChatScreens.go` in the Cubit targets
-                // `ScreenName.conversation`, so surely `canGoBack` implied
-                // "on a conversation". It does not, and the counter-example
-                // is ordinary: `ChatScreens.swap` (what `switchTab` calls)
-                // changes the screen WITHOUT clearing the stack, and its own
-                // test pins that on purpose — `chat_screens_test.dart`'s
-                // "the earlier go() is still there". So a customer who drills
-                // into a conversation and then taps the Messages tab is on
-                // Messages with `canGoBack` still true, and the old gate drew
-                // this whole conversation header — identity, avatar, session
-                // switcher, ⋯ and an unconditional back arrow — on top of
-                // their message list.
-                //
-                // Reading the screen fixes that leak in the same move as the
-                // missing header, because the screen is the fact the header
-                // was always about. Both directions are pinned by
-                // `header_menu_mount_test.dart`.
-                //
-                // `PopScope.canPop` above deliberately still reads
-                // `canGoBack`: back is about the back history, and returning
-                // a tab-switching customer to where they came from is what
-                // `ChatScreens` is designed to do.
+                // The conversation screen gets the conversation header even
+                // when the host opened it directly. In that direct-entry case
+                // there is no ChatScreens back stack, so the leading affordance
+                // becomes the host-owned close callback instead of Cubit back.
+                // Home and Messages are tabs, not drill-downs, and Home
+                // already greets the customer via its own HeroHeader.
                 appBar: state.screen == ScreenName.conversation
-                    ? _ConversationAppBar(state: state, cubit: widget.cubit)
+                    ? _ConversationAppBar(
+                        state: state,
+                        cubit: widget.cubit,
+                        onClose: widget.onClose,
+                      )
                     : null,
                 // The unavailable panel takes over the whole body, in place
                 // of whichever screen was active, the moment the connection
@@ -367,39 +230,28 @@ class _ChatWidgetState extends State<ChatWidget> {
                             ),
                           ),
                           Expanded(
-                            // `onClose` is handed to the two screens that
-                            // carry the control rather than drawn here, so
-                            // it sits with the rest of each screen's own
-                            // layout — Home's above its hero band, Messages'
-                            // above its search box. A bar drawn at this
-                            // level would be the "second, generic header"
-                            // the app bar above is gated to avoid. Null
-                            // reaches them as null and draws nothing; see
-                            // [ChatWidget.onClose].
                             child: switch (state.screen) {
                               ScreenName.home =>
                                 HomeScreen(onClose: widget.onClose),
-                              ScreenName.messages =>
-                                MessagesScreen(onClose: widget.onClose),
-                              ScreenName.conversation =>
-                                const ConversationScreen(),
+                              ScreenName.messages => MessagesScreen(
+                                  onBack: widget.showHomeTab
+                                      ? null
+                                      : widget.cubit.showConversation),
+                              ScreenName.conversation => ConversationScreen(
+                                  onConversationEnded: widget.onClose,
+                                ),
                             },
                           ),
                         ],
                       ),
-                bottomNavigationBar: ChatBottomNav(
-                  active: state.screen,
-                  // The unread behind the tab, not the unread on the page:
-                  // this badge is a promise about what the Messages screen
-                  // will show, and that screen no longer shows closed
-                  // conversations. The chime above now watches this same
-                  // number rise, so the sound and the badge cannot disagree
-                  // about whether anything happened. `state.unreadCount` —
-                  // the whole-page sum — is untouched as the RECORD of what
-                  // the host supplied; see [ChatWidgetState.unreadCount].
-                  unreadCount: state.customerVisibleUnreadCount,
-                  onSelect: widget.cubit.switchTab,
-                ),
+                bottomNavigationBar: widget.showBottomNav
+                    ? ChatBottomNav(
+                        active: state.screen,
+                        unreadCount: state.unreadCount,
+                        onSelect: widget.cubit.switchTab,
+                        showHome: widget.showHomeTab,
+                      )
+                    : null,
               ),
             ),
           );
@@ -411,10 +263,15 @@ class _ChatWidgetState extends State<ChatWidget> {
 
 class _ConversationAppBar extends StatelessWidget
     implements PreferredSizeWidget {
-  const _ConversationAppBar({required this.state, required this.cubit});
+  const _ConversationAppBar({
+    required this.state,
+    required this.cubit,
+    required this.onClose,
+  });
 
   final ChatWidgetState state;
   final ChatWidgetCubit cubit;
+  final VoidCallback? onClose;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -422,6 +279,7 @@ class _ConversationAppBar extends StatelessWidget
   @override
   Widget build(BuildContext context) {
     return AppBar(
+      automaticallyImplyLeading: false,
       // T14's IdentityHeader, not a second hand-built title.
       //
       // What this replaced re-derived identity as a bare
@@ -440,70 +298,19 @@ class _ConversationAppBar extends StatelessWidget
             ? 'New conversation'
             : (state.config.title ?? 'Conversation'),
       ),
-      // The back arrow is the one part of this bar that IS about the back
-      // history, so it alone keeps the `canGoBack` gate the whole header used
-      // to carry. A customer the host opened straight onto a conversation has
-      // nowhere to go back TO; the bottom nav is how they reach Home.
-      //
-      // `automaticallyImplyLeading: false` is required, not tidiness: with a
-      // null `leading` the default deduces one from the enclosing Navigator —
-      // which here is the HOST's, since this package mounts no MaterialApp of
-      // its own (see this library's header). That would paint a back arrow
-      // that pops the host's route out from under the panel.
-      // https://api.flutter.dev/flutter/material/AppBar/automaticallyImplyLeading.html
-      automaticallyImplyLeading: false,
-      leading: state.canGoBack ? BackButton(onPressed: cubit.back) : null,
+      leading: state.canGoBack
+          ? BackButton(onPressed: cubit.back)
+          : onClose == null
+              ? null
+              : IconButton(
+                  tooltip: 'Close chat',
+                  icon: const Icon(Icons.close),
+                  onPressed: onClose,
+                ),
       actions: <Widget>[
         // Reads the SAME `isHandledByCurrent` gate the title does, which is
         // what stops a face of Ada sitting beside "Acme Support".
         HeaderAvatar(session: state.session, config: state.config),
-        // Surface 2 of the session picker, mounted where its popover needs to
-        // be — a customer already inside one conversation is otherwise stuck
-        // in it with no way back.
-        //
-        // ── Right-aligned is a requirement, not a preference ──────────────
-        //
-        // The panel is 300px wide and anchors `bottomRight → topRight`
-        // (session_switcher.dart:196-199), so it hangs LEFTWARD from the
-        // toggle's right edge and does NOT clamp to the viewport. A toggle
-        // near the left edge therefore puts most of the panel off-screen,
-        // where taps hit nothing. `actions:` is the right-hand side of the
-        // app bar, which is why the header components were put here; this
-        // sits inboard of the ⋯ menu so the ⋯ stays last, and its right edge
-        // is still a full panel-width clear of the left edge. Pinned by
-        // `session_switcher_mount_test.dart`, which measures the rendered
-        // panel rather than trusting this comment.
-        //
-        // ── The gate is the CALLER's, and it is exactly length > 0 ────────
-        //
-        // `session-picker.ts`'s own header: "the client rule is exactly
-        // `sessions.length > 0` ⇒ show the picker", decided outside the
-        // module because whether to reveal a surface at all is a screen-flow
-        // choice. The module itself renders an empty list as an empty-state
-        // ROW, never as a hidden component, and asks no guest question of its
-        // own — re-deriving "is this a guest" here would be the second
-        // derivation D10 exists to forbid. The list is empty for a guest
-        // because the server says so, and that is the whole rule.
-        //
-        // Asked over `customerVisibleSessions` and not over the raw page,
-        // because those are the rows this panel would actually contain: a
-        // customer whose only other conversation the merchant has CLOSED
-        // would otherwise get a toggle in the header that opens onto "No
-        // other conversations yet." — a control offering a choice that is
-        // not there. One gate and one list, both from
-        // [ChatWidgetState.customerVisibleSessions].
-        if (state.customerVisibleSessions.isNotEmpty)
-          SessionSwitcher(
-            sessions: state.customerVisibleSessions,
-            currentSessionId: state.session?.sessionId,
-            onSelect: cubit.selectSession,
-            onStartNew: cubit.startNewConversation,
-            // Left at its default `false`. The busy flag exists for
-            // `SessionPickerScreen`, whose Start mints a session over a round
-            // trip; `startNewConversation` only raises the new-conversation
-            // form and returns, so there is no in-flight state to show and a
-            // spinner here would describe nothing.
-          ),
         HeaderMenu(
           canEnd: cubit.canEndConversation,
           privacyUrl: state.config.privacyUrl,
@@ -521,17 +328,6 @@ class _ConversationAppBar extends StatelessWidget
           // The same pairing `canEnd` above already makes.
           reportIssue: state.config.reportIssue && cubit.canReportIssue,
           muted: state.muted,
-          // The merchant's chime flag, and the third row gated on its own
-          // backing. `Chime` refuses on `!sound` BEFORE it looks at `muted`
-          // (chime.dart), so on a tenant that published none — and `sound`
-          // defaults to false — mute and unmute both changed nothing a
-          // customer could hear. Offering the row anyway was the one place
-          // this menu broke its own rule, and it is what "mute notification
-          // and unmute notification not working" actually was.
-          //
-          // Read off `state.config`, so a config that arrives late through
-          // `applyRemoteConfig` turns the row on with the same rebuild that
-          // repaints everything else it decides.
           sound: state.config.sound,
           onStartNew: cubit.startNewConversation,
           onEndConversation: cubit.openEndConversation,

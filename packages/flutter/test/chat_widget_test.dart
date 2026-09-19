@@ -11,8 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'state/fake_widget_chat_client.dart';
 import 'support/remote_config_fixtures.dart';
 
-Widget _wrap(ChatWidgetCubit cubit) =>
-    MaterialApp(home: ChatWidget(cubit: cubit));
+Widget _wrap(ChatWidgetCubit cubit, {VoidCallback? onClose}) =>
+    MaterialApp(home: ChatWidget(cubit: cubit, onClose: onClose));
 
 /// Lets a queued connection-state event actually reach [ChatWidgetCubit]
 /// before the next pump captures a frame. Same helper, same reasoning, as
@@ -61,9 +61,34 @@ void main() {
     expect(find.byType(AppBar), findsNothing);
   });
 
+  testWidgets('the Home hero close button calls the host onClose',
+      (tester) async {
+    int closeCalls = 0;
+    await tester.pumpWidget(_wrap(cubit, onClose: () => closeCalls += 1));
+
+    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_back), findsNothing);
+    await tester.tap(find.byTooltip('Close chat'));
+    await tester.pump();
+
+    expect(closeCalls, 1);
+    expect(cubit.state.screen, ScreenName.home);
+  });
+
   testWidgets('the bottom nav is present from the start', (tester) async {
     await tester.pumpWidget(_wrap(cubit));
     expect(find.byType(ChatBottomNav), findsOneWidget);
+  });
+
+  testWidgets('can hide the bottom nav for a single-surface chat',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(home: ChatWidget(cubit: cubit, showBottomNav: false)),
+    );
+
+    expect(find.byType(ChatBottomNav), findsNothing);
+    expect(find.text('Home'), findsNothing);
+    expect(find.text('Messages'), findsNothing);
   });
 
   testWidgets('tapping the Messages tab switches screens, still no back bar',

@@ -6,20 +6,14 @@
 /// Every one of these is a function type or a one-method interface that the
 /// package takes as a parameter rather than constructing for itself, so that
 /// its own tests can pass a closure and never touch a platform channel or a
-/// network. That property is worth having and it has a cost: not one of the
-/// package's tests ever exercises the REAL implementations together. This
+/// network. That property is worth having and it has a cost: nothing in the
+/// package's 930 tests ever exercises the REAL implementations together. This
 /// file is the first place they meet.
 ///
-/// The count used to be written out here and had drifted — it said 930 against
-/// a suite of 1245 — so it is not written out any more. A number nobody
-/// reruns is a number that is wrong, and this file's whole argument is that a
-/// claim which is not rechecked stops being true quietly.
-///
 /// Each declaration below is CONSTRUCTED, not described. If
-/// `filePickerAttachmentPicker` ever stops satisfying `AttachmentPicker`, or
-/// `RestClient.uploadAttachment` changes shape, this file stops compiling —
-/// which is the whole reason to write the recipe as code rather than as a
-/// paragraph in the README.
+/// `filePickerAttachmentPicker` ever stops satisfying `AttachmentPicker`, this
+/// file stops compiling — which is the whole reason to write the recipe as
+/// code rather than as a paragraph in the README.
 ///
 /// ── Everything here is now passed to something ───────────────────────────
 ///
@@ -35,38 +29,17 @@
 /// row nobody rechecks reads as a missing feature rather than as a missing
 /// line in an example.
 ///
-/// The session list was a third case, and a different one again: the seam is
-/// `ChatWidgetCubit.updateSessionSummaries`, and nothing called it, so the
-/// Messages screen was empty on every run. That fetch does not live in this
-/// file because it is not a closure the package takes — it is a page a host
-/// goes and gets. It lives in `session_list.dart`, and the panel below it
-/// reports on it.
-///
-/// [exampleAttachmentDraft] was in that list for a real reason and no longer
-/// is — not
-/// because it is now passed, but because the shape it demonstrated was
-/// wrong. `ChatWidgetCubit` takes the two SEAMS (`attachmentUploader`,
-/// `attachmentPicker`) and builds the draft controller per composer itself,
-/// because a draft is one composer's pending file and must die with it. So
-/// `main.dart` passes [exampleAttachmentUploader] directly and the assembled
-/// controller below exists only as compile-time proof that the picker and the
-/// uploader fit each other.
+/// The REST-backed issue reporter and attachment uploader used to live here
+/// as host recipes. They now live inside the SDK and are derived from
+/// `ChatWidgetCubit(rest:)`, so this file only demonstrates host choices that
+/// remain genuinely host-owned.
 library;
 
 import 'package:dhaam_chat/dhaam_chat.dart' show TokenProvider;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart'
-    show
-        AttachmentDraftController,
-        AttachmentPicker,
-        AttachmentUploader,
-        Chime,
-        PickedAttachment,
-        filePickerAttachmentPicker;
-// `MediaApi` is an extension on `RestClient`, not a member of it: without it
-// in scope `rest.uploadAttachment(...)` does not resolve. Named explicitly
-// rather than importing the barrel wholesale so that stays visible.
+    show AttachmentPicker, Chime, filePickerAttachmentPicker;
 import 'package:dhaam_chat_rest/dhaam_chat_rest.dart'
-    show GeolocationProbe, MediaApi, RestClient, RestGeoPosition;
+    show GeolocationProbe, RestGeoPosition;
 import 'package:flutter/foundation.dart';
 
 /// The `getToken` callback both clients take.
@@ -132,76 +105,19 @@ const GeolocationProbe kExampleGeolocationProbe = exampleGeolocationProbe;
 /// passes a closure.
 const AttachmentPicker kExampleAttachmentPicker = filePickerAttachmentPicker;
 
-/// The real uploader: `POST /upload`, through the REST client.
-///
-/// [sessionId] is a callback rather than a value because the seam's signature
-/// is `Future<AttachmentMetadata> Function(PickedAttachment)` — the session is
-/// not one of its parameters, and the conversation a file belongs to can
-/// change under a long-lived controller. Reading it at upload time is what
-/// keeps a file from being posted against the session that was open when the
-/// composer was built.
-///
-/// Note the absence of any `?? 'application/octet-stream'` on `mimeType`. That
-/// is deliberate and is `uploadAttachment`'s own rule: an empty type means
-/// "the platform said nothing" and gets the fallback inside that method, while
-/// a non-empty malformed one still raises. Substituting here would collapse
-/// the two cases at the one seam that can still tell them apart.
-AttachmentUploader exampleAttachmentUploader(
-  RestClient rest,
-  String Function() sessionId,
-) {
-  return (PickedAttachment file) => rest.uploadAttachment(
-        sessionId: sessionId(),
-        bytes: file.bytes,
-        fileName: file.fileName,
-        mimeType: file.mimeType,
-      );
-}
-
-/// The picker and the uploader, assembled into the controller that owns the
-/// draft, the 25 MiB refusal and the in-flight flag.
-///
-/// **The app does not pass THIS** — it passes the two seams to
-/// `ChatWidgetCubit`, which builds one of these per composer. See this
-/// library's header. It is built anyway because building it is what proves
-/// the pieces fit: the controller's constructor is what type-checks the
-/// picker and the uploader against each other, so a change to either shape
-/// stops this file compiling rather than failing at the first tap.
-AttachmentDraftController exampleAttachmentDraft({
-  required RestClient rest,
-  required String Function() sessionId,
-  required void Function(Object error, StackTrace stackTrace) onError,
-}) {
-  return AttachmentDraftController(
-    picker: kExampleAttachmentPicker,
-    uploader: exampleAttachmentUploader(rest, sessionId),
-    onError: onError,
-  );
-}
-
 /// The message-arrival chime, with the package's own default player.
 ///
-/// `Chime()` with no factory uses `bundledChimePlayer`, which plays the
-/// package's OWN `assets/chime.wav` through `audioplayers`. This comment used
-/// to say it used `playSystemChime` — `SystemSound.play(SystemSoundType.alert)`
-/// — and describe the seam as needing no dependency at all. That stopped being
-/// true when the audio work landed, and the old text mattered: Flutter
-/// documents `SystemSound.alert` as IGNORED on Android, iOS and web, so on the
-/// three platforms a customer actually uses there was no chime to describe.
-/// `playSystemChime` is still exported for a host that wants exactly that,
-/// through `Chime(createPlayer: () => playSystemChime)`.
+/// `Chime()` with no factory uses `playSystemChime`, which is
+/// `SystemSound.play(SystemSoundType.alert)` — Flutter's own, no audio plugin,
+/// no asset, nothing for a host to bundle. That is why this seam needs no
+/// dependency where the geolocation one would have needed a plugin and four
+/// permission strings.
 ///
-/// It still costs a host NOTHING to declare, which is the part of the old
-/// comment that survives: the asset ships inside the package and
-/// `audioplayers` asks for no permission on any platform — unlike the
-/// geolocation seam, which would have needed a plugin and four permission
-/// strings.
-///
-/// **Nothing constructs one of these inside the package**, so like
-/// [exampleAttachmentDraft] this is built and not passed. Its `play` still
-/// needs `sound` (the merchant's `RemoteConfig.sound`) and `muted` (the header
-/// menu's per-visitor state) supplied on every call, and both live inside the
-/// widget tree.
+/// The example still constructs one explicitly to show the seam, though
+/// `ChatWidget` would build the same default if the host passed none. Its
+/// `play` still needs `sound` (the merchant's `RemoteConfig.sound`) and
+/// `muted` (the header menu's per-visitor state) supplied on every call, and
+/// both live inside the widget tree.
 Chime exampleChime() => Chime();
 
 /// Whether a seam is actually connected to the widget tree, or only built.
@@ -253,13 +169,10 @@ const List<SeamReport> seamReports = <SeamReport>[
     name: 'AttachmentPicker / AttachmentUploader',
     wiring: SeamWiring.wired,
     detail:
-        'file_picker plus RestClient POST /upload, passed to ChatWidgetCubit. '
+        'file_picker plus RestClient POST /upload, derived by ChatWidgetCubit(rest:). '
+        'The composer grows a paperclip when the merchant has fileUploads on; '
         'ConversationScreen builds one AttachmentDraftController per composer '
-        'from these two seams — a host does NOT build one, because a draft is '
-        'one composer’s pending file and dies with it. If the paperclip is '
-        'missing with this row green, the gate is RemoteConfig.fileUploads: '
-        'see “Uploads enabled” above, which is the merchant’s switch and not '
-        'a seam anyone here can fill.',
+        'from the SDK picker and REST uploader.',
   ),
   SeamReport(
     name: 'VoiceDevice',
@@ -275,19 +188,9 @@ const List<SeamReport> seamReports = <SeamReport>[
     name: 'IssueReporter',
     wiring: SeamWiring.wired,
     detail:
-        'restIssueReporter over POST /chat/sessions/{id}/report-issue, passed '
-        'to ChatWidgetCubit(issueReporter:). Without it the header menu drops '
-        'the Report row entirely rather than offering a dead one.',
-  ),
-  SeamReport(
-    name: 'Session list (updateSessionSummaries)',
-    wiring: SeamWiring.wired,
-    detail: 'dhaam_chat_rest listSessions, mapped and pushed through '
-        'ChatWidgetCubit.updateSessionSummaries by a SessionListRefresher — '
-        'see session_list.dart. The Cubit cannot populate this itself: '
-        'dhaam_chat has no HTTP layer and cannot list sessions at all, so a '
-        'host that renders nothing here has a Messages screen with nothing to '
-        'draw. An empty page is ordinary success and is the guest signal.',
+        'restIssueReporter over POST /chat/sessions/{id}/report-issue, derived '
+        'by ChatWidgetCubit(rest:). Without REST the header menu drops the '
+        'Report row entirely rather than offering a dead one.',
   ),
   SeamReport(
     name: 'ChimePlayer',

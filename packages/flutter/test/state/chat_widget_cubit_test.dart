@@ -1,6 +1,11 @@
+import 'dart:convert';
+
 import 'package:dhaam_chat/dhaam_chat.dart';
+import 'package:dhaam_chat_rest/dhaam_chat_rest.dart';
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'fake_widget_chat_client.dart';
 
@@ -12,6 +17,19 @@ import 'fake_widget_chat_client.dart';
 /// Same reasoning `dhaam_chat`'s own `test/fakes.dart` gives for its
 /// identically-purposed `flush()`.
 Future<void> flush() => Future<void>.delayed(Duration.zero);
+
+http.Response _json(Object body) => http.Response(
+      jsonEncode(body),
+      200,
+      headers: <String, String>{'Content-Type': 'application/json'},
+    );
+
+RestClient _restOver(MockClient client) => RestClient(
+      apiUrl: 'https://chat.example.test',
+      publishableKey: PublishableKey.parse('dhp_test_${'A' * 43}'),
+      getAccessToken: () async => 'tok_test',
+      httpClient: client,
+    );
 
 void main() {
   late FakeWidgetChatClient fakeClient;
@@ -49,12 +67,152 @@ void main() {
       expect(custom.state.config.accent, '#ff0000');
       custom.close();
     });
+
+    test('can return from Messages to the current conversation', () {
+      final custom = ChatWidgetCubit(
+        client: FakeWidgetChatClient(),
+        initialScreen: ScreenName.messages,
+      );
+
+      custom.showConversation();
+
+      expect(custom.state.screen, ScreenName.conversation);
+      expect(custom.state.canGoBack, isFalse);
+      custom.close();
+    });
   });
 
   group('connect()', () {
     test('delegates to the client', () async {
       await cubit.connect();
       expect(fakeClient.connectCalls, 1);
+    });
+
+    test('loads REST session summaries on first connect', () async {
+      final List<Uri> calls = <Uri>[];
+      final RestClient rest =
+          _restOver(MockClient((http.Request request) async {
+        calls.add(request.url);
+        expect(request.method, 'GET');
+        return _json(<String, Object?>{
+          'success': true,
+          'data': <String, Object?>{
+            'sessions': <Object?>[
+              <String, Object?>{
+                'id': 'summary-1',
+                'status': 'OPEN',
+                'mode': 'HUMAN',
+                'createdAt': '2026-08-19T09:00:00.000Z',
+                'closedAt': null,
+                'lastMessageAt': '2026-08-19T09:05:00.000Z',
+                'lastMessagePreview': 'hello from yesterday',
+                'unreadCount': 2,
+                'subject': 'Refund request',
+                'topic': 'Billing',
+                'handledBy': <String, Object?>{
+                  'kind': 'AGENT',
+                  'id': 'agent-9',
+                  'displayName': 'Ada',
+                },
+              },
+            ],
+          },
+        });
+      }));
+      final ChatWidgetCubit custom = ChatWidgetCubit(
+        client: fakeClient,
+        rest: rest,
+      );
+
+      await custom.connect();
+      await flush();
+
+      expect(calls.single.path, '/chat-services/api/v1/chat/sessions/customer');
+      expect(calls.single.queryParameters['limit'], '20');
+      expect(custom.state.sessionSummaries, hasLength(1));
+      expect(custom.state.sessionSummaries.single.id, 'summary-1');
+      expect(custom.state.sessionSummaries.single.subject, 'Refund request');
+      expect(custom.state.sessionSummaries.single.unreadCount, 2);
+      expect(custom.state.unreadCount, 2);
+
+      await custom.close();
+      rest.close();
+    });
+
+    test('joins an initial session after connecting', () async {
+      final custom = ChatWidgetCubit(
+        client: fakeClient,
+        sessionId: 'sess_outlet',
+      );
+
+      await custom.connect();
+
+      expect(fakeClient.connectCalls, 1);
+      expect(fakeClient.joinedSessionIds, <String>['sess_outlet']);
+      await custom.close();
+    });
+
+    test('opens a targeted session and loads its first history page', () async {
+      final List<String> calls = <String>[];
+      final RestClient rest =
+          _restOver(MockClient((http.Request request) async {
+        calls.add('${request.method} ${request.url.path}');
+        if (request.url.path.endsWith('/chat/sessions/customer')) {
+          return _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{
+              'sessions': <Object?>[],
+            },
+          });
+        }
+        if (request.method == 'POST') {
+          expect(jsonDecode(request.body), <String, Object?>{
+            'targetRole': 'merchant',
+            'targetId': 'outlet-42',
+          });
+          return _json(<String, Object?>{
+            'success': true,
+            'data': <String, Object?>{'sessionId': 'sess_outlet'},
+          });
+        }
+        return _json(<String, Object?>{
+          'success': true,
+          'data': <String, Object?>{
+            'messages': <Object?>[
+              <String, Object?>{
+                'id': 'm1',
+                'chatSessionId': 'sess_outlet',
+                'senderId': 'agent-1',
+                'senderType': 2,
+                'messageType': 1,
+                'content': 'previous message',
+                'seq': 1,
+                'createdAt': '2026-01-01T00:00:00.000Z',
+              },
+            ],
+            'hasMore': false,
+          },
+        });
+      }));
+      final ChatWidgetCubit custom = ChatWidgetCubit(
+        client: fakeClient,
+        rest: rest,
+        target: ChatTarget.merchantOutlet('outlet-42'),
+      );
+
+      await custom.connect();
+      await flush();
+
+      expect(calls, <String>[
+        'GET /chat-services/api/v1/chat/sessions/customer',
+        'POST /chat-services/api/v1/chat/sessions',
+        'GET /chat-services/api/v1/chat/sessions/sess_outlet/messages',
+      ]);
+      expect(fakeClient.joinedSessionIds, <String>['sess_outlet']);
+      expect(custom.state.messages.single.content, 'previous message');
+
+      await custom.close();
+      rest.close();
     });
   });
 
@@ -138,6 +296,53 @@ void main() {
       // Deliberately putting a conversation on screen is what arms the
       // pre-chat gate — see ChatWidgetState.conversationOpened.
       expect(cubit.state.conversationOpened, isTrue);
+    });
+
+    test('openConversation loads that session history from REST', () async {
+      final List<Uri> calls = <Uri>[];
+      final RestClient rest =
+          _restOver(MockClient((http.Request request) async {
+        calls.add(request.url);
+        expect(request.method, 'GET');
+        expect(request.url.path,
+            '/chat-services/api/v1/chat/sessions/past-session-1/messages');
+        return _json(<String, Object?>{
+          'success': true,
+          'data': <String, Object?>{
+            'messages': <Object?>[
+              <String, Object?>{
+                'id': 'm-history',
+                'chatSessionId': 'past-session-1',
+                'senderId': 'agent-1',
+                'senderType': 2,
+                'messageType': 1,
+                'content': 'history for tapped session',
+                'seq': 7,
+                'createdAt': '2026-01-01T00:00:00.000Z',
+              },
+            ],
+            'hasMore': false,
+          },
+        });
+      }));
+      final ChatWidgetCubit custom = ChatWidgetCubit(
+        client: fakeClient,
+        rest: rest,
+      );
+
+      custom.openConversation('past-session-1');
+      await flush();
+
+      expect(fakeClient.joinedSessionIds, <String>['past-session-1']);
+      expect(calls.single.queryParameters['limit'], '30');
+      expect(
+        custom.state.messages.single.content,
+        'history for tapped session',
+      );
+      expect(custom.state.screen, ScreenName.conversation);
+
+      await custom.close();
+      rest.close();
     });
 
     test('back() returns to wherever navigation came from', () {
@@ -291,6 +496,22 @@ void main() {
       await flush();
 
       expect(cubit.state.messages.map((m) => m.id).toList(), ['m1', 'm2']);
+    });
+
+    test('REST history is merged and ordered by seq', () {
+      cubit.loadMessageHistory([
+        testMessage(id: 'm2', content: 'second', seq: 2),
+        testMessage(id: 'm1', content: 'first', seq: 1),
+      ]);
+
+      expect(cubit.state.messages.map((m) => m.id).toList(), ['m1', 'm2']);
+
+      cubit.loadMessageHistory([
+        testMessage(id: 'm1', content: 'first updated', seq: 1),
+      ]);
+
+      expect(cubit.state.messages, hasLength(2));
+      expect(cubit.state.messages.first.content, 'first updated');
     });
   });
 
