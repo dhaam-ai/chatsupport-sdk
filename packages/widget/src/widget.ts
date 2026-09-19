@@ -673,6 +673,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const localParticipantId = config.identity.userId;
 
   /**
+   * Whose online/offline status the header shows — the counterparty of a
+   * TARGETED mount only (`OutletChatModal`, the "Message Admin" button):
+   * `config.target.id` names them directly, which is simpler and more
+   * reliable than deriving "whoever in `session.participants` is not me"
+   * from a snapshot core doesn't even expose past `assignedAgent`/`customer`.
+   * `undefined` for the plain support flow, where this scope deliberately
+   * stops — see the presence UI's own header for why.
+   */
+  const presenceTargetId: string | undefined = (config as any).target?.id;
+
+  /**
    * Whether this visitor is a GUEST — i.e. nobody the host page has vouched
    * for.
    *
@@ -1584,6 +1595,24 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     children: [statusDot, statusText],
   });
 
+  /**
+   * The counterparty's ONLINE/OFFLINE, for a TARGETED mount only
+   * (`presenceTargetId`) — a separate line from `status` rather than a
+   * repurposing of it: `status` is written by `syncConnection` on every
+   * transport event (subtitle-or-connection-label), so anything `syncPresence`
+   * wrote there would be overwritten on the next tick. `status` is hidden for
+   * the life of the widget instance instead, right below — the two share the
+   * one line CSS reserves under the title (styles.ts's `.dh-status`
+   * positioning, mirrored here), never both at once.
+   */
+  const presenceDot = el('span', { attrs: { class: 'dh-presence-dot', 'aria-hidden': 'true' } });
+  const presenceText = el('span', { attrs: { class: 'dh-presence-text' } });
+  const presenceLine = el('div', {
+    attrs: { class: 'dh-presence-line', hidden: true },
+    children: [presenceDot, presenceText],
+  });
+  if (presenceTargetId !== undefined) status.hidden = true;
+
   // Deliberately a sibling of `status`, not a child of it: `status` is a
   // `role="status"` live region, and a control inside one gets its label read
   // out as part of every status announcement.
@@ -2435,7 +2464,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
               avatarHost,
               el('div', {
                 attrs: { class: 'dh-header-identity-wrap' },
-                children: [identityHeader.node, heroHeader.headerAvatars, status],
+                children: [identityHeader.node, presenceLine, heroHeader.headerAvatars, status],
               }),
               el('div', { attrs: { class: 'dh-header-spacer' } }),
               reconnectButton,
@@ -2901,6 +2930,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       (uploading) => composer.setUploading(uploading),
       { immediate: true },
     ),
+    // NOT `store.select((state) => state.presence[id], ...)` — `ChatState`
+    // declares that field but core's `PresenceRegistry` never actually
+    // writes to it (a live gap between the type and `presence/presence.ts`'s
+    // own implementation, which keeps a private Map and only ever EMITS
+    // `presenceUpdate`); selecting it always reads `undefined`. The event is
+    // the one place an answer — the query's own included, since
+    // `applyPresenceSnapshot` re-emits it per entry — actually arrives.
+    ...(presenceTargetId === undefined
+      ? []
+      : [
+          store.on('presenceUpdate', (entry) => {
+            if (entry.participantId === presenceTargetId) syncPresence(entry);
+          }),
+        ]),
   ];
 
   /**
@@ -4262,6 +4305,23 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
+   * The counterparty's ONLINE/OFFLINE line — `presenceTargetId` only, so a
+   * `undefined` entry (never queried yet, or the query came back empty) and
+   * "genuinely offline" both read the same way here: hidden until there is a
+   * real answer, never a guess in either direction.
+   */
+  function syncPresence(entry: { readonly status: string } | undefined): void {
+    if (presenceTargetId === undefined || entry === undefined) {
+      presenceLine.hidden = true;
+      return;
+    }
+    const online = entry.status === 'ONLINE';
+    presenceDot.setAttribute('data-online', String(online));
+    presenceText.textContent = online ? 'Online' : 'Offline';
+    presenceLine.hidden = false;
+  }
+
+  /**
    * Re-arms the keyword escalation once the bot no longer holds a live
    * conversation. The visible "Talk to a human" button this used to
    * show/hide is gone — escalation is keyword-only now (see the composer's
@@ -5051,6 +5111,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // needs a live `store.client` to switch.
   const skipCustomerFlowConnect = isPortalStaff && portalUserRole === 'admin';
   const connecting = skipCustomerFlowConnect ? Promise.resolve() : store.client.connect();
+
+  // One query, not a poll: `PresenceEntry`'s own doc says a change after this
+  // arrives on its own via `presence.update`, which the subscription above
+  // already renders — asking again on a timer would just be the same answer
+  // twice. Best-effort: a failed query leaves `presenceLine` hidden (its
+  // default), which is the honest state for "no answer yet" either way, so
+  // nothing here needs to react on rejection.
+  if (presenceTargetId !== undefined) {
+    connecting.then(() => store.client.queryPresence([presenceTargetId])).catch(() => {});
+  }
 
   // Portal (staff/merchant) mode: the Customers tab needs its first real data before
   // the user ever opens Messages, not only once they navigate there — see

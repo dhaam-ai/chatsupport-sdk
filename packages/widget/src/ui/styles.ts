@@ -1438,7 +1438,9 @@ button {
   padding: calc(var(--dh-space) * 4);
   display: flex;
   flex-direction: column;
-  gap: calc(var(--dh-space) * 2);
+  /* Stacks with each '.dh-msg''s own top/bottom margin below — the two
+     together are the actual gap between two bubbles, not this alone. */
+  gap: calc(var(--dh-space) * 1);
   /* The merchant-configurable backdrop. Defaults to '--dh-surface' through
      themeCss, so a widget nobody has configured is unchanged.
 
@@ -3482,6 +3484,39 @@ button {
 :host([data-screen="conversation"]) .dh-status-text:empty {
   display: none !important;
 }
+/* The counterparty's Online/Offline line — same slot '.dh-status' above
+   reserves under the title, never shown at the same time (widget.ts hides
+   one or the other for the life of the mount, per 'presenceTargetId'). */
+:host([data-screen="conversation"]) .dh-presence-line {
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  max-width: 100% !important;
+  position: absolute !important;
+  top: 100% !important;
+  left: 0 !important;
+  width: 100% !important;
+}
+:host([data-screen="conversation"]) .dh-presence-dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  background: #94a3b8 !important;
+  display: inline-block !important;
+  flex-shrink: 0 !important;
+}
+:host([data-screen="conversation"]) .dh-presence-dot[data-online="true"] {
+  background: #22c55e !important;
+}
+:host([data-screen="conversation"]) .dh-presence-text {
+  color: rgba(255, 255, 255, 0.9) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
+}
 :host([data-screen="conversation"]) .dh-avatar {
   border: 2px solid rgba(255, 255, 255, 0.6) !important;
   background: #f59e0b !important;
@@ -3569,7 +3604,7 @@ button {
   display: flex !important;
   flex-direction: column !important;
   align-items: flex-end !important;
-  margin: 4px 0 6px auto !important;
+  margin: 2px 0 2px auto !important;
   max-width: 82% !important;
   position: relative !important;
 }
@@ -3622,7 +3657,7 @@ button {
   flex-direction: row !important;
   align-items: flex-start !important;
   gap: 8px !important;
-  margin: 4px 0 6px 0 !important;
+  margin: 2px 0 2px 0 !important;
   max-width: 85% !important;
   position: relative !important;
 }

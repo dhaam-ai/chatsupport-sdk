@@ -255,7 +255,21 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   const presenceCoordinator = new PresenceCoordinator({
     store,
     emitIntent: (intent) => {
-      realTransport.send(intent.t, intent.d);
+      const { ack } = realTransport.send(intent.t, intent.d);
+      // `presence.query`'s answer arrives as a generic `ack` correlated by
+      // `ref` — transport already does that correlation (pending-acks.ts);
+      // this is the one place that knows the outcome belongs to a query, so
+      // it applies the snapshot. See PresenceCoordinator.handleFrame's doc,
+      // which describes this exact hand-off.
+      if (intent.t === 'presence.query') {
+        ack
+          .then((outcome) => {
+            if (outcome.status === 'acked' && 'presences' in outcome.frame.d) {
+              presenceCoordinator.presence.applyPresenceSnapshot(outcome.frame.d.presences);
+            }
+          })
+          .catch(() => undefined);
+      }
     },
     // Explicit, not adopted from the session snapshot's lone CUSTOMER
     // participant: that auto-adopt heuristic (watermarks.ts) is correct only
