@@ -825,6 +825,14 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
   const rawIsOpen = data['isOpenNow'];
   const rawVersion = data['publishedVersion'];
 
+  const rawHeader = parseHeader(appearance['header']);
+  const rawLogo = str(appearance, 'logoUrl');
+  const effectiveLogoUrl = rawLogo ?? rawHeader.logoUrl;
+  const header =
+    rawHeader.logoUrl === undefined && effectiveLogoUrl !== undefined
+      ? { ...rawHeader, logoUrl: effectiveLogoUrl }
+      : rawHeader;
+
   return {
     enabled: bool(data, 'enabled', DEFAULT_REMOTE_CONFIG.enabled),
     accent: str(appearance, 'accent'),
@@ -838,8 +846,8 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     launcherIcon: parseLauncherIcon(appearance['launcherIcon']),
     launcherShadow: parseLauncherShadow(appearance['launcherShadow']),
     design: oneOf(appearance, 'design', DESIGNS),
-    header: parseHeader(appearance['header']),
-    logoUrl: str(appearance, 'logoUrl'),
+    header,
+    logoUrl: effectiveLogoUrl,
     subtitle: str(appearance, 'subtitle'),
     avatarMode: oneOf(appearance, 'avatarMode', AVATAR_MODES),
     avatarInitials: str(appearance, 'avatarInitials'),
@@ -949,6 +957,15 @@ export function mergeRemoteConfig(host: WidgetConfig, remote: RemoteConfig | nul
   for (const key of ['launcherIcon', 'launcherShadow', 'header', 'thread'] as const) {
     const merged = { ...remote[key], ...host[key] };
     if (Object.keys(merged).length > 0) filled[key] = merged;
+  }
+
+  // Cross-pollinate logoUrl and header.logoUrl if one was set and the other omitted
+  const currentLogo = filled['logoUrl'] as string | undefined;
+  const currentHeader = filled['header'] as Partial<HeaderAppearance> | undefined;
+  if ((currentLogo === undefined || currentLogo.trim() === '') && currentHeader?.logoUrl && currentHeader.logoUrl.trim() !== '') {
+    filled['logoUrl'] = currentHeader.logoUrl;
+  } else if (currentLogo && currentLogo.trim() !== '' && (!currentHeader?.logoUrl || currentHeader.logoUrl.trim() === '')) {
+    filled['header'] = { ...currentHeader, logoUrl: currentLogo };
   }
 
   return filled as unknown as WidgetConfig;

@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { listPortalQueue, PortalApiError } from '../src/portal/portal-staff-client.js';
+import { createStaffHistorySource, listPortalQueue, PortalApiError } from '../src/portal/portal-staff-client.js';
 
 const OPTIONS = {
   apiUrl: 'https://chat.example.com',
@@ -53,11 +53,15 @@ describe('listPortalQueue — GET /agent/queue row parsing', () => {
         customerName: 'Jane Doe',
         customerEmail: null,
         lastMessage: 'Where is my order?',
+        hasMessage: true,
         chatType: 'customer',
         targetRole: null,
         targetId: null,
         storeName: null,
         merchantName: null,
+        merchantEmail: null,
+        subject: null,
+        topic: null,
       },
     ]);
   });
@@ -94,11 +98,54 @@ describe('listPortalQueue — GET /agent/queue row parsing', () => {
         customerName: null,
         customerEmail: null,
         lastMessage: null,
+        hasMessage: true,
         chatType: 'customer',
         targetRole: null,
         targetId: null,
         storeName: null,
         merchantName: null,
+        merchantEmail: null,
+        subject: null,
+        topic: null,
+      },
+    ]);
+  });
+
+  it('flags hasMessage: false when lastMessage is explicitly null (ghost session)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          data: [
+            {
+              id: 'sess_ghost',
+              status: 'OPEN',
+              customer: { displayName: 'amit83', email: 'amit83@gmail.com' },
+              lastMessage: null,
+              unreadCount: 0,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const rows = await listPortalQueue(OPTIONS);
+    expect(rows).toEqual([
+      {
+        sessionId: 'sess_ghost',
+        status: 'OPEN',
+        customerName: 'amit83',
+        customerEmail: 'amit83@gmail.com',
+        lastMessage: null,
+        hasMessage: false,
+        chatType: 'customer',
+        targetRole: null,
+        targetId: null,
+        storeName: null,
+        merchantName: null,
+        merchantEmail: null,
+        subject: null,
+        topic: null,
       },
     ]);
   });
@@ -146,5 +193,55 @@ describe('listPortalQueue — GET /agent/queue row parsing', () => {
     await expect(listPortalQueue(OPTIONS)).rejects.toMatchObject(
       expect.objectContaining({ status: 0 }) as Partial<PortalApiError>,
     );
+  });
+});
+
+describe('createStaffHistorySource — routes by identity, same envelope shape either way', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('calls /agent/sessions/{id}/messages for admin/manager (isMerchantPortal unset)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ success: true, data: { messages: [], hasMore: false } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const source = createStaffHistorySource(OPTIONS);
+    await source.listMessages({ sessionId: 'sess_1', limit: 30 });
+
+    const calledUrl = new URL((fetchMock.mock.calls[0] as [string | URL])[0] as string);
+    expect(calledUrl.pathname).toBe('/chat-services/api/v1/agent/sessions/sess_1/messages');
+    expect(calledUrl.searchParams.has('outletId')).toBe(false);
+  });
+
+  it('calls /party/sessions/{id}/messages for a merchant/outlet identity, with outletId when given', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ success: true, data: { messages: [], hasMore: false } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const source = createStaffHistorySource({ ...OPTIONS, isMerchantPortal: true, outletId: 'outlet_42' });
+    await source.listMessages({ sessionId: 'sess_1', limit: 30 });
+
+    const calledUrl = new URL((fetchMock.mock.calls[0] as [string | URL])[0] as string);
+    expect(calledUrl.pathname).toBe('/chat-services/api/v1/party/sessions/sess_1/messages');
+    expect(calledUrl.searchParams.get('outletId')).toBe('outlet_42');
+  });
+
+  it('omits outletId from /party/sessions/{id}/messages when none is configured', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ success: true, data: { messages: [], hasMore: false } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const source = createStaffHistorySource({ ...OPTIONS, isMerchantPortal: true });
+    await source.listMessages({ sessionId: 'sess_1', limit: 30 });
+
+    const calledUrl = new URL((fetchMock.mock.calls[0] as [string | URL])[0] as string);
+    expect(calledUrl.searchParams.has('outletId')).toBe(false);
+  });
+
+  it('still degrades to an empty page on 401/403, defense in depth for an unrouted role', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({}, 403)));
+    const source = createStaffHistorySource({ ...OPTIONS, isMerchantPortal: true });
+    await expect(source.listMessages({ sessionId: 'sess_1', limit: 30 })).resolves.toEqual({
+      messages: [],
+      hasMore: false,
+    });
   });
 });

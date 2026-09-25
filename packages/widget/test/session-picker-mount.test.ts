@@ -573,3 +573,39 @@ describe('a host that named the session it wants', () => {
     expect(messagesRows()).toHaveLength(1);
   });
 });
+
+describe('treatSubjectAsTarget — hiding a store-targeted session from the general Home/Messages list', () => {
+  // GET /chat/sessions/customer never sends targetId/targetRole (see
+  // widget.ts's customerVisibleSessions), only subject/topic — so a
+  // store-targeted session (subject defaults to the outlet name — see
+  // resolveConfig) is indistinguishable from a generic support one once it
+  // is back in this list, UNLESS the host opts into this subject-based
+  // stand-in.
+  it('excludes a subject-tagged session from both Home and Messages when set', async () => {
+    sessionRows = [
+      summaryRow({ id: 'sess_store', status: 'OPEN', closedAt: null, subject: 'Some Outlet' }),
+      summaryRow({ id: 'sess_general', status: 'OPEN', closedAt: null, subject: null }),
+    ];
+    await openedWidget({ treatSubjectAsTarget: true });
+
+    // Home's recent row must be the generic session, never the store one —
+    // it would otherwise win as the most recently created/updated fixture.
+    expect(homeShowsRecentRow()).toBe(true);
+
+    await goToMessages();
+    const rows = messagesRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).not.toContain('Some Outlet');
+  });
+
+  it('is off by default — a subject-tagged session still shows, exactly as before', async () => {
+    sessionRows = [
+      summaryRow({ id: 'sess_store', status: 'OPEN', closedAt: null, subject: 'Some Outlet' }),
+      summaryRow({ id: 'sess_general', status: 'OPEN', closedAt: null, subject: null }),
+    ];
+    await openedWidget();
+
+    await goToMessages();
+    expect(messagesRows()).toHaveLength(2);
+  });
+});

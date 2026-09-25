@@ -80,6 +80,19 @@ export interface ConnectionHelloPayload {
    */
   targetRole?: string;
   targetId?: string;
+  /** Outlet IDs this connection is registered/subscribed for (merchant console) */
+  outletIds?: string[];
+
+  /**
+   * UNVERIFIED self-claim of the caller's own chat identity — for a STAFF
+   * connection MINTING a PARTNER row (admin/manager addressing a
+   * merchant/outlet) only. dh-auth's `/validate` gives a staff identity no
+   * UUID, only a numeric `UserID`, so the server stores that numeric id as
+   * `customerId` unless this claims a stable id instead. Ignored for a
+   * customer or merchant hello, and never an authorization input — same
+   * trust class as `outletIds` above.
+   */
+  clientId?: string;
 
   /** Last applied `seq` (D2). Omit on first connect. */
   resumeFrom?: number;
@@ -213,6 +226,14 @@ export interface SessionJoinPayload {
    * Omit to plan a `fresh` join, which replays nothing.
    */
   resumeFrom?: number;
+
+  /**
+   * The outlet's own id, as a fallback ID proof for a merchant/outlet
+   * identity — see `ConversationClientConfig.outletId`'s doc. Max 128 chars.
+   * Ignored by the server for any other identity. Tried only when the
+   * token's own verified proof does not already grant access.
+   */
+  outletId?: string;
 }
 
 /**

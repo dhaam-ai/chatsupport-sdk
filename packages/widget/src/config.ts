@@ -259,11 +259,127 @@ export interface WidgetConfig {
   /** Initial conversation subject / store name, if any. */
   readonly subject?: string;
 
+  /** Initial conversation topic, if any. */
+  readonly topic?: string;
+
   /** Target counterparty (e.g. merchant or store), if any. */
-  readonly target?: { readonly role: string; readonly id: string };
+  readonly target?: { readonly role: string; readonly id: string; readonly name?: string; readonly email?: string };
 
   /** The current user's role in the portal ('admin' | 'merchant' | 'customer'). */
   readonly userRole?: 'admin' | 'merchant' | 'customer' | string;
+
+  /** Outlets this merchant or manager identity is viewing/scoping to. */
+  readonly outletIds?: readonly string[];
+
+  /**
+   * This merchant/outlet identity's own id, as the host's storefront already
+   * holds it — sent as `session.join.outletId`, a fallback the server tries
+   * only when the token's own verified proof does not already grant access
+   * (Wire Contract, "An outlet may need to claim its own id on
+   * session.join"). Without it, a conversation genuinely addressed to this
+   * outlet (a customer's store DM, or an admin-started partner chat) can be
+   * refused `SESSION_NOT_FOUND` even on a valid token, because dh-auth's
+   * `/validate` proves an outlet only by its per-tenant role id, never by
+   * the id `chat_sessions.target_id` is actually addressed in.
+   *
+   * Defaults to `outletIds[0]` when omitted — the array is already ordered
+   * so its first entry is this same id (see the host's own candidate-id
+   * collection) — but naming it explicitly here is preferred over relying on
+   * that ordering.
+   */
+  readonly outletId?: string;
+
+  /**
+   * Keeps the portal (admin/merchant/manager) view's Customers tab visible
+   * but empty: its `/agent/queue` or `/party/conversations` (customer-DM)
+   * fetch is skipped, so it never lists or opens a real end-customer
+   * conversation. Only the partner (Merchants/Admin) tab gets real data.
+   *
+   * For an `admin` identity on a host that is a store/outlet management
+   * console rather than the tenant's support console — this app's own admin
+   * should talk to outlets, not read or reply to end-customer conversations,
+   * which belongs to a dedicated support surface. Has no effect on
+   * `userRole: 'customer'` or when `userRole` is omitted.
+   */
+  readonly partnerOnly?: boolean;
+
+  /**
+   * A merchant/outlet identity clicked "Message Admin" on the portal Admin
+   * tab, wanting to start a conversation with the tenant's admin FIRST —
+   * before any admin has messaged them. Fired with no arguments.
+   *
+   * This SDK cannot resolve that on its own: opening a targeted conversation
+   * means a `target: { role, id }` (see `target` above), and there is no
+   * single `id` this widget can name for "the tenant's admin" — a tenant may
+   * have more than one, and nothing here has a list of them. The host is
+   * expected to open (or re-mount) a conversation targeted at
+   * `{ role: 'admin', id: <whatever the backend resolves "the tenant's
+   * admin" to> }` in response — the same way it already opens one targeted
+   * at a specific outlet for the reverse direction.
+   *
+   * No effect when unset: the button itself is omitted for `userRole:
+   * 'merchant'` until this is provided (see `ui/messages-screen.ts`'s
+   * `onStartNewPartner`), rather than shown and silently doing nothing.
+   */
+  readonly onStartPartnerConversation?: () => void;
+
+  /**
+   * Treats a customer session's non-empty `subject` as if it were a
+   * merchant/outlet target, for the purpose of what Home's "Recent
+   * conversation" card and the Messages list show.
+   *
+   * Exists because `GET /chat/sessions/customer` (what `state.pastSessions`
+   * is built from) never sends `targetId`/`targetRole` at all — only
+   * `subject`/`topic` — so the widget has no real way to tell a store-
+   * targeted session apart from a generic support one once it is back in
+   * this list. `subject` is a stand-in ONLY for a host where it is reliably
+   * set for a targeted session and reliably absent otherwise — true for a
+   * host whose `target`-ed mount always also sets `title` (this SDK defaults
+   * `subject` from `title` for a non-generic session — see `resolveConfig`)
+   * and whose GENERAL mount never sets a `subject`/`title` of its own.
+   *
+   * Off by default: `subject` is not a target on every host (a generic
+   * ticket may legitimately carry one, e.g. a chosen topic), so this stays
+   * opt-in rather than becoming a second, silently-wrong rule everywhere
+   * `targetId` already covers correctly. The real fix is chat-service-node
+   * adding `targetId`/`targetRole` to that endpoint's response, at which
+   * point this flag stops being necessary — it is a stand-in, not a second
+   * source of truth to keep maintaining alongside a real one.
+   */
+  readonly treatSubjectAsTarget?: boolean;
+
+  /**
+   * Suppresses `behaviour.greeting` — the console's configured "first
+   * message" bubble that otherwise appears above the composer once an empty
+   * conversation's `greetingDelaySec` has elapsed (`armGreeting`, widget.ts).
+   *
+   * A HOST decision, not a per-tenant one: the console's own greeting text
+   * is written with general platform support in mind ("Ask us anything —
+   * orders, refunds, account…"), and reads oddly sitting above a
+   * store-targeted conversation ("reem", "vikash") where it was never
+   * authored for that context. Rather than have the host maintain its own
+   * copy of "is this a context the greeting fits", this opts the whole
+   * mounted widget out — general support included — leaving the plain
+   * "No messages yet." placeholder as the only empty-state.
+   *
+   * Off by default: most hosts DO want the console's configured greeting,
+   * and a merchant who wants none can already say so there by leaving the
+   * field blank — this exists for a host that wants to keep ignoring
+   * whatever the console holds, without relying on it staying empty.
+   */
+  readonly hideGreeting?: boolean;
+
+  /**
+   * Never let the panel open itself.
+   *
+   * The console's `behaviour.autoOpen` (`'delay'` / `'exit-intent'`) is a
+   * MERCHANT setting that arrives with published config and opens the panel
+   * with no click. A host whose users must always choose to open the chat —
+   * an admin portal, an app that already has its own entry point — opts out
+   * here, which wins over whatever the console holds. It does not touch
+   * `openOnLoad` (the host's own explicit request) or a click on the launcher.
+   */
+  readonly disableAutoOpen?: boolean;
 
   /**
    * The line under the title — a response-time promise, typically. Defaults to
@@ -281,6 +397,15 @@ export interface WidgetConfig {
 
   /** Accent colour, any CSS colour. Defaults to a neutral slate. */
   readonly accent?: string;
+
+  /**
+   * Whether to sample the host page's top-bar or background colour when
+   * `header.colorSource: 'platform'`. Defaults to `true`.
+   *
+   * Set to `false` to opt out of borrowing the host page's colour and keep the
+   * configured `accent` on the header.
+   */
+  readonly samplePlatform?: boolean;
 
   /**
    * Colour scheme. Defaults to `'auto'`, which is what this widget has always
@@ -515,6 +640,7 @@ export interface ResolvedConfig extends WidgetConfig {
   readonly cornerRadius: number;
   readonly fontFamily: string;
   readonly font: 'isolate' | 'inherit';
+  readonly samplePlatform: boolean;
   readonly onError: (error: unknown) => void;
 }
 
@@ -698,8 +824,18 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     launcherIcon: { ...DEFAULT_LAUNCHER_ICON, ...config.launcherIcon },
     launcherShadow: { ...DEFAULT_LAUNCHER_SHADOW, ...config.launcherShadow },
     design: config.design ?? 'classic',
-    header: { ...DEFAULT_HEADER, ...config.header },
-    logoUrl: config.logoUrl ?? '',
+    header: {
+      ...DEFAULT_HEADER,
+      ...config.header,
+      logoUrl:
+        config.header?.logoUrl && config.header.logoUrl.trim() !== ''
+          ? config.header.logoUrl
+          : (config.logoUrl ?? ''),
+    },
+    logoUrl:
+      config.logoUrl && config.logoUrl.trim() !== ''
+        ? config.logoUrl
+        : (config.header?.logoUrl ?? ''),
     avatarMode: config.avatarMode ?? 'initials',
     avatarInitials: config.avatarInitials ?? '',
     showBranding: config.showBranding ?? false,
@@ -716,6 +852,7 @@ export function resolveConfig(config: WidgetConfig): ResolvedConfig {
     cornerRadius: config.cornerRadius ?? 12,
     fontFamily: config.fontFamily ?? 'System default',
     font: config.font ?? 'isolate',
+    samplePlatform: config.samplePlatform ?? true,
     onError: config.onError ?? defaultOnError,
   };
 }

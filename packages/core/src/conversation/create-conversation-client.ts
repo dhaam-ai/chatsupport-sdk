@@ -149,6 +149,11 @@ export function createConversationClient(config: ConversationClientConfig): Conv
     // would still be omitted from the hello but would read here as though a
     // key had been considered and rejected. Say what is meant.
     ...(publishableKey === undefined ? {} : { publishableKey }),
+    // Only meaningful for a keyless (staff) connection minting a PARTNER row —
+    // see `ConnectionHelloPayload.clientId`. Reusing `localSender.senderId`
+    // rather than adding a second config field: it is already required, and
+    // it is already this same "how the host identifies this caller" value.
+    ...(publishableKey === undefined ? { clientId: localSender.senderId } : {}),
     getToken: config.getToken,
     createTransport,
     // Read lazily: `registry` is assigned on the next statement, and no frame
@@ -168,6 +173,7 @@ export function createConversationClient(config: ConversationClientConfig): Conv
     ...(config.schedule === undefined ? {} : { schedule: config.schedule }),
     ...(config.now === undefined ? {} : { now: config.now }),
     ...(config.logger === undefined ? {} : { logger: config.logger }),
+    ...(config.outletId === undefined ? {} : { outletId: config.outletId }),
   });
 
   // -------------------------------------------------------------------------
@@ -306,5 +312,8 @@ export function createConversationClient(config: ConversationClientConfig): Conv
 
     sendMessage: (conversationId: string, content: string, options?: SendMessageOptions) =>
       registry.sendMessage(conversationId, content, options ?? {}),
+
+    queryPresence: (conversationId: string, participantIds?: readonly string[]) =>
+      registry.queryPresence(conversationId, participantIds),
   };
 }

@@ -122,7 +122,20 @@ export interface HomeScreenView {
    *   render is for. Drives the CTA's title/sub-line, the alt button beside
    *   it, and the mid-visit chat→ticket announcement.
    */
-  update(recent: ChatSessionSummary | null, subtitle: string, entry: ResolvedEntry): void;
+  update(
+    recent: ChatSessionSummary | null,
+    subtitle: string,
+    entry: ResolvedEntry,
+    customTitle?: string,
+    ctaEnabled?: boolean,
+  ): void;
+  /**
+   * The greeting block that opens Home under the CLASSIC design — the
+   * console's Classic preview draws "Hello there" and its sub-line as the first
+   * thing in the body. Always kept current; only painted under classic (the
+   * hero design carries the same words in its own header).
+   */
+  setGreeting(greeting: string, subGreeting: string): void;
 }
 
 /**
@@ -137,7 +150,14 @@ export interface HomeScreenView {
  * block, which is every deployment on the day this ships. Today's exact
  * copy, "Send us a message", is what an assumed entry gets instead.
  */
-function ctaCopy(entry: ResolvedEntry, subtitle: string): { readonly title: string; readonly sub: string } {
+function ctaCopy(
+  entry: ResolvedEntry,
+  subtitle: string,
+  customTitle?: string,
+): { readonly title: string; readonly sub: string } {
+  if (customTitle && customTitle.trim() !== '') {
+    return { title: customTitle, sub: subtitle };
+  }
   if (entry.source === 'published' && entry.primary === 'ticket') {
     return {
       title: 'Leave a message',
@@ -265,9 +285,16 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreenView
     ],
   });
 
+  const greetingTitle = el('h2', { attrs: { class: 'dh-home-greeting-title' } });
+  const greetingSub = el('p', { attrs: { class: 'dh-home-greeting-sub' } });
+  const greetingBlock = el('header', {
+    attrs: { class: 'dh-home-greeting', hidden: true },
+    children: [greetingTitle, greetingSub],
+  });
+
   const node = el('div', {
     attrs: { class: 'dh-home' },
-    children: [notice, cta, alt, recentSection, questionsSlot],
+    children: [greetingBlock, notice, cta, alt, recentSection, questionsSlot],
   });
 
   // `null` until the first `update()` — see the flip guard below, which must
@@ -277,22 +304,31 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreenView
 
   return {
     node,
-    update(recent, subtitle, entry) {
+    setGreeting(greeting, subGreeting) {
+      greetingTitle.textContent = greeting;
+      greetingSub.textContent = subGreeting;
+      greetingTitle.hidden = greeting === '';
+      greetingSub.hidden = subGreeting === '';
+      greetingBlock.hidden = greeting === '' && subGreeting === '';
+    },
+    update(recent, subtitle, entry, customTitle, ctaEnabled = true) {
+      cta.hidden = !ctaEnabled;
       // The merchant's own response-time line, reused rather than a second
       // hardcoded "We usually reply instantly" — it is the same promise the
       // status line makes, and two copies would drift. Used only when the
       // CTA is actually about chat; `ctaCopy` supplies its own sentence for
       // a ticket row.
-      const copy = ctaCopy(entry, subtitle);
+      const copy = ctaCopy(entry, subtitle, customTitle);
       ctaTitle.textContent = copy.title;
       ctaSubtitle.textContent = copy.sub;
       ctaSubtitle.hidden = copy.sub === '';
+      const hasCustomCta = Boolean(customTitle && customTitle.trim() !== '');
       onCtaPress =
-        entry.source === 'published' && entry.primary === 'ticket'
+        !hasCustomCta && entry.source === 'published' && entry.primary === 'ticket'
           ? callbacks.onLeaveMessage
           : callbacks.onStartNew;
 
-      const altChoice = altFor(entry);
+      const altChoice = hasCustomCta ? null : altFor(entry);
       alt.hidden = altChoice === null;
       if (altChoice !== null) {
         alt.textContent = altChoice.label;

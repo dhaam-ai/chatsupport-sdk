@@ -113,7 +113,13 @@ describe('GOLDEN: the keyless connection.hello', () => {
     // The hazard this DOES catch is `publishableKey: ''`, which survives
     // `JSON.stringify` and would reach the server as a present-but-blank key.
     // `expect(hello.d.publishableKey).toBeUndefined()` would pass for that.
-    expect(Object.keys(hello.d).sort()).toEqual(['protocolVersion', 'token']);
+    //
+    // `clientId` is here too, and always will be on a keyless hello: it is
+    // `localSender.senderId` (REQUIRED at construction — see the file's own
+    // constructor check), sent unconditionally on the keyless path so the
+    // server can honour it as `customerId` for a staff caller minting a
+    // PARTNER row. See `ConnectionHelloPayload.clientId`.
+    expect(Object.keys(hello.d).sort()).toEqual(['clientId', 'protocolVersion', 'token']);
     expect('publishableKey' in hello.d).toBe(false);
 
     // And on the raw text, so no assumption about how the envelope was built

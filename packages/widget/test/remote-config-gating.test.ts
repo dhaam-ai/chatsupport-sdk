@@ -761,6 +761,52 @@ describe('appearance, and the host’s right to overrule it', () => {
 
       expect(find('.dh-hero-logo')?.getAttribute('src')).toBe('https://cdn.acme.test/logo.svg');
     });
+
+    it('applies dynamic logo from header.logoUrl when appearance.logoUrl is empty', async () => {
+      stubFetch(
+        published({
+          appearance: {
+            design: 'hero',
+            logoUrl: '',
+            header: {
+              showLogo: true,
+              logoUrl: 'https://cdn.dhaamai.com/dev/logo/images/test-logo.png',
+            },
+          },
+        }),
+      );
+      mount(config());
+      await settle();
+
+      expect(find('.dh-hero-logo')?.getAttribute('src')).toBe(
+        'https://cdn.dhaamai.com/dev/logo/images/test-logo.png',
+      );
+      const hostEl = document.querySelector('dh-chat-widget') as HTMLElement;
+      expect(hostEl?.getAttribute('data-show-logo')).toBe('true');
+      expect(hostEl?.style.getPropertyValue('--dh-header-logo-image')).toBe(
+        'url("https://cdn.dhaamai.com/dev/logo/images/test-logo.png")',
+      );
+    });
+
+    it('removes logo and sets data-show-logo="false" when showLogo is false', async () => {
+      stubFetch(
+        published({
+          appearance: {
+            design: 'hero',
+            header: {
+              showLogo: false,
+              logoUrl: 'https://cdn.dhaamai.com/dev/logo/images/test-logo.png',
+            },
+          },
+        }),
+      );
+      mount(config());
+      await settle();
+
+      const hostEl = document.querySelector('dh-chat-widget') as HTMLElement;
+      expect(hostEl?.getAttribute('data-show-logo')).toBe('false');
+      expect(hostEl?.style.getPropertyValue('--dh-header-logo-image')).toBe('');
+    });
   });
 
   it('swaps in the published launcher glyph and shadow after mount', async () => {

@@ -229,7 +229,11 @@ export interface CsatSubmission {
  * uses an empty array to decide not to render at all.
  */
 export interface SessionSummarySource {
-  listSessions(query?: { readonly limit?: number }): Promise<readonly ChatSessionSummary[]>;
+  listSessions(query?: {
+    readonly limit?: number;
+    /** `?with=` on `GET /chat/sessions/customer` — e.g. `'agent'` for support-only. See chat.validator.ts's `CUSTOMER_COUNTERPARTIES`. */
+    readonly with?: string;
+  }): Promise<readonly ChatSessionSummary[]>;
 }
 
 /** Thrown when a `ChatClient` operation needs configuration that was not supplied. */
@@ -302,9 +306,28 @@ export interface ChatClientConfig {
    * reply in one, never start one).
    */
   readonly target?: { readonly role: string; readonly id: string };
+  /** Multi-outlet subscription for merchant / manager console. */
+  readonly outletIds?: readonly string[];
+
+  /**
+   * This merchant/outlet identity's own id, sent as `session.join.outletId`
+   * on every `session.join` this client makes (`joinSession`, `switchSession`,
+   * and the reconnect re-join alike) — see
+   * `ConversationClientConfig.outletId`'s doc for why: dh-auth's `/validate`
+   * proves an outlet only by its per-tenant role id, never by the id
+   * `chat_sessions.target_id` is actually addressed in, so a conversation
+   * genuinely addressed to this outlet can otherwise be refused
+   * `SESSION_NOT_FOUND` on a perfectly valid token.
+   *
+   * Defaults to `outletIds[0]` when omitted.
+   */
+  readonly outletId?: string;
 
   /** Initial conversation subject / store name, if any. */
   readonly subject?: string;
+
+  /** Initial conversation topic, if any. */
+  readonly topic?: string;
 
   /**
    * §6.1 types this `() => Promise<string>`. Widened here to `TokenProvider`
@@ -742,7 +765,11 @@ export interface ChatClient {
    * see {@link SessionSummarySource}'s doc for why the wire itself makes no
    * such distinction.
    */
-  listSessions(query?: { readonly limit?: number }): Promise<readonly ChatSessionSummary[]>;
+  listSessions(query?: {
+    readonly limit?: number;
+    /** `?with=` on `GET /chat/sessions/customer` — e.g. `'agent'` for support-only. See chat.validator.ts's `CUSTOMER_COUNTERPARTIES`. */
+    readonly with?: string;
+  }): Promise<readonly ChatSessionSummary[]>;
 
   // ---- §6.3 message operations ----
   sendMessage(content: string, opts?: SendMessageOptions): Promise<void>;

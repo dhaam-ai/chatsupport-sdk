@@ -176,7 +176,7 @@ button {
   background: var(--dh-surface-sunken);
   color: var(--dh-text);
   font: inherit;
-  /* 16px on touch: anything smaller makes iOS Safari zoom the whole page on
+  /* 16px on touch devices: smaller font-size causes iOS Safari to zoom the whole page on
      focus, which on a merchant's contact page zooms THEIR page. */
   font-size: 16px;
 }

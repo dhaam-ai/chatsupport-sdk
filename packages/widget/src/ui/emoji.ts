@@ -23,7 +23,7 @@
 //    which makes "🎉🎉" two round trips through the trigger button. Escape,
 //    an outside click, or the trigger closes it.
 
-import { el } from './dom.js';
+import { ICONS, el, icon } from './dom.js';
 
 /**
  * The shortlist, in display order — 8 columns x 2 rows.
@@ -63,17 +63,13 @@ export function createEmojiPicker(callbacks: EmojiPickerCallbacks): EmojiPickerV
 
   const trigger = el('button', {
     attrs: {
-      class: 'dh-icon-button',
+      class: 'dh-icon-button dh-composer-tool-btn',
       type: 'button',
       'aria-label': 'Insert emoji',
       'aria-expanded': 'false',
       'aria-haspopup': 'true',
     },
-    // A text glyph rather than an SVG from ICONS: the control's whole subject
-    // is emoji, so the most legible icon for it is one. `aria-hidden` because
-    // the button's own `aria-label` already names it — without that a screen
-    // reader announces "grinning face, Insert emoji".
-    children: [el('span', { attrs: { class: 'dh-emoji-glyph', 'aria-hidden': 'true' }, text: '🙂' })],
+    children: [icon(ICONS.smile, 18)],
     on: { click: () => toggle() },
   });
 

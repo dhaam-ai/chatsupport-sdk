@@ -1555,4 +1555,55 @@ describe('the flush gate opens on the join decision, not on the history read', (
     expect(client2.getState().session?.id).toBe('session_1');
     expect(framesOfType(h2.sockets.last, 'message.send')).toHaveLength(0);
   });
+
+  describe('targeted session scoping (Bug: merchant chat isolation)', () => {
+    it('does not restore untargeted support session when target is configured', async () => {
+      const storage = new MemoryStorageAdapter();
+      // Simulate user having chatted in general support previously:
+      await storage.set(SELECTED_SESSION_KEY, 'session_support_old');
+
+      // Customer opens chat targeted to merchant outlet_128:
+      const h = harness({ target: { role: 'merchant', id: 'outlet_128' } }, storage);
+      const client = createChatClient(h.config);
+      const connecting = client.connect();
+      await tick();
+
+      h.sockets.last.open();
+      // Server acknowledges and provides the fresh direct merchant session:
+      h.sockets.last.emitJson(ackJson(0, sessionSnapshot({ sessionId: 'session_merchant_new' }), 100));
+      await connecting;
+      await tick();
+
+      // The client must stay in session_merchant_new, NOT attempt to join session_support_old!
+      expect(client.getState().session?.id).toBe('session_merchant_new');
+      const joins = framesOfType(h.sockets.last, 'session.join');
+      expect(joins).toHaveLength(0);
+
+      // It must remember the targeted session under the scoped key:
+      const targetedKey = `chatsdk:${PUBLISHABLE_KEY}:${CUSTOMER_ID}:selectedSession:merchant:outlet_128`;
+      expect(await storage.get(targetedKey)).toBe('session_merchant_new');
+      // And the untargeted key should remain intact for general support:
+      expect(await storage.get(SELECTED_SESSION_KEY)).toBe('session_support_old');
+    });
+
+    it('restores remembered targeted session on reload when viewing the same merchant', async () => {
+      const storage = new MemoryStorageAdapter();
+      const targetedKey = `chatsdk:${PUBLISHABLE_KEY}:${CUSTOMER_ID}:selectedSession:merchant:outlet_128`;
+      await storage.set(targetedKey, 'session_merchant_saved');
+
+      const h = harness({ target: { role: 'merchant', id: 'outlet_128' } }, storage);
+      const client = createChatClient(h.config);
+      const connecting = client.connect();
+      await tick();
+
+      h.sockets.last.open();
+      // Server ack gives another session, but client re-joins session_merchant_saved
+      h.sockets.last.emitJson(ackJson(0, sessionSnapshot({ sessionId: 'session_server_default' }), 101));
+      await connecting;
+      await tick();
+
+      const join = framesOfType(h.sockets.last, 'session.join')[0];
+      expect(join?.d).toEqual({ sessionId: 'session_merchant_saved' });
+    });
+  });
 });

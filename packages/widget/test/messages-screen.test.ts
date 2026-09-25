@@ -4,7 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 
-import { createMessagesScreen } from '../src/ui/messages-screen.js';
+import {
+  createMessagesScreen,
+  sessionBelongsToTab,
+  getRowDisplayName,
+  getRowSubtitle,
+  getCustomerConversationTitle,
+} from '../src/ui/messages-screen.js';
 import { STYLES } from '../src/ui/styles.js';
 
 function summary(overrides: Partial<ChatSessionSummary> = {}): ChatSessionSummary {
@@ -53,7 +59,7 @@ describe('createMessagesScreen — rendering rows', () => {
       null,
     );
 
-    expect(screen.node.querySelector('.dh-messages-status')?.textContent).toBe('Waiting for an agent');
+    expect(screen.node.querySelector('.dh-messages-status')?.textContent).toBe('Waiting');
     expect(screen.node.querySelector('.dh-messages-preview')?.textContent).toBe('Where is my order?');
     expect(screen.node.querySelector('.dh-messages-time')?.textContent).toBe('1 hour ago');
     expect(screen.node.querySelector('.dh-messages-unread')?.textContent).toBe('2');
@@ -226,7 +232,9 @@ describe('createMessagesScreen — DOM shape the sticky-button fix depends on', 
     const newButton = screen.node.querySelector('.dh-messages-new');
     expect(list?.parentElement).toBe(screen.node);
     expect(search?.parentElement).toBe(screen.node);
-    expect(newButton?.parentElement).toBe(screen.node);
+    // The button sits in `.dh-messages-footer`, itself a direct child.
+    expect(newButton?.parentElement?.className).toBe('dh-messages-footer');
+    expect(newButton?.parentElement?.parentElement).toBe(screen.node);
     expect(list?.contains(newButton)).toBe(false);
   });
 });
@@ -246,5 +254,233 @@ describe('the sticky "New conversation" button — CSS ownership of the scroll b
     expect(listRule).toMatch(/overflow-y:\s*auto/);
     expect(listRule).toMatch(/flex:\s*1/);
     expect(listRule).toMatch(/min-height:\s*0/);
+  });
+});
+
+describe('sessionBelongsToTab & display info — Admin ↔ Merchant routing', () => {
+  const adminInitiatedSession = summary({
+    id: 's_admin_1',
+    customerName: 'Store Admin',
+    customerEmail: 'admin@dhaam.com',
+    targetRole: 'merchant',
+    targetId: 'outlet_12801',
+    chatType: 'admin',
+  } as any);
+
+  const customerSession = summary({
+    id: 's_cust_1',
+    customerName: 'John Doe',
+    customerEmail: 'john@gmail.com',
+    targetRole: 'merchant',
+    targetId: 'outlet_12801',
+    chatType: 'merchant',
+  } as any);
+
+  it('routes admin-initiated chats to the Admin tab for merchant users', () => {
+    expect(sessionBelongsToTab(adminInitiatedSession, 'admin', 'merchant')).toBe(true);
+    expect(sessionBelongsToTab(adminInitiatedSession, 'customers', 'merchant')).toBe(false);
+  });
+
+  it('routes customer-initiated chats to the Customers tab for merchant users', () => {
+    expect(sessionBelongsToTab(customerSession, 'customers', 'merchant')).toBe(true);
+    expect(sessionBelongsToTab(customerSession, 'admin', 'merchant')).toBe(false);
+  });
+
+  it('routes merchant-targeted chats to the Merchants tab for admin users', () => {
+    expect(sessionBelongsToTab(adminInitiatedSession, 'merchants', 'admin')).toBe(true);
+    expect(sessionBelongsToTab(adminInitiatedSession, 'customers', 'admin')).toBe(false);
+  });
+
+  it('routes a CUSTOMER\'s own DM to an outlet to the Customers tab for admin users, never Merchants', () => {
+    // customerSession has targetRole 'merchant' (it IS addressed to an
+    // outlet) but was started by an ordinary customer, not the admin.
+    // targetRole alone used to be enough to land it in Merchants under the
+    // customer's own name — this is the exact bug: a customer talking to an
+    // outlet is not the admin's own merchant conversation.
+    expect(sessionBelongsToTab(customerSession, 'customers', 'admin')).toBe(true);
+    expect(sessionBelongsToTab(customerSession, 'merchants', 'admin')).toBe(false);
+  });
+
+  it('renders correct display name and email without hardcoded "tse"', () => {
+    const displayName = getRowDisplayName(adminInitiatedSession, 'admin', 'merchant');
+    expect(displayName).toBe('Store Admin');
+    expect(displayName).not.toBe('tse');
+
+    const subtitle = getRowSubtitle(adminInitiatedSession, 'admin', 'merchant');
+    expect(subtitle).toBe('Admin • admin@dhaam.com');
+    expect(subtitle).not.toContain('tse@gmail.com');
+  });
+
+  it('displays store name (Food Hubs / amit) for admin viewing merchants tab, NEVER admin name "tse"', () => {
+    localStorage.setItem('dhaam_target_store_12801', JSON.stringify({
+      storeName: 'Food Hubs',
+      storeEmail: 'amit@dhaamai.com'
+    }));
+
+    const sessionWithTse = summary({
+      id: 's_admin_tse',
+      customerName: 'tse',
+      customerEmail: 'tse@dhaamai.com',
+      targetRole: 'merchant',
+      targetId: '12801',
+      chatType: 'merchant',
+    } as any);
+
+    // When Admin is viewing Merchants tab:
+    const adminViewName = getRowDisplayName(sessionWithTse, 'merchants', 'admin');
+    expect(adminViewName).toBe('Food Hubs');
+    expect(adminViewName).not.toBe('tse');
+
+    const adminViewSubtitle = getRowSubtitle(sessionWithTse, 'merchants', 'admin');
+    expect(adminViewSubtitle).toBe('Merchant • amit@dhaamai.com');
+    expect(adminViewSubtitle).not.toBe('Merchant • tse@dhaamai.com');
+
+    // When Merchant (amit) is viewing Admin tab:
+    expect(sessionBelongsToTab(sessionWithTse, 'admin', 'merchant')).toBe(true);
+    expect(sessionBelongsToTab(sessionWithTse, 'customers', 'merchant')).toBe(false);
+
+    const merchantViewName = getRowDisplayName(sessionWithTse, 'admin', 'merchant');
+    expect(merchantViewName).toBe('tse');
+  });
+
+  it('never shows the outlet its own name when IT started the "Message Admin" chat', () => {
+    // Reported bug: an outlet clicks "Message Admin" (direction: 'outgoing'
+    // from the outlet's own /party/conversations?with=partner row — the
+    // wire contract reuses customerId/customerName for whoever STARTED the
+    // chat, not for "the admin" specifically). Every row on the outlet's
+    // own Admin tab showed "am345345it" — the outlet's OWN name — instead
+    // of anything referring to the admin.
+    const outletStartedSession = summary({
+      id: 's_outlet_started',
+      customerName: 'am345345it', // the OUTLET's own name, not the admin's
+      customerEmail: 'am345345it@dhaamai.com',
+      targetRole: 'admin',
+      targetId: '12775',
+      chatType: 'admin',
+      direction: 'outgoing',
+    } as any);
+
+    const displayName = getRowDisplayName(outletStartedSession, 'admin', 'merchant');
+    expect(displayName).not.toBe('am345345it');
+    expect(displayName).toBe('Store Admin'); // the generic fallback, absent a real admin name
+
+    const subtitle = getRowSubtitle(outletStartedSession, 'admin', 'merchant');
+    expect(subtitle).not.toContain('am345345it');
+
+    // The admin-started case (direction 'incoming', or unset on older rows)
+    // must still show the real admin name — this is the exact case the
+    // "tse" test above already covers, restated here to pin both directions
+    // side by side.
+    const adminStartedSession = summary({
+      id: 's_admin_started',
+      customerName: 'tse',
+      customerEmail: 'tse@dhaamai.com',
+      targetRole: 'merchant',
+      targetId: 'outlet_14660',
+      chatType: 'admin',
+      direction: 'incoming',
+    } as any);
+    expect(getRowDisplayName(adminStartedSession, 'admin', 'merchant')).toBe('tse');
+  });
+});
+
+describe('"Message Admin" — a merchant/outlet starting a partner conversation first', () => {
+  function tabs(node: HTMLElement) {
+    return Array.from(node.querySelectorAll<HTMLButtonElement>('.dh-mtab'));
+  }
+
+  it('is shown for a merchant, only fires onStartNewPartner, and only on the Admin tab', () => {
+    const onStartNewPartner = vi.fn();
+    const screen = createMessagesScreen({
+      onOpenConversation: vi.fn(),
+      userRole: 'merchant',
+      onStartNewPartner,
+    });
+    document.body.appendChild(screen.node);
+
+    const button = screen.node.querySelector<HTMLButtonElement>('.dh-messages-new');
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toContain('Message Admin');
+    // Customers is the default-active tab — the button belongs to Admin only.
+    expect(button?.hidden).toBe(true);
+
+    const adminTab = tabs(screen.node)[1];
+    if (adminTab === undefined) throw new Error('admin tab not found');
+    adminTab.click();
+    expect(button?.hidden).toBeFalsy();
+
+    button?.click();
+    expect(onStartNewPartner).toHaveBeenCalledTimes(1);
+  });
+
+  it('is omitted entirely when the host has not wired onStartNewPartner', () => {
+    const screen = createMessagesScreen({ onOpenConversation: vi.fn(), userRole: 'merchant' });
+    document.body.appendChild(screen.node);
+
+    expect(screen.node.querySelector('.dh-messages-new')).toBeNull();
+  });
+
+  it('is never shown for an admin viewer — OutletChatModal already covers starting a new outlet chat', () => {
+    const screen = createMessagesScreen({
+      onOpenConversation: vi.fn(),
+      userRole: 'admin',
+      onStartNewPartner: vi.fn(),
+    });
+    document.body.appendChild(screen.node);
+
+    expect(screen.node.querySelector('.dh-messages-new')).toBeNull();
+  });
+});
+
+
+describe('admin-started chat with a customer (PARTNER, targetRole "customer")', () => {
+  // Shape produced by GET /party/conversations?with=partner for a chat the
+  // ADMIN opened with customer #14708. `customerId`/`customerName` name the
+  // admin ("tse"), not the customer.
+  const adminToCustomer = summary({
+    chatType: 'customer',
+    targetRole: 'customer',
+    targetId: '14708',
+    customerName: 'tse',
+    direction: 'outgoing',
+  } as unknown as Partial<ChatSessionSummary>);
+  const adminToOutlet = summary({
+    chatType: 'admin',
+    targetRole: 'merchant',
+    targetId: 'out-1',
+    customerName: 'tse',
+    direction: 'outgoing',
+  } as unknown as Partial<ChatSessionSummary>);
+
+  it('lists under Customers, not Outlets, for an admin', () => {
+    expect(sessionBelongsToTab(adminToCustomer, 'customers')).toBe(true);
+    expect(sessionBelongsToTab(adminToCustomer, 'merchants')).toBe(false);
+    expect(sessionBelongsToTab(adminToCustomer, 'admin')).toBe(false);
+  });
+
+  it('leaves an admin → outlet chat under Outlets', () => {
+    expect(sessionBelongsToTab(adminToOutlet, 'merchants')).toBe(true);
+    expect(sessionBelongsToTab(adminToOutlet, 'customers')).toBe(false);
+  });
+
+  it('never titles the row with the admin\'s own name', () => {
+    expect(getRowDisplayName(adminToCustomer, 'customers')).toBe('Customer #14708');
+  });
+
+  it('uses the cached customer name when the admin opened it from the customer page', () => {
+    localStorage.setItem('dhaam_target_customer_14708', JSON.stringify({ customerName: 'Bikash Kumar' }));
+    expect(getRowDisplayName(adminToCustomer, 'customers')).toBe('Bikash Kumar');
+    localStorage.removeItem('dhaam_target_customer_14708');
+  });
+});
+
+describe('customer-side title of a chat an admin opened with them', () => {
+  it('reads "Admin" for a PARTNER row that names nothing else', () => {
+    const row = summary({ conversationType: 4, target: { role: 'customer', id: '14735' } } as unknown as Partial<ChatSessionSummary>);
+    expect(getCustomerConversationTitle(row)).toBe('Admin');
+  });
+
+  it('leaves an ordinary support row on the fallback', () => {
+    expect(getCustomerConversationTitle(summary({ conversationType: 1 } as unknown as Partial<ChatSessionSummary>))).toBe('Support');
   });
 });

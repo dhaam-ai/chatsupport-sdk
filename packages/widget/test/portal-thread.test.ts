@@ -1,0 +1,410 @@
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ChatMessage, ChatState, SendMessageOptions } from '@dhaam-ccrm/js';
+import { createPortalThread } from '../src/ui/portal-thread.js';
+
+function buildMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id: 'msg_1',
+    sessionId: 'sess_1',
+    senderId: 'user_1',
+    senderType: 'CUSTOMER',
+    type: 'TEXT',
+    content: 'hello good morning',
+    createdAt: '2026-09-17T07:49:00.000Z',
+    ...overrides,
+  };
+}
+
+function buildState(messages: ChatMessage[]): ChatState {
+  return {
+    session: {
+      id: 'sess_1',
+      status: 'OPEN',
+      mode: 'HUMAN',
+      createdAt: '2026-09-17T07:49:00.000Z',
+      closedAt: null,
+      handledBy: null,
+      unreadCount: 0,
+      metadata: {},
+    },
+    messages,
+    connectionState: 'connected',
+    activeConversationId: 'sess_1',
+    conversations: {},
+    pendingQueue: [],
+  } as unknown as ChatState;
+}
+
+describe('createPortalThread — customer name and avatar resolution', () => {
+  it('renders customer name and initial on incoming messages when setCustomerName is configured', () => {
+    const thread = createPortalThread({ onSend: vi.fn() });
+    thread.setCustomerName('bikash');
+
+    const msg = buildMessage({ content: 'hello good morning' });
+    thread.render(buildState([msg]), false);
+
+    const authorEl = thread.node.querySelector('.dh-msg-author');
+    expect(authorEl).not.toBeNull();
+    expect(authorEl?.textContent).toBe('bikash');
+
+    const avatarEl = thread.node.querySelector('.dh-msg-avatar');
+    expect(avatarEl).not.toBeNull();
+    expect(avatarEl?.textContent).toBe('B');
+  });
+
+  it('renders bot identity for BOT senderType regardless of customer name', () => {
+    const thread = createPortalThread({ onSend: vi.fn() });
+    thread.setCustomerName('bikash');
+
+    const botMsg = buildMessage({
+      id: 'msg_bot',
+      senderType: 'BOT',
+      content: 'Good morning! How can I assist you today?',
+    });
+    thread.render(buildState([botMsg]), false);
+
+    const authorEl = thread.node.querySelector('.dh-msg-author');
+    expect(authorEl?.textContent).toBe('✦ Dhaam Assistant');
+
+    const avatarEl = thread.node.querySelector('.dh-msg-avatar--bot');
+    expect(avatarEl).not.toBeNull();
+    expect(avatarEl?.querySelector('svg')).not.toBeNull();
+  });
+
+  it('prefers metadata senderName when explicitly attached to the message', () => {
+    const thread = createPortalThread({ onSend: vi.fn() });
+    thread.setCustomerName('bikash');
+
+    const msg = buildMessage({
+      content: 'Special message',
+      metadata: { senderName: 'Rohit Sharma' } as any,
+    });
+    thread.render(buildState([msg]), false);
+
+    const authorEl = thread.node.querySelector('.dh-msg-author');
+    expect(authorEl?.textContent).toBe('Rohit Sharma');
+
+    const avatarEl = thread.node.querySelector('.dh-msg-avatar');
+    expect(avatarEl?.textContent).toBe('R');
+  });
+
+  it('falls back to Customer and initial C when no name is provided', () => {
+    const thread = createPortalThread({ onSend: vi.fn() });
+
+    const msg = buildMessage({ content: 'hii' });
+    thread.render(buildState([msg]), false);
+
+    const authorEl = thread.node.querySelector('.dh-msg-author');
+    expect(authorEl?.textContent).toBe('Customer');
+
+    const avatarEl = thread.node.querySelector('.dh-msg-avatar');
+    expect(avatarEl?.textContent).toBe('C');
+  });
+});
+
+describe('createPortalThread — reply', () => {
+  it('shows the quoted message in the composer chip when the reply icon is clicked', () => {
+    const thread = createPortalThread({ onSend: vi.fn(async () => undefined) });
+    thread.setCustomerName('bikash');
+
+    const msg = buildMessage({ content: 'where is my order' });
+    thread.render(buildState([msg]), false);
+
+    thread.node.querySelector<HTMLButtonElement>('.dh-msg-reply')!.click();
+
+    const chip = thread.node.querySelector<HTMLElement>('.dh-reply-chip')!;
+    expect(chip.hidden).toBe(false);
+    expect(chip.querySelector('.dh-reply-name')?.textContent).toBe('bikash');
+    expect(chip.querySelector('.dh-reply-excerpt')?.textContent).toBe('where is my order');
+  });
+
+  it('names the reply "You" when the agent replies to their own message', () => {
+    const thread = createPortalThread({ onSend: vi.fn(async () => undefined) });
+    const msg = buildMessage({ id: 'm_agent', senderType: 'AGENT', content: 'On its way!' });
+    thread.render(buildState([msg]), false);
+
+    thread.node.querySelector<HTMLButtonElement>('.dh-msg-reply')!.click();
+
+    expect(thread.node.querySelector('.dh-reply-name')?.textContent).toBe('You');
+  });
+
+  it('sends replyToMessageId and reply metadata built from the clicked message', async () => {
+    const onSend = vi.fn(async (_text: string, _options?: SendMessageOptions) => undefined);
+    const thread = createPortalThread({ onSend });
+    thread.setCustomerName('bikash');
+
+    const msg = buildMessage({ id: 'm_target', content: 'where is my order' });
+    thread.render(buildState([msg]), false);
+    thread.node.querySelector<HTMLButtonElement>('.dh-msg-reply')!.click();
+
+    const input = thread.node.querySelector<HTMLTextAreaElement>('.dh-input')!;
+    input.value = 'Refunded, sorry about that!';
+    input.dispatchEvent(new Event('input'));
+    thread.node.querySelector<HTMLButtonElement>('.dh-send')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend.mock.calls[0]![0]).toBe('Refunded, sorry about that!');
+    expect(onSend.mock.calls[0]![1]).toEqual({
+      replyToMessageId: 'm_target',
+      metadata: {
+        kind: 'reply',
+        replyTo: { messageId: 'm_target', excerpt: 'where is my order', senderName: 'bikash' },
+      },
+    });
+  });
+
+  it('cancelling the reply hides the chip and sends with no reply options', async () => {
+    const onSend = vi.fn(async (_text: string, _options?: SendMessageOptions) => undefined);
+    const thread = createPortalThread({ onSend });
+
+    const msg = buildMessage({ content: 'hello' });
+    thread.render(buildState([msg]), false);
+    thread.node.querySelector<HTMLButtonElement>('.dh-msg-reply')!.click();
+    thread.node.querySelector<HTMLButtonElement>('.dh-reply-clear')!.click();
+
+    expect(thread.node.querySelector<HTMLElement>('.dh-reply-chip')!.hidden).toBe(true);
+
+    const input = thread.node.querySelector<HTMLTextAreaElement>('.dh-input')!;
+    input.value = 'a plain message';
+    input.dispatchEvent(new Event('input'));
+    thread.node.querySelector<HTMLButtonElement>('.dh-send')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSend.mock.calls[0]).toEqual(['a plain message', undefined]);
+  });
+
+  it('renders the quoted strip inside a bubble carrying reply metadata', () => {
+    const thread = createPortalThread({ onSend: vi.fn() });
+    const msg = buildMessage({
+      content: 'Refunded, sorry about that!',
+      metadata: {
+        kind: 'reply',
+        replyTo: { messageId: 'm_target', excerpt: 'where is my order', senderName: 'bikash' },
+      } as any,
+    });
+    thread.render(buildState([msg]), false);
+
+    const quote = thread.node.querySelector<HTMLElement>('.dh-msg-quote')!;
+    expect(quote.hidden).toBe(false);
+    expect(quote.querySelector('.dh-quote-name')?.textContent).toBe('bikash');
+    expect(quote.querySelector('.dh-quote-text')?.textContent).toBe('where is my order');
+  });
+});
+
+describe('createPortalThread — partner chat (admin/manager <-> merchant/outlet)', () => {
+  /**
+   * The reported bug: a partner conversation has NO CUSTOMER-typed
+   * participant (both sides send as senderType AGENT — wire contract
+   * "Partner chats"), so `state.session.customer` is `null` (see
+   * `packages/core/src/client/session.ts`'s `findParticipant(...,
+   * 'CUSTOMER')`). `isOutgoing`'s old `senderType === 'AGENT'` check could
+   * not tell the two sides apart and rendered EVERY message as "mine" —
+   * both the admin's own messages AND the outlet's replies landed with
+   * `data-mine="true"`, all on the same side of the transcript.
+   */
+  function buildPartnerState(messages: ChatMessage[]): ChatState {
+    return {
+      session: {
+        id: 'sess_partner',
+        status: 'OPEN',
+        mode: 'HUMAN',
+        createdAt: '2026-09-19T04:00:00.000Z',
+        closedAt: null,
+        handledBy: null,
+        customer: null, // <- the partner-conversation signal
+        targetRole: 'merchant',
+        targetId: 'outlet_14660',
+      },
+      messages,
+      connectionState: 'connected',
+      activeConversationId: 'sess_partner',
+      conversations: {},
+      pendingQueue: [],
+    } as unknown as ChatState;
+  }
+
+  it('tells admin from outlet by senderId, not by senderType, once localParticipantId is known', () => {
+    const admin = buildMessage({
+      id: 'm_admin',
+      senderId: '12775',
+      senderType: 'AGENT',
+      content: 'hello outlet',
+    });
+    const outlet = buildMessage({
+      id: 'm_outlet',
+      senderId: '14660',
+      senderType: 'AGENT',
+      content: 'helo admin',
+    });
+
+    // Mounted as the admin (identity.userId "12775").
+    const thread = createPortalThread({ onSend: vi.fn() }, '12775');
+    thread.render(buildPartnerState([admin, outlet]), false);
+
+    const rows = thread.node.querySelectorAll<HTMLElement>('.dh-msg');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.getAttribute('data-mine')).toBe('true'); // admin's own message
+    expect(rows[1]!.getAttribute('data-mine')).toBe('false'); // the outlet's reply
+  });
+
+  it('flips sides on the outlet’s own mount of the exact same conversation', () => {
+    const admin = buildMessage({ id: 'm_admin', senderId: '12775', senderType: 'AGENT', content: 'hello outlet' });
+    const outlet = buildMessage({ id: 'm_outlet', senderId: '14660', senderType: 'AGENT', content: 'helo admin' });
+
+    // Mounted as the outlet (identity.userId "14660").
+    const thread = createPortalThread({ onSend: vi.fn() }, '14660');
+    thread.render(buildPartnerState([admin, outlet]), false);
+
+    const rows = thread.node.querySelectorAll<HTMLElement>('.dh-msg');
+    expect(rows[0]!.getAttribute('data-mine')).toBe('false'); // admin's message, not mine
+    expect(rows[1]!.getAttribute('data-mine')).toBe('true'); // my own reply
+  });
+
+  it('leaves the ordinary shared-inbox support conversation alone: any AGENT reply is still "our side"', () => {
+    // Same shape as buildState() above — session.customer is set, so this is
+    // NOT a partner conversation, and the old any-AGENT-is-outgoing rule
+    // must still apply even for a coworker's reply that isn't literally me.
+    const coworkerReply = buildMessage({ id: 'm2', senderId: 'agent_someone_else', senderType: 'AGENT', content: 'on it' });
+    const thread = createPortalThread({ onSend: vi.fn() }, 'agent_me');
+    thread.render(buildState([coworkerReply]), false);
+
+    expect(thread.node.querySelector<HTMLElement>('.dh-msg')?.getAttribute('data-mine')).toBe('true');
+  });
+});
+
+// The in-widget replacement for `window.prompt('Enter link URL:', ...)` — the
+// host page's own dialog, unthemed, and never appeared at all on a
+// sandboxed embed. Ported from `ui/composer.ts`'s own link popover, which
+// `composer.test.ts`'s "the link popover" suite covers exhaustively; this is
+// the same behaviour's subset that matters for the portal surface — see
+// that file for the fuller enumeration (Escape/outside-click/re-press/etc.).
+describe('createPortalThread — the link popover', () => {
+  type Thread = ReturnType<typeof createPortalThread>;
+  // Appended to the document and torn down after each test: focus assertions
+  // below need a real, attached element (jsdom does not move
+  // `document.activeElement` onto a detached one), and an open popover's
+  // document-level pointerdown/keydown listeners (`toggleLinkPopover`) would
+  // otherwise survive into the next test — `PortalThreadView` has no
+  // `destroy()` (composer.ts's equivalent test relies on that instead), so
+  // closing anything still open is this file's own job.
+  const built: Thread[] = [];
+
+  function mount(): Thread {
+    const thread = createPortalThread({ onSend: vi.fn() });
+    document.body.appendChild(thread.node);
+    built.push(thread);
+    thread.render(buildState([buildMessage()]), false);
+    return thread;
+  }
+
+  afterEach(() => {
+    for (const thread of built.splice(0)) {
+      if (!popover(thread).hidden) linkButton(thread).click();
+      thread.node.remove();
+    }
+    vi.unstubAllGlobals();
+  });
+
+  const linkButton = (thread: Thread) =>
+    thread.node.querySelector<HTMLButtonElement>('button[aria-label="Insert a link"]')!;
+  const popover = (thread: Thread) => thread.node.querySelector<HTMLFormElement>('.dh-link-popover')!;
+  const urlField = (thread: Thread) => popover(thread).querySelector<HTMLInputElement>('input[type="url"]')!;
+  const insertButton = (thread: Thread) => popover(thread).querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  const cancelButton = (thread: Thread) => popover(thread).querySelector<HTMLButtonElement>('.dh-link-cancel')!;
+  const error = (thread: Thread) => popover(thread).querySelector<HTMLElement>('.dh-link-error')!;
+  const input = (thread: Thread) => thread.node.querySelector<HTMLTextAreaElement>('.dh-input')!;
+
+  it('lives inside the composer box, starts closed, and never touches the browser prompt', () => {
+    const prompt = vi.fn();
+    vi.stubGlobal('prompt', prompt);
+    const thread = mount();
+
+    expect(thread.node.querySelector('.dh-composer-box > .dh-link-popover')).not.toBeNull();
+    expect(popover(thread).hidden).toBe(true);
+
+    linkButton(thread).click();
+    expect(prompt).not.toHaveBeenCalled();
+    expect(popover(thread).hidden).toBe(false);
+    expect(linkButton(thread).getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(urlField(thread));
+  });
+
+  it('inserts a valid https URL at the caret and closes', () => {
+    const thread = mount();
+    const field = input(thread);
+    field.value = 'See here: !';
+    field.focus();
+    field.setSelectionRange(10, 10); // right before "!"
+
+    linkButton(thread).click();
+    urlField(thread).value = 'https://x.test';
+    insertButton(thread).click();
+
+    expect(field.value).toBe('See here: https://x.test!');
+    expect(popover(thread).hidden).toBe(true);
+    expect(document.activeElement).toBe(field);
+  });
+
+  it('rejects an unsafe/invalid URL with an inline error and stays open', () => {
+    const thread = mount();
+
+    linkButton(thread).click();
+    urlField(thread).value = 'javascript:alert(1)';
+    insertButton(thread).click();
+
+    expect(input(thread).value).toBe('');
+    expect(popover(thread).hidden).toBe(false);
+    expect(error(thread).hidden).toBe(false);
+    expect(error(thread).textContent).toBe('That does not look like a valid https:// link.');
+    expect(urlField(thread).getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('Cancel closes it without inserting and returns focus to the link button', () => {
+    const thread = mount();
+
+    linkButton(thread).click();
+    urlField(thread).value = 'https://x.test';
+    cancelButton(thread).click();
+
+    expect(popover(thread).hidden).toBe(true);
+    expect(input(thread).value).toBe('');
+    expect(document.activeElement).toBe(linkButton(thread));
+  });
+
+  it('Escape closes it and does not reach the panel', () => {
+    const thread = mount();
+    linkButton(thread).click();
+    const panelHandler = vi.fn();
+    document.addEventListener('keydown', panelHandler);
+
+    urlField(thread).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    document.removeEventListener('keydown', panelHandler);
+
+    expect(popover(thread).hidden).toBe(true);
+    expect(panelHandler).not.toHaveBeenCalled();
+  });
+
+  it('closes on an outside pointerdown', () => {
+    const thread = mount();
+    linkButton(thread).click();
+
+    document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(popover(thread).hidden).toBe(true);
+  });
+
+  it('is disabled and will not open while no conversation is selected', () => {
+    const thread = createPortalThread({ onSend: vi.fn() });
+    document.body.appendChild(thread.node);
+    built.push(thread);
+    thread.render(null, false);
+
+    expect(linkButton(thread).disabled).toBe(true);
+    linkButton(thread).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(popover(thread).hidden).toBe(true);
+  });
+});

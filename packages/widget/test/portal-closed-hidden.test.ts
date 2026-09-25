@@ -171,8 +171,13 @@ describe('portal queue — a CLOSED conversation is off the staff list', () => {
     queueRows = [
       { id: 'sess_open', status: CODE.OPEN, customer: { displayName: 'Jane Doe' } },
       { id: 'sess_closed', status: CODE.CLOSED, customer: { displayName: 'Closed Casey' } },
-      { id: 'sess_m_live', status: CODE.ASSIGNED, targetRole: 'merchant', storeName: 'Acme Store' },
-      { id: 'sess_m_closed', status: CODE.CLOSED, targetRole: 'merchant', storeName: 'Gone Goods' },
+      // `chatType: 'admin'` makes these unambiguously admin-initiated — this
+      // test is about closed-row visibility, not initiator detection, and a
+      // merchant-targeted row with no customer identity at all is no longer
+      // enough on its own to land in the admin's Merchants tab (a customer's
+      // own DM to an outlet shares that same targetRole).
+      { id: 'sess_m_live', status: CODE.ASSIGNED, targetRole: 'merchant', storeName: 'Acme Store', chatType: 'admin' },
+      { id: 'sess_m_closed', status: CODE.CLOSED, targetRole: 'merchant', storeName: 'Gone Goods', chatType: 'admin' },
     ];
 
     mount(config());
@@ -275,5 +280,32 @@ describe('portal queue — a CLOSED conversation is off the staff list', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('hides ghost sessions where lastMessage is null and excludes them from tab counts', async () => {
+    // 1 session with an actual message, 1 ghost session where customer only logged in (lastMessage: null)
+    const active = {
+      id: 'sess_active',
+      status: CODE.OPEN,
+      customer: { displayName: 'Active Alex' },
+      lastMessage: { content: 'Hi there!' },
+    };
+    const ghost = {
+      id: 'sess_ghost',
+      status: CODE.OPEN,
+      customer: { displayName: 'Ghost Gary' },
+      lastMessage: null,
+      unreadCount: 0,
+    };
+    queueRows = [active, ghost];
+
+    const widget = mount(config());
+    widget.open();
+    await queueRendered();
+
+    // Only Active Alex is shown in the list; Ghost Gary is omitted
+    expect(visibleRowNames()).toEqual(['Active Alex']);
+    // Tab count badge should say 1, not 2
+    expect(tabCounts().customers).toBe('1');
   });
 });

@@ -171,6 +171,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     );
   }
 
+  // See ChatClientConfig.outletId's doc — sent on every session.join this
+  // client makes, as the fallback ID proof an outlet identity may need.
+  const outletId = config.outletId ?? config.outletIds?.[0];
+
   const resolveLocalSender = normalizeLocalSender(config.localSender);
   // Resolved once, eagerly, so presence/typing/watermark identity (below) is
   // seeded correctly from construction — not just at send time. See
@@ -251,7 +255,21 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   const presenceCoordinator = new PresenceCoordinator({
     store,
     emitIntent: (intent) => {
-      realTransport.send(intent.t, intent.d);
+      const { ack } = realTransport.send(intent.t, intent.d);
+      // `presence.query`'s answer arrives as a generic `ack` correlated by
+      // `ref` — transport already does that correlation (pending-acks.ts);
+      // this is the one place that knows the outcome belongs to a query, so
+      // it applies the snapshot. See PresenceCoordinator.handleFrame's doc,
+      // which describes this exact hand-off.
+      if (intent.t === 'presence.query') {
+        ack
+          .then((outcome) => {
+            if (outcome.status === 'acked' && 'presences' in outcome.frame.d) {
+              presenceCoordinator.presence.applyPresenceSnapshot(outcome.frame.d.presences);
+            }
+          })
+          .catch(() => undefined);
+      }
     },
     // Explicit, not adopted from the session snapshot's lone CUSTOMER
     // participant: that auto-adopt heuristic (watermarks.ts) is correct only
@@ -515,10 +533,30 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     store,
     url: wsUrl,
     publishableKey,
+    // See `ConnectionHelloPayload.clientId`: an unverified self-claim,
+    // honoured server-side ONLY for a staff caller (admin/manager) minting a
+    // PARTNER row — dh-auth gives that identity no UUID, only a numeric one,
+    // so a staff-owned widget mount (e.g. an admin's targeted "Message
+    // Outlet") needs a way to claim a stable id of its own. Server-side it is
+    // harmless either way (chat-service-node's gate requires the staff role,
+    // which no customer token satisfies), but gated on `target` here anyway
+    // rather than sent unconditionally: the default, untargeted support-desk
+    // connection is the overwhelmingly common case for a real customer, and
+    // this field has nothing to say there — see the golden wire tests this
+    // client's hello shape is pinned against. Sent on the KEYED path too, not
+    // only the keyless one (create-conversation-client.ts) — a targeted
+    // admin/merchant mount connects through THIS client (client.ts's
+    // `createWidgetStore`), so the keyless-only version of this fix never
+    // reached it.
+    ...(config.target !== undefined && localSender.senderId
+      ? { clientId: localSender.senderId }
+      : {}),
     // Absent, not `undefined` — `exactOptionalPropertyTypes` makes those
     // different, and absence is what selects the support conversation.
     ...(config.target === undefined ? {} : { target: config.target }),
+    ...(config.outletIds === undefined ? {} : { outletIds: config.outletIds }),
     ...(config.subject === undefined ? {} : { subject: config.subject }),
+    ...(config.topic === undefined ? {} : { topic: config.topic }),
     getToken: config.getToken,
     createTransport,
     onFrame: dispatchFrame,
@@ -753,7 +791,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
    * with no signal at all — this is what closes that gap.
    */
   function joinSessionFrame(sessionId: string): void {
-    const { ack } = realTransport.send('session.join', { sessionId });
+    const { ack } = realTransport.send('session.join', {
+      sessionId,
+      ...(outletId === undefined ? {} : { outletId }),
+    });
     void ack.then((outcome) => {
       // Only an ACK is the server saying `conn.sessionId` moved. A refusal, a
       // timeout and a `disconnected` write all leave the connection exactly
@@ -963,10 +1004,14 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     void messageController.loadMore(sessionId).catch(() => undefined);
   }
 
+  const selectedSessionKey = config.target
+    ? `${SELECTED_SESSION_KEY}:${encodeNamespaceSegment(config.target.role)}:${encodeNamespaceSegment(config.target.id)}`
+    : SELECTED_SESSION_KEY;
+
   /** Reads the persisted selected-session id. A storage fault reads as "none". */
   async function readSelectedSession(): Promise<string | null> {
     try {
-      const value = await queueStorage.get(SELECTED_SESSION_KEY);
+      const value = await queueStorage.get(selectedSessionKey);
       return value === null || value === '' ? null : value;
     } catch {
       // Never fatal: not knowing which session was chosen is exactly the
@@ -979,7 +1024,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   /** Records the session the user is in, so a reload comes back to it. */
   async function rememberSelectedSession(sessionId: string): Promise<void> {
     try {
-      await queueStorage.set(SELECTED_SESSION_KEY, sessionId);
+      await queueStorage.set(selectedSessionKey, sessionId);
     } catch {
       // A failed write costs the reload behaviour, nothing else. It must not
       // fail a switch that has already succeeded on the wire.
@@ -1037,7 +1082,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   async function forgetSelectedSession(sessionId?: string): Promise<void> {
     try {
       if (sessionId !== undefined && (await readSelectedSession()) !== sessionId) return;
-      await queueStorage.remove(SELECTED_SESSION_KEY);
+      await queueStorage.remove(selectedSessionKey);
     } catch {
       // Same reasoning as rememberSelectedSession.
     }
@@ -1060,7 +1105,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
    * the same thing.
    */
   async function joinSessionAwaited(sessionId: string): Promise<void> {
-    const { ack } = realTransport.send('session.join', { sessionId });
+    const { ack } = realTransport.send('session.join', {
+      sessionId,
+      ...(outletId === undefined ? {} : { outletId }),
+    });
     const outcome = await ack;
     if (outcome.status === 'acked') {
       // The server has moved `conn.sessionId`. Recorded here and nowhere else
@@ -1124,7 +1172,10 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     if (onScreen === joinedSessionId) return;
 
     if (onScreen !== null) {
-      const { ack } = realTransport.send('session.join', { sessionId: onScreen });
+      const { ack } = realTransport.send('session.join', {
+        sessionId: onScreen,
+        ...(outletId === undefined ? {} : { outletId }),
+      });
       const outcome = await ack;
       if (outcome.status === 'acked') {
         joinedSessionId = onScreen;

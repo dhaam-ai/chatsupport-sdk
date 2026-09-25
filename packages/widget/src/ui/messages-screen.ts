@@ -24,7 +24,7 @@ import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 import { ICONS, el, icon } from './dom.js';
 import { preserveListFocus, type ListFocusOutcome } from './focus.js';
 import { relativeTimeLabel } from './session-picker.js';
-import { statusLabel } from './session-status.js';
+import { statusLabel, statusPill } from './session-status.js';
 
 export type ActiveConversationTab = 'customers' | 'merchants' | 'admin';
 
@@ -66,6 +66,13 @@ export interface MessagesScreenCallbacks {
   readonly onOpenConversation: (sessionId: string, displayName?: string, subtitle?: string) => void;
   /** Optional start-new callback. */
   readonly onStartNew?: () => void;
+  /**
+   * Portal (merchant/outlet) Admin tab's "Message Admin" button. Fires with
+   * no arguments — this screen has no `role: 'admin'` target id to hand
+   * over, so resolving one (the host's job; see `WidgetConfig.onStartPartnerConversation`)
+   * is entirely on whoever set this callback.
+   */
+  readonly onStartNewPartner?: () => void;
   /** Current user role in the portal ('admin' | 'merchant' | 'customer'). */
   readonly userRole?: string;
 }
@@ -113,17 +120,40 @@ export function getRowDisplayName(
 
   if (isMerchantUser) {
     if (tab === 'admin' || tab === 'merchants') {
-      // Merchant viewing Admin chat
+      // Merchant viewing Admin chat.
+      //
+      // `customerName`/`customerEmail` are only the ADMIN's real identity
+      // when the ADMIN started this conversation (`direction` absent, or
+      // `'incoming'` from this merchant/outlet's own point of view — the
+      // wire contract's `/party/conversations` `direction` field). When the
+      // merchant/outlet itself started it instead (`'outgoing'`, e.g. via
+      // "Message Admin"), those same fields are the VIEWER's own name and
+      // email — the backend reuses the `customerId`/`customerName` columns
+      // for whoever started the chat, regardless of role — so trusting them
+      // here showed the outlet its own name back at itself instead of the
+      // admin's. `direction` was previously dropped between the wire
+      // response and this summary (see widget.ts's `portalQueueRowToSummary`);
+      // `undefined` (never sent, e.g. a legacy/non-partner row) keeps the
+      // old behaviour so nothing else regresses.
+      const startedByMe = s.direction === 'outgoing';
       if (s.adminName && typeof s.adminName === 'string' && s.adminName.trim()) return s.adminName.trim();
-      if (s.customerName && s.customerName.toLowerCase().includes('admin')) return s.customerName.trim();
-      if (s.targetName && s.targetName.toLowerCase().includes('admin')) return s.targetName.trim();
+      if (!startedByMe && s.customerName && typeof s.customerName === 'string' && s.customerName.trim()) {
+        const cName = s.customerName.trim();
+        if (cName.toLowerCase().includes('admin') || cName !== 'Customer') return cName;
+      }
+      if (s.targetName && typeof s.targetName === 'string' && s.targetName.trim() && s.targetName.toLowerCase().includes('admin')) {
+        return s.targetName.trim();
+      }
+      if (!startedByMe && s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@')) {
+        return s.customerEmail.split('@')[0];
+      }
       if (s.handledBy?.displayName && s.handledBy.displayName !== 'Support Bot' && s.handledBy.displayName !== 'Dhaam Bot') {
         return s.handledBy.displayName;
       }
-      return 'tse';
+      return 'Store Admin';
     } else {
       // Merchant viewing Customer chat
-      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() && !s.customerName.toLowerCase().includes('admin')) {
+      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() && !s.customerName.toLowerCase().includes('admin') && s.customerName.toLowerCase() !== 'tse') {
         return s.customerName.trim();
       }
       if (s.handledBy?.displayName) return s.handledBy.displayName;
@@ -133,32 +163,71 @@ export function getRowDisplayName(
     // Admin user
     if (tab === 'merchants' || tab === 'admin') {
       // Admin viewing Merchant chat
-      if (s.storeName && typeof s.storeName === 'string' && s.storeName.trim() && s.storeName.trim() !== 'Merchant') {
+      let storedTargetName: string | null = null;
+      if (s.targetId && typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('dhaam_target_store_' + s.targetId) || sessionStorage.getItem('dhaam_target_store_' + s.targetId);
+          if (raw) {
+            const p = JSON.parse(raw);
+            storedTargetName = p.storeName || p.merchantName || (p.storeEmail ? p.storeEmail.split('@')[0] : null);
+          }
+        } catch {}
+      }
+
+      if (s.storeName && typeof s.storeName === 'string' && s.storeName.trim() && s.storeName.trim() !== 'Merchant' && s.storeName.trim() !== s.customerName) {
         return s.storeName.trim();
       }
-      if (s.merchantName && typeof s.merchantName === 'string' && s.merchantName.trim() && s.merchantName.trim() !== 'Merchant') {
+      if (s.merchantName && typeof s.merchantName === 'string' && s.merchantName.trim() && s.merchantName.trim() !== 'Merchant' && s.merchantName.trim() !== s.customerName) {
         return s.merchantName.trim();
       }
       if (s.targetName && typeof s.targetName === 'string' && s.targetName.trim() && s.targetName.trim() !== 'Merchant') {
         return s.targetName.trim();
       }
-      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() &&
-          !s.customerName.toLowerCase().includes('admin')) {
-        return s.customerName.trim();
+      if (storedTargetName && storedTargetName.trim()) {
+        return storedTargetName.trim();
+      }
+      if (s.subject && typeof s.subject === 'string' && s.subject.trim() && s.subject.trim() !== 'admin') {
+        return s.subject.trim();
       }
       if (s.merchantEmail && typeof s.merchantEmail === 'string' && s.merchantEmail.includes('@')) {
         return s.merchantEmail.split('@')[0];
       }
-      if (s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@') && !s.customerEmail.toLowerCase().includes('admin')) {
-        return s.customerEmail.split('@')[0];
+      if (s.targetEmail && typeof s.targetEmail === 'string' && s.targetEmail.includes('@')) {
+        return s.targetEmail.split('@')[0];
+      }
+      if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() &&
+          !s.customerName.toLowerCase().includes('admin') && s.customerName.toLowerCase() !== 'tse') {
+        return s.customerName.trim();
       }
       if (s.handledBy?.displayName && s.handledBy.displayName !== 'Support Bot' && s.handledBy.displayName !== 'Dhaam Bot') {
         return s.handledBy.displayName;
       }
-      if (s.targetId) return `Merchant #${String(s.targetId).slice(0, 8)}`;
+      if (s.targetId) return `Store #${String(s.targetId).slice(0, 8)}`;
       return 'Merchant';
     } else {
       // Admin viewing Customer chat
+      // A chat the ADMIN started with a customer (targetRole 'customer',
+      // outgoing): the backend reuses `customerId`/`customerName` for whoever
+      // started it, so those name the admin, not the customer — never show
+      // them as the customer's name.
+      const startedByAdmin = s.targetRole === 'customer' && s.direction === 'outgoing';
+      let storedCustomerName: string | null = null;
+      if (s.targetId && typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('dhaam_target_customer_' + s.targetId) || sessionStorage.getItem('dhaam_target_customer_' + s.targetId);
+          if (raw) {
+            const p = JSON.parse(raw);
+            storedCustomerName = p.customerName || (p.customerEmail ? p.customerEmail.split('@')[0] : null);
+          }
+        } catch {}
+      }
+      if (storedCustomerName && storedCustomerName.trim()) {
+        return storedCustomerName.trim();
+      }
+      if (s.targetName && typeof s.targetName === 'string' && s.targetName.trim() && s.targetName.trim() !== 'Customer') {
+        return s.targetName.trim();
+      }
+      if (startedByAdmin) return s.targetId ? `Customer #${s.targetId}` : 'Customer';
       if (s.customerName && typeof s.customerName === 'string' && s.customerName.trim() && s.customerName !== 'Store Admin') {
         return s.customerName.trim();
       }
@@ -182,9 +251,18 @@ export function getRowSubtitle(
 
   if (isMerchantUser) {
     if (tab === 'admin' || tab === 'merchants') {
-      // Merchant viewing Admin chat: display Admin's email
-      const email = s.adminEmail || s.targetEmail || (s.handledBy?.email) || 'tse@gmail.com';
-      return `Admin • ${email}`;
+      // Merchant viewing Admin chat: display Admin's email. Same
+      // `direction` caveat as getRowDisplayName above — `customerEmail` is
+      // the viewer's OWN email when they started the conversation.
+      const startedByMe = s.direction === 'outgoing';
+      const email =
+        s.adminEmail ||
+        (!startedByMe && s.customerEmail && typeof s.customerEmail === 'string' && s.customerEmail.includes('@') ? s.customerEmail : null) ||
+        s.targetEmail ||
+        (s.handledBy?.email) ||
+        '';
+      if (email) return `Admin • ${email}`;
+      return 'Admin';
     } else {
       // Merchant viewing Customer chat: display Customer's email
       if (s.customerEmail) return `Customer • ${s.customerEmail}`;
@@ -194,12 +272,43 @@ export function getRowSubtitle(
     // Admin user viewing chat
     if (tab === 'merchants' || tab === 'admin') {
       // Admin viewing Merchant chat: display Merchant's email
-      const email = s.merchantEmail || s.storeEmail || (s.customerEmail && !s.customerEmail.toLowerCase().includes('admin') ? s.customerEmail : '') || s.targetEmail || '';
+      let storedEmail: string | null = null;
+      if (s.targetId && typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('dhaam_target_store_' + s.targetId) || sessionStorage.getItem('dhaam_target_store_' + s.targetId);
+          if (raw) {
+            const p = JSON.parse(raw);
+            storedEmail = p.storeEmail || null;
+          }
+        } catch {}
+      }
+
+      const email =
+        s.merchantEmail ||
+        s.storeEmail ||
+        storedEmail ||
+        s.targetEmail ||
+        (s.customerEmail && !s.customerEmail.toLowerCase().includes('admin') && !s.customerEmail.toLowerCase().includes('tse') ? s.customerEmail : '');
       if (email) return `Merchant • ${email}`;
-      return 'Merchant Chat';
+      return s.targetId ? `Outlet #${s.targetId}` : 'Merchant Chat';
     } else {
       // Admin viewing Customer chat: display Customer's email
-      if (s.customerEmail) return `Customer • ${s.customerEmail}`;
+      let storedCustomerEmail: string | null = null;
+      if (s.targetId && typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('dhaam_target_customer_' + s.targetId) || sessionStorage.getItem('dhaam_target_customer_' + s.targetId);
+          if (raw) {
+            const p = JSON.parse(raw);
+            storedCustomerEmail = p.customerEmail || null;
+          }
+        } catch {}
+      }
+      const startedByAdmin = s.targetRole === 'customer' && s.direction === 'outgoing';
+      const email =
+        storedCustomerEmail ||
+        s.targetEmail ||
+        (!startedByAdmin && s.customerEmail && !s.customerEmail.toLowerCase().includes('admin') && !s.customerEmail.toLowerCase().includes('tse') ? s.customerEmail : null);
+      if (email) return `Customer • ${email}`;
       return 'Customer';
     }
   }
@@ -221,61 +330,54 @@ export function sessionBelongsToTab(
   const s = summary as any;
   const isMerchantUser = userRole === 'merchant';
 
-  // Primary: use server-provided chatType when available
-  if (s.chatType === 'merchant') {
-    // For a merchant viewer: admin↔merchant sessions carry chatType='merchant'
-    // (because the target IS the merchant). The merchant's 2nd tab has key 'admin',
-    // so we must match on 'admin' (or 'merchants' which is the same slot key-wise).
-    // For an admin viewer: correctly routed to the 'merchants' tab.
-    return isMerchantUser ? (tab === 'admin' || tab === 'merchants') : tab === 'merchants';
-  }
-  if (s.chatType === 'admin') {
-    return isMerchantUser ? (tab === 'admin' || tab === 'merchants') : tab === 'merchants';
-  }
-  if (s.chatType === 'customer') {
-    return tab === 'customers';
-  }
+  const isInitiatorAdmin =
+    (typeof s.customerName === 'string' && s.customerName.toLowerCase().includes('admin')) ||
+    (typeof s.customerEmail === 'string' && s.customerEmail.toLowerCase().includes('admin')) ||
+    (typeof s.customerName === 'string' && s.customerName.toLowerCase() === 'tse') ||
+    (typeof s.customerEmail === 'string' && s.customerEmail.toLowerCase().includes('tse')) ||
+    s.topic === 'admin' ||
+    s.chatType === 'admin' ||
+    (s.adminName && !s.customerName);
 
-  // Fallbacks:
   if (isMerchantUser) {
     // When Merchant is logged in:
     // Tab 1: Customers
     // Tab 2: Admin
-    const isInitiatorAdmin =
-      (s.customerName && s.customerName.toLowerCase().includes('admin')) ||
-      (s.customerEmail && s.customerEmail.toLowerCase().includes('admin')) ||
-      (s.adminName && !s.customerName);
-
-    if (tab === 'customers') {
-      if (isInitiatorAdmin) return false;
-      if (s.targetRole === 'customer') return true;
-      // Inbound customer inquiry addressed to this merchant
-      if (s.targetRole === 'merchant') return true;
-      if (s.customerName && !isInitiatorAdmin) return true;
-      return false;
-    }
     if (tab === 'admin' || tab === 'merchants') {
-      if (isInitiatorAdmin) return true;
-      if (s.targetRole === 'admin') return true;
-      if (!s.targetRole && (!s.customerName || isInitiatorAdmin)) return true;
-      return false;
+      return isInitiatorAdmin || s.targetRole === 'admin';
     }
+    if (tab === 'customers') {
+      return !isInitiatorAdmin && s.targetRole !== 'admin';
+    }
+    return false;
   } else {
     // When Admin is logged in:
-    // Tab 1: Customers
-    // Tab 2: Merchants
-    if (tab === 'customers') {
-      if (s.targetRole === 'customer') return true;
-      if (s.targetRole === 'merchant') return false;
-      return true;
+    // Tab 1: Customers — every conversation a genuine customer is a party
+    //   to, INCLUDING a customer's own DM to an outlet (targetRole
+    //   'merchant') — the admin is observing that one, not a participant.
+    // Tab 2: Merchants — only conversations the ADMIN itself started (or is
+    //   addressed by) with a store/outlet. `targetRole === 'merchant'` alone
+    //   cannot tell "admin messaged this outlet" apart from "a customer
+    //   messaged this outlet" — both share it. `isInitiatorAdmin` is the
+    //   signal that can, and this branch used to skip it entirely, which is
+    //   why a customer's own outlet chat used to land here under the
+    //   customer's name instead of in Customers.
+    if (s.chatType === 'admin') {
+      return tab === 'merchants' || tab === 'admin';
+    }
+    if ((s.targetRole === 'merchant' || s.chatType === 'merchant') && isInitiatorAdmin) {
+      return tab === 'merchants' || tab === 'admin';
+    }
+    if (s.targetRole === 'admin') {
+      return tab === 'merchants' || tab === 'admin';
     }
     if (tab === 'merchants' || tab === 'admin') {
-      if (s.targetRole === 'merchant') return true;
       return false;
     }
+    // tab === 'customers': everything else, including a customer's own DM to
+    // an outlet — see the comment above.
+    return true;
   }
-
-  return true;
 }
 
 /** Whether `session` should stay visible under `query` — `''` matches everything. */
@@ -406,8 +508,21 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
 
 /**
  * Resolves the name of the entity the customer is chatting with:
- * Store name, Merchant name, assigned Agent name, or Support.
- * NEVER returns the user's message/subject.
+ * Store name, Merchant name, assigned Agent name, this conversation's own
+ * subject, or Support.
+ *
+ * `GET /chat/sessions/customer` (the customer's own session list) sends none
+ * of `storeName`/`merchantName`/`targetName`/`adminName` — those are portal
+ * (`/party/*`, `/agent/*`) enrichment fields this same function is also
+ * asked to read (see the call sites in widget.ts), and a customer's own
+ * list carries no such row. `subject` is what IS on that response, and for a
+ * store-targeted chat it already IS the entity's name: `resolveConfig`
+ * defaults a mint's `subject` to its `title` when the title isn't one of the
+ * SDK's own generic defaults (config.ts), and a store-targeted mount's title
+ * is `storeTarget.outletName` — so `subject` reaching here already went
+ * through that same "not a generic placeholder" filter once, at mint time.
+ * Read below `handledBy` deliberately: an agent who is actually on the
+ * conversation right now outranks what it was originally about.
  */
 export function getCustomerConversationTitle(summary: ChatSessionSummary, fallbackTitle = 'Support'): string {
   const s = summary as any;
@@ -426,6 +541,12 @@ export function getCustomerConversationTitle(summary: ChatSessionSummary, fallba
   if (s.adminName && typeof s.adminName === 'string' && s.adminName.trim() && s.adminName.trim() !== 'Admin') {
     return s.adminName.trim();
   }
+  if (s.subject && typeof s.subject === 'string' && s.subject.trim() && s.subject.trim().toLowerCase() !== 'admin') {
+    return s.subject.trim();
+  }
+  // A chat an admin opened with this customer (PARTNER, conversationType 4):
+  // nothing else names the other side to the customer.
+  if (s.conversationType === 4) return 'Admin';
   return fallbackTitle;
 }
 
@@ -437,19 +558,37 @@ interface CustomerMessageRow {
 function createCustomerMessageRow(
   onSelect: (sessionId: string) => void,
 ): CustomerMessageRow {
-  const status = el('span', { attrs: { class: 'dh-messages-status' } });
-  const time = el('time', { attrs: { class: 'dh-messages-time' } });
-  const top = el('div', { attrs: { class: 'dh-messages-row-top' }, children: [status, time] });
+  // Avatar circle (initial letter)
+  const avatarText = el('span', { attrs: { class: 'dh-mrow-avatar-text' } });
+  const avatar = el('div', { attrs: { class: 'dh-mrow-avatar' }, children: [avatarText] });
 
-  const title = el('span', { attrs: { class: 'dh-messages-title' } });
-  const preview = el('span', { attrs: { class: 'dh-messages-preview', hidden: true } });
-  const unread = el('span', { attrs: { class: 'dh-messages-unread', hidden: true } });
+  // Title / Name (bold, left)
+  const title = el('span', { attrs: { class: 'dh-messages-title dh-mrow-name' } });
+  // Status pill
+  const status = el('span', { attrs: { class: 'dh-messages-status dh-mrow-status-pill' } });
+  // Unread badge (circle, right side)
+  const unread = el('span', { attrs: { class: 'dh-messages-unread dh-mrow-unread-badge', hidden: true } });
+  // Chevron icon
+  const chevron = el('span', { attrs: { class: 'dh-mrow-chevron', 'aria-hidden': 'true' }, children: [icon(CHEVRON_ICON, 14)] });
+
+  // Top row: name + pill | badge + chevron
+  const nameRow = el('div', { attrs: { class: 'dh-mrow-name-row' }, children: [title, status] });
+  const rightCol = el('div', { attrs: { class: 'dh-mrow-right' }, children: [unread, chevron] });
+  const top = el('div', { attrs: { class: 'dh-messages-row-top dh-mrow-top' }, children: [nameRow, rightCol] });
+
+  // Preview text
+  const preview = el('span', { attrs: { class: 'dh-messages-preview dh-mrow-preview', hidden: true } });
+  // Timestamp
+  const time = el('time', { attrs: { class: 'dh-messages-time dh-mrow-time' } });
+
+  // Body: top + preview + time
+  const body = el('div', { attrs: { class: 'dh-mrow-body' }, children: [top, preview, time] });
 
   const button = el('button', {
-    attrs: { class: 'dh-messages-row', type: 'button' },
-    children: [top, title, preview, unread],
+    attrs: { class: 'dh-messages-row dh-mrow-btn', type: 'button' },
+    children: [avatar, body],
   });
-  const node = el('li', { attrs: { class: 'dh-messages-item' }, children: [button] });
+  const node = el('li', { attrs: { class: 'dh-messages-item dh-mrow-item' }, children: [button] });
 
   let current: ChatSessionSummary | null = null;
   button.addEventListener('click', () => {
@@ -466,15 +605,16 @@ function createCustomerMessageRow(
       if (isCurrent) button.setAttribute('aria-current', 'true');
       else button.removeAttribute('aria-current');
 
-      status.textContent = statusLabel(summary.status);
+      status.textContent = statusPill(summary.status);
       status.setAttribute('data-status', summary.status);
+
+      const displayName = getCustomerConversationTitle(summary);
+      title.textContent = displayName;
+      avatarText.textContent = getRowInitials(displayName);
 
       const whenIso = summary.lastMessageAt ?? summary.createdAt;
       if (time.getAttribute('datetime') !== whenIso) time.setAttribute('datetime', whenIso);
       time.textContent = relativeTimeLabel(whenIso);
-
-      const displayName = getCustomerConversationTitle(summary);
-      title.textContent = displayName;
 
       const previewContent = (summary.lastMessagePreview && summary.lastMessagePreview !== '')
         ? summary.lastMessagePreview
@@ -530,9 +670,10 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
   const newLabel = el('span', { text: 'New conversation' });
   const newButton = el('button', {
     attrs: { class: 'dh-messages-new', type: 'button' },
-    children: [icon(ICONS.chat, 18), newLabel],
+    children: [icon(ICONS.squarePen, 18), newLabel],
     on: { click: () => callbacks.onStartNew?.() },
   });
+  const footer = el('div', { attrs: { class: 'dh-messages-footer' }, children: [newButton] });
 
   // Says out loud what the focus rescue just did, and NOTHING else.
   //
@@ -556,7 +697,7 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
     attrs: { class: 'dh-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
   });
 
-  const node = el('div', { attrs: { class: 'dh-messages' }, children: [search, list, newButton] });
+  const node = el('div', { attrs: { class: 'dh-messages' }, children: [search, list, footer] });
 
   const rows = new Map<string, CustomerMessageRow>();
   let allSessions: readonly ChatSessionSummary[] = [];
@@ -566,6 +707,13 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
     const query = searchInput.value.trim().toLowerCase();
     let anyVisible = false;
     for (const summary of allSessions) {
+      const s = summary as any;
+      if (s.hasMessage === false && summary.id !== currentId) {
+        const row = rows.get(summary.id);
+        if (row) row.node.hidden = true;
+        continue;
+      }
+
       const row = rows.get(summary.id);
       if (row === undefined) continue;
 
@@ -670,9 +818,13 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
 function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): MessagesScreenView {
   const isMerchantUser = callbacks.userRole === 'merchant';
   const secondTabKey: ActiveConversationTab = isMerchantUser ? 'admin' : 'merchants';
-  const secondTabLabel = isMerchantUser ? 'Admin' : 'Merchants';
+  // Label only — an admin here is messaging specific OUTLETS
+  // (OutletChatModal), never a store/merchant as a whole, so the tab reads
+  // "Outlets". `secondTabKey` stays 'merchants' — an internal state key
+  // other code branches on, not copy.
+  const secondTabLabel = isMerchantUser ? 'Admin' : 'Outlets';
 
-  // ── Tab bar: Customers | [Merchants / Admin] ────────────────────────────
+  // ── Tab bar: Customers | [Outlets / Admin] ──────────────────────────────
   //
   // Neither tab starts with `--active`/`aria-selected="true"` baked into its
   // markup any more — `switchTab()` (called once at the bottom of this
@@ -752,22 +904,59 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
     attrs: { class: 'dh-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
   });
 
-  const node = el('div', { attrs: { class: 'dh-messages' }, children: [tabBar, search, list] });
+  // ── "Message Admin" — a merchant/outlet's own way to reach out FIRST ────
+  //
+  // Admin's side of this pairing already has one: `OutletChatModal` (the
+  // host app) lets an admin pick a store/outlet and open a chat targeted at
+  // it. A merchant/outlet had no equivalent — this screen's Admin tab could
+  // only ever show a conversation an admin had already started, same as
+  // `onStartNew` not existing at all here until now (see the module header,
+  // "'New conversation' button is removed").
+  //
+  // `callbacks.onStartNewPartner` — not `onStartNew`, which is the customer
+  // screen's own callback with a different shape and no equivalent here —
+  // is left to `widget.ts`/the host to actually resolve a target for
+  // `role: 'admin'`: this screen has no way to know which id that is (a
+  // tenant may have more than one admin), so it only ever fires the request.
+  //
+  // Merchant-only (never 'admin' or 'manager' itself): admin's own
+  // "Merchants" tab already has `OutletChatModal` for starting new outlet
+  // conversations, so this would be a second, redundant entry point there.
+  const messageAdminButton = isMerchantUser && callbacks.onStartNewPartner
+    ? el('button', {
+        attrs: { class: 'dh-messages-new', type: 'button' },
+        children: [icon(ICONS.chat, 18), el('span', { text: 'Message Admin' })],
+        on: { click: () => callbacks.onStartNewPartner?.() },
+      })
+    : null;
+
+  const node = el('div', {
+    attrs: { class: 'dh-messages' },
+    children: messageAdminButton
+      ? [tabBar, search, list, messageAdminButton]
+      : [tabBar, search, list],
+  });
 
   const rows = new Map<string, MessageRow>();
   let allSessions: readonly ChatSessionSummary[] = [];
   let currentId: string | null = null;
-  // Merchant viewers keep their prior default (their own second tab —
-  // 'admin' — is the real, working conversation). Admin viewers default
-  // straight to 'customers': it is the tab with real data (see widget.ts's
-  // portal wiring); 'merchants' is not wired to anything for an admin
-  // viewer, so opening there first showed an always-empty tab ahead of the
-  // one that actually works.
-  const initialTab: ActiveConversationTab = isMerchantUser ? secondTabKey : 'customers';
+  // Both viewers default to 'customers'. This used to read `isMerchantUser
+  // ? secondTabKey : 'customers'` — a merchant/outlet's 'admin' tab was the
+  // only one with real data back when GET /party/conversations (default,
+  // no `with=partner`) 401'd for that identity (the dh-auth outlet-role gap
+  // — see chat-service-node's role-mapping.ts / session-access.ts history).
+  // Now that that's fixed, 'customers' is real for a merchant/outlet too,
+  // and is the tab a store owner actually wants first: their own shoppers,
+  // not the platform admin. Admin viewers were already defaulting here —
+  // 'merchants' has never been wired to anything for an admin viewer, so
+  // opening there first showed an always-empty tab ahead of the one that
+  // works.
+  const initialTab: ActiveConversationTab = 'customers';
   let activeTab: ActiveConversationTab = initialTab;
 
   function switchTab(tab: ActiveConversationTab): void {
     activeTab = tab;
+    if (messageAdminButton) messageAdminButton.hidden = tab !== secondTabKey;
     if (tab === 'customers') {
       customersTab.classList.add('dh-mtab--active');
       customersTab.setAttribute('aria-selected', 'true');
@@ -801,6 +990,13 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
       // gated `totalInTab` on `rows.get(...)` existing here, which let the
       // badge say "88" while this said "No conversations yet." whenever a
       // row had not been created yet.
+      const s = summary as any;
+      if (s.hasMessage === false && summary.id !== currentId) {
+        const row = rows.get(summary.id);
+        if (row) row.node.hidden = true;
+        continue;
+      }
+
       if (sessionBelongsToTab(summary, 'customers', callbacks.userRole)) customerCount++;
       if (sessionBelongsToTab(summary, secondTabKey, callbacks.userRole)) secondTabCount++;
 
@@ -831,7 +1027,7 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
       ? 'No customer conversations yet.'
       : isMerchantUser
       ? 'No admin conversations yet.'
-      : 'No merchant conversations yet.';
+      : 'No outlet conversations yet.';
     // Conditional for the same reason as the customer list's copy of this —
     // see that one for the whole argument. Short version: an identical
     // re-assignment still replaces the text node, and this element is

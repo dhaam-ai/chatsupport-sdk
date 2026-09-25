@@ -60,6 +60,10 @@ export function createChime(onError: (error: unknown) => void): Chime {
       // in most systems. Sine rather than square: a widget's chime is heard on
       // top of whatever the visitor is already doing, and a harmonically rich
       // waveform at the same loudness is the one people describe as harsh.
+      // 0.22 peak (was 0.06): the original was tuned to be barely there and
+      // visitors were missing it entirely against page audio/ambient noise —
+      // raised to sit clearly above that without going into "harsh" territory,
+      // closer to a phone/WhatsApp-style incoming-message tone.
       for (const [frequency, at] of [
         [660, 0],
         [990, 0.09],
@@ -70,13 +74,13 @@ export function createChime(onError: (error: unknown) => void): Chime {
         oscillator.frequency.value = frequency;
         // An envelope, not a constant: a note that starts and stops at full
         // amplitude clicks at both ends, and the click is the part people
-        // notice. 0.06 peak keeps it under the page's own audio.
+        // notice.
         gain.gain.setValueAtTime(0.0001, now + at);
-        gain.gain.exponentialRampToValueAtTime(0.06, now + at + 0.012);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.16);
+        gain.gain.exponentialRampToValueAtTime(0.22, now + at + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.22);
         oscillator.connect(gain).connect(context.destination);
         oscillator.start(now + at);
-        oscillator.stop(now + at + 0.18);
+        oscillator.stop(now + at + 0.24);
       }
     } catch (error) {
       // Reported, not thrown — this runs on the message-arrival path, where a
