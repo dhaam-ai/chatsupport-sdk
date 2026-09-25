@@ -1166,6 +1166,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     armGreeting((config as any).hideGreeting === true ? '' : next.greeting ?? '', next.greetingDelaySec);
     consent.update(next.consentRequired, next.consentText ?? '');
     messageList.setTranscriptEmail(next.transcriptEmail);
+    composer.setAttachmentsEnabled(next.fileUploads);
     reportButton.hidden = !next.reportIssue;
     syncHeaderMenu();
     // The gate may have just opened or closed under the composer.

@@ -87,6 +87,12 @@ export interface ComposerView {
   setReplyTo(target: ReplyTarget | null): void;
   setEnabled(enabled: boolean): void;
   setUploading(uploading: boolean): void;
+  /**
+   * `behaviour.fileUploads` — shows or hides the image and file buttons.
+   * Hidden, not disabled: a greyed-out paperclip promises a feature the
+   * merchant switched off.
+   */
+  setAttachmentsEnabled(enabled: boolean): void;
   destroy(): void;
 }
 
@@ -646,6 +652,12 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     setUploading(next) {
       uploading = next;
       syncSendState();
+    },
+    setAttachmentsEnabled(next) {
+      imageButton.hidden = !next;
+      attachButton.hidden = !next;
+      // A file picked before the merchant turned uploads off must not still send.
+      if (!next) clearAttachment();
     },
     destroy() {
       // Order matters: the recorder holds the microphone, so it is released

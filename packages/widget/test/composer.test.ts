@@ -389,3 +389,20 @@ describe('the reply chip', () => {
     expect(onCancelReply).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('behaviour.fileUploads', () => {
+  const attachButtons = (composer: ComposerView) =>
+    [...composer.node.querySelectorAll<HTMLButtonElement>('button[aria-label^="Attach"]')];
+
+  it('shows the image and file buttons by default and hides both when switched off', () => {
+    const { composer } = build();
+    expect(attachButtons(composer)).toHaveLength(2);
+    expect(attachButtons(composer).every((b) => !b.hidden)).toBe(true);
+
+    composer.setAttachmentsEnabled(false);
+    expect(attachButtons(composer).every((b) => b.hidden)).toBe(true);
+
+    composer.setAttachmentsEnabled(true);
+    expect(attachButtons(composer).every((b) => !b.hidden)).toBe(true);
+  });
+});
