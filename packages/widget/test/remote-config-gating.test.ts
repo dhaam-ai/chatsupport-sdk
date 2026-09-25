@@ -944,6 +944,23 @@ describe('the merchant’s greeting', () => {
   });
 });
 
+describe('Allow file uploads', () => {
+  const attachButtons = () =>
+    [...shadow().querySelectorAll<HTMLButtonElement>('button[aria-label^="Attach"]')];
+
+  it('offers the image and file buttons by default', async () => {
+    await mountFresh(published());
+    expect(attachButtons()).toHaveLength(2);
+    expect(attachButtons().every((button) => !button.hidden)).toBe(true);
+  });
+
+  it('hides both when the merchant turns uploads off', async () => {
+    await mountFresh(published({ behaviour: { fileUploads: false } }));
+    expect(attachButtons()).toHaveLength(2);
+    expect(attachButtons().every((button) => button.hidden)).toBe(true);
+  });
+});
+
 describe('the consent gate', () => {
   const consentConfig = published({
     behaviour: { consentRequired: true, consentText: 'You agree to our privacy policy.' },
