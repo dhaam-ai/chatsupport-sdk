@@ -1095,6 +1095,45 @@ button {
 }
 .dh-offline-banner svg { flex: none; }
 .dh-offline-text { overflow-wrap: anywhere; }
+.dh-flow {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 2);
+  padding: calc(var(--dh-space) * 3);
+  min-height: 0;
+}
+.dh-flow-log {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 1.5);
+  overflow-y: auto;
+  min-height: 0;
+}
+.dh-flow-line {
+  margin: 0;
+  max-width: 85%;
+  min-width: 0;
+  padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
+  border-radius: var(--dh-radius);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.dh-flow-line[data-from="bot"] {
+  align-self: flex-start;
+  background: var(--dh-bubble-in);
+  border-bottom-left-radius: 4px;
+}
+.dh-flow-line[data-from="me"] {
+  align-self: flex-end;
+  background: var(--dh-accent);
+  color: var(--dh-accent-text);
+  border-bottom-right-radius: 4px;
+}
+.dh-flow-form {
+  display: flex;
+  gap: calc(var(--dh-space) * 2);
+}
+.dh-flow-form .dh-form-submit { flex: none; width: auto; }
 
 /* ── The hero header ──────────────────────────────────────────────────────
 
