@@ -41,7 +41,7 @@ Add to remote-config.ts:
 export function offlineFlowFor(remote: RemoteConfig): PublishedFlow | undefined
 ```
 
-Returns the first flow in `remote.flows` with `trigger === 4` (array order, same tie-break the older spec uses for Welcome), or `undefined`. Only meaningful when `shouldCollectOffline(remote)` is true.
+Returns the first flow in `remote.flows` with `trigger === 4` whose steps parse to at least one runnable step (array order, same tie-break the older spec uses for Welcome), or `undefined`. Only meaningful when `shouldCollectOffline(remote)` is true.
 
 In `syncProductSurfaces`, the existing chain becomes:
 
