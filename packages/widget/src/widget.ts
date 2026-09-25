@@ -965,12 +965,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // capturing it, because it is replaced once, asynchronously, after mount.
   let remote: RemoteConfig = DEFAULT_REMOTE_CONFIG;
 
-  // The out-of-hours flow view, while one is on screen, and how many messages
-  // the store held when the visitor's FIRST flow answer went out. Only replies
-  // that arrive after that point count as "a person answered" — history that
-  // was already in the session must not cancel a flow that has not started.
+  // The out-of-hours flow view, while one is on screen. A reply only counts as
+  // "a person answered" if it was created after the view's `startedAt()` (the
+  // visitor's first flow message, saved across reloads) — history that was
+  // already in the session must not cancel a flow that has not started.
   let activeFlowView: FlowView | null = null;
-  let flowBaseline: number | null = null;
   // The session in which a person/real bot took over. While the current
   // session is this one the flow does not come back; a new session may run it.
   let flowPreemptedSessionId: string | null = null;
@@ -3546,7 +3545,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   function buildFlowSurface(flowId: string, steps: readonly FlowStep[]): ProductSurface {
-    flowBaseline = null;
     const view = createFlowView(
       {
         flowId,
@@ -3556,10 +3554,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         ...(remote.offlineMessage === undefined ? {} : { offlineMessage: remote.offlineMessage }),
       },
       {
-        send: async (text, metadata) => {
-          if (flowBaseline === null) flowBaseline = store.getState().messages.length;
-          await store.client.sendMessage(text, { metadata });
-        },
+        send: (text, metadata) => store.client.sendMessage(text, { metadata }),
         requestAgent: (reason) => store.client.requestAgent(reason),
         hasSession: () => store.getState().session !== null,
         onError: report,
@@ -3571,10 +3566,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       focus: () => view.focus(),
       destroy: () => {
         view.destroy();
-        if (activeFlowView === view) {
-          activeFlowView = null;
-          flowBaseline = null;
-        }
+        if (activeFlowView === view) activeFlowView = null;
       },
     };
   }
@@ -3595,9 +3587,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
     // A person (or the real bot) answered after the visitor's first flow reply:
     // the scripted flow steps aside and the normal conversation takes over.
-    if (activeFlowView !== null && flowBaseline !== null) {
-      const arrived = state.messages.slice(flowBaseline);
-      if (arrived.some((m) => m.senderType === 'AGENT' || m.senderType === 'BOT')) {
+    const flowStartedAt = activeFlowView?.startedAt() ?? null;
+    if (activeFlowView !== null && flowStartedAt !== null) {
+      const answered = state.messages.some(
+        (m) => (m.senderType === 'AGENT' || m.senderType === 'BOT') && Date.parse(m.createdAt) > flowStartedAt,
+      );
+      if (answered) {
         flowPreemptedSessionId = state.session?.id ?? null;
         activeFlowView.abandon();
         closeSurface();

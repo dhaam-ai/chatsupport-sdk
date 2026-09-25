@@ -226,3 +226,30 @@ describe('abandon', () => {
     expect(answerForm(view.node).hidden).toBe(true);
   });
 });
+
+describe('startedAt', () => {
+  it('is null until the first send succeeds, then saved and restored on resume', async () => {
+    const first = build();
+    expect(first.view.startedAt()).toBeNull();
+    const before = Date.now();
+    await answer(first.view.node, 'a@b.co');
+    const at = first.view.startedAt();
+    expect(at).not.toBeNull();
+    expect(at!).toBeGreaterThanOrEqual(before);
+    expect(JSON.parse(localStorage.getItem(KEY)!).startedAt).toBe(at);
+
+    first.view.destroy();
+    document.body.innerHTML = '';
+    const second = build();
+    expect(second.view.startedAt()).toBe(at);
+  });
+
+  it('a failed first send does not start the clock', async () => {
+    const send = vi.fn(async (_text: string, _metadata: Record<string, unknown>): Promise<void> => {
+      throw new Error('offline');
+    });
+    const { view } = build({ send });
+    await answer(view.node, 'a@b.co');
+    expect(view.startedAt()).toBeNull();
+  });
+});

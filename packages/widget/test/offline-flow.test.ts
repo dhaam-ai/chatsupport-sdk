@@ -292,6 +292,19 @@ describe('a person replying takes over from the flow', () => {
     expect(find<HTMLElement>('.dh-composer')?.hidden).not.toBe(true);
   });
 
+  it('a reply that arrived while the visitor was away still takes over a resumed flow', async () => {
+    // Saved by an earlier visit: the visitor answered once (startedAt), then left.
+    localStorage.setItem(
+      `chatsdk:${PUBLISHABLE}:offline-flow`,
+      JSON.stringify({ flowId: 'flow-1', stepId: 'b', answers: {}, pendingTags: [], sessionId: null, startedAt: Date.now() - 60_000 }),
+    );
+    await mountClosed(closedWith([FLOW]));
+    expect(find('.dh-flow')).not.toBeNull();
+    agentReply(AckingSocket.instances[0]!);
+    await settle();
+    expect(find('.dh-flow')).toBeNull();
+  });
+
   it('does NOT close a fresh flow because of an agent message that was already in the history', async () => {
     await mountClosed(closedWith([FLOW]));
     agentReply(AckingSocket.instances[0]!); // arrives before the visitor has answered anything

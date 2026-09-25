@@ -43,6 +43,12 @@ export interface FlowView {
   readonly node: HTMLElement;
   focus(): void;
   destroy(): void;
+  /**
+   * When the visitor's first flow message went out (ms since epoch), or `null`
+   * before that. Saved with the progress, so it survives a reload: the widget
+   * uses it to tell a reply that came AFTER the flow began from old history.
+   */
+  startedAt(): number | null;
   /** A person or real bot replied: drop saved progress and stop taking input. */
   abandon(): void;
 }
@@ -54,6 +60,7 @@ interface Saved {
   stepId: string;
   answers: Record<string, string>;
   pendingTags: string[];
+  startedAt: number | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,7 +84,13 @@ export function createFlowView(options: FlowViewOptions, callbacks: FlowViewCall
       if (!Array.isArray(pendingTags) || !pendingTags.every((t) => typeof t === 'string')) return null;
       const savedSession = typeof parsed['sessionId'] === 'string' ? parsed['sessionId'] : null;
       if (savedSession !== null && sessionId !== null && savedSession !== sessionId) return null;
-      return { stepId, answers: answers as Record<string, string>, pendingTags: pendingTags as string[] };
+      const savedStart = parsed['startedAt'];
+      return {
+        stepId,
+        answers: answers as Record<string, string>,
+        pendingTags: pendingTags as string[],
+        startedAt: typeof savedStart === 'number' && Number.isFinite(savedStart) ? savedStart : null,
+      };
     } catch {
       return null;
     }
@@ -97,6 +110,7 @@ export function createFlowView(options: FlowViewOptions, callbacks: FlowViewCall
           answers: { ...next.answers },
           pendingTags: [...next.pendingTags],
           sessionId,
+          startedAt,
         }),
       );
     } catch {
@@ -178,6 +192,7 @@ export function createFlowView(options: FlowViewOptions, callbacks: FlowViewCall
   let state: FlowState;
   let busy = false;
   let finished = false;
+  let startedAt: number | null = null;
 
   function setBusy(next: boolean): void {
     busy = next;
@@ -245,6 +260,7 @@ export function createFlowView(options: FlowViewOptions, callbacks: FlowViewCall
       }
       addLine('me', first.text);
       setBusy(false);
+      if (startedAt === null) startedAt = Date.now();
     }
     commit(result);
     if (!finished) focusCurrent();
@@ -252,6 +268,7 @@ export function createFlowView(options: FlowViewOptions, callbacks: FlowViewCall
 
   // ── start or resume ──────────────────────────────────────────────────
   const saved = readSaved();
+  startedAt = saved?.startedAt ?? null;
   commit(
     saved !== null
       ? resumeFlow(steps, { flowId, stepId: saved.stepId, answers: saved.answers, pendingTags: saved.pendingTags, done: false })
@@ -261,6 +278,7 @@ export function createFlowView(options: FlowViewOptions, callbacks: FlowViewCall
   return {
     node,
     focus: focusCurrent,
+    startedAt: () => startedAt,
     destroy() {
       // No document-level listeners; every listener is on a node inside `node`.
     },
