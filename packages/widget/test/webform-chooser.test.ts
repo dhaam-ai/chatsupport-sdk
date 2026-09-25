@@ -243,6 +243,24 @@ describe('the six PRD rows, as Home affordances', () => {
     expect(find<HTMLButtonElement>('.dh-home-alt')?.hidden).toBe(true);
   });
 
+  it('custom ctaTitle and ctaSubtitle take precedence over closed ticket fallback', async () => {
+    await mountHome(
+      published({
+        appearance: {
+          header: {
+            ctaTitle: 'Send us a message',
+            ctaSubtitle: 'We usually reply instantly',
+          },
+        },
+        support: { primary: 'ticket', secondary: 'chat', hours: 'CLOSED' },
+      }),
+    );
+
+    expect(find('.dh-home-cta-title')?.textContent).toBe('Send us a message');
+    expect(find('.dh-home-cta-sub')?.textContent).toBe('We usually reply instantly');
+    expect(find<HTMLButtonElement>('.dh-home-alt')?.hidden).toBe(true);
+  });
+
   it('row 4 — offline, closed, SHOW_MESSAGE: byte-identical to today (no alt, default CTA)', async () => {
     await mountHome(
       published({

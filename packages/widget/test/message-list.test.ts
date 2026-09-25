@@ -47,7 +47,6 @@ function build() {
   const onStartNewConversation = vi.fn();
   const onEmailTranscript = vi.fn(async () => undefined);
   const onQuickReply = vi.fn();
-  const onCopyMessage = vi.fn(async (_message: ChatMessage) => undefined);
   const onReplyToMessage = vi.fn((_message: ChatMessage, _senderName: string) => undefined);
   const view = createMessageList({
     onRetry,
@@ -55,7 +54,6 @@ function build() {
     onStartNewConversation,
     onEmailTranscript,
     onQuickReply,
-    onCopyMessage,
     onReplyToMessage,
   });
   // Attached so `getComputedStyle` and `scrollHeight` behave.
@@ -67,7 +65,6 @@ function build() {
     onStartNewConversation,
     onEmailTranscript,
     onQuickReply,
-    onCopyMessage,
     onReplyToMessage,
   };
 }
@@ -338,6 +335,39 @@ describe('the live region', () => {
 });
 
 describe('rendering', () => {
+  // Regression: `isOutgoing` was rewritten to compare `senderId` against
+  // `localParticipantId` so a partner chat (both sides senderType AGENT)
+  // could tell its two parties apart. For the plain customer widget this
+  // added a NEW failure mode the old `senderType === 'CUSTOMER'` check never
+  // had: any hiccup in resolving `localParticipantId` (a guest-id fallback
+  // still in flight on a fresh page load, for instance) now flips every one
+  // of the customer's own messages to the "incoming" side. `senderType` is
+  // never ambiguous for CUSTOMER or BOT — only AGENT is, in a partner chat —
+  // so those two must stay decided by type alone, with id comparison used
+  // only to break the AGENT/AGENT tie.
+  it('a CUSTOMER-typed message renders as outgoing even when localParticipantId cannot be matched', () => {
+    const { view } = build();
+    const row = () => view.log.querySelector<HTMLElement>('.dh-msg');
+
+    view.render(
+      state({
+        messages: [message({ senderId: ME, senderType: 'CUSTOMER' })],
+        pagination: { hasMore: false, loadingMore: false, initialLoaded: true },
+      }),
+      null, // localParticipantId not resolved yet
+    );
+    expect(row()?.getAttribute('data-mine')).toBe('true');
+
+    view.render(
+      state({
+        messages: [message({ senderId: 'guest-abc', senderType: 'CUSTOMER' })],
+        pagination: { hasMore: false, loadingMore: false, initialLoaded: true },
+      }),
+      ME, // resolved, but to a different id than the message was sent under
+    );
+    expect(row()?.getAttribute('data-mine')).toBe('true');
+  });
+
   it('says "no messages yet" only once it knows there are none', () => {
     const { view } = build();
     const empty = view.log.querySelector<HTMLElement>('.dh-empty');
@@ -784,6 +814,31 @@ describe('a conversation the agent closed', () => {
   });
 });
 
+describe('the client-only "bot is thinking" cue', () => {
+  it('shows the typing dots even though nobody sent a real isTyping frame', () => {
+    const { view } = build();
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    const typing = view.log.querySelector('.dh-typing') as HTMLElement;
+    expect(typing.hidden).toBe(true);
+
+    view.setBotThinking(true);
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    expect(typing.hidden).toBe(false);
+  });
+
+  it('hides again once cleared', () => {
+    const { view } = build();
+    view.setBotThinking(true);
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    const typing = view.log.querySelector('.dh-typing') as HTMLElement;
+    expect(typing.hidden).toBe(false);
+
+    view.setBotThinking(false);
+    view.render(state({ messages: [message({ id: 'a' })] }), ME);
+    expect(typing.hidden).toBe(true);
+  });
+});
+
 describe('the emailed transcript', () => {
   // Off until the merchant's config says otherwise: a build whose config never
   // landed must show no control rather than one that fails when pressed.
@@ -922,9 +977,16 @@ describe('the bot’s suggested replies', () => {
 });
 
 describe('per-message actions', () => {
-  const openMenu = (view: ReturnType<typeof build>['view']) => {
-    view.log.querySelector<HTMLButtonElement>('.dh-msg-more')!.click();
-    return view.log.querySelector<HTMLElement>('.dh-msg-menu')!;
+  const replyButton = (view: ReturnType<typeof build>['view']) =>
+    view.log.querySelector<HTMLButtonElement>('.dh-msg-reply')!;
+
+  // jsdom has no `PointerEvent` constructor — a plain `Event` with
+  // `pointerType` attached afterward is what `message-actions.ts`'s handler
+  // actually reads, and is all a unit test needs to exercise it.
+  const pointer = (type: string, pointerType?: string) => {
+    const event = new Event(type);
+    if (pointerType !== undefined) Object.defineProperty(event, 'pointerType', { value: pointerType });
+    return event;
   };
 
   const render1 = () => {
@@ -933,70 +995,26 @@ describe('per-message actions', () => {
     return b;
   };
 
-  it('offers exactly Copy and Reply', () => {
+  // Copy is gone: no protocol frame nor product surface for it survived the
+  // redesign, and a menu with one working item is a menu that should not
+  // exist. Reply is the only per-message action now, and it is the control
+  // itself — no popover between the click and the action.
+  it('offers exactly one control: Reply, with no menu to open first', () => {
     const { view } = render1();
-    const labels = [...openMenu(view).querySelectorAll('.dh-msg-action')].map((b) =>
-      b.textContent?.trim(),
-    );
-    // Edit and delete are deliberately absent: no protocol frame exists for
-    // either, and a menu item that cannot work is a promise broken in front
-    // of the customer.
-    expect(labels).toEqual(['Copy', 'Reply']);
+    expect(view.log.querySelectorAll('.dh-msg-more, .dh-msg-menu, .dh-msg-action')).toHaveLength(0);
+    const button = replyButton(view);
+    expect(button.getAttribute('aria-label')).toBe('Reply to message');
   });
 
-  it('starts closed, and the toggle says so', () => {
-    const { view } = render1();
-    expect(view.log.querySelector<HTMLElement>('.dh-msg-menu')!.hidden).toBe(true);
-    expect(view.log.querySelector('.dh-msg-more')!.getAttribute('aria-expanded')).toBe('false');
-  });
-
-  it('opens on the toggle and reports it', () => {
-    const { view } = render1();
-    expect(openMenu(view).hidden).toBe(false);
-    expect(view.log.querySelector('.dh-msg-more')!.getAttribute('aria-expanded')).toBe('true');
-  });
-
-  // The reported bug: tapping Copy gave no visible feedback at all — the menu
-  // closed immediately and the outcome went to a screen-reader-only region.
-  // The confirmation is now the label itself, in place, in the open menu.
-  it('copies the message it belongs to, confirms in place, then closes on its own', async () => {
-    vi.useFakeTimers();
-    try {
-      const { view, onCopyMessage } = render1();
-      const menu = openMenu(view);
-      const copyButton = menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!;
-      copyButton.click();
-
-      expect(onCopyMessage).toHaveBeenCalledTimes(1);
-      expect(onCopyMessage.mock.calls[0]![0]).toMatchObject({ content: 'where is my order' });
-
-      // Visible confirmation: the menu stays open and the label says so.
-      await vi.advanceTimersByTimeAsync(0);
-      expect(menu.hidden).toBe(false);
-      expect(copyButton.querySelector('span')?.textContent).toBe('Copied');
-      expect(copyButton.getAttribute('data-outcome')).toBe('ok');
-
-      // …and the menu retires itself, restored for the next open.
-      await vi.advanceTimersByTimeAsync(1500);
-      expect(menu.hidden).toBe(true);
-      expect(copyButton.querySelector('span')?.textContent).toBe('Copy');
-      expect(copyButton.disabled).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('replies to the message it belongs to, naming its sender, then closes', () => {
+  it('replies to the message it belongs to on a single click, naming its sender', () => {
     const { view, onReplyToMessage } = render1();
-    const menu = openMenu(view);
-    menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[1]!.click();
+    replyButton(view).click();
 
     expect(onReplyToMessage).toHaveBeenCalledTimes(1);
     expect(onReplyToMessage.mock.calls[0]![0]).toMatchObject({ content: 'where is my order' });
     // The rendered message is the customer's own, so the quote names 'You' —
     // the same word WhatsApp prints when someone quotes themselves.
     expect(onReplyToMessage.mock.calls[0]![1]).toBe('You');
-    expect(menu.hidden).toBe(true);
   });
 
   it("hands Reply the AGENT's resolved name on an incoming message", () => {
@@ -1010,113 +1028,41 @@ describe('per-message actions', () => {
       }),
       ME,
     );
-    view.log.querySelector<HTMLButtonElement>('.dh-msg-more')!.click();
-    view.log.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[1]!.click();
+    replyButton(view).click();
 
     expect(onReplyToMessage.mock.calls[0]![1]).toBe('Priya');
   });
 
-  // Clipboard access is genuinely refused in some embedded webviews, so the
-  // rejection path is real. It must not surface as an unhandled rejection —
-  // and unlike before, it must SAY so where the user is looking.
-  it('says so, in place, when the clipboard refuses', async () => {
-    vi.useFakeTimers();
-    try {
-      const { view, onCopyMessage } = render1();
-      onCopyMessage.mockRejectedValueOnce(new Error('denied'));
-      const menu = openMenu(view);
-      const copyButton = menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!;
-      expect(() => copyButton.click()).not.toThrow();
-
-      await vi.advanceTimersByTimeAsync(0);
-      expect(copyButton.querySelector('span')?.textContent).toBe("Couldn't copy");
-      expect(copyButton.getAttribute('data-outcome')).toBe('failed');
-
-      await vi.advanceTimersByTimeAsync(1500);
-      expect(menu.hidden).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  // The menu closed while the clipboard promise was still PENDING: the
-  // outcome must not strand "Copied" on the closed menu for the next open.
-  it('drops the visual outcome when the menu closed before the clipboard settled', async () => {
-    vi.useFakeTimers();
-    try {
-      const { view, onCopyMessage } = render1();
-      let settle!: () => void;
-      onCopyMessage.mockReturnValueOnce(new Promise((r) => { settle = () => r(undefined); }));
-      const menu = openMenu(view);
-      const copyButton = menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!;
-      copyButton.click();
-
-      document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-      expect(menu.hidden).toBe(true);
-
-      settle();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(copyButton.querySelector('span')?.textContent).toBe('Copy');
-      expect(copyButton.disabled).toBe(false);
-      expect(copyButton.getAttribute('data-outcome')).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  // An outside click mid-confirmation closes the menu; the pending auto-close
-  // must not fire against it later, and a re-open must offer a plain Copy.
-  it('resets a pending confirmation when closed from outside', async () => {
-    vi.useFakeTimers();
-    try {
-      const { view } = render1();
-      const menu = openMenu(view);
-      const copyButton = menu.querySelectorAll<HTMLButtonElement>('.dh-msg-action')[0]!;
-      copyButton.click();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(copyButton.querySelector('span')?.textContent).toBe('Copied');
-
-      document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-      expect(menu.hidden).toBe(true);
-      expect(copyButton.querySelector('span')?.textContent).toBe('Copy');
-      await vi.advanceTimersByTimeAsync(1500); // the cleared timer must not throw
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('closes on a click outside it', () => {
+  it('shows a "Reply" tooltip on mouse hover and hides it on leave', () => {
     const { view } = render1();
-    const menu = openMenu(view);
-    document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    expect(menu.hidden).toBe(true);
+    const button = replyButton(view);
+    const tip = view.log.querySelector<HTMLElement>('.dh-msg-reply-tip')!;
+    expect(tip.hidden).toBe(true);
+
+    button.dispatchEvent(pointer('pointerenter', 'mouse'));
+    expect(tip.hidden).toBe(false);
+    expect(tip.textContent).toBe('Reply');
+
+    button.dispatchEvent(pointer('pointerleave'));
+    expect(tip.hidden).toBe(true);
   });
 
-  // The menu's own Escape must not reach the panel's handler, which closes the
-  // whole widget.
-  it('closes on Escape without letting it bubble to the panel', () => {
+  // Coarse pointers (touch) never fire pointerenter/pointerleave at all — a
+  // tooltip only a mouse can trigger is correct there, not a bug to route
+  // around.
+  it('does not show the tooltip for a non-mouse pointer', () => {
     const { view } = render1();
-    const menu = openMenu(view);
-    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
-    const seenByPanel = vi.fn();
-    document.body.addEventListener('keydown', seenByPanel);
-    view.log.querySelector('.dh-msg-more')!.dispatchEvent(event);
-
-    expect(menu.hidden).toBe(true);
-    expect(seenByPanel).not.toHaveBeenCalled();
-    document.body.removeEventListener('keydown', seenByPanel);
+    const button = replyButton(view);
+    button.dispatchEvent(pointer('pointerenter', 'touch'));
+    expect(view.log.querySelector<HTMLElement>('.dh-msg-reply-tip')!.hidden).toBe(true);
   });
 
-  // The menu holds a document-level pointerdown listener, which outlives the
-  // row unless the eviction path releases it.
-  it('releases its document listener when the row is evicted', () => {
+  it('hides the tooltip immediately on click, before acting', () => {
     const { view } = render1();
-    openMenu(view);
-    // A render without that message evicts the row.
-    view.render(state({ messages: [] }), ME);
-    expect(() =>
-      document.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })),
-    ).not.toThrow();
+    const button = replyButton(view);
+    button.dispatchEvent(pointer('pointerenter', 'mouse'));
+    button.click();
+    expect(view.log.querySelector<HTMLElement>('.dh-msg-reply-tip')!.hidden).toBe(true);
   });
 });
 
@@ -1180,6 +1126,62 @@ describe('the reply quote in a bubble', () => {
     expect(row.querySelector('.dh-quote-name')?.textContent).toBe('Priya');
   });
 
+  it('jumps to and flashes the quoted message when the quote is clicked', () => {
+    const scrolled: HTMLElement[] = [];
+    (HTMLElement.prototype as unknown as { scrollIntoView: (this: HTMLElement) => void }).scrollIntoView =
+      function scrollIntoView(this: HTMLElement) {
+        scrolled.push(this);
+      };
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({ id: 'm0', content: 'the original' }),
+          message({
+            id: 'm1',
+            content: 'the answer',
+            metadata: { kind: 'reply', replyTo: { messageId: 'm0', excerpt: 'the original', senderName: 'Priya' } },
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    const quote = view.log.querySelector<HTMLElement>('[data-message-id="m1"] .dh-msg-quote')!;
+    expect(quote.getAttribute('data-jump')).toBe('true');
+    quote.click();
+
+    const target = view.log.querySelector<HTMLElement>('[data-message-id="m0"]')!;
+    expect(scrolled).toEqual([target]);
+    expect(target.classList.contains('dh-msg--flash')).toBe(true);
+  });
+
+  it('falls back to the message’s own replyToMessageId when the quote metadata has no id', () => {
+    (HTMLElement.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = () => undefined;
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({ id: 'm0', content: 'the original' }),
+          message({
+            id: 'm1',
+            content: 'the answer',
+            replyToMessageId: 'm0',
+            metadata: { kind: 'reply', replyTo: { excerpt: 'the original', senderName: 'Priya' } },
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    const quote = view.log.querySelector<HTMLElement>('[data-message-id="m1"] .dh-msg-quote')!;
+    expect(quote.getAttribute('data-jump')).toBe('true');
+    quote.click();
+    expect(
+      view.log.querySelector<HTMLElement>('[data-message-id="m0"]')!.classList.contains('dh-msg--flash'),
+    ).toBe(true);
+  });
+
   it('draws no quote on a message whose metadata is not a reply', () => {
     const { view } = build();
     view.render(
@@ -1199,7 +1201,7 @@ describe('readReplyQuote', () => {
   };
 
   it('reads the agreed wire shape', () => {
-    expect(readReplyQuote(good)).toEqual({ senderName: 'Priya', excerpt: 'hello' });
+    expect(readReplyQuote(good)).toEqual({ senderName: 'Priya', excerpt: 'hello', messageId: 'm0' });
   });
 
   it.each([
@@ -1275,7 +1277,7 @@ describe('the sender avatar', () => {
     expect(avatarOf(view.log.querySelector('.dh-msg'))?.textContent).toBe('S');
   });
 
-  it("letters the avatar with the tenant's own bot name, not a hardcoded word", () => {
+  it("renders sparkle icon on the bot's avatar", () => {
     const { view } = build();
     view.render(
       state({
@@ -1285,7 +1287,9 @@ describe('the sender avatar', () => {
       ME,
     );
 
-    expect(avatarOf(view.log.querySelector('.dh-msg'))?.textContent).toBe('K');
+    const avatar = avatarOf(view.log.querySelector('.dh-msg'));
+    expect(avatar?.classList.contains('dh-msg-avatar--bot')).toBe(true);
+    expect(avatar?.querySelector('svg')).not.toBeNull();
   });
 
   it('falls back to the generic word\'s own initial when nothing more specific has resolved', () => {
@@ -1325,5 +1329,42 @@ describe('the sender avatar', () => {
 
     view.render(state({ messages: [message({ id: 'a' })] }), ME);
     expect(avatarOf(view.log.querySelector('.dh-msg'))?.hidden).toBe(true);
+  });
+});
+
+describe('sides in an admin\'s chat with a customer (staffViewer)', () => {
+  const ADMIN = 'admin-uuid';
+  const CUSTOMER = '14735';
+  const adminMsg = message({ id: 'a1', senderId: ADMIN, senderType: 'AGENT', content: 'Hello Bikash' });
+  const customerMsg = message({ id: 'c1', senderId: CUSTOMER, senderType: 'CUSTOMER', content: 'Hi admin' });
+
+  function buildFor(staffViewer: boolean) {
+    const view = createMessageList({
+      staffViewer,
+      onRetry: vi.fn(),
+      onLoadOlder: vi.fn(),
+      onStartNewConversation: vi.fn(),
+      onEmailTranscript: vi.fn(async () => undefined),
+      onQuickReply: vi.fn(),
+      onReplyToMessage: vi.fn(),
+    });
+    document.body.append(view.log, view.liveRegion);
+    return view;
+  }
+  const mine = (view: ReturnType<typeof buildFor>, text: string) =>
+    [...view.log.querySelectorAll('.dh-msg')].find((n) => n.textContent?.includes(text))?.getAttribute('data-mine');
+
+  it('shows the admin\'s own message as mine and the customer\'s reply as theirs', () => {
+    const view = buildFor(true);
+    view.render(state({ messages: [adminMsg, customerMsg] }), ADMIN);
+    expect(mine(view, 'Hello Bikash')).toBe('true');
+    expect(mine(view, 'Hi admin')).toBe('false');
+  });
+
+  it('keeps the customer\'s own widget unchanged: their CUSTOMER messages are mine, the admin\'s are not', () => {
+    const view = buildFor(false);
+    view.render(state({ messages: [adminMsg, customerMsg] }), CUSTOMER);
+    expect(mine(view, 'Hi admin')).toBe('true');
+    expect(mine(view, 'Hello Bikash')).toBe('false');
   });
 });

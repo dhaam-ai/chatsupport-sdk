@@ -50,6 +50,26 @@ export interface PortalStaffOptions {
   readonly getToken: () => Promise<string>;
   /** Local-echo hint only; the server derives the real sender from the token. */
   readonly senderId: string;
+  /**
+   * See `ConversationClientConfig.outletId` — the merchant/outlet's own id,
+   * sent as `session.join.outletId` so a conversation genuinely addressed to
+   * this outlet (a customer's store DM, or an admin-started partner chat)
+   * isn't refused `SESSION_NOT_FOUND` just because dh-auth's `/validate`
+   * proves the outlet only by its role id, not by this one. Unused for an
+   * admin/manager identity. Also sent as `/party/sessions/{id}/messages`'s
+   * own `outletId` query param — same unverified fallback, same reason.
+   */
+  readonly outletId?: string;
+  /**
+   * Whether this portal client belongs to a merchant/outlet identity rather
+   * than admin/manager/staff — decides which history route `listMessages`
+   * calls. `/agent/*` is strictly staff-only (401/403 for merchant/manager);
+   * `/party/sessions/{id}/messages` is the merchant/outlet counterpart —
+   * message history for a conversation the caller may read (a customer DM or
+   * a partner chat), added specifically because staff had `/agent/*` and
+   * merchant/outlet had nothing.
+   */
+  readonly isMerchantPortal?: boolean;
 }
 
 /** Anything the staff REST surface refused, with the HTTP status attached. */
@@ -90,29 +110,62 @@ async function getJson(options: PortalStaffOptions, path: string, query: Record<
   return (await response.json()) as unknown;
 }
 
-/** The `history` seam `createConversationClient` requires at construction. */
-function createStaffHistorySource(options: PortalStaffOptions): MessageHistorySource {
+/**
+ * The `history` seam `createConversationClient` requires at construction.
+ * Exported for direct testing, same reason `listPortalQueue` is — the
+ * routing between `/agent/*` and `/party/*` has no other seam to test it
+ * through short of standing up a whole `ConversationClient`.
+ */
+export function createStaffHistorySource(options: PortalStaffOptions): MessageHistorySource {
+  // Two different routes for two different identities — see
+  // `PortalStaffOptions.isMerchantPortal`'s doc. `/party/sessions/{id}/messages`
+  // answers the SAME envelope shape as `/agent/sessions/{id}/messages`
+  // (`{ messages, hasMore }`), so the rest of this function is identical
+  // either way; only the path and the merchant/outlet fallback id differ.
+  const path = (sessionId: string): string =>
+    options.isMerchantPortal
+      ? `/party/sessions/${encodeURIComponent(sessionId)}/messages`
+      : `/agent/sessions/${encodeURIComponent(sessionId)}/messages`;
+  const routeLabel = options.isMerchantPortal
+    ? 'GET /party/sessions/{sessionId}/messages'
+    : 'GET /agent/sessions/{sessionId}/messages';
+
   return {
     async listMessages(query) {
-      const body = await getJson(options, `/agent/sessions/${encodeURIComponent(query.sessionId)}/messages`, {
-        limit: String(query.limit),
-        ...(query.before === undefined ? {} : { before: query.before }),
-      });
+      try {
+        const body = await getJson(options, path(query.sessionId), {
+          limit: String(query.limit),
+          ...(query.before === undefined ? {} : { before: query.before }),
+          // Same unverified fallback as session.join.outletId — tried only
+          // when the token's own proof isn't already enough. Meaningless (and
+          // ignored server-side) on the admin/manager `/agent/*` route.
+          ...(options.isMerchantPortal && options.outletId !== undefined
+            ? { outletId: options.outletId }
+            : {}),
+        });
 
-      const page = unwrapEnvelope<{ messages?: unknown; hasMore?: unknown }>(
-        body,
-        'GET /agent/sessions/{sessionId}/messages',
-      );
+        const page = unwrapEnvelope<{ messages?: unknown; hasMore?: unknown }>(body, routeLabel);
 
-      const rows = Array.isArray(page.messages) ? page.messages : [];
-      const messages = rows
-        .map(projectHistoryRow)
-        .filter((message): message is RestChatMessage => message !== null);
+        const rows = Array.isArray(page.messages) ? page.messages : [];
+        const messages = rows
+          .map(projectHistoryRow)
+          .filter((message): message is RestChatMessage => message !== null);
 
-      return {
-        messages: messages as unknown as readonly ChatMessage[],
-        hasMore: page.hasMore === true,
-      };
+        return {
+          messages: messages as unknown as readonly ChatMessage[],
+          hasMore: page.hasMore === true,
+        };
+      } catch (error) {
+        // Defense in depth, not the expected case any more now that
+        // `/party/sessions/{id}/messages` exists for merchant/outlet: a role
+        // this SDK build doesn't yet know how to route still degrades to an
+        // empty transcript rather than breaking conversation open & live
+        // pushes.
+        if (error instanceof PortalApiError && (error.status === 401 || error.status === 403)) {
+          return { messages: [], hasMore: false };
+        }
+        throw error;
+      }
     },
   };
 }
@@ -127,6 +180,7 @@ export function createPortalConversationClient(options: PortalStaffOptions): Con
     localSender: { senderId: options.senderId, senderType: 'AGENT' },
     history: createStaffHistorySource(options),
     pageSize: 20,
+    ...(options.outletId === undefined ? {} : { outletId: options.outletId }),
   });
 }
 
@@ -137,11 +191,38 @@ export interface PortalQueueRow {
   readonly customerName: string | null;
   readonly customerEmail: string | null;
   readonly lastMessage: string | null;
+  readonly hasMessage: boolean;
   readonly chatType: string | null;
   readonly targetRole: string | null;
   readonly targetId: string | null;
+  /**
+   * `/party/conversations` only — the row's STARTER id (`partner-conversation.ts`'s
+   * header: "the starter's user id is `customerId`"), never null there. `null`
+   * for an `/agent/queue` row, which has no PARTNER concept.
+   *
+   * Needed because a PARTNER row's `targetId` names the merchant/outlet ONLY
+   * when the ADMIN side started it (`targetRole: 'merchant'`) — for the
+   * reverse direction (the outlet messaged first, `targetRole: 'admin'`) the
+   * outlet IS this row's `customerId`, not its target. See `merchantIdOf`.
+   */
+  readonly customerId?: string | null;
   readonly storeName: string | null;
   readonly merchantName: string | null;
+  readonly merchantEmail?: string | null;
+  readonly subject?: string | null;
+  readonly topic?: string | null;
+  /**
+   * `ConversationType` (Wire Contract §6, integer-only): 2 DM · 4 PARTNER.
+   * Only `/party/conversations` sends this — `/agent/queue` rows leave it
+   * `null`. Present ⇒ the AUTHORITATIVE signal for admin-vs-merchant
+   * routing (see `sessionBelongsToTab`); a PARTNER row can never be
+   * mistaken for a customer's own DM to an outlet, because the two are
+   * different conversation types at the protocol level, not a guess from
+   * the customer's name.
+   */
+  readonly conversationType?: number | null;
+  /** "incoming" | "outgoing" — which side of a partner chat the caller is. */
+  readonly direction?: string | null;
 }
 
 // `/agent/queue` is a REST endpoint, not the v2 WS protocol §12.1 talks about
@@ -168,7 +249,10 @@ const QUEUE_STATUS_BY_CODE: Record<number, string> = {
 
 function readQueueStatus(value: unknown): string {
   if (typeof value === 'string' && isChatStatus(value)) return value;
-  if (typeof value === 'number' && value in QUEUE_STATUS_BY_CODE) return QUEUE_STATUS_BY_CODE[value] as string;
+  if (typeof value === 'number') {
+    const named = QUEUE_STATUS_BY_CODE[value];
+    if (named !== undefined) return named;
+  }
   // Neither a known name nor a known code — 'OPEN' rather than the crash
   // above, matching `widget.ts`'s own `?? 'OPEN'` fallback for a missing one.
   return 'OPEN';
@@ -201,19 +285,45 @@ function readQueueRow(row: unknown): PortalQueueRow | null {
 
   const targetRole = typeof source['targetRole'] === 'string' ? source['targetRole'] : null;
   const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
+  const subject = typeof source['subject'] === 'string' ? source['subject'] : null;
+  const topic = typeof source['topic'] === 'string' ? source['topic'] : null;
+
   const chatType =
     typeof source['chatType'] === 'string'
       ? source['chatType']
       : (targetRole?.toLowerCase() === 'merchant' ? 'merchant' : 'customer');
 
+  let storedTargetInfo: { storeName?: string; storeEmail?: string; merchantName?: string } | null = null;
+  if (targetId && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('dhaam_target_store_' + targetId) || sessionStorage.getItem('dhaam_target_store_' + targetId);
+      if (raw) storedTargetInfo = JSON.parse(raw);
+    } catch {}
+  }
+
   const merchantName =
     (typeof source['merchantName'] === 'string' ? source['merchantName'] : null) ??
     (typeof source['storeName'] === 'string' ? source['storeName'] : null) ??
-    (chatType === 'merchant' ? customerName : null);
+    storedTargetInfo?.storeName ??
+    storedTargetInfo?.merchantName ??
+    (subject && subject !== 'admin' ? subject : null) ??
+    (chatType === 'merchant' && customerName && !customerName.toLowerCase().includes('admin') && customerName.toLowerCase() !== 'tse' ? customerName : null);
 
   const storeName =
     (typeof source['storeName'] === 'string' ? source['storeName'] : null) ??
+    storedTargetInfo?.storeName ??
     merchantName;
+
+  const merchantEmail =
+    (typeof source['merchantEmail'] === 'string' ? source['merchantEmail'] : null) ??
+    (typeof source['storeEmail'] === 'string' ? source['storeEmail'] : null) ??
+    storedTargetInfo?.storeEmail ??
+    null;
+
+  const hasMessage =
+    'lastMessage' in source
+      ? (source['lastMessage'] !== null && source['lastMessage'] !== undefined)
+      : true;
 
   return {
     sessionId,
@@ -221,11 +331,15 @@ function readQueueRow(row: unknown): PortalQueueRow | null {
     customerName,
     customerEmail,
     lastMessage: lastContent,
+    hasMessage,
     chatType,
     targetRole,
     targetId,
     storeName,
     merchantName,
+    merchantEmail,
+    subject,
+    topic,
   };
 }
 
@@ -253,8 +367,198 @@ export async function listPortalQueue(options: PortalStaffOptions, limit = 50): 
   const body = (await getJson(options, '/agent/queue', {
     limit: String(limit),
     includeClosed: 'false',
+    hasMessagesOnly: 'true',
   })) as { data?: unknown };
 
   const rows = Array.isArray(body?.data) ? body.data : [];
   return rows.map(readQueueRow).filter((row): row is PortalQueueRow => row !== null);
 }
+
+function readPartyConversationRow(row: unknown): PortalQueueRow | null {
+  if (typeof row !== 'object' || row === null) return null;
+  const source = row as Record<string, unknown>;
+  const sessionId = source['sessionId'] ?? source['id'];
+  if (typeof sessionId !== 'string') return null;
+
+  const customerId = typeof source['customerId'] === 'string' ? source['customerId'] : null;
+  const customer = source['customer'];
+  const customerName =
+    (typeof customer === 'object' && customer !== null
+      ? ((customer as Record<string, unknown>)['displayName'] as string | undefined) ??
+        ((customer as Record<string, unknown>)['name'] as string | undefined) ?? null
+      : null) ??
+    (typeof source['customerName'] === 'string' ? source['customerName'] : null) ??
+    (typeof source['name'] === 'string' ? source['name'] : null);
+
+  const customerEmail =
+    (typeof customer === 'object' && customer !== null
+      ? ((customer as Record<string, unknown>)['email'] as string | undefined) ?? null
+      : null) ??
+    (typeof source['customerEmail'] === 'string' ? source['customerEmail'] : null) ??
+    (typeof source['email'] === 'string' ? source['email'] : null);
+  const targetRole = typeof source['targetRole'] === 'string' ? source['targetRole'] : 'merchant';
+  const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
+  const subject = typeof source['subject'] === 'string' ? source['subject'] : null;
+  const topic = typeof source['topic'] === 'string' ? source['topic'] : null;
+  const conversationType = typeof source['conversationType'] === 'number' ? source['conversationType'] : null;
+  const direction = typeof source['direction'] === 'string' ? source['direction'] : null;
+
+  // `/party/conversations` (Wire Contract §6) has no `lastMessage`/message-
+  // count field at all — unlike `/agent/queue` below (`readQueueRow`), whose
+  // rows carry a real `lastMessage` this function can check for presence.
+  // A row here is minted the instant a chat is OPENED (`connection.hello`
+  // with targetRole/targetId, or POST /chat/sessions), before anyone has
+  // typed a word — e.g. an admin merely clicking through several outlets in
+  // OutletChatModal. Those empty sessions used to sit in the Merchants/
+  // Admin tab forever (`hasMessage` was hardcoded `true`), because the
+  // existing `hasMessage === false` filter (messages-screen.ts) had nothing
+  // to work with here. `createdAt === updatedAt` (exact string equality) is
+  // the best available proxy: confirmed against real data — a session with
+  // real message history has `updatedAt` matching its last message's
+  // timestamp, strictly after `createdAt`; an untouched one has the two
+  // fields byte-identical. Defaults to `true` (never hides a row) if either
+  // timestamp is missing, so an unexpected wire shape fails open, not shut.
+  const createdAt = typeof source['createdAt'] === 'string' ? source['createdAt'] : null;
+  const updatedAt = typeof source['updatedAt'] === 'string' ? source['updatedAt'] : null;
+  const hasMessage = createdAt === null || updatedAt === null ? true : createdAt !== updatedAt;
+
+  // Pre-partner-chat heuristic — kept ONLY as a fallback for a backend that
+  // does not yet send `conversationType` (customer name/email substring,
+  // topic==='admin'). `conversationType` below, when present, overrides this
+  // completely: it is the protocol telling us the kind, not a guess from the
+  // conversation's content.
+  const isCustomerAdmin =
+    (typeof customerName === 'string' && customerName.toLowerCase().includes('admin')) ||
+    (typeof customerEmail === 'string' && customerEmail.toLowerCase().includes('admin')) ||
+    (typeof customerName === 'string' && customerName.toLowerCase() === 'tse') ||
+    (typeof customerEmail === 'string' && customerEmail.toLowerCase().includes('tse')) ||
+    source['chatType'] === 'admin' ||
+    topic === 'admin';
+
+  // The cache `storeChatManager.openStoreChat` writes (`dhaam_target_store_<outletId>`)
+  // is keyed by the OUTLET's own id — which is `targetId` only when the ADMIN
+  // side started this row (`targetRole: 'merchant'`, target = the outlet).
+  // For the reverse direction (outlet messaged first, `targetRole: 'admin'`)
+  // the outlet IS this row's own `customerId`, not its target — looking the
+  // cache up by `targetId` there was looking up the ADMIN's id and could
+  // never hit, which is why an outlet-started conversation always fell
+  // through to the bare "Store #<id>" fallback however many times an admin
+  // had genuinely opened that exact outlet's chat before.
+  const merchantId = targetRole === 'merchant' ? targetId : customerId;
+
+  let storedTargetInfo: { storeName?: string; storeEmail?: string; merchantName?: string } | null = null;
+  if (merchantId && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('dhaam_target_store_' + merchantId) || sessionStorage.getItem('dhaam_target_store_' + merchantId);
+      if (raw) storedTargetInfo = JSON.parse(raw);
+    } catch {}
+  }
+
+  const storeName =
+    (typeof source['storeName'] === 'string' ? source['storeName'] : null) ??
+    storedTargetInfo?.storeName ??
+    (subject && subject !== 'admin' ? subject : null);
+
+  const merchantName =
+    (typeof source['merchantName'] === 'string' ? source['merchantName'] : null) ??
+    storedTargetInfo?.merchantName ??
+    storeName;
+
+  const merchantEmail =
+    (typeof source['merchantEmail'] === 'string' ? source['merchantEmail'] : null) ??
+    storedTargetInfo?.storeEmail ??
+    null;
+
+  return {
+    sessionId,
+    status: readQueueStatus(source['status']),
+    customerId,
+    customerName,
+    customerEmail,
+    lastMessage: null,
+    hasMessage,
+    chatType:
+      conversationType === 4
+        // PARTNER = staff <-> merchant/outlet, EXCEPT an admin's chat with a
+        // real customer (targetRole 'customer'), which belongs under the
+        // Customers tab, not Outlets.
+        ? (targetRole === 'customer' ? 'customer' : 'admin')
+        : conversationType === 2
+          ? 'merchant'
+          : (isCustomerAdmin ? 'admin' : (typeof source['chatType'] === 'string' ? source['chatType'] : 'merchant')),
+    targetRole,
+    targetId,
+    storeName,
+    merchantName,
+    merchantEmail,
+    subject,
+    topic,
+    conversationType,
+    direction,
+  };
+}
+
+export interface PartyConversationQuery {
+  readonly limit?: number;
+  readonly outletIds?: readonly string[];
+  /**
+   * `?with=customer` (default, omitted) — store DMs addressed to the caller.
+   * `?with=partner` — admin/manager ↔ merchant/outlet chats the caller is a
+   * party to, in EITHER direction. The two never mix in one response; a
+   * caller wanting both tabs calls this twice (Wire Contract §6, "Before you
+   * integrate": "Call /party/conversations once with the default and once
+   * with with=partner").
+   */
+  readonly with?: 'customer' | 'partner';
+}
+
+/**
+ * Lists conversations addressed to the caller's merchant / manager role or outlets.
+ *
+ * `GET /chat-services/api/v1/party/conversations` (Wire Contract §6).
+ * Strictly formats ?outletIds=a,b (comma-separated string, never bracket array ?outletIds[]).
+ * Omits ?outletIds when empty or not provided.
+ */
+export async function listPartyConversations(
+  options: PortalStaffOptions,
+  query?: PartyConversationQuery,
+): Promise<readonly PortalQueueRow[]> {
+  const queryParams: Record<string, string> = {
+    limit: String(query?.limit ?? 50),
+  };
+
+  if (query?.outletIds && query.outletIds.length > 0) {
+    const cleaned = query.outletIds.map((id) => id.trim()).filter((id) => id.length > 0);
+    if (cleaned.length > 0) {
+      queryParams['outletIds'] = cleaned.join(',');
+    }
+  }
+
+  // Omitted for 'customer' (the server default) too, not just when unset —
+  // sending an explicit ?with=customer would be a second spelling of the
+  // same request the bare call already makes.
+  if (query?.with === 'partner') {
+    queryParams['with'] = 'partner';
+    // The same unverified self-claim `connection.hello`'s `clientId` sends
+    // on the WRITE side (see that field's doc in chat-service-node) — a
+    // staff caller's own PARTNER rows, and rows addressed to it, are keyed
+    // by whatever id its client claimed, not by dh-auth's numeric UserID.
+    // Without this, a caller whose `senderId` IS that claimed id gets back
+    // a list that finds neither. Server-side: `PartyListOptions.selfId`.
+    // Omitted (not sent blank) when `senderId` isn't set — it is REQUIRED
+    // at `createConversationClient` construction, so this is always sent
+    // once a client exists, but a defensive caller of this function alone
+    // should not have a blank claim manufactured for it.
+    if (options.senderId) {
+      queryParams['selfId'] = options.senderId;
+    }
+  }
+
+  const body = (await getJson(options, '/party/conversations', queryParams)) as {
+    data?: { conversations?: unknown[] };
+  };
+
+  const rows = Array.isArray(body?.data?.conversations) ? body.data.conversations : [];
+  return rows.map(readPartyConversationRow).filter((row): row is PortalQueueRow => row !== null);
+}
+

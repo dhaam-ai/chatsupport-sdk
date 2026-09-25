@@ -2,31 +2,19 @@
 // `presence.update`), §6.5 (the `presenceUpdate` event).
 //
 // ---------------------------------------------------------------------------
-// Why presence is NOT written into ChatState
+// Where presence lives
 // ---------------------------------------------------------------------------
 //
-// It cannot be, and this is a genuine gap in §6.4 rather than a shortcut:
+// `ChatState.presence` (state/types.ts, "the one canonical location for
+// presence (D4)") is the write target: `applyPresenceUpdate` below keeps it
+// in sync on every accepted entry, alongside `#entries` (this module's own
+// read accessors) and the §6.5 `presenceUpdate` discrete event. Three
+// surfaces, one fact, written from one place.
 //
-//   1. §6.4 specifies `ChatState` as exactly ten fields and none of them
-//      carries presence. There is no `presence` map to write to.
-//   2. The one presence-shaped field anywhere in the state layer is
-//      `ChatParticipantProfile.isOnline`, reachable as
-//      `session.assignedAgent` / `session.customer`. But
-//      `ChatParticipantProfile` has NO id field — it is
-//      `{ displayName, email, avatarUrl, isOnline }` — so a
-//      `presence.update` carrying `participantId` cannot be correlated to a
-//      profile at all.
-//   3. Even given the participant→type mapping this module holds from
-//      session snapshots, routing an AGENT's presence to the singular
-//      `assignedAgent` would be wrong in exactly the case that mapping
-//      exists for: multi-agent sessions are confirmed real (§12.9), so "some
-//      agent went offline" does not imply "the assigned agent went offline".
-//
-// So presence is surfaced the two ways that ARE specified: the §6.5
-// `presenceUpdate` discrete event, and this registry's read accessors for
-// callers that want the current picture. Closing the gap properly means a
-// §6.4 amendment (an id on `ChatParticipantProfile`, or a presence map in
-// `ChatState`) — a spec change, not something to improvise here.
+// Each conversation on the keyless/staff surface (`conversation/runtime.ts`)
+// constructs its own `PresenceCoordinator` over its own private `ChatStore`,
+// so this is also how a party client's per-conversation `ChatState.presence`
+// gets populated — no separate wiring needed there.
 //
 // ---------------------------------------------------------------------------
 // Last-write-wins, deliberately unlike watermarks
@@ -79,6 +67,9 @@ export class PresenceRegistry {
     if (previous !== undefined && previous.status === entry.status && previous.lastSeen === entry.lastSeen) {
       return;
     }
+    this.#store.setState({
+      presence: { ...this.#store.getState().presence, [entry.participantId]: entry },
+    });
     this.#store.emit('presenceUpdate', entry);
   }
 

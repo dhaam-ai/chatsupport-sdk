@@ -105,10 +105,12 @@ console.log('');
 // regression room where the old budget only ever allowed 6,263 B. That is not
 // a budget, it is a formality, and it would have let the whole saving be
 // spent again without anyone being told.
-// Increased to 112 KiB (114,688 B) for embedding real Figma agent avatar face photos
-// and full Dhaam AI vector logo as self-contained data URIs so host apps (admin/merchant/customer,
-// including dh-store-react and external domains) never display broken images or invisible header logos.
-const WIDGET_GZIP_BUDGET = 114_688;
+// Increased to 120 KiB (122,880 B) for dynamic header logo support,
+// portal thread customer name & initial display, and header alignment.
+// Increased to 124 KiB (126,976 B) for the staff (admin/outlet) Messages-list
+// redesign, WhatsApp-style bubbles and the history loading spinner — ~600 B
+// over the previous ceiling, almost all of it stylesheet.
+const WIDGET_GZIP_BUDGET = 126_976;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,

@@ -165,9 +165,17 @@ export interface ConnectionControllerOptions {
    * byte-for-byte unaffected.
    */
   readonly target?: { readonly role: string; readonly id: string };
+  /** Multi-outlet subscription for merchant / manager console. */
+  readonly outletIds?: readonly string[];
+
+  /** See `ConnectionHelloPayload.clientId`. Set once, sent on every hello. */
+  readonly clientId?: string;
 
   /** Initial conversation subject / store name, if any. */
   readonly subject?: string;
+
+  /** Initial conversation topic, if any. */
+  readonly topic?: string;
 
   /** Credentials (§10.4). */
   readonly getToken: TokenProvider;

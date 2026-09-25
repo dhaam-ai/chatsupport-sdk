@@ -100,7 +100,7 @@ describe('the Messages list shows a status for every session', () => {
       screen.render([summary({ status })], null);
 
       const pill = screen.node.querySelector<HTMLElement>('.dh-messages-status');
-      expect(pill?.textContent).toBe(statusLabel(status));
+      expect(pill?.textContent).toBe(statusPill(status));
       // The spoken account carries it too — see messages-screen.ts on why the
       // aria-label is composed from the summary, not from the rendered spans.
       expect(screen.node.querySelector('.dh-messages-row')?.getAttribute('aria-label')).toContain(
@@ -266,10 +266,9 @@ describe('the two screens read the same table', () => {
       const pill = home.node.querySelector<HTMLElement>('.dh-home-recent-status')?.textContent ?? '';
       const label =
         messages.node.querySelector<HTMLElement>('.dh-messages-status')?.textContent ?? '';
-      // Not necessarily the same STRING — the pill is the short form — but
-      // always the same ENTRY, which is the property one table guarantees and
-      // two tables cannot.
-      expect(SESSION_STATUS_WORDS[status]).toEqual({ label, pill });
+      // Both screens show the short form, read from the one table.
+      expect(SESSION_STATUS_WORDS[status].pill).toBe(pill);
+      expect(SESSION_STATUS_WORDS[status].pill).toBe(label);
     }
   });
 });

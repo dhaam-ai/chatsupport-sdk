@@ -68,9 +68,11 @@ import { createIdentityHeader } from './ui/identity-header.js';
 import { createMessageList } from './ui/message-list.js';
 import { createMessagesScreen, getCustomerConversationTitle } from './ui/messages-screen.js';
 import { createPortalThread } from './ui/portal-thread.js';
+import { statusLabel } from './ui/session-status.js';
 import {
   createPortalConversationClient,
   listPortalQueue,
+  listPartyConversations,
   PortalApiError,
 } from './portal/portal-staff-client.js';
 import type { PortalQueueRow } from './portal/portal-staff-client.js';
@@ -285,13 +287,13 @@ const CONNECTION_COLOR: Record<ConnectionState, string> = {
 /**
  * How many past conversations the picker asks for.
  *
- * Five is the server's own default for `GET /chat/sessions/customer` and well
- * inside its cap of 20 (chat.validator.ts). A picker is a shortcut back to a
- * recent conversation, not an archive browser — a longer list would push the
- * "start a new conversation" action below the fold on a phone, which is the
- * one action every customer needs to be able to reach.
+ * Ten stays well inside the server's cap of 20 for `GET
+ * /chat/sessions/customer` (chat.validator.ts). A picker is a shortcut back
+ * to a recent conversation, not an archive browser — a longer list would
+ * push the "start a new conversation" action below the fold on a phone,
+ * which is the one action every customer needs to be able to reach.
  */
-const SESSION_PICKER_LIMIT = 50;
+const SESSION_PICKER_LIMIT = 10;
 
 /** Everything the connection's state implies for the UI, decided in one place. */
 interface ConnectionStatus {
@@ -576,10 +578,38 @@ function isUserInitiated(kind: SurfaceKind): boolean {
 function customerVisibleSessions(
   sessions: readonly ChatSessionSummary[],
   joinedSessionId: string | null,
+  target?: { readonly role: string; readonly id: string } | undefined,
+  // See WidgetConfig.treatSubjectAsTarget's doc for why this exists:
+  // `GET /chat/sessions/customer` (what `state.pastSessions` is built from)
+  // never sends `targetId`/`targetRole` at all — chat.routes.ts's
+  // `CustomerSessionHistoryRow` has no such fields — so `hasTarget` below is
+  // always `false` for every row this function ever sees, on every host,
+  // regardless of whether the session actually has one. This makes a store-
+  // targeted session look exactly like a generic support one to this filter.
+  treatSubjectAsTarget = false,
 ): readonly ChatSessionSummary[] {
-  return sessions.filter(
-    (summary) => summary.status !== 'CLOSED' || summary.id === joinedSessionId,
-  );
+  return sessions.filter((summary) => {
+    const s = summary as any;
+    const hasTarget =
+      (s.targetId !== undefined && s.targetId !== null && s.targetId !== '') ||
+      (treatSubjectAsTarget && typeof s.subject === 'string' && s.subject.trim() !== '');
+    if (target !== undefined) {
+      // Scoped to a specific merchant outlet
+      if (hasTarget) {
+        if (String(s.targetId) !== String(target.id)) return false;
+      } else if (summary.id !== joinedSessionId) {
+        return false;
+      }
+    } else {
+      // General support (no target): exclude merchant-targeted sessions
+      if (hasTarget) return false;
+    }
+
+    if (summary.id === joinedSessionId) return true;
+    if (summary.status === 'CLOSED') return false;
+    if (s.hasMessage === false) return false;
+    return true;
+  });
 }
 
 /**
@@ -621,9 +651,13 @@ function portalVisibleSessions(
   sessions: readonly ChatSessionSummary[],
   openSessionId: string | null,
 ): readonly ChatSessionSummary[] {
-  return sessions.filter(
-    (summary) => summary.status !== 'CLOSED' || summary.id === openSessionId,
-  );
+  return sessions.filter((summary) => {
+    if (summary.id === openSessionId) return true;
+    if (summary.status === 'CLOSED') return false;
+    const s = summary as any;
+    if (s.hasMessage === false) return false;
+    return true;
+  });
 }
 
 /** The shape all three surfaces share, so one slot can hold any of them. */
@@ -637,6 +671,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const config = resolveConfig(rawConfig);
   const { store, rest } = createWidgetStore(config);
   const localParticipantId = config.identity.userId;
+
+  /**
+   * Whose online/offline status the header shows — the counterparty of a
+   * TARGETED mount only (`OutletChatModal`, the "Message Admin" button):
+   * `config.target.id` names them directly, which is simpler and more
+   * reliable than deriving "whoever in `session.participants` is not me"
+   * from a snapshot core doesn't even expose past `assignedAgent`/`customer`.
+   * `undefined` for the plain support flow, where this scope deliberately
+   * stops — see the presence UI's own header for why.
+   */
+  const presenceTargetId: string | undefined = (config as any).target?.id;
 
   /**
    * Whether this visitor is a GUEST — i.e. nobody the host page has vouched
@@ -916,6 +961,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // capturing it, because it is replaced once, asynchronously, after mount.
   let remote: RemoteConfig = DEFAULT_REMOTE_CONFIG;
   /**
+   * The published greeting, kept here because `applyHeaderAppearance` can run
+   * before Home exists; `paintHomeGreeting` is wired once it does.
+   */
+  let latestHomeGreeting = { greeting: '', subGreeting: '' };
+  let paintHomeGreeting: ((greeting: string, subGreeting: string) => void) | null = null;
+  /**
+   * The widget's title RIGHT NOW: what the host stated, else what the console
+   * published, else the default — the same host > remote > default precedence
+   * every other appearance field follows. `config.title` alone is only the
+   * first and last of those, so a published title never reached the header.
+   */
+  const currentTitle = (): string =>
+    rawConfig.title !== undefined ? config.title : (remote.title ?? config.title);
+  /**
    * The chooser's one read of `remote` — see `entryFor`. Re-derived
    * alongside `remote` itself (`applyRemoteConfig`), never independently:
    * two places deciding what the six rows mean is how they drift.
@@ -957,6 +1016,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   let openingLinesInFlight = 0;
   let lastUnread = store.getState().unreadCount;
   const chime = createChime(config.onError);
+
+  /**
+   * Safety net for the client-only "bot is thinking" indicator — see the
+   * `state.messages` subscription below for why it exists and
+   * `MessageListView.setBotThinking` for the DOM it drives. Cleared and
+   * re-armed on every messages change; if it ever fires, the reply the
+   * customer's message was waiting on never arrived (a swallowed error, a
+   * slow provider), and the dots must not animate forever over nothing.
+   */
+  let botThinkingTimer: ReturnType<typeof setTimeout> | undefined;
+  const BOT_THINKING_TIMEOUT_MS = 20_000;
 
   /**
    * This VISITOR's own preference about noise, remembered per browser.
@@ -1023,7 +1093,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   function armAutoOpen(mode: AutoOpen, delaySec: number): void {
     releaseAutoOpen();
     releaseAutoOpen = () => undefined;
-    if (mode === 'never' || open) return;
+    if (mode === 'never' || open || (config as any).disableAutoOpen === true) return;
 
     // Fires only while the panel is still shut and the widget is still alive.
     // Both are checked at FIRING time rather than at arming time: seconds pass
@@ -1086,7 +1156,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // here: a host that asked for an open panel has already got one, and a
     // console setting cannot un-ask for it.
     armAutoOpen(next.autoOpen, next.autoOpenDelaySec);
-    armGreeting(next.greeting ?? '', next.greetingDelaySec);
+    // See WidgetConfig.hideGreeting's doc: a host opt-out, not a console
+    // setting, so it overrides whatever the console holds rather than
+    // depending on the merchant having left the field blank there. Armed
+    // with an empty string — never skipped — so a config republish that
+    // used to carry text still clears `greetingBubble.textContent` and
+    // `syncScreens`'s `greetingBubble.textContent !== ''` check keeps
+    // failing closed, the same as a merchant who genuinely wrote nothing.
+    armGreeting((config as any).hideGreeting === true ? '' : next.greeting ?? '', next.greetingDelaySec);
     consent.update(next.consentRequired, next.consentText ?? '');
     messageList.setTranscriptEmail(next.transcriptEmail);
     reportButton.hidden = !next.reportIssue;
@@ -1154,13 +1231,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       design = next.design;
       host.setAttribute('data-design', next.design);
     }
+    const nextLogo = next.logoUrl || next.header?.logoUrl;
+    const configLogo = config.logoUrl || config.header?.logoUrl;
+    const effectiveLogo =
+      rawConfig.logoUrl === undefined
+        ? (nextLogo ?? configLogo ?? '')
+        : (config.logoUrl || config.header?.logoUrl || '');
+
     // Unconditional, unlike the fields above: even a publish that says nothing
     // about the header can still have moved the ACCENT the header is painted
     // from, and the foreground has to be recomputed against it either way.
     applyHeaderAppearance(
       rawConfig.header === undefined ? { ...config.header, ...next.header } : config.header,
       accent,
-      rawConfig.logoUrl === undefined ? (next.logoUrl ?? config.logoUrl) : config.logoUrl,
+      effectiveLogo,
     );
     if (rawConfig.thread === undefined && Object.keys(next.thread).length > 0) {
       applyThreadAppearance({ ...config.thread, ...next.thread });
@@ -1181,7 +1265,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       rawConfig.avatarInitials === undefined
         ? (next.avatarInitials ?? config.avatarInitials)
         : config.avatarInitials,
-      rawConfig.logoUrl === undefined ? (next.logoUrl ?? config.logoUrl) : config.logoUrl,
+      effectiveLogo,
     );
     applyBranding(
       rawConfig.showBranding === undefined
@@ -1266,11 +1350,37 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     host.style.setProperty('--dh-header-bg', headerBaseColor(header));
     host.style.setProperty('--dh-header-fg', headerForeground(header, accent));
     host.style.setProperty('--dh-header-layers', headerLayers(header));
-    heroHeader.render(heroContentFrom(header, logoUrl));
+    const content = heroContentFrom(header, logoUrl);
+    heroHeader.render(content);
+    latestHomeGreeting = { greeting: content.greeting, subGreeting: content.subGreeting };
+    paintHomeGreeting?.(content.greeting, content.subGreeting);
 
-    // `platform` only means anything when no explicit colour was set —
+    const effectiveLogo = content.showLogo
+      ? (safeImageUrl(content.logoUrl) || DEFAULT_LOGO_IMAGE)
+      : '';
+    if (effectiveLogo) {
+      const escaped = effectiveLogo.replace(/"/g, '\\"');
+      host.style.setProperty('--dh-header-logo-image', `url("${escaped}")`);
+      host.setAttribute('data-show-logo', 'true');
+      if (effectiveLogo !== DEFAULT_LOGO_IMAGE && typeof Image !== 'undefined') {
+        const testImg = new Image();
+        testImg.src = effectiveLogo;
+        testImg.onerror = () => {
+          host.style.setProperty('--dh-header-logo-image', `url("${DEFAULT_LOGO_IMAGE}")`);
+        };
+      }
+    } else {
+      host.style.removeProperty('--dh-header-logo-image');
+      host.setAttribute('data-show-logo', 'false');
+    }
+
+    // `platform` only means anything when no explicit colour was set and platform sampling is enabled —
     // "borrow the site's colour" and "use this hex" are not both answerable.
-    if (header.colorSource === 'platform' && header.backgroundColor.trim() === '') {
+    if (
+      config.samplePlatform &&
+      header.colorSource === 'platform' &&
+      header.backgroundColor.trim() === ''
+    ) {
       borrowPlatformColor();
     }
   }
@@ -1286,7 +1396,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   let brandAvatar = {
     mode: config.avatarMode,
     initials: config.avatarInitials,
-    logoUrl: config.logoUrl,
+    logoUrl: config.logoUrl || config.header?.logoUrl || '',
   };
 
   /** Records the published brand inputs, then repaints. */
@@ -1318,6 +1428,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   let activeConversationTitle: string | null = null;
 
+  /**
+   * The brand disc's letters. A merchant who left "Avatar initials" empty still
+   * gets a disc under the classic design — the console's Classic preview
+   * always draws one — so it falls back to the title's first letter there.
+   * Other designs keep the no-placeholder contract.
+   */
+  function brandInitials(): string {
+    const typed = brandAvatar.initials.trim();
+    return typed !== '' || design !== 'classic' ? typed : currentTitle().trim().slice(0, 1);
+  }
+
   function syncHeaderAvatar(): void {
     const session = store.getState().session;
     let avatar: HTMLElement | null = null;
@@ -1328,8 +1449,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         avatar =
           session !== null && isHandledByCurrent(session)
             ? (buildAgentAvatar(session.handledBy?.displayName ?? '') ??
-              buildHeaderAvatar(brandAvatar.mode, brandAvatar.initials, brandAvatar.logoUrl))
-            : buildHeaderAvatar(brandAvatar.mode, brandAvatar.initials, brandAvatar.logoUrl);
+              buildHeaderAvatar(brandAvatar.mode, brandInitials(), brandAvatar.logoUrl))
+            : buildHeaderAvatar(brandAvatar.mode, brandInitials(), brandAvatar.logoUrl);
       }
     }
     avatarHost.hidden = avatar === null;
@@ -1382,24 +1503,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     composer.setReplyTo(null);
   }
 
-  /**
-   * Puts a message's text on the clipboard.
-   *
-   * Rejects rather than reporting: the caller is a menu item that announces
-   * its own outcome, and `report` would swallow the failure and leave it
-   * silently claiming success. `navigator.clipboard` is genuinely absent in
-   * some embedded webviews and refused outright in others, so the rejection
-   * path is real rather than defensive.
-   */
-  async function copyMessage(message: ChatMessage): Promise<void> {
-    const text = message.content ?? '';
-    if (text === '') throw new Error('Nothing to copy');
-    if (typeof navigator === 'undefined' || navigator.clipboard === undefined) {
-      throw new Error('Clipboard unavailable');
-    }
-    await navigator.clipboard.writeText(text);
-  }
-
   /** The conversation's backdrop, through the same inline-property route. */
   function applyThreadAppearance(thread: ThreadAppearance): void {
     const tokens = threadTokens(thread);
@@ -1423,8 +1526,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * the accent already on the header is the right thing to leave there.
    */
   function borrowPlatformColor(): void {
+    if (!config.samplePlatform) return;
     const sample = (): void => {
-      if (destroyed) return;
+      if (destroyed || !config.samplePlatform) return;
       const color = samplePlatformColor();
       if (color === null) return;
       host.style.setProperty('--dh-header-bg', cssColor(color));
@@ -1527,6 +1631,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     children: [buildLauncherIcon(config.launcherIcon)],
   });
 
+  /**
+   * The X the launcher shows while the panel is open — the console's preview
+   * swaps the chat glyph for it, so the button reads as "close" once it is.
+   * A sibling of `launcherGlyph`, not a child, so a published icon change
+   * (`launcherGlyph.replaceChildren`) cannot drop it; CSS swaps the two on
+   * `aria-expanded`.
+   */
+  const launcherClose = el('span', {
+    attrs: { class: 'dh-launcher-close', 'aria-hidden': 'true' },
+    children: [icon(ICONS.close, 22)],
+  });
+
   const launcher = el('button', {
     attrs: {
       class: 'dh-launcher',
@@ -1538,7 +1654,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       'aria-controls': 'dh-panel',
       'aria-label': 'Open chat',
     },
-    children: [launcherGlyph, launcherLabel, badge],
+    children: [launcherGlyph, launcherClose, launcherLabel, badge],
     on: { click: () => toggle() },
   });
 
@@ -1549,6 +1665,24 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     attrs: { class: 'dh-status', role: 'status', 'aria-live': 'polite' },
     children: [statusDot, statusText],
   });
+
+  /**
+   * The counterparty's ONLINE/OFFLINE, for a TARGETED mount only
+   * (`presenceTargetId`) — a separate line from `status` rather than a
+   * repurposing of it: `status` is written by `syncConnection` on every
+   * transport event (subtitle-or-connection-label), so anything `syncPresence`
+   * wrote there would be overwritten on the next tick. `status` is hidden for
+   * the life of the widget instance instead, right below — the two share the
+   * one line CSS reserves under the title (styles.ts's `.dh-status`
+   * positioning, mirrored here), never both at once.
+   */
+  const presenceDot = el('span', { attrs: { class: 'dh-presence-dot', 'aria-hidden': 'true' } });
+  const presenceText = el('span', { attrs: { class: 'dh-presence-text' } });
+  const presenceLine = el('div', {
+    attrs: { class: 'dh-presence-line', hidden: true },
+    children: [presenceDot, presenceText],
+  });
+  if (presenceTargetId !== undefined) status.hidden = true;
 
   // Deliberately a sibling of `status`, not a child of it: `status` is a
   // `role="status"` live region, and a control inside one gets its label read
@@ -1713,6 +1847,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const identityHeader = createIdentityHeader(config.title);
 
   const messageList = createMessageList({
+    staffViewer: (config as any).userRole === 'admin' || (config as any).userRole === 'merchant' || (config as any).userRole === 'manager',
     onRetry: (message) => retry(message),
     onStartNewConversation: () => openNewConversationFlow(),
     onEmailTranscript: () => emailTranscript(),
@@ -1721,7 +1856,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the composer's own send path so a suggestion is subject to every rule a
     // typed message is, the consent gate and handoff keywords included.
     onQuickReply: (text) => void composer.submit(text),
-    onCopyMessage: (message) => copyMessage(message),
     onReplyToMessage: (message, senderName) => startReply(message, senderName),
     // Read through `remote` at call time, never captured: a config publish
     // replaces `remote` wholesale, and the suggestion filter must judge by
@@ -1926,6 +2060,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       if (name !== 'conversation') {
         currentPortalSessionId = null;
         portalConversationActive = false;
+        portalPresenceTargetId = null;
+        syncPresence(undefined);
         // Clearing the id is only half of ending the exemption. That id is
         // what `portalVisibleSessions` reads to keep a CLOSED conversation
         // listed while the admin is READING it — so until the list is
@@ -1987,7 +2123,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     onStartNew: () => openNewConversationFlow(),
     onOpenConversation: (sessionId) => {
       const recent = store.getState().pastSessions.find((s) => s.id === sessionId);
-      const title = recent ? getCustomerConversationTitle(recent, config.title) : config.title;
+      const title = recent ? getCustomerConversationTitle(recent, currentTitle()) : currentTitle();
       void selectSession(sessionId, title);
     },
     onSeeAll: () => screens.swap('messages'),
@@ -2007,6 +2143,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // Host`'s OWN visibility (set in `syncScreens`) is still what decides
   // whether anything inside this slot is ever seen, exactly as it did when
   // this node sat directly in the panel.
+  paintHomeGreeting = homeScreen.setGreeting;
+  paintHomeGreeting(latestHomeGreeting.greeting, latestHomeGreeting.subGreeting);
   homeQuestionsSlot(homeScreen).hidden = false;
   homeQuestionsSlot(homeScreen).appendChild(commonQuestionsHost);
 
@@ -2028,6 +2166,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       }
     },
     onStartNew: () => openNewConversationFlow(),
+    ...((config as any).onStartPartnerConversation === undefined
+      ? {}
+      : { onStartNewPartner: () => (config as any).onStartPartnerConversation() }),
     userRole: (config as any).userRole,
   });
 
@@ -2043,9 +2184,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // `./portal/portal-staff-client.ts`'s header for why the two protocols
   // cannot share a session model. `store`'s own connection still opens (line
   // near the bottom of this function) and is simply unused for portal
-  // rendering; nothing about the customer flow changes for `userRole`
-  // undefined/'customer'/'merchant'.
-  const isPortalAdmin = (config as any).userRole === 'admin' && config.auth.getToken !== undefined;
+  // rendering; customer flow is used when userRole is 'customer' or undefined.
+  const portalUserRole = (config as any).userRole;
+  const isPortalStaff =
+    (portalUserRole === 'admin' || portalUserRole === 'merchant' || portalUserRole === 'manager') &&
+    config.auth.getToken !== undefined &&
+    (config as any).target === undefined;
+  const isMerchantPortal = portalUserRole === 'merchant' || portalUserRole === 'manager';
+  // See WidgetConfig.outletId's doc: the outlet's own id, for session.join's
+  // fallback. Falls back to outletIds[0] — the array is already ordered so
+  // its first entry is this same id — for a host that has not yet been
+  // updated to pass the singular field explicitly.
+  const portalOutletId: string | undefined =
+    (config as any).outletId ?? (config as any).outletIds?.[0];
 
   async function portalToken(): Promise<string> {
     const resolved = await config.auth.getToken!();
@@ -2054,8 +2205,27 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   let portalClient: ConversationClient | null = null;
   let portalUnsubscribe: (() => void) | null = null;
-  // EVERY row `/agent/queue` returned, CLOSED ones included. What the two
-  // tabs actually render is `portalVisibleSessions(...)` of this, in
+  // `open()` sends `session.join` immediately, with no wait of its own for the
+  // socket to be up (registry.ts's `open()` has no such check) — so the FIRST
+  // conversation opened right after `ensurePortalClient()` creates the client
+  // raced the still-connecting socket and failed
+  // ("session.join was not sent: the connection is not open"). A second open
+  // (or a reopen after close/reopen) never showed it, because by then
+  // `connect()` had already settled.
+  // ponytail: no automated test covers this race — packages/widget/test's
+  // portal harnesses (portal-open-conversation.test.ts,
+  // portal-staff-client.test.ts) exercise messages-screen.ts and the REST
+  // history source in isolation, neither of which touches the keyless
+  // ConversationClient/transport this bug lives in; connecting-state.test.ts
+  // has that transport harness but only for the customer flow. Add a portal
+  // equivalent (StubSocketFactory, assert `open()` awaits a pending
+  // `connect()`) if this regresses.
+  // Held here so `openPortalConversation` can await the SAME connect() only
+  // once — every open after the first is an
+  // already-resolved await, effectively free.
+  let portalConnecting: Promise<void> | null = null;
+  // EVERY row `/agent/queue` or `/party/conversations` returned, CLOSED ones included.
+  // What the two tabs actually render is `portalVisibleSessions(...)` of this, in
   // `syncSessionSurfaces` — kept apart on purpose, because `portalQueueIds`
   // has to keep a closed session's id for the click routing in
   // `onOpenConversation` to still recognise it as a PORTAL session rather
@@ -2063,7 +2233,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   let portalQueueRows: readonly PortalQueueRow[] = [];
   const portalQueueIds = new Set<string>();
   let portalQueuePollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Customer mode's session-list re-read — see where it is started. */
+  let sessionsPollTimer: ReturnType<typeof setInterval> | null = null;
   let currentPortalSessionId: string | null = null;
+
+  /**
+   * The open portal conversation's counterparty — this mode's equivalent of
+   * `presenceTargetId`, resolved per-conversation instead of once at mount
+   * (a portal mount browses many conversations without remounting; see
+   * `presenceTargetId`'s own doc for the targeted-mount case this is not).
+   * `null` outside a conversation, or inside one with no PARTNER counterparty
+   * to show (a plain customer DM row — `row.targetRole === null`).
+   */
+  let portalPresenceTargetId: string | null = null;
 
   function ensurePortalClient(): ConversationClient {
     if (portalClient !== null) return portalClient;
@@ -2072,32 +2254,131 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       wsUrl: config.wsUrl,
       getToken: portalToken,
       senderId: config.identity.userId,
+      isMerchantPortal,
+      ...(portalOutletId === undefined ? {} : { outletId: portalOutletId }),
     });
     portalClient = client;
     portalUnsubscribe = client.subscribe((state) => {
       if (currentPortalSessionId === null) return;
-      portalThread.render(state.conversations[currentPortalSessionId] ?? null, false);
+      const convo = state.conversations[currentPortalSessionId] ?? null;
+      portalThread.render(convo, false);
+      if (portalPresenceTargetId !== null) syncPresence(convo?.presence?.[portalPresenceTargetId]);
     });
-    client.connect().catch(report);
+    // Reported here exactly as before (`.catch(report)`), and re-thrown so
+    // `portalConnecting` still carries the rejection to whoever awaits it —
+    // `openPortalConversation`'s own catch already renders that without a
+    // second report.
+    portalConnecting = client.connect().catch((error: unknown) => {
+      report(error);
+      throw error;
+    });
     return client;
   }
 
-  /** GET /agent/queue — this tenant's real customer conversations. REST, not the socket; works before/independent of `ensurePortalClient()`. */
+  /**
+   * The (role, id) pair a PARTNER row is WITH, from THIS side's point of
+   * view, regardless of which side started it. `targetRole: 'merchant'`
+   * means the admin side started it (target = the outlet); any other
+   * `targetRole` (`'admin'`/`'manager'`) means the outlet started it, so the
+   * outlet IS this row's own `customerId`. `null` when neither half is
+   * known — a row this cannot key never collides with anything and always
+   * survives dedup untouched.
+   */
+  function partnerCounterpartyId(row: PortalQueueRow): string | null {
+    return row.targetRole === 'merchant' || row.targetRole === 'customer' ? row.targetId : (row.customerId ?? null);
+  }
+
+  /**
+   * One row per (admin, outlet) PAIR, not one per SESSION. The two sides can
+   * each independently start a conversation with the other before either
+   * finds the other's existing thread — an admin picking the same outlet
+   * from `OutletChatModal` a second time resumes the one open session for
+   * that pair (chat-service-node's `createSession` does that server-side),
+   * but the OUTLET starting one first, going quiet, and the admin later
+   * starting their own is a genuinely different session row for the same
+   * real-world counterparty. Both then sat in the Merchants tab forever as
+   * separate rows for what a human reads as one relationship.
+   *
+   * Kept per pair: the OPEN one, if any — an admin replying should land in
+   * whichever thread with that outlet is still live, not an arbitrary one of
+   * several. Rows arrive newest-activity-first (party.routes.ts), so among
+   * several OPEN (or several CLOSED, with none open) rows for the same pair,
+   * the first one this sees is already the most recently active — no
+   * separate recency comparison needed.
+   */
+  function dedupePartnerRowsByCounterparty(rows: readonly PortalQueueRow[]): PortalQueueRow[] {
+    const chosen = new Map<string, PortalQueueRow>();
+    const unkeyed: PortalQueueRow[] = [];
+    for (const row of rows) {
+      const counterpartyId = partnerCounterpartyId(row);
+      if (counterpartyId === null) {
+        unkeyed.push(row);
+        continue;
+      }
+      const existing = chosen.get(counterpartyId);
+      if (existing === undefined) {
+        chosen.set(counterpartyId, row);
+        continue;
+      }
+      // Newest-first order already picked the best CLOSED candidate (if
+      // that's all there is) on first sight; only an OPEN row arriving later
+      // can still improve on an already-CLOSED pick.
+      if (row.status !== 'CLOSED' && existing.status === 'CLOSED') {
+        chosen.set(counterpartyId, row);
+      }
+    }
+    return [...chosen.values(), ...unkeyed];
+  }
+
+  /**
+   * GET /agent/queue or GET /party/conversations (customer DMs, `with`
+   * omitted) — this tenant's real customer conversations — PLUS
+   * GET /party/conversations?with=partner — admin/manager ↔ merchant/outlet
+   * chats (`conversationType: 4`). Wire Contract §6 ("Before you integrate"):
+   * "Call /party/conversations once with the default and once with
+   * with=partner" — a PARTNER row is invisible to both /agent/queue and the
+   * default /party/conversations call, so without this second fetch neither
+   * an admin's Merchants tab nor a merchant's Admin tab would ever show one.
+   */
   function refreshPortalQueue(): void {
-    if (!isPortalAdmin || destroyed) return;
-    listPortalQueue({ apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId })
-      .then((rows) => {
+    if (!isPortalStaff || destroyed) return;
+    const portalOptions = { apiUrl: config.apiUrl, wsUrl: config.wsUrl, getToken: portalToken, senderId: config.identity.userId };
+    const outletIds = (config as any).outletIds;
+
+    // See WidgetConfig.partnerOnly: the Customers tab stays visible and
+    // clickable, it just never gets real customer rows — an empty tab, not
+    // a missing one.
+    const customerPromise = (config as any).partnerOnly === true
+      ? Promise.resolve([])
+      : isMerchantPortal
+      ? listPartyConversations(portalOptions, { outletIds })
+      : listPortalQueue(portalOptions);
+    const partnerPromise = listPartyConversations(portalOptions, { with: 'partner', outletIds });
+
+    Promise.all([customerPromise, partnerPromise])
+      .then(([customerRows, partnerRows]) => {
         if (destroyed) return;
+        const rows = [...customerRows, ...dedupePartnerRowsByCounterparty(partnerRows)];
         portalQueueRows = rows;
         portalQueueIds.clear();
         for (const row of rows) portalQueueIds.add(row.sessionId);
+        if (currentPortalSessionId) {
+          const activeRow = rows.find((r) => r.sessionId === currentPortalSessionId);
+          if (activeRow?.customerName) {
+            portalThread.setCustomerName(activeRow.customerName);
+          }
+        }
         syncSessionSurfaces();
       })
       .catch((error: unknown) => {
         // A failed queue refresh leaves the last-known list on screen rather
         // than blanking it — same "don't discard what's still true" rule
         // `refreshSessions` follows for the customer flow.
-        report(error instanceof PortalApiError ? new Error(`could not load the customer queue: ${error.message}`) : error);
+        report(
+          error instanceof PortalApiError
+            ? new Error(`could not load the customer queue: ${error.message}`)
+            : error,
+        );
       });
   }
 
@@ -2116,13 +2397,24 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       unreadCount: 0,
       handledBy: null,
       // Consumed by messages-screen.ts's tab-routing/display-name logic
-      chatType: isMerchant ? 'merchant' : 'customer',
+      chatType: row.chatType ?? (isMerchant ? 'merchant' : 'customer'),
       targetRole: row.targetRole ?? (isMerchant ? 'merchant' : undefined),
       targetId: row.targetId ?? undefined,
       storeName,
       merchantName: isMerchant ? (row.merchantName ?? storeName) : undefined,
+      merchantEmail: row.merchantEmail ?? undefined,
       customerName: row.customerName ?? undefined,
       customerEmail: row.customerEmail ?? undefined,
+      subject: row.subject ?? undefined,
+      topic: row.topic ?? undefined,
+      hasMessage: row.hasMessage,
+      // Dropping this used to make getRowDisplayName's merchant/outlet-
+      // viewing-Admin-tab branch trust `customerName` unconditionally — for
+      // a partner chat the VIEWER started themselves ("outgoing"), that
+      // field is the viewer's OWN name (the backend reuses the `customerId`
+      // column for whoever started the chat), so the outlet saw its own
+      // name where the admin's name belonged. See messages-screen.ts.
+      direction: row.direction ?? undefined,
     } as unknown as ChatSessionSummary;
   }
 
@@ -2133,8 +2425,29 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     activeConversationTitle = resolvedTitle;
     identityHeader.setTitle(resolvedTitle);
     syncHeaderAvatar();
-    subtitle = subtitleText ?? (displayName?.toLowerCase().includes('store') ? 'Merchant' : 'Customer');
-    statusText.textContent = subtitle;
+
+    const row = portalQueueRows.find((r) => r.sessionId === sessionId);
+    const customerName =
+      (displayName && displayName !== 'Conversation' && displayName !== 'Customer' ? displayName : null) ??
+      row?.customerName ??
+      null;
+    portalThread.setCustomerName(customerName);
+
+    // Presence only for a PARTNER row (`targetRole !== null` — a plain
+    // customer DM row has none, per `PortalQueueRow.targetRole`'s own doc):
+    // that is the approved scope, matching the targeted-mount case's own
+    // "admin/merchant chat only". Cleared and hidden immediately on every
+    // open, including a re-open of the SAME conversation, so a stale answer
+    // for whoever was open before this never shows while the fresh query is
+    // in flight.
+    portalPresenceTargetId = row !== undefined && row.targetRole !== null ? partnerCounterpartyId(row) : null;
+    syncPresence(undefined);
+
+    // In header section, show only the active customer name (e.g. "bikash"),
+    // do not show "Customer • email" in subtitle
+    subtitle = '';
+    statusText.textContent = '';
+
     portalThread.setError(null);
     portalThread.render(null, true);
     showConversation();
@@ -2142,7 +2455,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
     const client = ensurePortalClient();
     try {
+      // `open()` sends session.join immediately with no wait of its own —
+      // see `portalConnecting`'s own doc. Already-resolved on every open past
+      // the first, so this is a no-op wait in the ordinary case.
+      await portalConnecting;
       await client.open({ conversationId: sessionId });
+      // Best-effort, same as the targeted-mount query below: a failed query
+      // leaves `presenceLine` hidden, the honest state for "no answer yet".
+      if (portalPresenceTargetId !== null && currentPortalSessionId === sessionId) {
+        client.queryPresence(sessionId, [portalPresenceTargetId]);
+      }
       if (currentPortalSessionId === sessionId) {
         portalThread.render(client.getState().conversations[sessionId] ?? null, false);
       }
@@ -2153,12 +2475,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
   }
 
-  const portalThread = createPortalThread({
-    onSend: async (text) => {
-      if (currentPortalSessionId === null || portalClient === null) return;
-      await portalClient.sendMessage(currentPortalSessionId, text);
+  const portalThread = createPortalThread(
+    {
+      onSend: async (text, options) => {
+        if (currentPortalSessionId === null || portalClient === null) return;
+        await portalClient.sendMessage(currentPortalSessionId, text, options);
+      },
     },
-  });
+    localParticipantId,
+  );
   let portalConversationActive = false;
 
   const backButton = el('button', {
@@ -2169,7 +2494,22 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       hidden: true,
     },
     children: [icon(BACK_ICON, 18)],
-    on: { click: () => screens.back() },
+    // A TARGETED mount (`presenceTargetId !== undefined` — OutletChatModal /
+    // "Message Admin") never pushed a prior screen to go back TO: it opens
+    // straight into `conversation`, so `screens.canGoBack()` is permanently
+    // false there. "Back" is the only exit such a mount has, so it closes
+    // instead — same as the X button beside it.
+    on: {
+      click: () => {
+        if (screens.canGoBack()) {
+          screens.back();
+        } else if (screens.current() === 'messages') {
+          screens.swap('home');
+        } else {
+          close();
+        }
+      },
+    },
   });
 
   /**
@@ -2237,14 +2577,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
           el('header', {
             attrs: { class: 'dh-header' },
             children: [
-              // Shown only once there is somewhere to go back TO — see
-              // `screens.ts`'s own back-stack rules and this file's `onChange`
-              // above, which is the one place `backButton.hidden` is set.
+              // Shown once there is somewhere to go back TO (`screens.ts`'s
+              // back-stack) OR for a TARGETED mount, which has nowhere to go
+              // back to but still gets the button — see `syncScreens` (the
+              // one place `backButton.hidden` is set) and the button's own
+              // click-handler doc.
               backButton,
               avatarHost,
               el('div', {
                 attrs: { class: 'dh-header-identity-wrap' },
-                children: [identityHeader.node, heroHeader.headerAvatars, status],
+                children: [identityHeader.node, presenceLine, heroHeader.headerAvatars, status],
               }),
               el('div', { attrs: { class: 'dh-header-spacer' } }),
               reconnectButton,
@@ -2290,7 +2632,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // one element wearing each of those classes at a time; an ALWAYS-
       // mounted second one is exactly what broke `widget-dom.test.ts`'s
       // `querySelector('.dh-input')` during development of this feature.
-      ...(isPortalAdmin ? [portalThread.node] : []),
+      ...(isPortalStaff ? [portalThread.node] : []),
       messageList.log,
       // Above the chips and below the transcript: the greeting is the first
       // thing said, and the chips are the answers to it.
@@ -2314,7 +2656,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // conversation is showing — same bottom-of-panel real estate the
       // composer needs there, and a customer typing does not also need a
       // tab bar competing for the same row. See `syncScreens`.
-      nav.node,
+      //
+      // Omitted entirely for the admin/merchant portal: `createNav` was
+      // already called with `includeHome: false` there (no Home screen to
+      // switch to — a staff user lands straight on their queue, see
+      // nav.ts's own doc), which leaves a single "Messages" tab with nothing
+      // to navigate between and nowhere else to navigate FROM — the portal's
+      // one screen, permanently marked "selected". A tablist of one is not
+      // a control, so it is not mounted.
+      ...(isStaffOrAdmin ? [] : [nav.node]),
       messageList.liveRegion,
       // Its own channel, deliberately not folded into `status` or the message
       // log's region: `status` re-announces on every connection change, and
@@ -2348,8 +2698,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // `activeSurface` is declared where it is: this call reaches `heroHeader`,
   // which is built with the panel above, so running it any earlier puts that
   // const in the temporal dead zone and every single mount throws.
-  applyHeaderAppearance(config.header, config.accent, config.logoUrl);
-  applyHeaderAvatar(config.avatarMode, config.avatarInitials, config.logoUrl);
+  const initialLogo = config.logoUrl || config.header?.logoUrl || '';
+  applyHeaderAppearance(config.header, config.accent, initialLogo);
+  applyHeaderAvatar(config.avatarMode, config.avatarInitials, initialLogo);
   applyBranding(config.showBranding, config.brandingText, config.brandingUrl);
 
   // Every pane needs an initial, correct visibility before anything else can
@@ -2359,6 +2710,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // unconditionally and silently override "launcher opens -> Home" for
   // every visitor, on every mount, before a single click happened.
   syncScreens();
+  syncSessionSurfaces();
 
   // ── presentation ──────────────────────────────────────────────────────
   function applyPresentation(): void {
@@ -2490,7 +2842,32 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const unsubscribers = [
     store.select(
       (state) => state.messages,
-      () => messageList.render(store.getState(), localParticipantId),
+      () => {
+        const state = store.getState();
+        // chat-service only ever emits a real `typing.start` for a human
+        // AGENT composing (bridge.ts/websocket-server.ts's broadcastTyping)
+        // — the AI bot sends no such signal before its reply, so a BOT-mode
+        // conversation showed nothing at all during the 1-3s a reply takes
+        // to generate. This synthesises the same "someone is responding"
+        // cue for exactly that gap: due the moment the customer's own
+        // message is the newest thing in the transcript on a BOT-mode
+        // session, cleared the moment anything else arrives (the reply
+        // itself re-fires this same subscription). Never armed for a HUMAN
+        // session — an agent's own typing state already covers that, and
+        // stacking a synthetic cue under a real one would tell the customer
+        // two different things about the same wait.
+        const last = state.messages[state.messages.length - 1];
+        const thinking = state.session?.mode === 'BOT' && last?.senderType === 'CUSTOMER';
+        clearTimeout(botThinkingTimer);
+        messageList.setBotThinking(thinking);
+        if (thinking) {
+          botThinkingTimer = setTimeout(() => {
+            messageList.setBotThinking(false);
+            messageList.render(store.getState(), localParticipantId);
+          }, BOT_THINKING_TIMEOUT_MS);
+        }
+        messageList.render(state, localParticipantId);
+      },
       { immediate: true },
     ),
     store.select(
@@ -2532,7 +2909,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }),
     store.select(
       (state) => (state.session === null ? null : `${state.session.id}:${state.session.status}`),
-      () => syncProductSurfaces(),
+      () => {
+        syncProductSurfaces();
+        // The header's status line reads `endedSession`, so a status flip
+        // into or out of CLOSED/RESOLVED has to repaint it too — otherwise it
+        // sits on whatever the last connection event left it showing until
+        // an unrelated transport event happens to fire next.
+        syncConnection();
+      },
     ),
     store.select(
       (state) => state.connectionState,
@@ -2670,6 +3054,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       (uploading) => composer.setUploading(uploading),
       { immediate: true },
     ),
+    // The event, not `store.select((state) => state.presence[id], ...)`:
+    // core does write `ChatState.presence` now, but the EVENT is still what
+    // this needs — `applyPresenceSnapshot` re-emits `presenceUpdate` per
+    // entry, so a `select` here would just be a second, redundant listener
+    // for the exact same moments this one already catches.
+    ...(presenceTargetId === undefined
+      ? []
+      : [
+          store.on('presenceUpdate', (entry) => {
+            if (entry.participantId === presenceTargetId) syncPresence(entry);
+          }),
+        ]),
   ];
 
   /**
@@ -3461,6 +3857,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   function refreshSessions(): void {
     if (destroyed) return;
+    // Portal (admin/merchant/manager) mode never reads `pastSessions` — see
+    // `syncSessionSurfaces`'s comment on why the customer-flow store's own
+    // list is unused there. Skips the `GET /chat/sessions/customer` round
+    // trip every caller above would otherwise fire for a result nothing
+    // renders.
+    if (isPortalStaff) return;
     sessionsRequested = true;
     if (sessionsInFlight) {
       sessionsRefreshQueued = true;
@@ -3468,7 +3870,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
     sessionsInFlight = true;
     store.client
-      .listSessions({ limit: SESSION_PICKER_LIMIT })
+      // `with: 'agent'` only for a GENERAL (untargeted) mount: Home/Messages
+      // there are the support picker, and store DMs showing up beside it is
+      // exactly the leak `customerVisibleSessions` above tries (and, per its
+      // own comment, currently fails) to filter client-side — the server can
+      // do this precisely, the client heuristic cannot. An outlet-targeted
+      // mount (`config.target` set) leaves this unset: `?with=` has no way to
+      // name one specific outlet, only a role, so filtering by role there
+      // would drop the very store DM the mount exists to show.
+      .listSessions({
+        limit: SESSION_PICKER_LIMIT,
+        ...(config.target === undefined ? { with: 'agent' } : {}),
+      })
       .catch((error: unknown) => {
         // An embed whose client has no `sessionSummarySource` is a
         // CONFIGURATION fact, not a fault: core is telling us this deployment
@@ -3523,9 +3936,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // "Recent conversation" row and the Messages list. Filtering once here
     // rather than twice downstream is the same "one input, two screens"
     // reason this function exists at all.
-    const customerSessions = customerVisibleSessions(state.pastSessions, joinedSessionId);
+    const customerSessions = customerVisibleSessions(
+      state.pastSessions,
+      joinedSessionId,
+      config.target,
+      (config as any).treatSubjectAsTarget === true,
+    );
     const ctaSub = remote.header.ctaSubtitle || config.header.ctaSubtitle || 'We usually reply instantly';
-    homeScreen.update(mostRecentSession(customerSessions), ctaSub, entry);
+    const ctaTitle = remote.header.ctaTitle || config.header.ctaTitle || '';
+    const ctaEnabled = remote.header.ctaEnabled ?? config.header.ctaEnabled ?? true;
+    // Read by CSS: the hero band only overhangs into Home to give the CTA card
+    // something to straddle, so with the CTA off the overhang goes too.
+    host.setAttribute('data-cta', ctaEnabled ? 'on' : 'off');
+    homeScreen.update(mostRecentSession(customerSessions), ctaSub, entry, ctaTitle, ctaEnabled);
     // Portal (admin) mode: the Customers tab's real rows come from
     // `/agent/queue`, not from `state.pastSessions` — that array is the
     // customer-flow client's OWN session history (the widget always builds
@@ -3541,7 +3964,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // array) can never say "3" over two visible rows — see
     // `portalVisibleSessions` for the rule and for what it deliberately does
     // not touch.
-    const sessions = isPortalAdmin
+    const sessions = isPortalStaff
       ? portalVisibleSessions(portalQueueRows.map(portalQueueRowToSummary), currentPortalSessionId)
       : customerSessions;
     messagesScreen.render(sessions, currentPortalSessionId ?? joinedSessionId);
@@ -3595,16 +4018,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the picked conversation renders under.
     discardUserSurface();
     const past = store.getState().pastSessions.find((s) => s.id === sessionId);
-    const resolvedTitle = displayName || (past ? getCustomerConversationTitle(past, config.title) : config.title);
+    const resolvedTitle = displayName || (past ? getCustomerConversationTitle(past, currentTitle()) : currentTitle());
     if (resolvedTitle) {
       activeConversationTitle = resolvedTitle;
       identityHeader.setTitle(resolvedTitle);
       syncHeaderAvatar();
     }
     if (subtitleText !== undefined) {
-      subtitle = subtitleText;
+      subtitle = isPortalStaff ? '' : subtitleText;
       statusText.textContent = subtitle;
     }
+    // Spinner until the picked conversation's first page lands — the store
+    // still holds the previous conversation (or nothing) until switchSession
+    // clears it, and a blank transcript reads as "broken", not "loading".
+    messageList.setLoading(true);
     showConversation();
     if (open) composer.input.focus({ preventScroll: true });
 
@@ -3878,15 +4305,33 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // transport event, and a repaint per heartbeat is work nobody asked for.
     if (wasUnreachable !== givenUp) syncScreens();
 
-    // The merchant's subtitle stands in for `'Online'` and for nothing else.
-    // Every other label is diagnostic, and a response-time promise painted
-    // over "Not connected — use Reconnect to try again" would tell a customer
-    // their message is on its way to somebody while it is going nowhere. A
-    // healthy connection is the one state with nothing of its own to report,
-    // so it is the one the merchant's words can have.
-    statusText.textContent =
-      connectionState === 'connected' && subtitle !== '' ? subtitle : status.label;
-    statusDot.style.color = status.color;
+    // A genuinely-ended session on screen (`endedSession` — the same
+    // CLOSED/RESOLVED-minus-parked predicate the CSAT card and the ended
+    // footer already key off) is not a fact about the connection at all, and
+    // "Online" painted over a conversation that is OVER is precisely the
+    // confusion this branch exists to remove. It outranks both the
+    // merchant's subtitle and the connection label — neither describes a
+    // conversation with nothing left to report a connection for — and the
+    // dot goes with it: the dot means "here is the connection's colour", and
+    // a resolved conversation has none to show.
+    const ended = endedSession(state);
+    if (ended !== null) {
+      statusText.textContent = statusLabel(ended.status);
+      statusDot.style.display = 'none';
+    } else {
+      // The merchant's subtitle stands in for `'Online'` and for nothing
+      // else. Every other label is diagnostic, and a response-time promise
+      // painted over "Not connected — use Reconnect to try again" would tell
+      // a customer their message is on its way to somebody while it is going
+      // nowhere. A healthy connection is the one state with nothing of its
+      // own to report, so it is the one the merchant's words can have.
+      statusText.textContent =
+        connectionState === 'connected' && subtitle !== ''
+          ? subtitle
+          : (isPortalStaff && portalConversationActive ? '' : status.label);
+      statusDot.style.display = '';
+      statusDot.style.color = status.color;
+    }
 
     reconnectButton.hidden = status.control === 'hidden';
     // `inert` and "a manual attempt is already running" are different reasons
@@ -3991,6 +4436,27 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
+   * The counterparty's ONLINE/OFFLINE line — shared by both presence-eligible
+   * flows (a TARGETED mount's `presenceTargetId`, and a portal mount's
+   * per-conversation `portalPresenceTargetId`); each caller is already the
+   * one place that knows which flow is live, so this renders whatever it is
+   * handed rather than re-deciding eligibility. An `undefined` entry (never
+   * queried yet, the query came back empty, or presence is out of scope for
+   * whatever is open) and "genuinely offline" both read the same way here:
+   * hidden until there is a real answer, never a guess in either direction.
+   */
+  function syncPresence(entry: { readonly status: string } | undefined): void {
+    if (entry === undefined) {
+      presenceLine.hidden = true;
+      return;
+    }
+    const online = entry.status === 'ONLINE';
+    presenceDot.setAttribute('data-online', String(online));
+    presenceText.textContent = online ? 'Online' : 'Offline';
+    presenceLine.hidden = false;
+  }
+
+  /**
    * Re-arms the keyword escalation once the bot no longer holds a live
    * conversation. The visible "Talk to a human" button this used to
    * show/hide is gone — escalation is keyword-only now (see the composer's
@@ -4077,7 +4543,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // customer typing does not also need two tabs competing for a glance,
     // and there is no tab for `conversation` to begin with (see nav.ts).
     setPaneVisible(nav.node, !onConversation);
-    backButton.hidden = !screens.canGoBack();
+    const isStaffOrAdmin = (config as any).userRole === 'admin' || (config as any).userRole === 'merchant';
+
+    // Also shown for a TARGETED mount even with nothing to go back to — see
+    // the button's own click-handler doc for why that is still correct.
+    // For customers, also show on Messages screen to navigate back to Home.
+    backButton.hidden = !(screens.canGoBack() || presenceTargetId !== undefined || (current === 'messages' && !isStaffOrAdmin));
+
+    if (current === 'messages' && !isStaffOrAdmin) {
+      identityHeader.setTitle('Messages');
+    } else if (current === 'home') {
+      identityHeader.setTitle(currentTitle());
+    }
 
     // Stamp the current screen onto the host element so CSS can target it:
     // `:host([data-screen="conversation"])` applies the purple gradient header
@@ -4097,11 +4574,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // elapsed (see `armGreeting`); without it this pane would appear
     // instantly and the merchant's configured wait would be invisible.
     const beforeFirstMessage = showingLog && state.messages.length === 0;
-    const isStaffOrAdmin = (config as any).userRole === 'admin' || (config as any).userRole === 'merchant';
-    setPaneVisible(
-      greetingBubble,
-      !isStaffOrAdmin && beforeFirstMessage && greetingDue && greetingBubble.textContent !== '',
-    );
+    const greetingShowing =
+      !isStaffOrAdmin && beforeFirstMessage && greetingDue && greetingBubble.textContent !== '';
+    setPaneVisible(greetingBubble, greetingShowing);
+    // The greeting bubble and the transcript's own "No messages yet." both
+    // answer "there's nothing here yet" — see MessageListView.setGreetingShown
+    // for why showing both at once reads as two competing empty-states.
+    messageList.setGreetingShown(greetingShowing);
 
     nav.update(current, state.unreadCount);
   }
@@ -4530,8 +5009,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   async function startNewConversation(input: NewConversationInput, form: ProductSurface): Promise<void> {
     openingLinesInFlight += 1;
     try {
-      activeConversationTitle = config.title;
-      identityHeader.setTitle(config.title);
+      activeConversationTitle = currentTitle();
+      identityHeader.setTitle(currentTitle());
       syncHeaderAvatar();
       // `startNewSession`, never `switchSession`: a switch joins a session
       // that already exists and deliberately mints nothing, so using it here
@@ -4751,18 +5230,66 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // to keep could do neither: it could not re-arm when the customer switched
   // conversations, which is why picking a past session left the previous
   // session's transcript on screen.
-  const connecting = isPortalAdmin ? Promise.resolve() : store.client.connect();
+  //
+  // ── Skipped only for ADMIN, not merchant/manager, despite both being
+  // `isPortalStaff` ────────────────────────────────────────────────────────
+  // An admin's live channel for an untargeted mount is `portalClient`
+  // (`ensurePortalClient`, below) — its own separate connection, dialled
+  // lazily when a queue row is opened. This one (`store.client`) would only
+  // duplicate it, and an untargeted `connection.hello` from ANY staff/party
+  // identity resolves to a SUPPORT-type session under that identity's own id
+  // (chat-service-node's `resolveConversationKind`) — connecting it for
+  // nothing an admin needs is a session an admin never asked for.
+  //
+  // A merchant/manager has no such duplicate: `portalClient`'s underlying
+  // socket is the "staff flow" hello (`publishableKey` absent), which
+  // chat-service-node's server refuses for a merchant/manager token outright
+  // (see `ensurePortalClient`'s own comment, a server-side mapping gap this
+  // widget cannot route around). Skipping `store.client.connect()` for a
+  // merchant/manager therefore left them with NO live connection AT ALL
+  // while untargeted — the incidental SUPPORT-session row this connects
+  // costs is far cheaper than a merchant/outlet unable to reach a partner
+  // conversation an admin started until they happen to click into it (which,
+  // for the same server-side gap, does not work either): switching this
+  // connection into that session via `switchSession` afterward (see the
+  // host's own "surface an incoming partner message" flow) is what actually
+  // needs a live `store.client` to switch.
+  const skipCustomerFlowConnect = isPortalStaff && portalUserRole === 'admin' && (config as any).target === undefined;
+  const connecting = skipCustomerFlowConnect ? Promise.resolve() : store.client.connect();
 
-  // Portal (admin) mode: the Customers tab needs its first real data before
-  // the admin ever opens Messages, not only once they navigate there — see
-  // the `isPortalAdmin` comment above `refreshPortalQueue`. `20_000`, not
-  // shorter: this is a plain REST poll (no server-pushed queue event this
-  // SDK slice surfaces yet — see `portal-staff-client.ts`), and a customer's
-  // own widget polls its session list on no tighter a cadence than a screen
+  // One query, not a poll: `PresenceEntry`'s own doc says a change after this
+  // arrives on its own via `presence.update`, which the subscription above
+  // already renders — asking again on a timer would just be the same answer
+  // twice. Best-effort: a failed query leaves `presenceLine` hidden (its
+  // default), which is the honest state for "no answer yet" either way, so
+  // nothing here needs to react on rejection.
+  if (presenceTargetId !== undefined) {
+    connecting.then(() => store.client.queryPresence([presenceTargetId])).catch(() => {});
+  }
+
+  // Portal (staff/merchant) mode: the Customers tab needs its first real data before
+  // the user ever opens Messages, not only once they navigate there — see
+  // `refreshPortalQueue`. `20_000`, not shorter: this is a plain REST poll
+  // (no server-pushed queue event this SDK slice surfaces yet — see `portal-staff-client.ts`),
+  // and a customer's own widget polls its session list on no tighter a cadence than a screen
   // navigation already provides.
-  if (isPortalAdmin) {
+  if (isPortalStaff) {
     refreshPortalQueue();
     portalQueuePollTimer = setInterval(refreshPortalQueue, 20_000);
+  }
+
+  // Customer mode: nothing is PUSHED to a customer about a conversation they
+  // have not joined — e.g. one an admin opened with them from the customer's
+  // detail page (a PARTNER row addressed to them). The list is otherwise only
+  // re-read on a tab switch or when the panel opens, so a message that arrives
+  // while the Messages list is on screen stayed invisible until they navigated.
+  // Re-read it while the panel is open and the tab is visible; 15 s is the same
+  // order as the staff poll above, and `refreshSessions`'s in-flight latch keeps
+  // overlapping ticks from stacking.
+  if (!isPortalStaff) {
+    sessionsPollTimer = setInterval(() => {
+      if (open && !document.hidden) refreshSessions();
+    }, 15_000);
   }
 
   const namedSession = config.sessionId;
@@ -4799,6 +5326,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // would otherwise outlive the shadow root.
       releaseAutoOpen();
       clearTimeout(greetingTimer);
+      clearTimeout(botThinkingTimer);
       window.removeEventListener('resize', onResize);
       // Both hold a window listener or a timer that would otherwise outlive
       // the shadow root. The pump goes first: it subscribes to `network`.
@@ -4828,6 +5356,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // The portal (admin) socket, if this widget ever opened one — a second
       // connection `store.destroy` below knows nothing about.
       if (portalQueuePollTimer !== null) clearInterval(portalQueuePollTimer);
+      if (sessionsPollTimer !== null) clearInterval(sessionsPollTimer);
       portalUnsubscribe?.();
       portalClient?.disconnect();
       // `disconnect: true` — this store built the client it wraps, so nothing

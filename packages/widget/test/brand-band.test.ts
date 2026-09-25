@@ -419,7 +419,7 @@ describe('the brand paint, as written in the stylesheet', () => {
     // presence plus an absence rather than as the whole block verbatim — a
     // benign extra declaration here is not a regression, a background is.
     const headerRow = bodyOf(':host([data-design="hero"]) .dh-header');
-    expect(headerRow).toContain('border-bottom-color: transparent');
+    expect(headerRow).toMatch(/border-bottom:\s*none/);
     expect(headerRow).not.toMatch(/background/);
   });
 
@@ -475,15 +475,25 @@ describe('the brand paint, as written in the stylesheet', () => {
     const bandRules = cssRules(STYLES).filter((rule) => /\.dh-brand-band\b/.test(rule.selector));
     const ungated = bandRules.filter((rule) => !rule.selector.includes('[data-design="hero"]'));
 
-    expect(ungated.map((rule) => rule.selector)).toEqual(['.dh-brand-band']);
+    // The bare `.dh-brand-band` is the only rule that applies to every screen.
+    // The rest are deliberate paint overrides for the Messages screen (all
+    // designs, light and dark) and classic Home — each scoped to its own
+    // `data-screen`, so no other screen's paint moves.
+    const [base, ...overrides] = ungated;
+    expect(base?.selector).toBe('.dh-brand-band');
+    for (const rule of overrides) expect(rule.selector).toMatch(/\[data-screen="(messages|home)"\]/);
 
     // The load-bearing declarations, plus the thing that must never appear:
     // anything that paints, spaces or offsets, because on the classic design
     // this box has to be exactly as tall as the children it wraps.
-    const structural = ungated[0]?.body ?? '';
+    const structural = base?.body ?? '';
     expect(structural).toContain('flex: none');
     expect(structural).toContain('display: flex');
     expect(structural).toContain('flex-direction: column');
-    expect(structural).not.toMatch(/background|border|box-shadow|padding|margin|z-index/);
+    // The base rule now carries the published header paint (driven by the
+    // config's `--dh-header-*` variables), but still nothing that spaces or
+    // offsets the box.
+    expect(structural).toContain('var(--dh-header-bg');
+    expect(structural).not.toMatch(/border|box-shadow|padding|margin|z-index/);
   });
 });

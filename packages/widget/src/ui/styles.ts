@@ -180,8 +180,8 @@ export function headerForeground(header: HeaderAppearance, accent: string): stri
  */
 export function headerLayers(header: HeaderAppearance): string {
   if (header.background === 'gradient') {
-    const a = percent(header.gradientStrength, 100);
-    return `linear-gradient(180deg, rgba(0,0,0,${a}) 0%, rgba(0,0,0,${(a * 0.3).toFixed(3)}) 50%, rgba(0,0,0,0) 100%)`;
+    const a = percent(header.gradientStrength, 100) * 0.55;
+    return `linear-gradient(180deg, rgba(0,0,0,${a.toFixed(3)}) 0%, rgba(0,0,0,${(a * 0.3).toFixed(3)}) 50%, rgba(0,0,0,0) 100%)`;
   }
 
   if (header.background === 'image') {
@@ -214,7 +214,13 @@ function percent(value: number, fallback: number): number {
 export function cssUrl(value: string): string | null {
   const url = safeImageUrl(value);
   if (url === null) return null;
-  return /["'()\\;\s]/.test(url) ? null : `url("${url}")`;
+  // A `data:image/png;base64,…` URL always carries the `;` that separates its
+  // media type from its encoding, so a blanket semicolon ban refused EVERY
+  // uploaded image — the console stores logos and backgrounds that way. That
+  // one separator is exempted; a semicolon anywhere else (the declaration
+  // breakout above) is still refused.
+  const probe = url.replace(/^data:image\/[a-z+]+;/i, 'data:image/x,');
+  return /["'()\\;\s]/.test(probe) ? null : `url("${url}")`;
 }
 
 /**
@@ -412,12 +418,16 @@ export function cssColor(value: string): string {
  * once — the interpolation happens at module evaluation, not per mount.
  */
 const DARK_TOKENS = `
-  --dh-surface: #191c21;
-  --dh-surface-sunken: #131519;
-  --dh-text: #f2f4f7;
-  --dh-text-muted: #9aa3b0;
-  --dh-border: #2c3039;
-  --dh-bubble-in: #252a32;
+  /* The console's dark palette (chat-widget.css '.dh-root[data-theme="dark"]'):
+     panel #171717, raised cards #262626, hairlines #333. Kept identical so a
+     merchant who flips Theme → Dark sees in the storefront what the live
+     preview showed. */
+  --dh-surface: #171717;
+  --dh-surface-sunken: #262626;
+  --dh-text: #f4f4f4;
+  --dh-text-muted: #a8a8a8;
+  --dh-border: #333333;
+  --dh-bubble-in: #262626;
   --dh-focus: #7aa5ff;
   --dh-danger: #f97066;
   --dh-shadow: 0 6px 24px -4px rgb(0 0 0 / 0.55), 0 2px 6px -2px rgb(0 0 0 / 0.4);
@@ -438,6 +448,75 @@ const DARK_TOKENS = `
     radial-gradient(88% 70% at 0% 100%, rgb(60 200 165 / 0.12) 0%, rgb(60 200 165 / 0) 72%),
     radial-gradient(95% 76% at 100% 100%, rgb(90 170 210 / 0.14) 0%, rgb(90 170 210 / 0) 74%);
 `;
+
+// Admin / outlet (portal staff) logins on the Messages screen — see the
+// "16." section at the end of STYLES. Customers never carry data-user-role.
+const STAFF_ROLES = ':is([data-user-role="admin"],[data-user-role="merchant"],[data-user-role="manager"])';
+const STAFF_MSGS = `:host([data-screen="messages"]${STAFF_ROLES})`;
+// Conversation bubbles (section 17) apply to every user, not just staff.
+const STAFF_CONV = ':host([data-screen="conversation"])';
+
+/**
+ * Dark-theme counterparts of the "Figma-sync" rules that hard-code light
+ * surfaces (white bars, grey borders, slate text) with '!important' — those
+ * ignore the palette tokens, so without this a pinned or OS-dark widget shows
+ * white cards on a dark panel. Emitted twice (attribute and OS query) for the
+ * same reason DARK_TOKENS is; `h` builds the matching ':host(...)' selector.
+ * Each rule carries one more attribute than the light rule it beats.
+ */
+function darkOverrides(h: (extra: string) => string): string {
+  const M = h('[data-screen="messages"]');
+  const H = h('[data-screen="home"]');
+  const C = h('[data-screen="conversation"]');
+  const A = h('');
+  const card = 'var(--dh-surface-sunken)';
+  return `
+${M} .dh-brand-band { background-color: var(--dh-surface) !important; border-bottom-color: var(--dh-border) !important; }
+${M} .dh-header { background: var(--dh-surface) !important; color: var(--dh-text) !important; }
+${M} .dh-title { color: var(--dh-text) !important; }
+${M} .dh-back, ${M} .dh-header .dh-icon-button { color: var(--dh-text-muted) !important; background: ${card} !important; }
+${M} .dh-back:hover, ${M} .dh-header .dh-icon-button:hover { color: var(--dh-text) !important; background: var(--dh-border) !important; }
+${M} .dh-messages, ${M} .dh-messages-list, ${M} .dh-messages-search, ${M} .dh-messages-footer,
+${M} .dh-messages-row, ${M} .dh-mrow-btn { background: var(--dh-surface) !important; }
+${M} .dh-messages-search, ${M} .dh-messages-footer { border-color: var(--dh-border) !important; }
+${M} .dh-messages-search-input { background: ${card} !important; border-color: var(--dh-border) !important; color: var(--dh-text) !important; }
+${M} .dh-messages-search-input::placeholder, ${M} .dh-messages-search-icon, ${M} .dh-messages-empty,
+${M} .dh-messages-time, ${M} .dh-mrow-time, ${M} .dh-mrow-chevron { color: var(--dh-text-muted) !important; }
+${M} .dh-messages-search-icon svg, ${M} .dh-mrow-chevron svg { stroke: var(--dh-text-muted) !important; }
+${M} .dh-messages-item { border-bottom-color: var(--dh-border) !important; }
+${M} .dh-messages-row:hover, ${M} .dh-mrow-btn:hover { background: ${card} !important; }
+${M} .dh-messages-row[aria-current="true"], ${M} .dh-mrow-btn[aria-current="true"] { background: color-mix(in srgb, var(--dh-accent) 14%, var(--dh-surface)) !important; }
+${M} .dh-messages-title, ${M} .dh-mrow-name { color: var(--dh-text) !important; }
+${M} .dh-messages-preview, ${M} .dh-mrow-preview { color: var(--dh-text-muted) !important; }
+${M} .dh-messages-status, ${M} .dh-mrow-status-pill { background: var(--dh-border) !important; color: var(--dh-text-muted) !important; }
+${M} .dh-messages-status[data-status="RESOLVED"], ${M} .dh-mrow-status-pill[data-status="RESOLVED"] { background: rgba(34, 197, 94, 0.16) !important; color: #4ade80 !important; }
+${M} .dh-messages-status[data-status="WAITING_FOR_AGENT"], ${M} .dh-mrow-status-pill[data-status="WAITING_FOR_AGENT"] { background: rgba(245, 158, 11, 0.16) !important; color: #fbbf24 !important; }
+
+${H} .dh-nav, ${M} .dh-nav { background: var(--dh-surface) !important; border-top-color: var(--dh-border) !important; }
+${A} .dh-nav-tab:not([aria-selected="true"]) { color: var(--dh-text-muted) !important; }
+${A} .dh-nav > .dh-nav-tab + .dh-nav-tab { border-inline-start-color: var(--dh-border) !important; }
+
+${H} .dh-home-cta { background: ${card} !important; border-color: color-mix(in srgb, var(--dh-accent) 30%, #000) !important; }
+${H} .dh-home-cta:hover { background: color-mix(in srgb, var(--dh-accent) 14%, ${card}) !important; border-color: color-mix(in srgb, var(--dh-accent) 50%, #000) !important; }
+${H} .dh-home-cta-title, ${H} .dh-common-question-label { color: var(--dh-text) !important; }
+${H} .dh-home-cta-sub, ${H} .dh-home-section-title, ${H} .dh-common-question-row .dh-home-chevron { color: var(--dh-text-muted) !important; }
+${H} .dh-common-questions, ${H} .dh-home-recent-row { background: ${card} !important; border-color: var(--dh-border) !important; }
+${H} .dh-common-question-item:not(:last-child) { border-bottom-color: var(--dh-border) !important; }
+${H} .dh-common-question-row:hover { background: color-mix(in srgb, var(--dh-accent) 14%, ${card}) !important; }
+
+${A} .dh-day-pill { background: rgba(38, 38, 38, 0.95) !important; color: var(--dh-text-muted) !important; }
+${A} .dh-system-pill, ${C} .dh-msg[data-system="true"] .dh-msg-bubble, ${A} .dh-log .dh-msg[data-system="true"] .dh-msg-bubble { background: rgba(38, 38, 38, 0.94) !important; border-color: var(--dh-border) !important; color: var(--dh-text-muted) !important; }
+${C} .dh-msg[data-mine="false"] .dh-msg-bubble, ${A} .dh-portal-log .dh-msg[data-mine="false"] .dh-msg-bubble { background: var(--dh-bubble-in) !important; color: var(--dh-text) !important; border-color: rgba(255, 255, 255, 0.1) !important; }
+${C} .dh-msg[data-mine="false"] .dh-msg-author, ${A} .dh-portal-log .dh-msg[data-mine="false"] .dh-msg-author { color: var(--dh-text-muted) !important; }
+${A} .dh-msg-avatar--bot { background: color-mix(in srgb, var(--dh-accent) 25%, #000) !important; }
+${A} .dh-composer .dh-icon-button, ${A} .dh-composer-tool-btn { color: var(--dh-text-muted) !important; }
+${A} .dh-composer .dh-icon-button:hover, ${A} .dh-composer-tool-btn:hover { color: var(--dh-text) !important; background: rgba(255, 255, 255, 0.08) !important; }
+${A} .dh-send[disabled] { background: var(--dh-border) !important; color: #737373 !important; }
+`;
+}
+
+const DARK_ATTR = darkOverrides((extra) => `:host([data-theme="dark"]${extra})`);
+const DARK_OS = darkOverrides((extra) => `:host(:not([data-theme="light"])${extra})`);
 
 export const STYLES = `
 *, *::before, *::after { box-sizing: border-box; }
@@ -602,7 +681,7 @@ button {
   position: fixed;
   bottom: var(--dh-offset-y);
   right: var(--dh-offset-x);
-  width: 56px; height: 56px;
+  width: 48px; height: 48px;
   display: grid;
   place-items: center;
   border-radius: 999px;
@@ -631,6 +710,16 @@ button {
   width: 24px; height: 24px;
   flex: none;
 }
+/* Open panel: the launcher becomes the close control, as in the console's
+   preview — the chat glyph gives way to an X. */
+.dh-launcher-close {
+  display: none;
+  place-items: center;
+  width: 24px; height: 24px;
+  flex: none;
+}
+.dh-launcher[aria-expanded="true"] .dh-launcher-glyph { display: none; }
+.dh-launcher[aria-expanded="true"] .dh-launcher-close { display: grid; }
 .dh-launcher-emoji {
   font-size: 21px;
   line-height: 1;
@@ -649,7 +738,7 @@ button {
 /* ── Launcher shapes ──────────────────────────────────────────────────────
 
    'bubble' is the base rule above and needs no variant. The other two grow
-   sideways to fit a label, so they trade the fixed 56px square for auto width
+   sideways to fit a label, so they trade the fixed 48px square for auto width
    and lay their two children out in a row — 'place-items: center' on the base
    rule keeps both centred either way. */
 :host([data-launcher="bubble-label"]) .dh-launcher,
@@ -800,7 +889,7 @@ button {
 /* bubble: a floating card anchored above the launcher — so it takes the same
    physical corner and the same offsets, for the same reason. */
 :host([data-presentation="bubble"]) .dh-panel {
-  bottom: calc(var(--dh-offset-y) + 56px + var(--dh-space) * 3);
+  bottom: calc(var(--dh-offset-y) + 48px + var(--dh-space) * 3);
   right: var(--dh-offset-x);
   width: min(384px, calc(100vw - var(--dh-space) * 8));
   height: min(560px, calc(100dvh - 140px));
@@ -884,6 +973,11 @@ button {
   flex: none;
   display: flex;
   flex-direction: column;
+  background-color: var(--dh-header-bg, var(--dh-accent));
+  background-image: var(--dh-header-layers, none);
+  background-size: cover;
+  background-position: center;
+  color: var(--dh-header-fg, #ffffff);
 }
 
 .dh-header {
@@ -893,6 +987,10 @@ button {
   padding: calc(var(--dh-space) * 3) calc(var(--dh-space) * 4);
   border-bottom: 1px solid var(--dh-border);
   flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
 }
 .dh-title { font-size: 15px; font-weight: 600; margin: 0; }
 /* The header's avatar — the merchant's brand face (logo or initials) until an
@@ -1040,8 +1138,8 @@ button {
   color: var(--dh-header-fg);
 }
 :host([data-design="hero"]) .dh-header {
-  /* The paint IS the separation — a hairline on top of it reads as a seam. */
-  border-bottom-color: transparent;
+  /* The paint IS the separation — remove border completely so no hairline/seam shows. */
+  border-bottom: none;
 }
 
 /* Everything in the header that had its own muted colour now inherits, or it
@@ -1434,7 +1532,9 @@ button {
   padding: calc(var(--dh-space) * 4);
   display: flex;
   flex-direction: column;
-  gap: calc(var(--dh-space) * 2);
+  /* Stacks with each '.dh-msg''s own top/bottom margin below — the two
+     together are the actual gap between two bubbles, not this alone. */
+  gap: calc(var(--dh-space) * 0.5);
   /* The merchant-configurable backdrop. Defaults to '--dh-surface' through
      themeCss, so a widget nobody has configured is unchanged.
 
@@ -1533,7 +1633,7 @@ button {
   display: flex;
   align-items: center;
   gap: calc(var(--dh-space) * 1.5);
-  margin-top: calc(var(--dh-space) * 1);
+  margin-top: calc(var(--dh-space) * 0.5);
   font-size: 11px;
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
@@ -1900,12 +2000,12 @@ button {
 
 /* The conversation header's overflow menu. Anchored to its own toggle rather
    than to the header, so it stays put when the title beside it changes length. */
-.dh-hmenu-wrap { position: relative; flex: none; }
+.dh-hmenu-wrap { position: relative; flex: none; z-index: 100; }
 .dh-hmenu {
   position: absolute;
   top: calc(100% + 6px);
   inset-inline-end: 0;
-  z-index: 3;
+  z-index: 1000 !important;
   display: flex;
   flex-direction: column;
   min-width: 216px;
@@ -1943,72 +2043,80 @@ button {
    keeps them — but the TOGGLE belongs to the header and inherits from it. */
 :host([data-design="hero"]) .dh-hmenu-toggle { color: inherit; opacity: 0.85; }
 
-/* Per-message actions. Hidden until the row is hovered or something inside it
-   has focus, so a transcript at rest is text rather than a column of buttons —
-   but ALWAYS present for keyboard and touch, which have no hover: 'opacity' is
-   what is animated, never 'display', so the control stays in the tab order and
-   in the accessibility tree at all times. */
-.dh-msg { position: relative; }
-.dh-msg-actions { position: absolute; top: 2px; inset-inline-end: 2px; }
-.dh-msg-more {
+/* Per-message reply action. A FLEX SIBLING of the bubble inside
+   .dh-msg-bubble-wrap (already display: flex, align-items: center, gap: 6px
+   — see the [data-mine] rules below), never absolutely positioned: that
+   wrap's own child order is what puts this before the bubble for an
+   outgoing message and after it for an incoming one (message-list.ts's
+   bubbleWrap.replaceChildren(...) calls), so the control sits cleanly beside
+   the bubble rather than floating over one of its corners.
+   Hidden until the row is hovered or something inside it has focus, so a
+   transcript at rest is text rather than a column of buttons — but ALWAYS
+   present for keyboard and touch, which have no hover: 'opacity' is what is
+   animated, never 'display', so the control stays in the tab order and in
+   the accessibility tree at all times. */
+.dh-msg-actions {
+  /* relative, never absolute — this only anchors the tooltip popup
+     below/above the button; it must NOT pull the actions wrapper itself out
+     of .dh-msg-bubble-wrap's flex flow, which is what put the button on top
+     of the bubble's corner instead of beside it. */
+  position: relative;
+  display: flex;
+}
+.dh-msg-reply {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px; height: 24px;
+  width: 28px; height: 28px;
   padding: 0;
-  border: 0;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: var(--dh-text-muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
 }
-.dh-msg:hover .dh-msg-more,
-.dh-msg-more:focus-visible,
-.dh-msg-actions:focus-within .dh-msg-more,
-.dh-msg-more[aria-expanded="true"] { opacity: 1; }
+/* A 44px touch target without inflating the 28px visual — the pseudo-element
+   extends the hit area beyond the drawn circle instead of the circle itself
+   growing. */
+.dh-msg-reply::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 44px; height: 44px;
+  transform: translate(-50%, -50%);
+}
+.dh-msg:hover .dh-msg-reply,
+.dh-msg-reply:focus-visible { opacity: 1; }
 /* Coarse pointers get no hover event at all, so the control would be
    permanently invisible and permanently tappable — the worst combination. */
-@media (hover: none) { .dh-msg-more { opacity: 1; } }
-.dh-msg-more:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 1px; }
+@media (hover: none) { .dh-msg-reply { opacity: 1; } }
+.dh-msg-reply:hover,
+.dh-msg-reply:focus-visible {
+  border-color: var(--dh-border);
+  background: var(--dh-bubble-in);
+  color: var(--dh-text);
+}
+.dh-msg-reply:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 1px; }
 
-.dh-msg-menu {
+.dh-msg-reply-tip {
   position: absolute;
-  top: 26px;
   inset-inline-end: 0;
   z-index: 2;
-  display: flex;
-  flex-direction: column;
-  min-width: 132px;
-  padding: calc(var(--dh-space) * 0.75);
-  border: 1px solid var(--dh-border);
-  border-radius: var(--dh-radius);
-  background: var(--dh-surface);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--dh-text);
+  color: var(--dh-surface);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
   box-shadow: var(--dh-shadow);
 }
-.dh-msg-action {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--dh-space) * 1.5);
-  padding: calc(var(--dh-space) * 1.25) calc(var(--dh-space) * 1.5);
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dh-text);
-  font: inherit;
-  font-size: 13px;
-  text-align: start;
-  cursor: pointer;
-}
-.dh-msg-action:hover { background: var(--dh-bubble-in); }
-.dh-msg-action:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
-/* Copy's in-place confirmation (message-actions.ts): the label swaps to the
-   outcome and the menu lingers just long enough to show it. Colour says which
-   outcome at a glance; the swapped word is what a screen reader gets. */
-.dh-msg-action[data-outcome="ok"] { color: var(--dh-accent); font-weight: 600; }
-.dh-msg-action[data-outcome="failed"] { color: var(--dh-danger); }
-.dh-msg-action:disabled { cursor: default; }
+.dh-msg-reply-tip[data-side="top"] { bottom: calc(100% + 6px); }
+.dh-msg-reply-tip[data-side="bottom"] { top: calc(100% + 6px); }
 
 /* The quoted message above the composer while a reply is being written. */
 .dh-reply-chip {
@@ -2076,6 +2184,21 @@ button {
 .dh-msg[data-mine="true"] .dh-msg-quote {
   border-inline-start-color: color-mix(in srgb, var(--dh-accent-text) 55%, transparent);
   color: color-mix(in srgb, var(--dh-accent-text) 85%, transparent);
+}
+/* A quote that knows its source message is a jump link. */
+.dh-msg-quote[data-jump="true"] { cursor: pointer; }
+.dh-msg-quote[data-jump="true"]:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+/* The message a quote just jumped to — the whole row is washed in the accent
+   and fades out. On the ROW, not the bubble: the bubbles' own '!important'
+   box-shadows (sections 8/9) beat any animated shadow, which is why an earlier
+   ring here never showed once those rules landed. */
+.dh-msg--flash {
+  border-radius: 14px;
+  animation: dh-msg-flash 1.8s ease-out;
+}
+@keyframes dh-msg-flash {
+  0%, 40% { background-color: color-mix(in srgb, var(--dh-accent) 26%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--dh-accent) 26%, transparent); }
+  100% { background-color: transparent; box-shadow: 0 0 0 6px transparent; }
 }
 
 /* Links inside message text. Underlined, not colour-only: WCAG 1.4.1, and on
@@ -3220,16 +3343,62 @@ button {
    3. Conversation screen (Purple gradient header, online dot, pastel chat background, purple bubbles, hidden nav bar)
    ───────────────────────────────────────────────────────────────────────── */
 
-/* 1. Header gradient for home, messages, and conversation screens */
+/* 1. Header styling for home, messages, and conversation screens */
 :host([data-screen="home"]) .dh-header,
-:host([data-screen="conversation"]) .dh-header,
-:host([data-screen="messages"]) .dh-header {
-  background: linear-gradient(180deg, #2e0854 0%, #4c1d95 35%, #6d28d9 75%, #7c3aed 100%) !important;
+:host([data-screen="conversation"]) .dh-header {
   color: #fff !important;
-  border-bottom-color: transparent !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 10px 14px !important;
+  gap: 8px !important;
+  overflow: visible !important;
+}
+:host([data-screen="home"]) .dh-header {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
+}
+:host([data-screen="home"][data-design="hero"]) .dh-brand-band:has(.dh-hero:not([data-collapsed="true"])) .dh-header {
+  border: none !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
+}
+:host([data-screen="home"][data-design="hero"]) .dh-brand-band:has(.dh-hero[data-collapsed="true"]) .dh-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+}
+:host([data-screen="conversation"]) .dh-header {
+  background-color: var(--dh-header-bg, var(--dh-accent)) !important;
+  background-image: var(--dh-header-layers, none) !important;
+  background-size: cover !important;
+  background-position: center !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
 }
 
-/* 2. Home & Messages Screen Headers — hide default avatar/status/menu/back */
+/* Messages screen header: clean white bar with subtle bottom border */
+:host([data-screen="messages"]) .dh-brand-band {
+  background-color: #ffffff !important;
+  background-image: none !important;
+  border-bottom: 1px solid #e5e7eb !important;
+}
+:host([data-screen="messages"]) .dh-header {
+  background: #ffffff !important;
+  background-image: none !important;
+  color: #111827 !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 10px 14px !important;
+  gap: 10px !important;
+  overflow: visible !important;
+  border: none !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
+}
+
+/* 2. Home & Messages Screen Headers — hide default avatar/status/menu */
 :host([data-screen="home"]) .dh-back,
 :host([data-screen="home"]) .dh-avatar-host,
 :host([data-screen="home"]) .dh-status,
@@ -3237,7 +3406,6 @@ button {
 :host([data-screen="home"]) .dh-menu,
 :host([data-screen="home"]) .dh-hmenu-wrap,
 :host([data-screen="home"]) .dh-hmenu-toggle,
-:host([data-screen="messages"]) .dh-back,
 :host([data-screen="messages"]) .dh-avatar-host,
 :host([data-screen="messages"]) .dh-status,
 :host([data-screen="messages"]) .dh-reconnect,
@@ -3247,11 +3415,40 @@ button {
   display: none !important;
 }
 
+/* Messages back button: circular button with dark grey back icon */
+:host([data-screen="messages"]) .dh-back {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 999px !important;
+  color: #374151 !important;
+  background: #f3f4f6 !important;
+  border: none !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  transition: background 0.15s ease, color 0.15s ease !important;
+}
+:host([data-screen="messages"]) .dh-back:hover {
+  background: #e5e7eb !important;
+  color: #111827 !important;
+}
+:host([data-screen="messages"]) .dh-back svg {
+  stroke: currentColor !important;
+  width: 18px !important;
+  height: 18px !important;
+}
+
 /* Header identity wrap containing logo + collapsed avatars */
 .dh-header-identity-wrap {
   display: flex !important;
   align-items: center !important;
-  gap: 12px !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+  flex: 0 1 auto !important;
+  overflow: hidden !important;
 }
 
 /* Collapsed header hero avatars: hidden by default, shown ONLY on Home when hero is collapsed */
@@ -3303,37 +3500,112 @@ button {
   background: #22c55e !important;
 }
 
-/* Home & Messages: title shows the exact Dhaam AI SVG logo */
-:host([data-screen="home"]) .dh-title,
-:host([data-screen="messages"]) .dh-title {
+/* Home: title shows the dynamic logo when data-show-logo is not false */
+:host([data-screen="home"]:not([data-show-logo="false"])) .dh-title {
   display: block !important;
-  width: 95px !important;
+  width: 105px !important;
   height: 38px !important;
-  background: url("${DEFAULT_LOGO_IMAGE}") no-repeat left center !important;
+  background-image: var(--dh-header-logo-image, url("${DEFAULT_LOGO_IMAGE}")) !important;
+  background-repeat: no-repeat !important;
+  background-position: left center !important;
   background-size: contain !important;
   font-size: 0 !important;
   color: transparent !important;
   margin: 0 !important;
   padding: 0 !important;
 }
-:host([data-screen="home"]) .dh-title::before,
-:host([data-screen="home"]) .dh-title::after,
+:host([data-screen="home"]:not([data-show-logo="false"])) .dh-title::before,
+:host([data-screen="home"]:not([data-show-logo="false"])) .dh-title::after {
+  display: none !important;
+}
+
+:host([data-screen="home"][data-show-logo="false"]) .dh-title {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  font-size: 15px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  background: none !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Messages: title is clean dark text "Messages", never logo image */
+:host([data-screen="messages"]) .dh-title {
+  display: block !important;
+  color: #111827 !important;
+  font-weight: 600 !important;
+  font-size: 16.5px !important;
+  letter-spacing: -0.01em !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  background: none !important;
+  background-image: none !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
 :host([data-screen="messages"]) .dh-title::before,
 :host([data-screen="messages"]) .dh-title::after {
   display: none !important;
 }
 
-:host([data-screen="home"]) .dh-icon-button,
-:host([data-screen="messages"]) .dh-icon-button,
-:host([data-screen="conversation"]) .dh-icon-button {
+:host([data-screen="home"]) .dh-header .dh-icon-button,
+:host([data-screen="conversation"]) .dh-header .dh-icon-button {
   color: #fff !important;
   opacity: 0.95 !important;
+  flex-shrink: 0 !important;
 }
-:host([data-screen="home"]) .dh-icon-button:hover,
-:host([data-screen="messages"]) .dh-icon-button:hover,
-:host([data-screen="conversation"]) .dh-icon-button:hover {
+:host([data-screen="home"]) .dh-header .dh-icon-button:hover,
+:host([data-screen="conversation"]) .dh-header .dh-icon-button:hover {
   background: rgba(255, 255, 255, 0.18) !important;
   color: #fff !important;
+}
+
+/* Messages close button: circular button with dark icon */
+:host([data-screen="messages"]) .dh-header .dh-icon-button {
+  color: #374151 !important;
+  opacity: 1 !important;
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 999px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: transparent !important;
+  transition: background 0.15s ease, color 0.15s ease !important;
+  flex-shrink: 0 !important;
+}
+:host([data-screen="messages"]) .dh-header .dh-icon-button:hover {
+  background: #f3f4f6 !important;
+  color: #111827 !important;
+}
+:host([data-screen="messages"]) .dh-header .dh-icon-button svg {
+  stroke: currentColor !important;
+  width: 18px !important;
+  height: 18px !important;
+}
+
+.dh-header .dh-icon-button,
+.dh-header .dh-hmenu-wrap,
+.dh-header .dh-avatar-host,
+.dh-header .dh-back {
+  flex-shrink: 0 !important;
+}
+
+.dh-header .dh-icon-button[aria-label="Close chat"] {
+  flex-shrink: 0 !important;
+  margin-inline-end: 2px !important;
+}
+
+.dh-header-spacer {
+  flex: 1 1 auto !important;
+  min-width: 6px !important;
 }
 
 /* 3. Bottom navigation bar — show on home & messages, hide only on conversation */
@@ -3354,7 +3626,7 @@ button {
   transition: color 0.15s ease !important;
 }
 .dh-nav-tab[aria-selected="true"] {
-  color: #7c3aed !important;
+  color: var(--dh-accent) !important;
   font-weight: 600 !important;
 }
 .dh-nav > .dh-nav-tab + .dh-nav-tab {
@@ -3362,61 +3634,433 @@ button {
 }
 
 /* 4. Conversation Header */
+:host([data-screen="conversation"]) .dh-header {
+  background-color: var(--dh-header-bg, var(--dh-accent)) !important;
+  background-image: var(--dh-header-layers, none) !important;
+  background-size: cover !important;
+  background-position: center !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  /* Bottom padding raised past the base 10px: room for '.dh-status'/
+     '.dh-presence-line', positioned below the title rather than stacked in
+     normal flow (see their own rules) so that centering the title against
+     the avatar isn't thrown off by a second line's height. Padding is
+     outside the flex content box either way, so this extra space is purely
+     cosmetic breathing room for that line and does not itself move the
+     avatar or title — kept just tall enough for one line of it, not more. */
+  padding: 8px 14px 18px !important;
+  gap: 8px !important;
+  overflow: visible !important;
+}
+/* Name and email were sharing one row — the email (flex-shrink: 0) never
+   gave ground, so the name (flex-shrink: 1) was the one that always lost
+   width and got ellipsized first, even when the name was the shorter of
+   the two. Stacking them (name row, then status row) gives the name the
+   wrap's full width instead of whatever the email left over. */
+:host([data-screen="conversation"]) .dh-header-identity-wrap {
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 1px !important;
+  /* Anchors '.dh-status' below, once it's taken out of flow — see that
+     rule's own comment for why. Deliberately no extra padding here: this
+     box's OWN height is what '.dh-header''s 'align-items: center' centers
+     against the avatar, and it must stay exactly the title's height (one
+     line) for that centering to land on the title rather than on some
+     taller box that includes room for the status line too — that room is
+     reserved on '.dh-header' itself instead, below. */
+  position: relative !important;
+}
 :host([data-screen="conversation"]) .dh-title {
-  color: #fff !important;
+  color: #ffffff !important;
   font-weight: 600 !important;
+  font-size: 15px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
 }
-:host([data-screen="conversation"]) .dh-status,
-.dh-status {
+:host([data-screen="conversation"]) .dh-status {
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  max-width: 100% !important;
+  /* Taken out of normal flow so '.dh-header-identity-wrap''s own box — what
+     '.dh-header''s 'align-items: center' actually centers against the
+     avatar — shrinks to the TITLE's height alone. Centering a wrap that
+     still included this status line centered the two-line BLOCK's midpoint
+     against the avatar instead, which put the title above true center and
+     the status below it — not what "Assistant" lined up with the avatar
+     means. 'width: 100%' keeps the same truncation box the status text's
+     own 'text-overflow: ellipsis' (below) already relied on. */
+  position: absolute !important;
+  top: 100% !important;
+  left: 0 !important;
+  width: 100% !important;
+}
+:host([data-screen="conversation"]) .dh-status-dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  background: #22c55e !important;
+  display: inline-block !important;
+  flex-shrink: 0 !important;
+}
+:host([data-screen="conversation"]) .dh-status-text {
+  color: rgba(255, 255, 255, 0.9) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
+}
+:host([data-screen="conversation"]) .dh-status-text:empty {
   display: none !important;
 }
-:host([data-screen="conversation"]) .dh-status-dot,
-.dh-status-dot {
-  display: none !important;
+/* The counterparty's Online/Offline line — same slot '.dh-status' above
+   reserves under the title, never shown at the same time (widget.ts hides
+   one or the other for the life of the mount, per 'presenceTargetId'). */
+:host([data-screen="conversation"]) .dh-presence-line {
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  max-width: 100% !important;
+  position: absolute !important;
+  top: 100% !important;
+  left: 0 !important;
+  width: 100% !important;
+}
+:host([data-screen="conversation"]) .dh-presence-dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  background: #94a3b8 !important;
+  display: inline-block !important;
+  flex-shrink: 0 !important;
+}
+:host([data-screen="conversation"]) .dh-presence-dot[data-online="true"] {
+  background: #22c55e !important;
+}
+:host([data-screen="conversation"]) .dh-presence-text {
+  color: rgba(255, 255, 255, 0.9) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
 }
 :host([data-screen="conversation"]) .dh-avatar {
-  border: 2px solid rgba(255, 255, 255, 0.7) !important;
+  border: 2px solid rgba(255, 255, 255, 0.6) !important;
   background: #f59e0b !important;
-  color: #78350f !important;
+  color: #ffffff !important;
   font-weight: 700 !important;
+  flex-shrink: 0 !important;
 }
 
-/* 5. Chat thread background: pastel pink-teal gradient (matches screenshot) */
-:host([data-screen="conversation"]) .dh-log {
-  background-color: #fbf7ff !important;
-  background-image:
-    radial-gradient(ellipse 85% 65% at 0% 0%, rgba(255, 205, 225, 0.5) 0%, transparent 65%),
-    radial-gradient(ellipse 85% 65% at 100% 0%, rgba(255, 235, 200, 0.4) 0%, transparent 65%),
-    radial-gradient(ellipse 85% 70% at 0% 100%, rgba(160, 245, 220, 0.45) 0%, transparent 65%),
-    radial-gradient(ellipse 90% 75% at 100% 100%, rgba(190, 225, 250, 0.5) 0%, transparent 70%) !important;
-  background-size: 100% 100% !important;
-  background-repeat: no-repeat !important;
+/* 5. Chat thread background: pastel pink-teal gradient */
+:host([data-screen="conversation"]) .dh-log,
+:host([data-screen="conversation"]) .dh-portal-log,
+.dh-portal-log,
+.dh-portal-thread {
+  background-color: var(--dh-thread-bg) !important;
+  background-image: var(--dh-thread-layers) !important;
+  background-size: var(--dh-thread-size) !important;
+  background-repeat: var(--dh-thread-repeat) !important;
 }
 
-/* 6. Outbound message bubble: solid purple */
-:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-bubble {
-  background: #7c3aed !important;
-  color: #fff !important;
-  border-radius: 16px 16px 4px 16px !important;
+/* 6. Day Separator Badge */
+.dh-day-separator {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  margin: 14px 0 10px !important;
+  width: 100% !important;
 }
-:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-time {
-  color: rgba(255, 255, 255, 0.8) !important;
-}
-:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-tick {
-  color: #34d399 !important;
+.dh-day-pill {
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 4px 14px !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+  border-radius: 10px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.5px !important;
+  color: #54656f !important;
+  text-transform: uppercase !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+  border: 1px solid rgba(0, 0, 0, 0.05) !important;
 }
 
-/* 7. Inbound message bubble: crisp white card */
-:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-bubble {
+/* 7. System Event Pill (e.g. joined/left/assigned) */
+.dh-system-row,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"],
+.dh-log .dh-msg[data-system="true"] {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  margin: 8px 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-avatar,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-author,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-meta,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-actions,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-actions {
+  display: none !important;
+}
+.dh-system-pill,
+:host([data-screen="conversation"]) .dh-msg[data-system="true"] .dh-msg-bubble,
+.dh-log .dh-msg[data-system="true"] .dh-msg-bubble {
+  display: inline-block !important;
+  max-width: 86% !important;
+  padding: 6px 14px !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: min(var(--dh-radius), 14px) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: #475569 !important;
+  text-align: center !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  line-height: 1.4 !important;
+}
+
+/* 8. Outgoing message: vibrant purple card */
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"],
+.dh-portal-log .dh-msg[data-mine="true"] {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  margin: 1px 0 1px auto !important;
+  max-width: 82% !important;
+  position: relative !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-bubble-wrap,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-msg-bubble-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-direction: row !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-bubble,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-msg-bubble {
+  background: var(--dh-accent) !important;
+  color: #ffffff !important;
+  border-radius: min(var(--dh-radius), 18px) min(var(--dh-radius), 18px) 4px min(var(--dh-radius), 18px) !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  line-height: 1.45 !important;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--dh-accent) 25%, transparent) !important;
+  word-break: break-word !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-msg-meta,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-msg-meta {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 4px !important;
+  margin-top: 1px !important;
+  padding-right: 2px !important;
+  font-size: 11px !important;
+  color: #64748b !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-tick,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-tick {
+  display: inline-flex !important;
+  align-items: center !important;
+  color: #22c55e !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="true"] .dh-tick svg,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-tick svg {
+  stroke: #22c55e !important;
+  width: 14px !important;
+  height: 14px !important;
+}
+
+/* 9. Incoming message: crisp white card with avatar */
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"],
+.dh-portal-log .dh-msg[data-mine="false"] {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  gap: 8px !important;
+  margin: 1px 0 1px 0 !important;
+  max-width: 85% !important;
+  position: relative !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-avatar,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-avatar {
+  width: 32px !important;
+  height: 32px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+}
+.dh-msg-avatar--bot {
+  background: color-mix(in srgb, var(--dh-accent) 15%, #ffffff) !important;
+  color: var(--dh-accent) !important;
+}
+.dh-msg-avatar--agent {
+  background: #f59e0b !important;
+  color: #ffffff !important;
+}
+.dh-msg-avatar--customer {
+  background: #3b82f6 !important;
+  color: #ffffff !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-content-wrap,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-content-wrap {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  min-width: 0 !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-bubble-wrap,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-bubble-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-direction: row !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-author,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-author {
+  display: block !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: #64748b !important;
+  margin-bottom: 3px !important;
+  margin-left: 2px !important;
+}
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-bubble,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-bubble {
   background: #ffffff !important;
-  color: #0f172a !important;
-  border-radius: 16px 16px 16px 4px !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  color: #1e293b !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: min(var(--dh-radius), 18px) min(var(--dh-radius), 18px) min(var(--dh-radius), 18px) 4px !important;
+  padding: 10px 14px !important;
+  font-size: 14px !important;
+  line-height: 1.45 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+  word-break: break-word !important;
 }
-:host([data-screen="conversation"]) .dh-msg-avatar {
-  background: #f59e0b !important;
-  color: #78350f !important;
-  font-weight: 700 !important;
+:host([data-screen="conversation"]) .dh-msg[data-mine="false"] .dh-msg-meta,
+.dh-portal-log .dh-msg[data-mine="false"] .dh-msg-meta {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 4px !important;
+  margin-top: 1px !important;
+  padding-left: 2px !important;
+  font-size: 11px !important;
+  color: #94a3b8 !important;
+}
+
+/* 10. Reply action button on hover — portal-thread.ts now reuses
+   ui/message-actions.ts's own .dh-msg-reply/.dh-msg-actions directly (see
+   its base styles above) rather than a separate .dh-msg-reply-btn, so the
+   two surfaces share one implementation instead of two that could drift. */
+
+
+/* 11. Portal Thread Container Layout */
+.dh-portal-thread {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 0%;
+  overflow: hidden;
+}
+.dh-portal-thread[hidden],
+:host(:not([data-screen="conversation"])) .dh-portal-thread {
+  display: none !important;
+}
+.dh-portal-log {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dh-portal-log[hidden] {
+  display: none !important;
+}
+
+/* 12. Composer tools & send button styling */
+.dh-composer-tools {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+}
+.dh-composer .dh-icon-button,
+.dh-composer-tool-btn {
+  color: #64748b !important;
+  opacity: 1 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  transition: color 0.15s ease, background-color 0.15s ease !important;
+}
+.dh-composer .dh-icon-button:hover,
+.dh-composer-tool-btn:hover {
+  color: #1e293b !important;
+  background: rgba(0, 0, 0, 0.06) !important;
+}
+.dh-composer .dh-icon-button[disabled],
+.dh-composer-tool-btn[disabled] {
+  opacity: 0.35 !important;
+  cursor: not-allowed !important;
+}
+.dh-composer .dh-icon-button svg,
+.dh-composer-tool-btn svg {
+  display: block !important;
+  stroke: currentColor !important;
+}
+.dh-send {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 50% !important;
+  display: grid !important;
+  place-items: center !important;
+  background: var(--dh-accent) !important;
+  color: #ffffff !important;
+  margin-inline-start: auto !important;
+  border: none !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--dh-accent) 35%, transparent) !important;
+  transition: background-color 0.15s ease, opacity 0.15s ease !important;
+}
+.dh-send:hover:not([disabled]) {
+  background: color-mix(in srgb, var(--dh-accent) 85%, #000000) !important;
+}
+.dh-send[disabled] {
+  background: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+  cursor: not-allowed !important;
+}
+.dh-send svg {
+  display: block !important;
+  stroke: currentColor !important;
 }
 
 /* 8. Hero header: hide duplicate hero logo (already in header) */
@@ -3497,6 +4141,10 @@ button {
   position: relative !important;
   z-index: 1 !important;
 }
+:host([data-screen="home"][data-design="hero"][data-cta="off"]) .dh-brand-band:has(.dh-hero:not([data-collapsed="true"])) {
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+}
 :host([data-screen="home"]) .dh-home {
   background: transparent !important;
   padding: 0 16px 16px 16px !important;
@@ -3505,12 +4153,12 @@ button {
   z-index: 2 !important;
 }
 
-/* 12. Home screen CTA card — straddles purple gradient banner and white surface */
+/* 12. Home screen CTA card — straddles dynamic accent gradient banner and white surface */
 :host([data-screen="home"]) .dh-home-cta {
   background: #ffffff !important;
-  border: 1px solid #ede9fe !important;
-  box-shadow: 0 8px 24px rgba(124, 58, 237, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
-  border-radius: 18px !important;
+  border: 1px solid color-mix(in srgb, var(--dh-accent) 18%, #ffffff) !important;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--dh-accent) 12%, transparent), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
+  border-radius: var(--dh-radius) !important;
   padding: 14px 16px !important;
   display: flex !important;
   align-items: center !important;
@@ -3524,22 +4172,22 @@ button {
   transition: all 0.15s ease !important;
 }
 :host([data-screen="home"]) .dh-home-cta:hover {
-  background: #faf5ff !important;
-  border-color: #d8b4fe !important;
+  background: color-mix(in srgb, var(--dh-accent) 4%, #ffffff) !important;
+  border-color: color-mix(in srgb, var(--dh-accent) 35%, #ffffff) !important;
   transform: translateY(-1px) !important;
-  box-shadow: 0 10px 28px rgba(124, 58, 237, 0.18), 0 3px 8px rgba(0, 0, 0, 0.06) !important;
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--dh-accent) 18%, transparent), 0 3px 8px rgba(0, 0, 0, 0.06) !important;
 }
 :host([data-screen="home"]) .dh-home-cta-icon {
   width: 42px !important;
   height: 42px !important;
-  background: #7c3aed !important;
+  background: var(--dh-accent) !important;
   border-radius: 50% !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
   color: #ffffff !important;
   flex-shrink: 0 !important;
-  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.3) !important;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--dh-accent) 30%, transparent) !important;
 }
 :host([data-screen="home"]) .dh-home-cta-icon svg {
   width: 22px !important;
@@ -3562,7 +4210,7 @@ button {
   color: #6b7280 !important;
 }
 :host([data-screen="home"]) .dh-home-cta .dh-home-chevron {
-  color: #7c3aed !important;
+  color: var(--dh-accent) !important;
   font-size: 22px !important;
   font-weight: 700 !important;
   margin-left: auto !important;
@@ -3585,7 +4233,7 @@ button {
 :host([data-screen="home"]) .dh-common-questions {
   background: #ffffff !important;
   border: 1px solid #e5e7eb !important;
-  border-radius: 16px !important;
+  border-radius: var(--dh-radius) !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
   overflow: hidden !important;
   list-style: none !important;
@@ -3608,7 +4256,7 @@ button {
   transition: background-color 0.15s ease !important;
 }
 :host([data-screen="home"]) .dh-common-question-row:hover {
-  background: #faf5ff !important;
+  background: color-mix(in srgb, var(--dh-accent) 5%, #ffffff) !important;
 }
 :host([data-screen="home"]) .dh-common-question-label {
   font-size: 14px !important;
@@ -3623,13 +4271,13 @@ button {
 
 /* 14. Recent conversation row */
 :host([data-screen="home"]) .dh-home-recent-row {
-  border-radius: 16px !important;
+  border-radius: var(--dh-radius) !important;
   border: 1px solid rgba(0,0,0,0.07) !important;
   box-shadow: 0 1px 4px rgba(0,0,0,0.04) !important;
   background: #ffffff !important;
 }
 :host([data-screen="home"]) .dh-home-seeall {
-  color: #7c3aed !important;
+  color: var(--dh-accent) !important;
   font-weight: 600 !important;
   font-size: 13px !important;
 }
@@ -3637,82 +4285,145 @@ button {
 /* 15. Customer Messages Screen styling matching media_1789103878278.png */
 :host([data-screen="messages"]) .dh-messages {
   background: #ffffff !important;
-  padding: 16px !important;
-  gap: 12px !important;
+  padding: 0 !important;
+  margin: 0 !important;
   display: flex !important;
   flex-direction: column !important;
   flex: 1 !important;
   min-height: 0 !important;
+  overflow: hidden !important;
 }
+
+/* Search bar container */
 :host([data-screen="messages"]) .dh-messages-search {
-  border: 1px solid #e5e7eb !important;
-  background: #f9fafb !important;
-  border-radius: 12px !important;
-  padding: 10px 14px !important;
+  position: relative !important;
+  padding: 12px 16px !important;
+  background: #ffffff !important;
+  border: none !important;
+  border-bottom: 1px solid #f3f4f6 !important;
   display: flex !important;
   align-items: center !important;
-  gap: 10px !important;
   flex: none !important;
 }
+:host([data-screen="messages"]) .dh-messages-search-icon {
+  position: absolute !important;
+  left: 28px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  color: #9ca3af !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  pointer-events: none !important;
+  z-index: 2 !important;
+}
+:host([data-screen="messages"]) .dh-messages-search-icon svg {
+  width: 16px !important;
+  height: 16px !important;
+  stroke: #9ca3af !important;
+}
 :host([data-screen="messages"]) .dh-messages-search-input {
-  font-size: 14px !important;
-  color: #111827 !important;
-  border: 0 !important;
-  background: transparent !important;
+  height: 38px !important;
   width: 100% !important;
-  padding: 0 !important;
+  box-sizing: border-box !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: min(var(--dh-radius), 14px) !important;
+  background: #ffffff !important;
+  padding: 8px 12px 8px 36px !important;
+  font-size: 13.5px !important;
+  color: #111827 !important;
+  transition: border-color 0.15s ease !important;
+}
+:host([data-screen="messages"]) .dh-messages-search-input:focus {
+  outline: none !important;
+  border-color: var(--dh-accent) !important;
 }
 :host([data-screen="messages"]) .dh-messages-search-input::placeholder {
   color: #9ca3af !important;
+  opacity: 1 !important;
 }
+
+/* Conversation list */
 :host([data-screen="messages"]) .dh-messages-list {
-  gap: 12px !important;
   flex: 1 !important;
   min-height: 0 !important;
   overflow-y: auto !important;
   list-style: none !important;
   margin: 0 !important;
   padding: 0 !important;
-  display: flex !important;
-  flex-direction: column !important;
+  display: block !important;
+  background: #ffffff !important;
+}
+:host([data-screen="messages"]) .dh-messages-empty {
+  padding: 32px 16px !important;
+  text-align: center !important;
+  color: #9ca3af !important;
+  font-size: 13.5px !important;
 }
 :host([data-screen="messages"]) .dh-messages-item {
   list-style: none !important;
   margin: 0 !important;
   padding: 0 !important;
+  border-bottom: 1px solid #f3f4f6 !important;
 }
-:host([data-screen="messages"]) .dh-messages-row {
+:host([data-screen="messages"]) .dh-messages-row,
+:host([data-screen="messages"]) .dh-mrow-btn {
   background: #ffffff !important;
-  border: 1px solid #e5e7eb !important;
-  border-radius: 16px !important;
+  border: none !important;
+  border-radius: 0 !important;
   padding: 14px 16px !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
-  gap: 8px !important;
+  box-shadow: none !important;
   width: 100% !important;
   display: flex !important;
-  flex-direction: column !important;
-  align-items: stretch !important;
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  gap: 12px !important;
   text-align: start !important;
   cursor: pointer !important;
-  transition: all 0.12s ease !important;
+  transition: background-color 0.15s ease !important;
+  box-sizing: border-box !important;
 }
-:host([data-screen="messages"]) .dh-messages-row:hover {
-  background: #fdfcff !important;
-  border-color: #ddd6fe !important;
-  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.08) !important;
+:host([data-screen="messages"]) .dh-messages-row:hover,
+:host([data-screen="messages"]) .dh-mrow-btn:hover {
+  background: #f9fafb !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
-:host([data-screen="messages"]) .dh-messages-row[aria-current="true"] {
-  border-color: #7c3aed !important;
-  background: #faf5ff !important;
+:host([data-screen="messages"]) .dh-messages-row[aria-current="true"],
+:host([data-screen="messages"]) .dh-mrow-btn[aria-current="true"] {
+  background: color-mix(in srgb, var(--dh-accent) 5%, #ffffff) !important;
 }
-:host([data-screen="messages"]) .dh-messages-row-top {
+
+/* Hide avatar circle in customer conversation rows to match reference preview */
+:host([data-screen="messages"]) .dh-mrow-avatar {
+  display: none !important;
+}
+
+:host([data-screen="messages"]) .dh-mrow-body {
+  flex: 1 !important;
+  min-width: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+}
+:host([data-screen="messages"]) .dh-messages-row-top,
+:host([data-screen="messages"]) .dh-mrow-top {
   display: flex !important;
   align-items: center !important;
   justify-content: space-between !important;
   gap: 8px !important;
+  width: 100% !important;
 }
-:host([data-screen="messages"]) .dh-messages-title {
-  font-size: 15px !important;
+:host([data-screen="messages"]) .dh-mrow-name-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+  flex: 1 !important;
+}
+:host([data-screen="messages"]) .dh-messages-title,
+:host([data-screen="messages"]) .dh-mrow-name {
+  font-size: 14.5px !important;
   font-weight: 600 !important;
   color: #111827 !important;
   line-height: 1.3 !important;
@@ -3720,46 +4431,63 @@ button {
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
 }
-:host([data-screen="messages"]) .dh-messages-status {
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  padding: 3px 10px !important;
+
+/* Status pills */
+:host([data-screen="messages"]) .dh-messages-status,
+:host([data-screen="messages"]) .dh-mrow-status-pill {
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  padding: 2px 8px !important;
   border-radius: 999px !important;
   background: #f3f4f6 !important;
   color: #4b5563 !important;
+  flex-shrink: 0 !important;
+  line-height: 1.4 !important;
 }
-:host([data-screen="messages"]) .dh-messages-status[data-status="OPEN"] {
+:host([data-screen="messages"]) .dh-messages-status[data-status="RESOLVED"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="RESOLVED"] {
   background: #dcfce7 !important;
   color: #15803d !important;
 }
-:host([data-screen="messages"]) .dh-messages-status[data-status="WAITING_FOR_AGENT"] {
+:host([data-screen="messages"]) .dh-messages-status[data-status="WAITING_FOR_AGENT"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="WAITING_FOR_AGENT"] {
   background: #fef3c7 !important;
-  color: #92400e !important;
+  color: #b45309 !important;
 }
-:host([data-screen="messages"]) .dh-messages-status[data-status="ASSIGNED"] {
-  background: #ede9fe !important;
-  color: #6d28d9 !important;
+:host([data-screen="messages"]) .dh-messages-status[data-status="OPEN"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="OPEN"] {
+  background: color-mix(in srgb, var(--dh-accent) 12%, transparent) !important;
+  color: var(--dh-accent) !important;
 }
-:host([data-screen="messages"]) .dh-messages-status[data-status="CLOSED"],
-:host([data-screen="messages"]) .dh-messages-status[data-status="RESOLVED"] {
-  background: #f3f4f6 !important;
-  color: #6b7280 !important;
+:host([data-screen="messages"]) .dh-messages-status[data-status="ASSIGNED"],
+:host([data-screen="messages"]) .dh-mrow-status-pill[data-status="ASSIGNED"] {
+  background: color-mix(in srgb, var(--dh-accent) 12%, transparent) !important;
+  color: var(--dh-accent) !important;
 }
-:host([data-screen="messages"]) .dh-messages-time {
-  font-size: 12px !important;
-  color: #6b7280 !important;
-  white-space: nowrap !important;
+/* Right side: unread badge + chevron */
+:host([data-screen="messages"]) .dh-mrow-right {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex: none !important;
 }
-:host([data-screen="messages"]) .dh-messages-preview {
-  font-size: 14px !important;
-  color: #374151 !important;
-  line-height: 1.4 !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
+:host([data-screen="messages"]) .dh-mrow-chevron {
+  color: #9ca3af !important;
+  display: flex !important;
+  align-items: center !important;
 }
-:host([data-screen="messages"]) .dh-messages-unread {
-  background: #dc2626 !important;
+:host([data-screen="messages"]) .dh-mrow-chevron svg {
+  stroke: #9ca3af !important;
+  width: 14px !important;
+  height: 14px !important;
+}
+:host([data-screen="messages"]) .dh-messages-unread[hidden],
+:host([data-screen="messages"]) .dh-mrow-unread-badge[hidden] {
+  display: none !important;
+}
+:host([data-screen="messages"]) .dh-messages-unread:not([hidden]),
+:host([data-screen="messages"]) .dh-mrow-unread-badge:not([hidden]) {
+  background: var(--dh-accent) !important;
   color: #ffffff !important;
   font-size: 11px !important;
   font-weight: 700 !important;
@@ -3769,38 +4497,303 @@ button {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  align-self: flex-start !important;
-  margin-top: 4px !important;
-  padding: 0 5px !important;
+  padding: 0 6px !important;
+  line-height: 1 !important;
+}
+
+/* Preview text */
+:host([data-screen="messages"]) .dh-messages-preview,
+:host([data-screen="messages"]) .dh-mrow-preview {
+  font-size: 13px !important;
+  color: #4b5563 !important;
+  line-height: 1.4 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  margin-top: 3px !important;
+  display: block !important;
+}
+
+/* Timestamp */
+:host([data-screen="messages"]) .dh-messages-time,
+:host([data-screen="messages"]) .dh-mrow-time {
+  font-size: 12px !important;
+  color: #9ca3af !important;
+  white-space: nowrap !important;
+  margin-top: 2px !important;
+  display: block !important;
+}
+
+/* Sticky footer with 'New conversation' button */
+:host([data-screen="messages"]) .dh-messages-footer {
+  position: sticky !important;
+  bottom: 0 !important;
+  background: #ffffff !important;
+  border-top: 1px solid #e5e7eb !important;
+  padding: 12px 16px !important;
+  z-index: 10 !important;
+  flex: none !important;
+  box-sizing: border-box !important;
 }
 :host([data-screen="messages"]) .dh-messages-new {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
   gap: 8px !important;
-  padding: 13px 18px !important;
-  border-radius: 12px !important;
+  height: 44px !important;
+  border-radius: min(var(--dh-radius), 14px) !important;
   border: 0 !important;
-  background: #7c3aed !important;
+  background: var(--dh-accent) !important;
   color: #ffffff !important;
-  font-size: 15px !important;
+  font-size: 14.5px !important;
   font-weight: 600 !important;
   cursor: pointer !important;
-  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.3) !important;
-  transition: all 0.12s ease !important;
-  margin-top: auto !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+  transition: opacity 0.15s ease, transform 0.12s ease !important;
   width: 100% !important;
+  box-sizing: border-box !important;
 }
 :host([data-screen="messages"]) .dh-messages-new:hover:not(:disabled) {
-  background: #6d28d9 !important;
-  transform: translateY(-1px) !important;
+  opacity: 0.92 !important;
 }
 :host([data-screen="messages"]) .dh-messages-new:disabled {
-  opacity: 0.6 !important;
+  opacity: 0.55 !important;
   cursor: not-allowed !important;
 }
 :host([data-screen="messages"]) .dh-messages-new svg {
   stroke: #ffffff !important;
+  width: 18px !important;
+  height: 18px !important;
 }
-`;
 
+/* 16. Staff (admin / outlet) Messages screen — brand header with the logo and
+   the inset tab bar ONLY. The search box and conversation rows are deliberately
+   NOT restyled: they inherit section 15's flat customer list, so Customers and
+   Outlets read exactly like the customer app's Messages list. Every colour
+   comes from the published widget config (accent / header.*) — the same
+   variables the customer Home header uses — never a fixed brand purple. */
+${STAFF_MSGS} .dh-brand-band {
+  background-color: var(--dh-header-bg, var(--dh-accent)) !important;
+  background-image: var(--dh-header-layers, none) !important;
+  border-bottom: 0 !important;
+}
+${STAFF_MSGS} .dh-header {
+  background: transparent !important;
+  color: var(--dh-header-fg, #ffffff) !important;
+  padding: 14px 20px !important;
+}
+${STAFF_MSGS} .dh-back { display: none !important; }
+${STAFF_MSGS} .dh-title {
+  width: 105px !important;
+  height: 38px !important;
+  background-image: var(--dh-header-logo-image, url("${DEFAULT_LOGO_IMAGE}")) !important;
+  background-repeat: no-repeat !important;
+  background-position: left center !important;
+  background-size: contain !important;
+  font-size: 0 !important;
+  color: transparent !important;
+}
+${STAFF_MSGS} .dh-header .dh-icon-button {
+  color: var(--dh-header-fg, #ffffff) !important;
+  background: transparent !important;
+  opacity: 0.95 !important;
+}
+${STAFF_MSGS} .dh-header .dh-icon-button:hover { background: rgba(255, 255, 255, 0.18) !important; }
+
+${STAFF_MSGS} .dh-mtab-bar { margin: 8px 20px 0 !important; }
+${STAFF_MSGS} .dh-mtab { font-size: 15px !important; padding: 12px 0 !important; }
+
+/* 17. Conversation bubbles for ALL users — outgoing in the configured accent,
+   incoming in the theme's bubble colour (both from the published config, never
+   fixed hex), with the time (and ticks) on their own line UNDER the bubble, as
+   the console's preview draws it. The row is a column: bubble on top, meta
+   below, both aligned to the side the message came from. */
+${STAFF_CONV} .dh-msg[data-mine] {
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  width: fit-content !important;
+  max-width: 82% !important;
+}
+${STAFF_CONV} .dh-msg[data-mine="true"] { align-items: flex-end !important; }
+/* The bot is a bare accent-coloured sparkle, not a disc (the conversation header
+   rule for .dh-avatar would otherwise paint it amber like an agent). */
+${STAFF_CONV} .dh-msg .dh-msg-avatar--bot {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  color: var(--dh-accent) !important;
+}
+/* Incoming keeps its sender: avatar on the left, name above the bubble, time
+   below it (avatar + content column), as in the console's preview. */
+${STAFF_CONV} .dh-msg[data-mine="false"] {
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  gap: 8px !important;
+}
+${STAFF_CONV} .dh-msg[data-mine="true"] { margin: 2px 0 2px auto !important; }
+${STAFF_CONV} .dh-msg[data-mine="false"] { margin: 2px auto 2px 0 !important; }
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-msg-avatar,
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-msg-author { display: none !important; }
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-msg-content-wrap { display: block !important; }
+${STAFF_CONV} .dh-msg[data-mine] .dh-msg-bubble-wrap {
+  display: block !important;
+  position: relative !important;
+}
+${STAFF_CONV} .dh-msg[data-mine] .dh-msg-actions {
+  position: absolute !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-msg-actions { right: 100% !important; margin-right: 4px !important; }
+${STAFF_CONV} .dh-msg[data-mine="false"] .dh-msg-actions { left: 100% !important; margin-left: 4px !important; }
+
+${STAFF_CONV} .dh-msg[data-mine] .dh-msg-bubble {
+  border: 0 !important;
+  padding: 7px 10px !important;
+  font-size: 15px !important;
+  line-height: 1.35 !important;
+  color: var(--dh-text) !important;
+  box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13) !important;
+}
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-msg-bubble {
+  background: var(--dh-accent) !important;
+  color: #ffffff !important;
+  border-radius: min(var(--dh-radius), 18px) min(var(--dh-radius), 18px) 4px min(var(--dh-radius), 18px) !important;
+}
+${STAFF_CONV} .dh-msg[data-mine="false"] .dh-msg-bubble {
+  background: var(--dh-bubble-in) !important;
+  border-radius: min(var(--dh-radius), 18px) min(var(--dh-radius), 18px) min(var(--dh-radius), 18px) 4px !important;
+}
+${STAFF_CONV} .dh-msg[data-mine] .dh-msg-meta {
+  position: static !important;
+  margin: 3px 2px 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  color: var(--dh-text-muted) !important;
+}
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-msg-meta { justify-content: flex-end !important; }
+${STAFF_CONV} .dh-msg[data-mine="false"] .dh-msg-meta { justify-content: flex-start !important; }
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-tick { color: #22c55e !important; }
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-tick svg { stroke: currentColor !important; }
+
+/* 19. Classic design — Home is the compact title bar the console's Classic
+   preview draws: a plain surface bar (avatar, name, response-time line with
+   its online dot, close) over a body that opens with the greeting. The hero
+   design keeps the branded band; classic never paints it, and none of the
+   hero-only settings (logo, faces, header background) reach this bar. */
+:host([data-design="classic"][data-screen="home"]) .dh-brand-band {
+  background-color: var(--dh-surface) !important;
+  background-image: none !important;
+  color: var(--dh-text) !important;
+  border-bottom: 1px solid var(--dh-border) !important;
+}
+:host([data-design="classic"][data-screen="home"]) .dh-header { color: var(--dh-text) !important; }
+:host([data-design="classic"][data-screen="home"]) .dh-avatar-host { display: flex !important; }
+:host([data-design="classic"][data-screen="home"]) .dh-header-identity-wrap {
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 1px !important;
+  min-width: 0 !important;
+}
+:host([data-design="classic"][data-screen="home"]) .dh-title {
+  display: block !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+  background-image: none !important;
+  color: var(--dh-text) !important;
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+:host([data-design="classic"][data-screen="home"]) .dh-status {
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  max-width: 100% !important;
+}
+:host([data-design="classic"][data-screen="home"]) .dh-status-dot { background: #22c55e !important; }
+:host([data-design="classic"][data-screen="home"]) .dh-status-text {
+  color: var(--dh-text-muted) !important;
+  font-size: 12px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  min-width: 0 !important;
+}
+:host([data-design="classic"][data-screen="home"]) .dh-status-text:empty { display: none !important; }
+:host([data-design="classic"][data-screen="home"]) .dh-header .dh-icon-button { color: var(--dh-text-muted) !important; }
+:host([data-design="classic"][data-screen="home"]) .dh-header .dh-icon-button:hover {
+  color: var(--dh-text) !important;
+  background: color-mix(in srgb, var(--dh-text) 8%, transparent) !important;
+}
+:host([data-design="classic"][data-screen="home"]) .dh-header-hero-avatars { display: none !important; }
+.dh-home-greeting { display: none; }
+:host([data-design="classic"][data-screen="home"]) .dh-home-greeting { display: block; margin: 4px 2px 2px; }
+.dh-home-greeting-title { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.2; color: var(--dh-text); }
+.dh-home-greeting-sub { margin: 4px 0 0; font-size: 14px; line-height: 1.4; color: var(--dh-text-muted); }
+
+/* 20. Scrollbars — thin and quiet, as in the console's preview, instead of the
+   platform's wide arrowed bar. Applies to every scroll container in the panel
+   (Home, Messages, the transcript, the composer). */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--dh-text-muted) 45%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+/* Only where the webkit pseudo-elements are unknown (Firefox): setting the
+   standard properties in Chrome would switch its custom scrollbar off and
+   bring the arrowed platform bar back. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--dh-text-muted) 45%, transparent) transparent;
+  }
+}
+
+/* 21. Dark theme — the hard-coded light surfaces above, re-pointed at the palette. */
+@media (prefers-color-scheme: dark) {${DARK_OS}}
+${DARK_ATTR}
+
+/* 22. The hidden attribute always wins. The Figma-sync rules above set
+   display with !important at specificity up to (0,5,0), which beats the base
+   [hidden] rule (0,1,0) - so an element the widget hid (the CTA card with
+   "Show the call to action" off, an empty avatar slot) still rendered.
+   Repeating the attribute raises this rule past all of them without touching
+   each one. */
+:host [hidden][hidden][hidden][hidden][hidden] { display: none !important; }
+
+/* 18. History loading state — spinner shown while a conversation's first
+   page of messages is being fetched (message-list.ts / portal-thread.ts). */
+.dh-loading {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 12px !important;
+  padding: 48px 16px !important;
+  color: #64748b !important;
+  font-size: 13px !important;
+}
+.dh-loading[hidden] { display: none !important; }
+.dh-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid rgba(100, 116, 139, 0.25);
+  border-top-color: var(--dh-accent);
+  animation: dh-spin 0.8s linear infinite;
+}
+@keyframes dh-spin { to { transform: rotate(360deg); } }
+`;

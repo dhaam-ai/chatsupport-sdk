@@ -309,6 +309,14 @@ describe('borrowing the host page’s colour', () => {
     expect(headerBg()).toBe('#123456');
   });
 
+  it('does not borrow platform colour when samplePlatform is false', () => {
+    document.body.innerHTML = '<header id="bar">shop</header>';
+    document.getElementById('bar')!.style.backgroundColor = 'rgb(18, 52, 86)';
+
+    mount(config({ design: 'hero', samplePlatform: false, header: { colorSource: 'platform' } }));
+    expect(headerBg()).toBe('var(--dh-accent)');
+  });
+
   // A near-white body (the old fixture used pure white) no longer counts as a
   // colour worth borrowing — the sampler treats it as "nothing to borrow" and
   // keeps the accent (see platform-color.test.ts for that refusal) — so the
@@ -522,10 +530,10 @@ describe('the classic header’s avatar', () => {
   // The rule the whole `null`-not-empty-circle contract exists for: this
   // widget has never drawn an avatar, and an upgrade must not put a grey disc
   // where a merchant's brand is supposed to be.
-  it('draws nothing at all when there is nothing to draw', () => {
-    mount(config());
-    expect(shadow().querySelector('.dh-avatar')).toBeNull();
-    expect(query<HTMLElement>('.dh-avatar-host').hidden).toBe(true);
+  it('falls back to the title’s first letter when no initials were set', () => {
+    mount(config({ title: 'Acme Support' }));
+    expect(query('.dh-avatar').textContent).toBe('A');
+    expect(query<HTMLElement>('.dh-avatar-host').hidden).toBe(false);
   });
 
   it('draws the initials a merchant set', () => {
@@ -624,7 +632,7 @@ describe('opening itself', () => {
    * be advanced past before the timer they are meant to control even exists.
    * A 50ms delay is the same code path as a 12s one.
    */
-  const publish = async (behaviour: Record<string, unknown>) => {
+  const publish = async (behaviour: Record<string, unknown>, hostConfig: Record<string, unknown> = {}) => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -641,7 +649,7 @@ describe('opening itself', () => {
         });
       }),
     );
-    mount(config());
+    mount(config(hostConfig));
     // The same drain `remote-config-gating.test.ts` uses: the fetch, its
     // `.json()`, and the caller's `.then` are each their own tick.
     for (let i = 0; i < 8; i += 1) await new Promise<void>((resolve) => queueMicrotask(resolve));
@@ -674,6 +682,24 @@ describe('opening itself', () => {
     expect(isOpen()).toBe(false);
     await wait(120);
     expect(isOpen()).toBe(false);
+  });
+
+  // A host whose users must always click (an admin portal) opts out, and that
+  // wins over the console's setting — for BOTH triggers.
+  it('never opens itself for a host that set disableAutoOpen, whatever the console says', async () => {
+    await publish({ autoOpen: 'delay', autoOpenDelaySec: 0.05 }, { disableAutoOpen: true });
+    await wait(120);
+    expect(isOpen()).toBe(false);
+  });
+
+  it('ignores exit-intent too under disableAutoOpen, and still opens on a click', async () => {
+    await publish({ autoOpen: 'exit-intent' }, { disableAutoOpen: true });
+    document.dispatchEvent(
+      new MouseEvent('mouseout', { relatedTarget: null, clientY: 0, bubbles: true }),
+    );
+    expect(isOpen()).toBe(false);
+    query<HTMLButtonElement>('.dh-launcher').click();
+    expect(isOpen()).toBe(true);
   });
 
   it('opens when the pointer leaves for the browser chrome', async () => {

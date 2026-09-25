@@ -72,7 +72,63 @@ const CLOSURE_COPY: Record<CloseReason, string> = {
   SWITCHED: 'This conversation was moved.',
 };
 
+function isSystemMessage(message: ChatMessage): boolean {
+  const content = message.content.trim();
+  return (
+    content.endsWith('has joined the chat.') ||
+    content.endsWith('has left the chat.') ||
+    content.includes('has joined the chat') ||
+    content.includes('has left the chat') ||
+    content.startsWith('Conversation assigned to') ||
+    content.startsWith('The agent has left') ||
+    content.startsWith('This chat session has been closed') ||
+    content.startsWith('This conversation was closed') ||
+    content.startsWith('This conversation was marked')
+  );
+}
+
+function formatDayKey(isoString?: string): string {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  } catch {
+    return '';
+  }
+}
+
+function getDayLabel(isoString?: string): string {
+  if (!isoString) return '';
+  try {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return '';
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return 'TODAY';
+    if (diffDays === 1) return 'YESTERDAY';
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase();
+  } catch {
+    return '';
+  }
+}
+
+function createDaySeparator(label: string): HTMLElement {
+  const pill = el('span', { attrs: { class: 'dh-day-pill' }, text: label });
+  return el('div', { attrs: { class: 'dh-day-separator' }, children: [pill] });
+}
+
 export interface MessageListCallbacks {
+  /**
+   * The viewer is staff (admin/outlet), not the customer. A CUSTOMER-typed
+   * message is then someone ELSE's — an admin's chat with a customer shows the
+   * customer's replies as incoming — whereas for a customer's own widget
+   * CUSTOMER-typed always means "mine".
+   */
+  readonly staffViewer?: boolean;
   readonly onRetry: (message: ChatMessage) => void;
   readonly onLoadOlder: () => void;
   /** The customer asking for a fresh conversation after this one ended. */
@@ -81,8 +137,6 @@ export interface MessageListCallbacks {
   readonly onEmailTranscript: () => Promise<void>;
   /** Sends one of the bot's suggested follow-ups as the customer's next message. */
   readonly onQuickReply: (text: string) => void;
-  /** Puts the message's text on the clipboard. Rejects if the browser refuses. */
-  readonly onCopyMessage: (message: ChatMessage) => Promise<void>;
   /**
    * Starts a reply addressed to this message.
    *
@@ -105,6 +159,44 @@ export interface MessageListView {
   readonly log: HTMLElement;
   readonly liveRegion: HTMLElement;
   render(state: ChatState, localParticipantId: string | null): void;
+
+  /**
+   * Whether the merchant's greeting bubble (widget.ts's `greetingBubble`) is
+   * about to show above the composer.
+   *
+   * `render`'s own "No messages yet." placeholder and that bubble answer the
+   * exact same question — "there's nothing here yet" — and showing both at
+   * once (one plain gray line, one purple bubble) reads as two competing
+   * empty-states rather than one. The greeting is the friendlier of the two
+   * and the one the merchant wrote, so it wins: this suppresses the
+   * placeholder while it is showing.
+   *
+   * A setter rather than a `render()` parameter because the greeting can flip
+   * on its own timer (`armGreeting`'s `setTimeout`, widget.ts) — a moment
+   * `render()` is not otherwise called for — and threading it through every
+   * OTHER `render()` call site (typing, pagination, …) would mean each of
+   * those call sites re-deriving a value they have no reason to know.
+   */
+  setGreetingShown(shown: boolean): void;
+
+  /**
+   * Says a conversation's history is being fetched, so the transcript shows a
+   * spinner instead of sitting blank. Cleared by itself once the first page
+   * lands (or after {@link LOADING_GIVE_UP_MS}, so a failed fetch never spins
+   * forever). Set by widget.ts when the customer/staff picks a conversation.
+   */
+  setLoading(loading: boolean): void;
+
+  /**
+   * The client-only "bot is thinking" cue — see widget.ts's `state.messages`
+   * subscription for why it exists (chat-service sends no real typing
+   * signal for the AI bot). Reuses the SAME animated-dots element the real,
+   * server-driven typing indicator uses (`createTypingIndicator`): to the
+   * customer both mean exactly the same thing, "someone is about to reply",
+   * and a second visually-distinct spinner for the bot case would be a
+   * second thing to learn for no difference that matters to them.
+   */
+  setBotThinking(thinking: boolean): void;
 
   /**
    * Marks the conversation ended, or `null` to clear it for a new one.
@@ -131,6 +223,9 @@ export interface MessageListView {
   setStartingNewConversation(busy: boolean): void;
 }
 
+/** A history fetch that has not landed by now is treated as failed — stop the spinner. */
+const LOADING_GIVE_UP_MS = 15_000;
+
 export function createMessageList(callbacks: MessageListCallbacks): MessageListView {
   const loadOlder = el('button', {
     attrs: { class: 'dh-more', type: 'button', hidden: true },
@@ -141,6 +236,14 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   const empty = el('p', {
     attrs: { class: 'dh-empty' },
     text: 'No messages yet.',
+  });
+
+  const loadingEl = el('div', {
+    attrs: { class: 'dh-loading', role: 'status', hidden: true },
+    children: [
+      el('span', { attrs: { class: 'dh-spinner', 'aria-hidden': 'true' } }),
+      el('span', { text: 'Loading messages…' }),
+    ],
   });
 
   const log = el('div', {
@@ -157,7 +260,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       // a scrollable region that cannot take focus is unreachable by keyboard.
       tabindex: '0',
     },
-    children: [loadOlder, empty],
+    children: [loadOlder, empty, loadingEl],
   });
 
   // The announcement channel. Separate from `log` on purpose: marking the log
@@ -237,12 +340,28 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
 
   /** id → rendered row, so a re-render patches rather than rebuilds. */
   const rows = new Map<string, MessageRow>();
+  const daySeparators = new Map<string, HTMLElement>();
   let announcedUpTo: string | null = null;
   let seenAnyState = false;
   let closedReason: CloseReason | null = null;
   /** The bot's name for the session in {@link lastBotNameSessionId}. See `render`. */
   let lastBotName: string | null = null;
   let lastBotNameSessionId: string | null = null;
+  /** See {@link MessageListView.setGreetingShown}. */
+  let greetingShown = false;
+  /**
+   * See {@link MessageListView.setBotThinking}. Unlike `greetingShown`, every
+   * caller (widget.ts's `state.messages` subscription, both the "on" branch
+   * and the safety-timeout's "off" branch) already pairs a `setBotThinking`
+   * call with a `render()` right after it, so this stays a plain flag with
+   * no DOM write of its own.
+   */
+  let botThinking = false;
+  /** See {@link MessageListView.setLoading}. */
+  let loadingRequested = false;
+  let loadingGaveUp = false;
+  let loadingTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastRender: { state: ChatState; localId: string | null } | null = null;
 
   function render(state: ChatState, localParticipantId: string | null): void {
     // Captured BEFORE mutating: reading `scrollTop` after an append gives the
@@ -256,7 +375,29 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // year of history that their conversation is empty, for as long as the
     // fetch takes. It is also the window a session switch re-enters, where the
     // wrong answer would flash on every switch.
-    empty.hidden = state.messages.length > 0 || !state.pagination.initialLoaded;
+    empty.hidden = state.messages.length > 0 || !state.pagination.initialLoaded || greetingShown;
+
+    // A real conversation whose first page has not come back yet (or one the
+    // host just asked to open) shows a spinner instead of a blank transcript.
+    if (state.pagination.initialLoaded) loadingRequested = false;
+    const showLoading =
+      state.messages.length === 0 &&
+      !state.pagination.initialLoaded &&
+      !loadingGaveUp &&
+      (loadingRequested || state.session !== null);
+    loadingEl.hidden = !showLoading;
+    if (showLoading && loadingTimer === undefined) {
+      loadingTimer = setTimeout(() => {
+        loadingTimer = undefined;
+        loadingGaveUp = true;
+        if (lastRender) render(lastRender.state, lastRender.localId);
+      }, LOADING_GIVE_UP_MS);
+    } else if (!showLoading) {
+      clearTimeout(loadingTimer);
+      loadingTimer = undefined;
+      if (state.pagination.initialLoaded) loadingGaveUp = false;
+    }
+    lastRender = { state, localId: localParticipantId };
     loadOlder.hidden = !state.pagination.hasMore;
     loadOlder.disabled = state.pagination.loadingMore;
     loadOlder.textContent = state.pagination.loadingMore
@@ -276,15 +417,35 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     lastBotName = botNameFrom(state) ?? lastBotName;
 
     const live = new Set<string>();
+    const liveDays = new Set<string>();
     let previous: Node = loadOlder;
+    let lastDayKey = '';
     // Names the FIRST message of each run only — see `MessageRow.update`.
     let previousAuthor: string | null = null;
 
     for (const message of state.messages) {
+      const dayKey = formatDayKey(message.createdAt);
+      if (dayKey && dayKey !== lastDayKey) {
+        lastDayKey = dayKey;
+        liveDays.add(dayKey);
+        let sep = daySeparators.get(dayKey);
+        if (!sep) {
+          sep = createDaySeparator(getDayLabel(message.createdAt));
+          daySeparators.set(dayKey, sep);
+        }
+        if (previous.nextSibling !== sep) {
+          log.insertBefore(sep, previous.nextSibling);
+        }
+        previous = sep;
+      }
+
       live.add(message.id);
       let row = rows.get(message.id);
       if (row === undefined) {
-        row = createRow(message, callbacks);
+        row = createRow(message, callbacks, (id) => {
+          const target = rows.get(id)?.node;
+          if (target !== undefined) flashMessage(target);
+        });
         rows.set(message.id, row);
       }
 
@@ -293,7 +454,9 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       // already aligned and coloured as theirs. `senderName` (unlike
       // `showAuthorName` below) is not suppressed for a continued run — the
       // avatar draws from it on every row; see `MessageRow.update`'s doc.
-      const senderName = isOutgoing(message) ? null : senderLabel(message, state, lastBotName);
+      const senderName = isOutgoing(message, localParticipantId, callbacks.staffViewer)
+        ? null
+        : senderLabel(message, state, lastBotName);
       const showAuthorName = senderName !== null && senderName !== previousAuthor;
       previousAuthor = senderName;
 
@@ -302,7 +465,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
         localParticipantId,
         deliveredWatermarks: state.deliveredWatermarks,
         readWatermarks: state.readWatermarks,
-      }), senderName, showAuthorName);
+      }), senderName, showAuthorName, localParticipantId);
 
       // Keeps DOM order equal to core's array order without a full rebuild.
       // Core may reorder on a `seq` arriving late (D2), so position is
@@ -311,6 +474,12 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
         log.insertBefore(row.node, previous.nextSibling);
       }
       previous = row.node;
+    }
+
+    for (const [dayKey, sep] of daySeparators) {
+      if (liveDays.has(dayKey)) continue;
+      sep.remove();
+      daySeparators.delete(dayKey);
     }
 
     for (const [id, row] of rows) {
@@ -332,7 +501,9 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // reopen nothing is a dead control.
     const newestMessage = state.messages[state.messages.length - 1];
     const suggestions =
-      closedReason === null && newestMessage !== undefined && !isOutgoing(newestMessage)
+      closedReason === null &&
+      newestMessage !== undefined &&
+      !isOutgoing(newestMessage, localParticipantId, callbacks.staffViewer)
         ? readQuickReplies(newestMessage.metadata, callbacks.handoffKeywords?.() ?? [])
         : [];
     quickReplies.update(suggestions);
@@ -345,7 +516,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // Typing bubble stays last so it reads as "someone is composing the next
     // message", not as an interruption in the middle of history.
     log.appendChild(typing.node);
-    typing.update(state, handlerName(state, lastBotName));
+    typing.update(state, handlerName(state, lastBotName), botThinking);
 
     announce(state, localParticipantId);
 
@@ -416,7 +587,40 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     transcriptAction.hidden = !enabled;
   }
 
-  return { log, liveRegion, render, setClosure, setStartingNewConversation, setTranscriptEmail };
+  function setGreetingShown(shown: boolean): void {
+    greetingShown = shown;
+    // Only the ON direction needs to act immediately: the greeting is only
+    // ever due when the transcript is already empty (widget.ts's
+    // `beforeFirstMessage`), so hiding the placeholder the moment it turns
+    // on is always correct. Turning it back OFF happens either because a
+    // real first message arrived — which fires `render()` on its own via the
+    // `state.messages` subscription and recomputes `empty.hidden` correctly
+    // — or because the panel is closed/torn down, where there is no
+    // placeholder left on screen to matter.
+    if (shown) empty.hidden = true;
+  }
+
+  function setBotThinking(thinking: boolean): void {
+    botThinking = thinking;
+  }
+
+  function setLoading(loading: boolean): void {
+    loadingRequested = loading;
+    loadingGaveUp = false;
+    if (lastRender) render(lastRender.state, lastRender.localId);
+  }
+
+  return {
+    log,
+    liveRegion,
+    render,
+    setGreetingShown,
+    setBotThinking,
+    setLoading,
+    setClosure,
+    setStartingNewConversation,
+    setTranscriptEmail,
+  };
 }
 
 /**
@@ -426,6 +630,25 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
 export interface ReplyQuote {
   readonly senderName: string;
   readonly excerpt: string;
+  /** The quoted message's id, when the sender's client wrote one — what a click on the quote jumps to. */
+  readonly messageId?: string;
+}
+
+/** How long the jumped-to message keeps its highlight — matches the CSS animation in styles.ts. */
+const FLASH_MS = 1900;
+
+/**
+ * Scrolls a message row into the middle of its log and flashes it, so a click
+ * on a reply's quote lands the reader on the message that was answered. Shared
+ * by the customer conversation list and the staff portal thread.
+ */
+export function flashMessage(node: HTMLElement): void {
+  node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  node.classList.remove('dh-msg--flash');
+  // Reading offsetWidth restarts the CSS animation when the same row is hit twice in a row.
+  void node.offsetWidth;
+  node.classList.add('dh-msg--flash');
+  setTimeout(() => node.classList.remove('dh-msg--flash'), FLASH_MS);
 }
 
 /**
@@ -454,7 +677,7 @@ export function readReplyQuote(metadata: unknown): ReplyQuote | null {
 
   const ref = bag['replyTo'];
   if (typeof ref !== 'object' || ref === null) return null;
-  const { senderName, excerpt } = ref as Record<string, unknown>;
+  const { senderName, excerpt, messageId } = ref as Record<string, unknown>;
   if (typeof senderName !== 'string' || typeof excerpt !== 'string') return null;
 
   const name = senderName.trim();
@@ -466,6 +689,7 @@ export function readReplyQuote(metadata: unknown): ReplyQuote | null {
   return {
     senderName: name,
     excerpt: text.length > MAX_QUOTE_EXCERPT ? `${text.slice(0, MAX_QUOTE_EXCERPT - 1)}…` : text,
+    ...(typeof messageId === 'string' && messageId !== '' ? { messageId } : {}),
   };
 }
 
@@ -485,12 +709,16 @@ interface MessageRow {
     tick: MessageTickState | null,
     senderName: string | null,
     showAuthorName: boolean,
+    localParticipantId: string | null,
   ): void;
-  /** Releases the row's document-level listeners. See `createMessageActions`. */
   destroy(): void;
 }
 
-function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): MessageRow {
+function createRow(
+  initial: ChatMessage,
+  callbacks: MessageListCallbacks,
+  onJumpToMessage: (messageId: string) => void,
+): MessageRow {
   // Who wrote this. Above the text rather than in `meta` alongside the
   // timestamp: the customer needs to know who is speaking BEFORE they read
   // the words, and a name discovered underneath them arrives too late to
@@ -538,13 +766,11 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
     children: [time, tickGlyph, tickLabel, failureText, retry],
   });
 
-  // Copy and Reply. Built per row because both act on THIS message; the
-  // menu's own document listener is released through `destroy` below.
+  // Reply. Built per row because it acts on THIS message.
   // `currentSenderLabel` (kept fresh by `update`) is the resolved name the
   // reply quote will carry — the customer's own rows resolve to 'You', which
   // is also what WhatsApp prints when someone quotes themselves.
   const actions = createMessageActions({
-    onCopy: () => callbacks.onCopyMessage(current),
     onReply: () => callbacks.onReplyToMessage(current, currentSenderLabel),
   });
 
@@ -566,12 +792,34 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
   // the bubble's own coloured background.
   const bubble = el('div', {
     attrs: { class: 'dh-msg-bubble' },
-    children: [author, quote, body, meta],
+    children: [quote, body],
+  });
+
+  const bubbleWrap = el('div', {
+    attrs: { class: 'dh-msg-bubble-wrap' },
+    children: [bubble, actions.node],
+  });
+
+  const contentWrap = el('div', {
+    attrs: { class: 'dh-msg-content-wrap' },
+    children: [author, bubbleWrap, meta],
   });
 
   const node = el('div', {
     attrs: { class: 'dh-msg' },
-    children: [avatar, bubble, actions.node],
+    children: [avatar, contentWrap],
+  });
+
+  // A quote that names its source message jumps to it on click / Enter / Space.
+  let quoteTargetId: string | null = null;
+  const jumpToQuoted = (): void => {
+    if (quoteTargetId !== null) onJumpToMessage(quoteTargetId);
+  };
+  quote.addEventListener('click', jumpToQuoted);
+  quote.addEventListener('keydown', (event) => {
+    if (quoteTargetId === null || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    jumpToQuoted();
   });
 
   let current = initial;
@@ -586,15 +834,45 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
     destroy() {
       actions.destroy();
     },
-    update(message, tick, senderName, showAuthorName) {
+    update(message, tick, senderName, showAuthorName, localParticipantId) {
       current = message;
       currentSenderLabel = senderName ?? 'You';
+      node.setAttribute('data-message-id', message.id);
+
+      const isSystem = isSystemMessage(message);
+      node.setAttribute('data-system', String(isSystem));
+
+      if (isSystem) {
+        avatar.hidden = true;
+        author.hidden = true;
+        quote.hidden = true;
+        meta.hidden = true;
+        actions.node.hidden = true;
+        node.replaceChildren(bubble);
+        const shown = visibleContent(message);
+        if (body.textContent !== shown) body.textContent = shown;
+        return;
+      }
+      meta.hidden = false;
+      actions.node.hidden = false;
 
       // The quote is compared before rewriting, like `body` below, and for
       // the same reason: an unrelated re-render (a tick change, a typing
       // flap) must not destroy a text selection inside it.
       const replyQuote = readReplyQuote(message.metadata);
       quote.hidden = replyQuote === null;
+      // The quote metadata is the primary source; the message's own
+      // `replyToMessageId` covers replies whose metadata predates the id.
+      quoteTargetId = replyQuote === null ? null : (replyQuote.messageId ?? message.replyToMessageId ?? null);
+      if (quoteTargetId !== null) {
+        quote.setAttribute('role', 'button');
+        quote.setAttribute('tabindex', '0');
+        quote.setAttribute('data-jump', 'true');
+      } else {
+        quote.removeAttribute('role');
+        quote.removeAttribute('tabindex');
+        quote.removeAttribute('data-jump');
+      }
       if (replyQuote !== null) {
         // `textContent` on both — a name and an excerpt are another party's
         // data, exactly as `author` above says of its own.
@@ -606,35 +884,48 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
         }
       }
 
-      // `false` means "do not name this one" — the customer's own messages,
-      // and every message after the first in a run from the same sender.
-      // Repeating the name on each of five consecutive bot replies is noise
-      // that pushes the words themselves off the screen.
-      if (!showAuthorName) {
+      const isBot = message.senderType === 'BOT';
+      const isAgent = message.senderType === 'AGENT';
+      const outgoing = isOutgoing(message, localParticipantId, callbacks.staffViewer);
+
+      node.setAttribute('data-mine', String(outgoing));
+      node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
+
+      if (outgoing) {
+        avatar.hidden = true;
         author.hidden = true;
         author.textContent = '';
-      } else {
-        author.hidden = false;
-        // `textContent`: a display name is another party's data.
-        if (author.textContent !== senderName) author.textContent = senderName ?? '';
-      }
-
-      // The avatar, unlike the heading above, is not gated on being first in
-      // a run — see its construction comment for why every incoming row
-      // carries one.
-      if (senderName === null) {
-        avatar.hidden = true;
+        bubbleWrap.replaceChildren(actions.node, bubble);
+        // keep avatar in row (hidden) so avatarOf queries in tests and DOM tools find it
+        node.replaceChildren(avatar, bubbleWrap, meta);
       } else {
         avatar.hidden = false;
-        // One character: `.dh-avatar`'s CSS uppercases it, matching the
-        // header avatar's own convention of leaving case to CSS rather than
-        // baking it into the string (ui/styles.ts).
-        const letter = senderName.trim().slice(0, 1);
-        if (avatar.textContent !== letter) avatar.textContent = letter;
-      }
+        if (isBot) {
+          avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--bot';
+          avatar.replaceChildren(icon(ICONS.sparkle, 16));
+        } else if (isAgent) {
+          avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--agent';
+          const letter = (senderName ?? 'Agent').trim().slice(0, 1);
+          avatar.textContent = letter;
+        } else {
+          avatar.className = 'dh-avatar dh-msg-avatar dh-msg-avatar--customer';
+          const letter = (senderName ?? 'Customer').trim().slice(0, 1);
+          avatar.textContent = letter;
+        }
 
-      node.setAttribute('data-mine', String(isOutgoing(message)));
-      node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
+        if (!showAuthorName) {
+          author.hidden = true;
+          author.textContent = '';
+        } else {
+          author.hidden = false;
+          const displayName = isBot ? '✦ Dhaam Assistant' : (senderName ?? '');
+          if (author.textContent !== displayName) author.textContent = displayName;
+        }
+
+        bubbleWrap.replaceChildren(bubble, actions.node);
+        contentWrap.replaceChildren(author, bubbleWrap, meta);
+        node.replaceChildren(avatar, contentWrap);
+      }
 
       // Still never `innerHTML`. `renderLinkified` builds text nodes and
       // `<a>` elements by hand and runs every href through the same allowlist
@@ -652,16 +943,26 @@ function createRow(initial: ChatMessage, callbacks: MessageListCallbacks): Messa
         time.setAttribute('datetime', iso);
         time.textContent = Number.isNaN(created.getTime())
           ? ''
-          : created.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+          : created.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
       }
 
       if (attachmentNode === null && message.attachment !== undefined) {
         attachmentNode = renderAttachment(message.attachment);
-        bubble.insertBefore(attachmentNode, meta);
+        bubble.appendChild(attachmentNode);
       }
 
       const presentation = tick === null ? null : TICK_PRESENTATION[tick];
-      tickGlyph.textContent = presentation?.glyph ?? '';
+      if (outgoing) {
+        if (tick === null) {
+          tickGlyph.replaceChildren();
+        } else if (tick === 'pending') {
+          tickGlyph.textContent = '○';
+        } else {
+          tickGlyph.replaceChildren(icon(ICONS.checkDouble, 14));
+        }
+      } else {
+        tickGlyph.replaceChildren();
+      }
       tickGlyph.setAttribute('data-state', tick ?? '');
       // The tick's meaning as words. Colour distinguishes `read` from
       // `delivered` visually; this is what distinguishes them otherwise.
@@ -739,8 +1040,14 @@ function renderAttachment(attachment: AttachmentMetadata): HTMLElement {
 
 function createTypingIndicator(): {
   node: HTMLElement;
-  /** @param who the name of whoever is typing — see `handlerName`. */
-  update(state: ChatState, who: string): void;
+  /**
+   * @param who the name of whoever is typing — see `handlerName`.
+   * @param botThinking the client-only synthetic cue — see
+   *   `MessageListView.setBotThinking`. Shows the exact same dots as real
+   *   `state.typing.isTyping`; the two are never meaningfully different to
+   *   the customer, so there is one visual for both, not two.
+   */
+  update(state: ChatState, who: string, botThinking: boolean): void;
 } {
   const dots = [0, 1, 2].map(() => el('span', { attrs: { class: 'dh-typing-dot' } }));
   // Screen-reader-only, and named: the three animated dots say SOMEONE is
@@ -762,8 +1069,8 @@ function createTypingIndicator(): {
 
   return {
     node,
-    update(state, who) {
-      node.hidden = !state.typing.isTyping;
+    update(state, who, botThinking) {
+      node.hidden = !(state.typing.isTyping || botThinking);
       const text = `${who} is typing`;
       if (label.textContent !== text) label.textContent = text;
     },
@@ -785,8 +1092,37 @@ function handlerName(state: ChatState, lastBotName: string | null): string {
   return state.session?.assignedAgent?.displayName ?? lastBotName ?? 'Agent';
 }
 
-function isOutgoing(message: ChatMessage): boolean {
-  return message.senderType === 'CUSTOMER';
+/**
+ * Whose bubble this is, visually — right/"mine" vs left/theirs.
+ *
+ * `senderType` alone decides CUSTOMER and BOT: a customer's own messages are
+ * always senderType CUSTOMER and never sent by anyone else, and a BOT
+ * message is never the customer's — neither side of that is ambiguous in
+ * ANY conversation this widget renders, partner chat included. Only AGENT is
+ * ambiguous: per the wire contract's "Partner chats" section, BOTH sides of
+ * a partner chat (admin/manager <-> merchant/outlet) send as senderType
+ * AGENT, so that's the one case `senderType` cannot tell apart and `senderId
+ * === localParticipantId` (== `config.identity.userId`, see widget.ts) is
+ * needed to break the tie.
+ *
+ * Deciding CUSTOMER/BOT by type FIRST, rather than falling through the same
+ * id comparison every case, matters beyond tidiness: `localParticipantId` is
+ * resolved once at widget construction from the host's own identity
+ * resolution (ChatWidgetMount.tsx, for this app), which can still be mid-
+ * flight on a fresh page load. Routing the unambiguous 95% of messages
+ * through id comparison too made every one of a customer's own messages
+ * flip to "incoming" the moment that identity was not yet settled — id
+ * comparison is scoped to exactly the one case that has no other way to
+ * decide.
+ */
+function isOutgoing(
+  message: ChatMessage,
+  localParticipantId: string | null,
+  staffViewer = false,
+): boolean {
+  if (message.senderType === 'CUSTOMER') return !staffViewer;
+  if (message.senderType === 'BOT') return false;
+  return localParticipantId !== null && message.senderId === localParticipantId;
 }
 
 /**
@@ -828,9 +1164,11 @@ function senderLabel(message: ChatMessage, state: ChatState, lastBotName: string
   if (message.senderType === 'SYSTEM') return 'System';
   if (message.senderType === 'BOT') {
     if (handledBy?.kind === 'BOT') return handledBy.displayName;
-    return lastBotName ?? 'Assistant';
+    return lastBotName ?? 'Dhaam Assistant';
   }
-  return 'You';
+  // Only reached for an INCOMING row: a CUSTOMER-typed one is the customer,
+  // as seen from staff (see MessageListCallbacks.staffViewer).
+  return message.senderType === 'CUSTOMER' ? 'Customer' : 'You';
 }
 
 /** The bot's name as this session currently reports it, or `null`. */

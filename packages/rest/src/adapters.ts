@@ -429,10 +429,10 @@ export function createSessionActions<TSession>(client: RestClient): {
 
 /**
  * `limit`'s valid range on `GET /chat/sessions/customer` (openapi's
- * `listSessions`, `chat.validator.ts:74-78` — server default 50, cap 100).
+ * `listSessions`, `chat.validator.ts:74-78` — server default 5, cap 20).
  */
 const SESSION_SUMMARY_LIMIT_MIN = 1;
-const SESSION_SUMMARY_LIMIT_MAX = 100;
+const SESSION_SUMMARY_LIMIT_MAX = 20;
 
 /**
  * Validates `limit` before any request is made — the route itself would 400
@@ -475,14 +475,14 @@ function validateSessionSummaryLimit(limit: number | undefined): number | undefi
  * identified" — the wire does not either.
  */
 export function createSessionSummarySource<TSessionSummary>(client: RestClient): {
-  listSessions(query?: { readonly limit?: number }): Promise<readonly TSessionSummary[]>;
+  listSessions(query?: { readonly limit?: number; readonly with?: string }): Promise<readonly TSessionSummary[]>;
 } {
   return {
     async listSessions(query = {}) {
       const limit = validateSessionSummaryLimit(query.limit);
 
       const body = await client.request<unknown>('GET', '/chat/sessions/customer', {
-        query: { limit },
+        query: { limit, with: query.with },
       });
 
       const page = unwrapEnvelope<{ sessions?: unknown }>(body, 'GET /chat/sessions/customer');

@@ -94,6 +94,9 @@ export interface ConversationRegistryOptions {
   readonly pageSize?: number;
   readonly schedule?: ScheduleTimer;
   readonly now?: Clock;
+
+  /** See {@link ConversationClientConfig.outletId} — sent on every `session.join` this registry makes. */
+  readonly outletId?: string;
   readonly logger?: ConversationLogger;
 }
 
@@ -144,7 +147,23 @@ export class ConversationRegistry {
     this.#connectionState = options.store.getState().connectionState;
 
     this.#emitIntent = (intent) => {
-      options.transport().send(intent.t, intent.d);
+      const { ack } = options.transport().send(intent.t, intent.d);
+      // `presence.query` is not in `ADDRESSABLE_INTENT_TYPES` (addressing.ts)
+      // — presence is a fact about the CONNECTION, not about one conversation
+      // — so its ack carries no `sessionId` to route by. Applying the answer
+      // to every open runtime is therefore correct, not a broadening: "ONE
+      // conversation at a time in this release" (types.ts) makes it a no-op
+      // beyond the single open one anyway.
+      if (intent.t === 'presence.query') {
+        ack
+          .then((outcome) => {
+            if (outcome.status !== 'acked' || !('presences' in outcome.frame.d)) return;
+            for (const runtime of this.#runtimes.values()) {
+              runtime.presence.presence.applyPresenceSnapshot(outcome.frame.d.presences);
+            }
+          })
+          .catch(() => undefined);
+      }
     };
 
     const queueTransport: QueueTransport = {
@@ -305,6 +324,21 @@ export class ConversationRegistry {
     await runtime.messages.sendMessage(content, options);
   }
 
+  /**
+   * Requests presence for specific participants (every participant in scope,
+   * if omitted) — §7.3, routed through the given conversation's own
+   * `PresenceCoordinator` (any open one does; see `#emitIntent`'s doc on why
+   * the answer is connection-wide). A silent no-op for a conversation that is
+   * not open, matching `sendMessage`'s own "nothing to send through" case —
+   * a caller racing a just-closed conversation gets no query rather than a
+   * thrown error for a UI signal this unimportant.
+   */
+  queryPresence(conversationId: string, participantIds?: readonly string[]): void {
+    const runtime = this.#runtimes.get(conversationId);
+    if (runtime === undefined) return;
+    runtime.presence.presence.queryPresence(participantIds);
+  }
+
   /** An explicit `client.disconnect()`, which produces no `disconnected` event. */
   handleLocalDisconnect(): void {
     this.#dropConnectionScopedState();
@@ -336,6 +370,23 @@ export class ConversationRegistry {
   }
 
   #routePush(frame: ServerPushFrame): void {
+    // `presence.update` with no `sessionId` on the wire — the ordinary case;
+    // presence is a fact about the CONNECTION, not about one conversation
+    // (see `#emitIntent`'s own doc on `presence.query`'s ack for the same
+    // reasoning on the outbound half). `addressOf` reads that shape as
+    // `unaddressed` and the switch below would drop it as a routable frame
+    // that arrived without its address — right for `message.read`, wrong
+    // here, where broadcasting to every open runtime IS the correct
+    // interpretation of "connection-wide", not a fallback for a missing
+    // field. A `presence.update` that DOES carry `sessionId` (a future,
+    // scoped server) still falls through to the normal per-conversation path
+    // below.
+    if (frame.t === 'presence.update' && frame.d.sessionId === undefined) {
+      for (const runtime of this.#runtimes.values()) runtime.applyPush(frame);
+      this.#scheduleFlush();
+      return;
+    }
+
     const address = addressOf(frame);
 
     switch (address.kind) {
@@ -413,6 +464,10 @@ export class ConversationRegistry {
       // `exactOptionalPropertyTypes` and would serialise the same only by
       // accident of the encoder.
       ...(resumeFrom === null ? {} : { resumeFrom }),
+      // The server caches this per connection after the first join that
+      // carries it, so resending it on every join (rather than tracking
+      // "have I sent it on this socket yet") is simply harmless, not wrong.
+      ...(this.#options.outletId === undefined ? {} : { outletId: this.#options.outletId }),
     };
 
     const outcome = await this.#options.transport().send('session.join', payload).ack;
