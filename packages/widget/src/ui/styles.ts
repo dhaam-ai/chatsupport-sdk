@@ -1924,7 +1924,8 @@ button {
 .dh-greeting {
   align-self: flex-start;
   max-width: 85%;
-  margin: 0 calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
+  /* Inside '.dh-log', whose own padding already insets it. */
+  margin: 0;
   padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
   border-radius: var(--dh-radius);
   background: var(--dh-bubble-in);

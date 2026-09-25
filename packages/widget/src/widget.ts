@@ -1869,6 +1869,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     },
   });
 
+  // The greeting is the first thing said, so it lives at the top of the
+  // transcript (on the thread backdrop) rather than as a sibling below the
+  // log, where the log's `flex: 1` pushed it down beside the composer.
+  // Ahead of `loadOlder`, which the row anchoring in message-list.ts starts from.
+  messageList.log.insertBefore(greetingBubble, messageList.log.firstChild);
+
   const composer = createComposer({
     onCancelReply: () => cancelReply(),
     onSend: async (text) => {
@@ -2634,9 +2640,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // `querySelector('.dh-input')` during development of this feature.
       ...(isPortalStaff ? [portalThread.node] : []),
       messageList.log,
-      // Above the chips and below the transcript: the greeting is the first
-      // thing said, and the chips are the answers to it.
-      greetingBubble,
       // Sits right where the transcript is still empty — it reads most
       // naturally right above where the customer is about to type, not
       // competing with the header or buried inside the (empty) log.
