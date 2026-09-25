@@ -12,6 +12,7 @@ import {
   offlineFlowFor,
   parseRemoteConfig,
   shouldCollectOffline,
+  shouldShowOfflineNotice,
   shouldMount,
 } from '../src/remote-config.js';
 import type { RemoteConfig } from '../src/remote-config.js';
@@ -746,5 +747,27 @@ describe('offlineFlowFor', () => {
     );
     expect(picked?.flow.id).toBe('good');
     expect(picked?.steps).toHaveLength(1);
+  });
+});
+
+describe('shouldShowOfflineNotice', () => {
+  const closed = (offlineMode: RemoteConfig['offlineMode'], isOpenNow: boolean | null): RemoteConfig => ({
+    ...DEFAULT_REMOTE_CONFIG,
+    offlineMode,
+    isOpenNow,
+  });
+
+  it('is true only while closed under SHOW_MESSAGE', () => {
+    expect(shouldShowOfflineNotice(closed(OFFLINE_MODE.SHOW_MESSAGE, false))).toBe(true);
+  });
+
+  it('is false while open, and when the tenant does not follow hours (null)', () => {
+    expect(shouldShowOfflineNotice(closed(OFFLINE_MODE.SHOW_MESSAGE, true))).toBe(false);
+    expect(shouldShowOfflineNotice(closed(OFFLINE_MODE.SHOW_MESSAGE, null))).toBe(false);
+  });
+
+  it('is false under the other two modes', () => {
+    expect(shouldShowOfflineNotice(closed(OFFLINE_MODE.COLLECT_MESSAGE, false))).toBe(false);
+    expect(shouldShowOfflineNotice(closed(OFFLINE_MODE.HIDE_WIDGET, false))).toBe(false);
   });
 });

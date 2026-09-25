@@ -1062,6 +1062,19 @@ export function shouldCollectOffline(remote: RemoteConfig): boolean {
   return remote.isOpenNow === false && remote.offlineMode === OFFLINE_MODE.COLLECT_MESSAGE;
 }
 
+/**
+ * Whether the widget should show the merchant's out-of-hours message in place
+ * of the conversation: closed, and the merchant chose `SHOW_MESSAGE`.
+ *
+ * `isOpenNow === false` exactly — `null` means the tenant does not follow
+ * business hours, which is "not applicable", never "closed". Default
+ * `offlineMode` is SHOW_MESSAGE, so that rule is what keeps every tenant that
+ * never touched hours from meeting this notice.
+ */
+export function shouldShowOfflineNotice(remote: RemoteConfig): boolean {
+  return remote.isOpenNow === false && remote.offlineMode === OFFLINE_MODE.SHOW_MESSAGE;
+}
+
 /** `PublishedFlow.trigger` for the out-of-hours flow (FlowTrigger 4 OFFLINE). */
 export const FLOW_TRIGGER_OFFLINE = 4;
 

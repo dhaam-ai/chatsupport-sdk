@@ -420,14 +420,49 @@ describe('the out-of-hours form is driven by isOpenNow + offlineMode', () => {
     expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(true);
   });
 
-  it('leaves the composer alone under SHOW_MESSAGE', async () => {
-    stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: false }));
+  // SHOW_MESSAGE (WIDGET_CONFIG_SCHEMA §G): "render behaviour.offlineMessage,
+  // no chat input". The visitor reads the merchant's message and cannot reply.
+  it('shows the merchant’s message and no composer under SHOW_MESSAGE while closed', async () => {
+    stubFetch(
+      published({
+        offlineMode: OFFLINE_MODE.SHOW_MESSAGE,
+        isOpenNow: false,
+        behaviour: { offlineMessage: 'Back at 9am.' },
+      }),
+    );
     // See "does not gate when the merchant left pre-chat off" above for why
     // `sessionId` is what puts this test on the conversation screen.
     mount(config({ sessionId: 'sess_1' }));
     await settle();
 
+    expect(find('.dh-offline-notice')?.textContent).toContain('Back at 9am.');
     expect(find('.dh-offline-form')).toBeNull();
+    expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(true);
+  });
+
+  it('says something sensible under SHOW_MESSAGE when the merchant wrote no message', async () => {
+    stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: false }));
+    mount(config({ sessionId: 'sess_1' }));
+    await settle();
+
+    expect(find('.dh-offline-notice')?.textContent?.trim()).not.toBe('');
+  });
+
+  it('leaves the composer alone under SHOW_MESSAGE while the team is open', async () => {
+    stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: true }));
+    mount(config({ sessionId: 'sess_1' }));
+    await settle();
+
+    expect(find('.dh-offline-notice')).toBeNull();
+    expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
+  });
+
+  it('leaves the composer alone when the tenant does not follow business hours', async () => {
+    stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: null }));
+    mount(config({ sessionId: 'sess_1' }));
+    await settle();
+
+    expect(find('.dh-offline-notice')).toBeNull();
     expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
   });
 

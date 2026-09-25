@@ -107,6 +107,7 @@ import { createEndedFooter } from './ui/ended-footer.js';
 import { createOfflineBanner } from './ui/offline-banner.js';
 import { createOfflineForm } from './ui/offline-form.js';
 import { createFlowView } from './ui/flow-view.js';
+import { createOfflineNotice } from './ui/offline-notice.js';
 import type { FlowView } from './ui/flow-view.js';
 import type { FlowStep } from './flow/parse.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
@@ -120,6 +121,7 @@ import {
   offlineFlowFor,
   shouldCollectOffline,
   shouldMount,
+  shouldShowOfflineNotice,
 } from './remote-config.js';
 import type { AutoOpen, RemoteConfig, ResolvedEntry } from './remote-config.js';
 import { captureContactInfo } from './contact-info.js';
@@ -3597,6 +3599,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         activeFlowView.abandon();
         closeSurface();
       }
+    }
+
+    // `SHOW_MESSAGE` while closed: the merchant's message, no composer. A ticket
+    // destination outranks it for the same reason it outranks the flow — the
+    // web form carries its own closed-hours copy — and a web form the visitor
+    // opened by hand is left alone, exactly as the collect gate below does.
+    if (shouldShowOfflineNotice(remote) && entry.primary !== 'ticket' && entry.secondary !== 'ticket') {
+      if (activeSurface?.kind === 'webform') {
+        syncScreens();
+        return;
+      }
+      openSurface('offline', () => createOfflineNotice(remote.offlineMessage));
+      return;
     }
 
     if (collectingOffline()) {
