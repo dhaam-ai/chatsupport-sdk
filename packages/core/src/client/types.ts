@@ -700,6 +700,19 @@ export interface ChatClient {
    * particular must never gate the chat opening, and an IP-watermark fetch
    * that is merely slow should not either.
    */
+  /**
+   * Tells the server where the visitor is, so chat flows that start "on a page"
+   * can run (chatbot-workflows.md §9.2-9.3, §11.1). Safe to call on every route
+   * change: the SDK sends an update only when the content actually changed,
+   * coalesces a burst, and stays under the server's rate limit. Before the
+   * connection exists the context rides on the hello; afterwards it goes as a
+   * `context.update`. Each field the server would reject is dropped on its own,
+   * and a value that is not an object is ignored — this never throws.
+   *
+   * Do not put personal data (email, phone, name) in `attributes`; identity
+   * goes through `/identify`.
+   */
+  setPageContext(context: unknown): void;
   setContactInfo(info: {
     readonly ip?: string;
     readonly ipWatermark?: string;

@@ -42,6 +42,7 @@ import { MessageController, upsertMessage } from '../messages/index.js';
 import type { LocalSender } from '../messages/index.js';
 import { PresenceCoordinator, systemClock, systemTimers } from '../presence/index.js';
 import type { Clock, ScheduleTimer } from '../presence/index.js';
+import { PageContextSync } from './page-context-sync.js';
 import { isParkedCloseReason } from '../protocol/index.js';
 import type { ChatStatus, ErrorPayload, ServerFrame } from '../protocol/index.js';
 import { SendQueue } from '../queue/index.js';
@@ -529,8 +530,21 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     return realTransport;
   };
 
+  // Where the visitor is (chatbot-workflows.md §9.2-9.3). Annotated, not
+  // inferred: it closes over `connectionController`, which in turn reads it for
+  // every hello, and an inferred type would be circular (TS7022).
+  const pageSync: PageContextSync = new PageContextSync({
+    isConnected: () => connectionController.state === 'connected',
+    send: (context) => {
+      realTransport.send('context.update', context);
+    },
+    schedule: schedule ?? systemTimers,
+    clock: now ?? systemClock,
+  });
+
   const connectionController = new ConnectionController({
     store,
+    pageContext: () => pageSync.forHello(),
     url: wsUrl,
     publishableKey,
     // See `ConnectionHelloPayload.clientId`: an unverified self-claim,
@@ -1683,6 +1697,13 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   // of which `store.on('connected')` call happens to appear first: the gate is
   // armed synchronously here, before anything can await it, and `flushQueue`
   // is the only way to reach `queue.flush()`.
+  // A page set between a hello being built and its ack was only latched (the
+  // hello could not carry it and no socket was up to send an update on), so
+  // it is delivered as soon as the connection is up.
+  store.on('connected', () => {
+    pageSync.flush();
+  });
+
   store.on('connected', () => {
     let sessionDecided!: () => void;
     selectionRestored = new Promise<void>((resolve) => {
@@ -1843,6 +1864,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     retryNow: () => connectionController.retryNow(),
     disconnect: () => {
       connectionController.disconnect();
+      pageSync.destroy();
       presenceCoordinator.reset();
       // The connection carrying the join is gone; the next `connection.ack`
       // establishes a new one.
@@ -1938,6 +1960,17 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     // Pure delegation — `ConnectionController.setContactInfo` owns the
     // merge/latch semantics documented on the public method above.
     setContactInfo: (info) => connectionController.setContactInfo(info),
+    // Never throws: a page context is advisory, and a host page's bad value
+    // must not surface as an exception in its own render path.
+    setPageContext: (context) => {
+      try {
+        if (!pageSync.set(context)) {
+          config.logger?.('warn', 'setPageContext ignored a value that is not an object');
+        }
+      } catch (error) {
+        config.logger?.('warn', 'setPageContext failed', { error: String(error) });
+      }
+    },
     reopenSession: async (sessionId): Promise<ChatSession> => {
       if (config.sessionActions === undefined) {
         throw new ChatClientConfigError(
