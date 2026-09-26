@@ -30,7 +30,8 @@ import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-
 import { ICONS, el, icon } from './dom.js';
 import { createMessageActions } from './message-actions.js';
 import { renderLinkified } from './linkify.js';
-import { createQuickReplies, readQuickReplies } from './quick-replies.js';
+import { createQuickReplies, readSuggestions } from './quick-replies.js';
+import type { QuickReplyChip } from './quick-replies.js';
 
 /** Glyph plus the phrase a screen reader gets. The phrase is not optional. */
 const TICK_PRESENTATION: Record<MessageTickState, { glyph: string; label: string }> = {
@@ -136,7 +137,7 @@ export interface MessageListCallbacks {
   /** Emails the conversation to the address already on file. Rejects on failure. */
   readonly onEmailTranscript: () => Promise<void>;
   /** Sends one of the bot's suggested follow-ups as the customer's next message. */
-  readonly onQuickReply: (text: string) => void;
+  readonly onQuickReply: (chip: QuickReplyChip) => void;
   /**
    * Starts a reply addressed to this message.
    *
@@ -332,7 +333,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
 
   // The bot's own suggestions. One row reused across renders — see the
   // module's note on why it is not per-message.
-  const quickReplies = createQuickReplies((text) => callbacks.onQuickReply(text));
+  const quickReplies = createQuickReplies((chip) => callbacks.onQuickReply(chip));
   log.appendChild(quickReplies.node);
 
   const typing = createTypingIndicator();
@@ -504,7 +505,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       closedReason === null &&
       newestMessage !== undefined &&
       !isOutgoing(newestMessage, localParticipantId, callbacks.staffViewer)
-        ? readQuickReplies(newestMessage.metadata, callbacks.handoffKeywords?.() ?? [])
+        ? readSuggestions(newestMessage.metadata, callbacks.handoffKeywords?.() ?? [])
         : [];
     quickReplies.update(suggestions);
     log.appendChild(quickReplies.node);

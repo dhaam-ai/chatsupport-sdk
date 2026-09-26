@@ -49,6 +49,9 @@ import { createUnavailable } from './ui/unavailable.js';
 import { createReportIssueForm } from './ui/report-issue.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
+import type { SendExtra } from './ui/composer.js';
+import { flowReplyMetadata } from './ui/quick-replies.js';
+import type { QuickReplyChip } from './ui/quick-replies.js';
 import {
   DEFAULT_AVATAR_IMAGE,
   DEFAULT_LOGO_IMAGE,
@@ -676,6 +679,12 @@ interface ProductSurface {
   readonly node: HTMLElement;
   focus?(): void;
   destroy(): void;
+}
+
+/** What a chip tap sends beyond its label: the `flow_reply` metadata of a flow button, else nothing. */
+function sendExtraFor(chip: QuickReplyChip): SendExtra | undefined {
+  const metadata = flowReplyMetadata(chip);
+  return metadata === undefined ? undefined : { metadata };
 }
 
 export function createWidget(rawConfig: WidgetConfig): ChatWidget {
@@ -1883,7 +1892,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the bot suggested the words, but the person chose them. Routed through
     // the composer's own send path so a suggestion is subject to every rule a
     // typed message is, the consent gate and handoff keywords included.
-    onQuickReply: (text) => void composer.submit(text),
+    onQuickReply: (chip) => void composer.submit(chip.label, sendExtraFor(chip)),
     onReplyToMessage: (message, senderName) => startReply(message, senderName),
     // Read through `remote` at call time, never captured: a config publish
     // replaces `remote` wholesale, and the suggestion filter must judge by
@@ -1905,7 +1914,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
   const composer = createComposer({
     onCancelReply: () => cancelReply(),
-    onSend: async (text) => {
+    onSend: async (text, extra) => {
       // SEND FIRST, then escalate, and only once the send has actually
       // settled. The customer typed a sentence and expects it to arrive;
       // swallowing it because it matched a keyword would lose the question,
@@ -1926,9 +1935,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // metadata-kind precedent as `pre_chat` and `offline_message` below.
       // The excerpt rides along because the quoted message may not be in the
       // reader's loaded page at all.
+      //
+      // A flow button's tap sends `flow_reply` metadata instead: that is what
+      // the flow engine matches to the button (chatbot-workflows.md §9.5), and
+      // its `metadata.kind` cannot also be `reply`. The quote chip is still
+      // cleared above; it belonged to a different intent.
+      const flowMetadata = extra?.metadata;
       await store.client.sendMessage(
         text,
-        addressedTo === null
+        flowMetadata !== undefined
+          ? { metadata: flowMetadata }
+          : addressedTo === null
           ? undefined
           : {
               replyToMessageId: addressedTo.messageId,
@@ -1947,7 +1964,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // settled, from fresh state, which is what stops a keyword escalating
       // a conversation a human is already handling — that would ask the
       // agent to hand off to themselves.
+      //
+      // Not for a flow button: the merchant chose that label and the flow
+      // engine owns what "talk to a person" means inside a flow (its own
+      // `handoff` and `person` exits). Escalating here as well would race it.
       if (
+        flowMetadata === undefined &&
         botHoldsLiveConversation(store.getState()) &&
         asksForAHuman(text, remote.handoffKeywords)
       ) {

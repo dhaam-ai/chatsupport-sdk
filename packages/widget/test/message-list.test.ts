@@ -914,7 +914,7 @@ describe('the bot’s suggested replies', () => {
       ME,
     );
     view.log.querySelector<HTMLButtonElement>('.dh-quick-reply')!.click();
-    expect(onQuickReply).toHaveBeenCalledWith('Refund');
+    expect(onQuickReply).toHaveBeenCalledWith({ label: 'Refund' });
   });
 
   // Stale by construction: they were answers to a question two turns ago, and

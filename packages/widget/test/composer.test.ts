@@ -406,3 +406,44 @@ describe('behaviour.fileUploads', () => {
     expect(attachButtons(composer).every((b) => !b.hidden)).toBe(true);
   });
 });
+
+describe('submit(text, extra) — a tapped flow button', () => {
+  const extra = { metadata: { kind: 'flow_reply', runId: 'run-1', stepId: 'choose', buttonId: 'b1' } };
+
+  it('hands the extra data to onSend for that one send', async () => {
+    const { composer, onSend } = build();
+    await composer.submit('Payment failed', extra);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith('Payment failed', extra);
+  });
+
+  it('does not leak onto the next message the customer types', async () => {
+    const { composer, onSend } = build();
+    await composer.submit('Payment failed', extra);
+
+    input(composer).value = 'and another thing';
+    input(composer).dispatchEvent(new Event('input'));
+    sendButton(composer).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSend).toHaveBeenLastCalledWith('and another thing');
+  });
+
+  it('does not leak when the tap was refused because the composer is disabled', async () => {
+    const { composer, onSend } = build();
+    composer.setEnabled(false);
+    await composer.submit('Payment failed', extra);
+    expect(onSend).not.toHaveBeenCalled();
+
+    composer.setEnabled(true);
+    input(composer).value = 'typed instead';
+    input(composer).dispatchEvent(new Event('input'));
+    sendButton(composer).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith('typed instead');
+  });
+});

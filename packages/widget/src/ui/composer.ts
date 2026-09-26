@@ -44,8 +44,17 @@ export interface ReplyTarget {
   readonly excerpt: string;
 }
 
+/**
+ * Extra data that travels with ONE send. Today: the `flow_reply` metadata of a
+ * tapped flow button. Deliberately per-call, never remembered: it must not
+ * leak onto whatever the customer types next.
+ */
+export interface SendExtra {
+  readonly metadata?: Record<string, unknown>;
+}
+
 export interface ComposerCallbacks {
-  readonly onSend: (text: string) => Promise<void>;
+  readonly onSend: (text: string, extra?: SendExtra) => Promise<void>;
   readonly onSendAttachment: (file: File) => Promise<void>;
   readonly onTyping: () => void;
   readonly onError: (error: unknown) => void;
@@ -74,7 +83,7 @@ export interface ComposerView {
    * EMPTY box is the normal case, not a refusal — a chip is tapped instead of
    * typing, so the box is empty precisely when a suggestion should send.
    */
-  submit(text: string): Promise<void>;
+  submit(text: string, extra?: SendExtra): Promise<void>;
 
   /**
    * Shows the message being replied to, or `null` to clear it.
@@ -102,6 +111,9 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   let previewUrl: string | null = null;
   let enabled = true;
   let uploading = false;
+  // Set by the public `submit(text, extra)` for exactly the one send it starts,
+  // and consumed (cleared) at the top of the internal `submit()`.
+  let pendingExtra: SendExtra | undefined;
 
   const errorLine = el('p', { attrs: { class: 'dh-error', role: 'alert', hidden: true } });
 
@@ -547,6 +559,8 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   }
 
   async function submit(): Promise<void> {
+    const extra = pendingExtra;
+    pendingExtra = undefined;
     if (sendButton.disabled) return;
 
     const text = input.value.trim();
@@ -568,7 +582,10 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
         syncSendState();
         await callbacks.onSendAttachment(file);
       }
-      if (text !== '') await callbacks.onSend(text);
+      // The one-argument call for an ordinary send, so a plain typed message is
+      // byte-for-byte what it always was; the second argument exists only for a
+      // tapped flow button.
+      if (text !== '') await (extra === undefined ? callbacks.onSend(text) : callbacks.onSend(text, extra));
     } catch (error) {
       report(error, 'That message could not be sent. Please try again.');
     } finally {
@@ -629,7 +646,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       replyName.textContent = target?.senderName ?? '';
       replyExcerpt.textContent = target?.excerpt ?? '';
     },
-    async submit(text) {
+    async submit(text, extra) {
       // Both guards are refusals, not races. `enabled` is the consent gate and
       // the closed-session rule, `uploading` the in-flight send; a non-empty
       // box is the customer's own draft, which a suggestion must not
@@ -641,6 +658,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       const suggestion = text.trim();
       if (suggestion === '') return;
       input.value = suggestion;
+      pendingExtra = extra;
       // Send is enabled by content, and the content just changed.
       syncSendState();
       await submit();
