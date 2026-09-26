@@ -289,3 +289,67 @@ describe('flow buttons', () => {
     expect(sent?.d['metadata']).toBeUndefined();
   });
 });
+
+describe('a flow question’s input type', () => {
+  const box = () => shadow().querySelector<HTMLTextAreaElement>('.dh-input')!;
+
+  async function mountAsked(type: string) {
+    stubFetch(published());
+    vi.stubGlobal('WebSocket', AckingSocket);
+    const widget = mount(config({ sessionId: 'sess_live' }));
+    await settle();
+    AckingSocket.instances[0]!.ack('sess_live');
+    await settle();
+    widget.open();
+    await settle();
+    botMessage(1, 'What is your email?', { flow: { runId: 'run-1', stepId: 'ask', kind: 'question' }, input: { type } });
+    await settle();
+    return widget;
+  }
+
+  it('raises the matching keyboard and prompt while the question is the newest message', async () => {
+    await mountAsked('email');
+    expect(box().getAttribute('inputmode')).toBe('email');
+    expect(box().placeholder).toBe('Your email address');
+  });
+
+  it('does the same for a phone question', async () => {
+    await mountAsked('phone');
+    expect(box().getAttribute('inputmode')).toBe('tel');
+    expect(box().placeholder).toBe('Your phone number');
+  });
+
+  it('leaves the box alone for a type it does not know', async () => {
+    await mountAsked('password');
+    expect(box().getAttribute('inputmode')).toBeNull();
+    expect(box().placeholder).toBe('Type your message...');
+  });
+
+  it('hands the ordinary keyboard back once the visitor has answered', async () => {
+    await mountAsked('email');
+    box().value = 'a@b.co';
+    box().dispatchEvent(new Event('input'));
+    shadow().querySelector<HTMLButtonElement>('.dh-send')!.click();
+    await settle();
+
+    expect(box().getAttribute('inputmode')).toBeNull();
+    expect(box().placeholder).toBe('Type your message...');
+  });
+
+  it('hands it back when a newer bot message asks nothing special', async () => {
+    await mountAsked('email');
+    botMessage(2, 'Thanks. Anything else?');
+    await settle();
+    expect(box().getAttribute('inputmode')).toBeNull();
+    expect(box().placeholder).toBe('Type your message...');
+  });
+
+  it('still lets the visitor type anything', async () => {
+    await mountAsked('email');
+    box().value = 'no thanks';
+    box().dispatchEvent(new Event('input'));
+    shadow().querySelector<HTMLButtonElement>('.dh-send')!.click();
+    await settle();
+    expect(sentFrames('message.send').at(-1)?.d['content']).toBe('no thanks');
+  });
+});

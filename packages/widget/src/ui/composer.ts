@@ -12,6 +12,7 @@
 import { ICONS, el, icon, safeLinkUrl } from './dom.js';
 import { createEmojiPicker, insertAtCaret } from './emoji.js';
 import type { EmojiPickerView } from './emoji.js';
+import type { InputHint } from './input-hint.js';
 import { createVoiceRecorder } from './voice.js';
 import type { VoiceRecorder } from './voice.js';
 
@@ -102,6 +103,14 @@ export interface ComposerView {
    * merchant switched off.
    */
   setAttachmentsEnabled(enabled: boolean): void;
+  /**
+   * The keyboard a flow's question wants (email, phone, number, order), or
+   * `null` to hand back the ordinary one. Only the on-screen keyboard and
+   * autofill change: the box keeps accepting any text, because the server
+   * validates and re-asks. The prompt text is the widget's to set (it already
+   * owns the placeholder for the offline-queue state), from `hint.placeholder`.
+   */
+  setInputHint(hint: InputHint | null): void;
   destroy(): void;
 }
 
@@ -308,6 +317,12 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       },
     },
   });
+
+  // What the box was built with, kept so `setInputHint(null)` can hand exactly
+  // that back (see the method's doc) rather than a guess at the defaults.
+  const ordinaryKeyboard: Record<string, string | null> = Object.fromEntries(
+    ['inputmode', 'autocomplete', 'autocapitalize', 'enterkeyhint'].map((name) => [name, input.getAttribute(name)]),
+  );
 
   const sendButton = el('button', {
     attrs: { class: 'dh-send', type: 'button', 'aria-label': 'Send message', disabled: true },
@@ -670,6 +685,23 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     setUploading(next) {
       uploading = next;
       syncSendState();
+    },
+    setInputHint(hint) {
+      if (hint === null) {
+        // Back to what `createComposer` built, not to a guess at it.
+        for (const [name, value] of Object.entries(ordinaryKeyboard)) {
+          if (value === null) input.removeAttribute(name);
+          else input.setAttribute(name, value);
+        }
+        return;
+      }
+      input.setAttribute('inputmode', hint.inputMode);
+      input.setAttribute('autocomplete', hint.autocomplete);
+      // An email, a phone and a number are never sentences, and iOS would
+      // capitalise the first letter of an address; an order number is typed in
+      // capitals by convention.
+      input.setAttribute('autocapitalize', hint.type === 'order' ? 'characters' : 'none');
+      input.setAttribute('enterkeyhint', 'send');
     },
     setAttachmentsEnabled(next) {
       imageButton.hidden = !next;

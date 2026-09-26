@@ -447,3 +447,48 @@ describe('submit(text, extra) — a tapped flow button', () => {
     expect(onSend).toHaveBeenCalledWith('typed instead');
   });
 });
+
+describe('setInputHint — the keyboard the flow’s question wants', () => {
+  const emailHint = {
+    type: 'email',
+    placeholder: 'Your email address',
+    inputMode: 'email',
+    autocomplete: 'email',
+  } as const;
+
+  it('switches the keyboard for the box, and hands the original back when cleared', () => {
+    const { composer } = build();
+    const box = input(composer);
+    const original = {
+      inputmode: box.getAttribute('inputmode'),
+      autocomplete: box.getAttribute('autocomplete'),
+      autocapitalize: box.getAttribute('autocapitalize'),
+      enterkeyhint: box.getAttribute('enterkeyhint'),
+    };
+
+    composer.setInputHint(emailHint);
+    expect(box.getAttribute('inputmode')).toBe('email');
+    expect(box.getAttribute('autocomplete')).toBe('email');
+    expect(box.getAttribute('autocapitalize')).toBe('none');
+    expect(box.getAttribute('enterkeyhint')).toBe('send');
+
+    composer.setInputHint(null);
+    expect({
+      inputmode: box.getAttribute('inputmode'),
+      autocomplete: box.getAttribute('autocomplete'),
+      autocapitalize: box.getAttribute('autocapitalize'),
+      enterkeyhint: box.getAttribute('enterkeyhint'),
+    }).toEqual(original);
+  });
+
+  it('never stops the box accepting text', async () => {
+    const { composer, onSend } = build();
+    composer.setInputHint(emailHint);
+    input(composer).value = 'not an email at all';
+    input(composer).dispatchEvent(new Event('input'));
+    sendButton(composer).click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onSend).toHaveBeenCalledWith('not an email at all');
+  });
+});

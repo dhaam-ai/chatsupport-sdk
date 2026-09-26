@@ -50,6 +50,8 @@ import { createReportIssueForm } from './ui/report-issue.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
 import type { SendExtra } from './ui/composer.js';
+import { readInputHint } from './ui/input-hint.js';
+import type { InputHint } from './ui/input-hint.js';
 import { flowReplyMetadata } from './ui/quick-replies.js';
 import type { QuickReplyChip } from './ui/quick-replies.js';
 import {
@@ -2575,6 +2577,24 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   const composerPlaceholder = composer.input.placeholder;
 
+  // The kind of answer the newest bot message is asking for (a flow question's
+  // `metadata.input.type`), and whether the offline-queue prompt is showing.
+  // The placeholder has two owners — the connection status and this hint — so
+  // both go through `applyComposerPlaceholder` and neither overwrites the other.
+  let inputHint: InputHint | null = null;
+  let composerQueueing = false;
+  function applyComposerPlaceholder(): void {
+    composer.input.placeholder = composerQueueing
+      ? QUEUEING_PLACEHOLDER
+      : (inputHint?.placeholder ?? composerPlaceholder);
+  }
+  function syncInputHint(next: InputHint | null): void {
+    if (next?.type === inputHint?.type) return;
+    inputHint = next;
+    composer.setInputHint(next);
+    applyComposerPlaceholder();
+  }
+
   /**
    * The bar that says the network is gone and the messages are safe.
    *
@@ -2897,6 +2917,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       (state) => state.messages,
       () => {
         const state = store.getState();
+        // A flow's question asks for a kind of answer while it is the newest
+        // thing on screen; the visitor answering (or anything newer arriving,
+        // or the chat ending) hands the ordinary keyboard back.
+        const newest = state.messages[state.messages.length - 1];
+        const ended = state.session?.status === 'CLOSED' || state.session?.status === 'RESOLVED';
+        syncInputHint(newest?.senderType === 'BOT' && !ended ? readInputHint(newest.metadata) : null);
         // chat-service only ever emits a real `typing.start` for a human
         // AGENT composing (bridge.ts/websocket-server.ts's broadcastTyping)
         // — the AI bot sends no such signal before its reply, so a BOT-mode
@@ -4410,7 +4436,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // The composer stays ENABLED throughout — core queues sends durably (§9.6)
     // and a customer in a lift must still be able to type their question. What
     // changes is only the promise made about what happens to it.
-    composer.input.placeholder = status.queueing ? QUEUEING_PLACEHOLDER : composerPlaceholder;
+    composerQueueing = status.queueing;
+    applyComposerPlaceholder();
 
     syncComposer();
   }
