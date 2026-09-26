@@ -8,7 +8,7 @@ import {
 import type { AnyFrame } from './frames.js';
 
 describe('frame type catalog — §7.3', () => {
-  it('has exactly the 13 client→server frame types', () => {
+  it('has exactly the 14 client→server frame types', () => {
     expect(CLIENT_TO_SERVER_FRAME_TYPES).toEqual([
       'connection.hello',
       'connection.reauth',
@@ -23,6 +23,7 @@ describe('frame type catalog — §7.3', () => {
       'presence.set',
       'presence.query',
       'system.heartbeat',
+      'context.update',
     ]);
   });
 
@@ -50,9 +51,9 @@ describe('frame type catalog — §7.3', () => {
     expect(SERVER_TO_CLIENT_FRAME_TYPES).toEqual([...SERVER_PUSH_FRAME_TYPES, 'ack', 'error']);
   });
 
-  it('has 26 distinct frame type strings total (typing.start/stop shared, not double-counted)', () => {
+  it('has 27 distinct frame type strings total (typing.start/stop shared, not double-counted)', () => {
     const distinct = new Set(ALL_FRAME_TYPES);
-    expect(distinct.size).toBe(26);
+    expect(distinct.size).toBe(27);
   });
 
   it('typing.start and typing.stop are the one shared pair used in both directions (§7.3)', () => {
@@ -102,6 +103,8 @@ function describeFrame(frame: AnyFrame): string {
       return `presenceQuery:${(frame.d.participantIds ?? []).length}`;
     case 'system.heartbeat':
       return 'heartbeat';
+    case 'context.update':
+      return `contextUpdate:${frame.d.label ?? ''}`;
     case 'connection.ack':
       return `ack:${frame.d.seq}:${frame.d.session?.sessionId}`;
     case 'session.updated':

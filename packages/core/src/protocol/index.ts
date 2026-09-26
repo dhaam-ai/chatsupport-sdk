@@ -57,6 +57,8 @@ export type {
   PresenceEntry,
 } from './domain.js';
 
+export { normalizeVisitorContext, visitorContextKey } from './visitor-context.js';
+
 export {
   CLIENT_TO_SERVER_FRAME_TYPES,
   SERVER_PUSH_FRAME_TYPES,
@@ -65,6 +67,8 @@ export {
 } from './frames.js';
 export type {
   EmptyPayload,
+  VisitorContext,
+  ContextUpdatePayload,
   ConnectionHelloPayload,
   ConnectionReauthPayload,
   SessionJoinPayload,

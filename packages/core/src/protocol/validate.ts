@@ -467,6 +467,13 @@ function validateSessionLeave(d: unknown, path: string, frameType: string): Fram
   return optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType);
 }
 
+function validateContextUpdate(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+  // The fields themselves are normalised by `normalizeVisitorContext` before a
+  // frame is built; only the envelope-level `sessionId` is checked here.
+  return optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType);
+}
+
 function validateEmptyPayload(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
   return null;
@@ -677,6 +684,7 @@ const PAYLOAD_VALIDATORS: Record<PlainFrameType, PayloadValidator> = {
   'presence.set': validatePresenceSet,
   'presence.query': validatePresenceQuery,
   'system.heartbeat': validateEmptyPayload,
+  'context.update': validateContextUpdate,
   'connection.ack': validateConnectionAck,
   'session.updated': validateSessionUpdated,
   'session.closed': validateSessionClosed,
