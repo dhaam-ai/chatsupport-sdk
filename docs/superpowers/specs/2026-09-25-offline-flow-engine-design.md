@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-26).** This client-side flow runner was removed. Flows run on chat-service-node and the SDK never executes them (`chat-service-node/docs/specs/chatbot-workflows.md` §1, §11.3). See `docs/superpowers/specs/2026-09-26-flow-sdk-contract-design.md`. Kept for history only.
+
 # Offline Flow Engine — Design
 
 Status: approved in chat 2026-09-25, awaiting written-spec review.

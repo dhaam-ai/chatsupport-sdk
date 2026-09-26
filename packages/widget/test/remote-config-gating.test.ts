@@ -448,6 +448,33 @@ describe('the out-of-hours form is driven by isOpenNow + offlineMode', () => {
     expect(find('.dh-offline-notice')?.textContent?.trim()).not.toBe('');
   });
 
+  // Flows run on the server (chatbot-workflows.md §1, §11.3): the widget never
+  // executes one, whatever the `flows` array carries. A published OFFLINE flow
+  // in the payload must not change what COLLECT_MESSAGE shows.
+  it('still shows the built-in form under COLLECT_MESSAGE when an OFFLINE flow is published', async () => {
+    stubFetch(
+      published({
+        offlineMode: OFFLINE_MODE.COLLECT_MESSAGE,
+        isOpenNow: false,
+        flows: [
+          {
+            id: 'flow-1',
+            name: 'Out of hours',
+            trigger: 4,
+            keywords: [],
+            pagePattern: '',
+            steps: [{ id: 'a', kind: 'message', text: 'We are closed right now.' }],
+          },
+        ],
+      }),
+    );
+    mount(config());
+    await settle();
+
+    expect(find('.dh-offline-form')).not.toBeNull();
+    expect(find('.dh-flow')).toBeNull();
+  });
+
   it('leaves the composer alone under SHOW_MESSAGE while the team is open', async () => {
     stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: true }));
     mount(config({ sessionId: 'sess_1' }));

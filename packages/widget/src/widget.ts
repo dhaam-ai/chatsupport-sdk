@@ -106,10 +106,7 @@ import { createEndConversationConfirm } from './ui/end-conversation.js';
 import { createEndedFooter } from './ui/ended-footer.js';
 import { createOfflineBanner } from './ui/offline-banner.js';
 import { createOfflineForm } from './ui/offline-form.js';
-import { createFlowView } from './ui/flow-view.js';
 import { createOfflineNotice } from './ui/offline-notice.js';
-import type { FlowView } from './ui/flow-view.js';
-import type { FlowStep } from './flow/parse.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
 import type { PreChatAnswers } from './ui/pre-chat-form.js';
 import { createCommonQuestions } from './ui/common-questions.js';
@@ -118,7 +115,6 @@ import {
   DEFAULT_REMOTE_CONFIG,
   entryFor,
   fetchRemoteConfig,
-  offlineFlowFor,
   shouldCollectOffline,
   shouldMount,
   shouldShowOfflineNotice,
@@ -967,14 +963,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // capturing it, because it is replaced once, asynchronously, after mount.
   let remote: RemoteConfig = DEFAULT_REMOTE_CONFIG;
 
-  // The out-of-hours flow view, while one is on screen. A reply only counts as
-  // "a person answered" if it was created after the view's `startedAt()` (the
-  // visitor's first flow message, saved across reloads) — history that was
-  // already in the session must not cancel a flow that has not started.
-  let activeFlowView: FlowView | null = null;
-  // The session in which a person/real bot took over. While the current
-  // session is this one the flow does not come back; a new session may run it.
-  let flowPreemptedSessionId: string | null = null;
   /**
    * The published greeting, kept here because `applyHeaderAppearance` can run
    * before Home exists; `paintHomeGreeting` is wired once it does.
@@ -1458,7 +1446,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   function syncHeaderAvatar(): void {
     const session = store.getState().session;
     let avatar: HTMLElement | null = null;
-    if (!collectingOffline()) {
+    if (!shouldCollectOffline(remote)) {
       if (activeConversationTitle !== null) {
         avatar = buildAgentAvatar(activeConversationTitle);
       } else {
@@ -3539,40 +3527,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     return null;
   }
 
-  /** `shouldCollectOffline`, minus a flow that a person has already taken over. */
-  function collectingOffline(): boolean {
-    if (!shouldCollectOffline(remote)) return false;
-    const current = store.getState().session?.id ?? null;
-    return !(flowPreemptedSessionId !== null && flowPreemptedSessionId === current);
-  }
-
-  function buildFlowSurface(flowId: string, steps: readonly FlowStep[]): ProductSurface {
-    const view = createFlowView(
-      {
-        flowId,
-        steps,
-        storageKey: `chatsdk:${config.auth.publishableKey}:offline-flow`,
-        sessionId: store.getState().session?.id ?? null,
-        ...(remote.offlineMessage === undefined ? {} : { offlineMessage: remote.offlineMessage }),
-      },
-      {
-        send: (text, metadata) => store.client.sendMessage(text, { metadata }),
-        requestAgent: (reason) => store.client.requestAgent(reason),
-        hasSession: () => store.getState().session !== null,
-        onError: report,
-      },
-    );
-    activeFlowView = view;
-    return {
-      node: view.node,
-      focus: () => view.focus(),
-      destroy: () => {
-        view.destroy();
-        if (activeFlowView === view) activeFlowView = null;
-      },
-    };
-  }
-
   /**
    * Puts the right surface — or none — in front of the conversation.
    *
@@ -3587,24 +3541,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (destroyed) return;
     const state = store.getState();
 
-    // A person (or the real bot) answered after the visitor's first flow reply:
-    // the scripted flow steps aside and the normal conversation takes over.
-    const flowStartedAt = activeFlowView?.startedAt() ?? null;
-    if (activeFlowView !== null && flowStartedAt !== null) {
-      const answered = state.messages.some(
-        (m) => (m.senderType === 'AGENT' || m.senderType === 'BOT') && Date.parse(m.createdAt) > flowStartedAt,
-      );
-      if (answered) {
-        flowPreemptedSessionId = state.session?.id ?? null;
-        activeFlowView.abandon();
-        closeSurface();
-      }
-    }
-
     // `SHOW_MESSAGE` while closed: the merchant's message, no composer. A ticket
-    // destination outranks it for the same reason it outranks the flow — the
-    // web form carries its own closed-hours copy — and a web form the visitor
-    // opened by hand is left alone, exactly as the collect gate below does.
+    // destination outranks it (the web form carries its own closed-hours copy),
+    // and a web form the visitor opened by hand is left alone, exactly as the
+    // collect gate below does.
     if (shouldShowOfflineNotice(remote) && entry.primary !== 'ticket' && entry.secondary !== 'ticket') {
       if (activeSurface?.kind === 'webform') {
         syncScreens();
@@ -3614,7 +3554,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       return;
     }
 
-    if (collectingOffline()) {
+    if (shouldCollectOffline(remote)) {
       // The one carve-out gate 1 needs. A Row-2 tenant on `COLLECT_MESSAGE`
       // has BOTH entry points live at once: the Home CTA opens kind
       // `'webform'` by hand, and the very next store tick would otherwise
@@ -3631,10 +3571,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       }
 
       const ticketDestinationExists = entry.primary === 'ticket' || entry.secondary === 'ticket';
-      // The merchant's own OFFLINE flow, when there is one to run. A ticket
-      // destination outranks it (that is the existing web-form arm below), and
-      // with neither the built-in leave-a-message form is the fallback.
-      const offlineFlow = ticketDestinationExists ? undefined : offlineFlowFor(remote);
       openSurface(
         'offline',
         () =>
@@ -3663,9 +3599,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
               // reached from Home, not to this automatic gate.
               { onSubmit: (draft) => sendWebform(draft), onError: report },
             )
-          : offlineFlow !== undefined
-            ? buildFlowSurface(offlineFlow.flow.id, offlineFlow.steps)
-            : createOfflineForm(
+          : createOfflineForm(
               // `isGuest` here too — this branch outranks BOTH gates below, so
               // without it an out-of-hours visit was the one path on which a
               // logged-in customer still met the merchant's pre-chat questions.
@@ -3682,9 +3616,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
               },
               remote.offlineMessage,
             ),
-        // Keyed by flow id so a republished flow rebuilds the view; the built-in
-        // form and the web form keep the plain by-kind rule.
-        offlineFlow === undefined ? undefined : `flow:${offlineFlow.flow.id}`,
       );
       return;
     }

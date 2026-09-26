@@ -9,7 +9,6 @@ import {
   fetchRemoteConfig,
   isOutOfHours,
   mergeRemoteConfig,
-  offlineFlowFor,
   parseRemoteConfig,
   shouldCollectOffline,
   shouldShowOfflineNotice,
@@ -714,39 +713,6 @@ describe('mount and offline gating', () => {
   it('mounts on the defaults a failed fetch leaves behind', () => {
     expect(shouldMount(DEFAULT_REMOTE_CONFIG)).toBe(true);
     expect(shouldCollectOffline(DEFAULT_REMOTE_CONFIG)).toBe(false);
-  });
-});
-
-describe('offlineFlowFor', () => {
-  const withFlows = (flows: RemoteConfig['flows']): RemoteConfig => ({ ...DEFAULT_REMOTE_CONFIG, flows });
-  const offline = (id: string, steps: unknown[]) => ({
-    id,
-    name: id,
-    trigger: 4,
-    keywords: [],
-    pagePattern: '',
-    steps,
-  });
-
-  it('is undefined when there are no flows', () => {
-    expect(offlineFlowFor(DEFAULT_REMOTE_CONFIG)).toBeUndefined();
-  });
-
-  it('ignores flows that are not the OFFLINE trigger', () => {
-    const welcome = { ...offline('w', [{ id: 'a', kind: 'message', text: 'hi' }]), trigger: 1 };
-    expect(offlineFlowFor(withFlows([welcome]))).toBeUndefined();
-  });
-
-  it('returns the first OFFLINE flow with usable steps, with its parsed steps', () => {
-    const picked = offlineFlowFor(
-      withFlows([
-        offline('broken', [{ id: 'a', kind: 'webhook' }]),
-        offline('good', [{ id: 'a', kind: 'message', text: 'We are closed' }]),
-        offline('later', [{ id: 'a', kind: 'message', text: 'x' }]),
-      ]),
-    );
-    expect(picked?.flow.id).toBe('good');
-    expect(picked?.steps).toHaveLength(1);
   });
 });
 

@@ -51,8 +51,6 @@ import type {
 // `webform.ts`'s draft — a second union spelled here would be a second thing
 // to keep equal to `tenant_webform_config.contact_requirement`.
 import type { ContactRequirement } from './webform.js';
-import { parseFlowSteps } from './flow/parse.js';
-import type { FlowStep } from './flow/parse.js';
 
 /** One console-defined field on the pre-chat form. */
 export interface PreChatField {
@@ -1073,34 +1071,6 @@ export function shouldCollectOffline(remote: RemoteConfig): boolean {
  */
 export function shouldShowOfflineNotice(remote: RemoteConfig): boolean {
   return remote.isOpenNow === false && remote.offlineMode === OFFLINE_MODE.SHOW_MESSAGE;
-}
-
-/** `PublishedFlow.trigger` for the out-of-hours flow (FlowTrigger 4 OFFLINE). */
-export const FLOW_TRIGGER_OFFLINE = 4;
-
-/**
- * The tenant's out-of-hours flow, when `COLLECT_MESSAGE` should run one.
- *
- * The console specifies COLLECT_MESSAGE as "run the tenant's OFFLINE-trigger
- * bot flow, falling back to the built-in form when none is published". The
- * payload only ever carries published+enabled flows, so "is there one" is
- * answered here by looking for the first OFFLINE flow whose steps parse to
- * something runnable. `undefined` is the fallback: the caller renders the
- * built-in form. A flow whose every step the parser had to drop counts as
- * absent — running it would show the visitor an empty screen.
- *
- * Only meaningful when {@link shouldCollectOffline} is true; it does not
- * re-check hours.
- */
-export function offlineFlowFor(
-  remote: RemoteConfig,
-): { readonly flow: PublishedFlow; readonly steps: readonly FlowStep[] } | undefined {
-  for (const flow of remote.flows) {
-    if (flow.trigger !== FLOW_TRIGGER_OFFLINE) continue;
-    const steps = parseFlowSteps(flow.steps);
-    if (steps.length > 0) return { flow, steps };
-  }
-  return undefined;
 }
 
 /** Convenience for the UI layer: is the team closed right now? */

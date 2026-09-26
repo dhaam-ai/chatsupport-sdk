@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-09-26).** This client-side flow runner was removed. Flows run on chat-service-node and the SDK never executes them (`chat-service-node/docs/specs/chatbot-workflows.md` §1, §11.3). See `docs/superpowers/specs/2026-09-26-flow-sdk-contract-design.md`. Kept for history only.
+
 # Offline Flow Engine Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
