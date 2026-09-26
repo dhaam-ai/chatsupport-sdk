@@ -1,0 +1,69 @@
+{
+  "name": "Test - While we're closed",
+  "description": "The chat opens while closed. Email question, ticket, close. Created OFF so it does not take over live chats; switch it on to test.",
+  "enabled": false,
+  "rules": {
+    "trigger": "open",
+    "labels": [],
+    "url": "",
+    "phrases": [],
+    "conditions": [],
+    "hours": "closed",
+    "often": "chat"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "msg",
+    "steps": {
+      "msg": {
+        "id": "msg",
+        "kind": "message",
+        "name": "Say we're closed",
+        "text": "We're closed right now. We're back at 9am.",
+        "next": {
+          "next": "ask"
+        }
+      },
+      "ask": {
+        "id": "ask",
+        "kind": "question",
+        "name": "Ask for email",
+        "text": "Leave your email and we'll reply first thing.",
+        "answer": "email",
+        "saveAs": "Email",
+        "tries": 2,
+        "retry": "That doesn't look like an email. Try again, like name@example.com.",
+        "next": {
+          "ok": "ticket",
+          "bad": "bye2"
+        }
+      },
+      "ticket": {
+        "id": "ticket",
+        "kind": "ticket",
+        "name": "Morning ticket",
+        "title": "Out-of-hours message",
+        "contact": "Email",
+        "includeChat": true,
+        "next": {
+          "created": "bye",
+          "failed": "bye2"
+        }
+      },
+      "bye": {
+        "id": "bye",
+        "kind": "close",
+        "name": "Say goodbye",
+        "text": "Thanks! We'll be in touch at {Email}.",
+        "next": {}
+      },
+      "bye2": {
+        "id": "bye2",
+        "kind": "close",
+        "name": "Say goodbye",
+        "text": "Thanks! Someone will look at this in the morning.",
+        "next": {}
+      }
+    }
+  }
+}

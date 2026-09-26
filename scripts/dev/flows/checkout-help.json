@@ -1,0 +1,155 @@
+{
+  "name": "Test - Checkout help",
+  "description": "Page: checkout. Buttons, email question, ticket, text question, tag, AI answer, handoff.",
+  "enabled": true,
+  "rules": {
+    "trigger": "page",
+    "labels": [
+      "checkout"
+    ],
+    "url": "",
+    "phrases": [],
+    "conditions": [],
+    "hours": "any",
+    "often": "chat"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "choose",
+    "steps": {
+      "choose": {
+        "id": "choose",
+        "kind": "buttons",
+        "name": "Ask what went wrong",
+        "text": "Stuck at checkout? Pick one:",
+        "buttons": [
+          {
+            "id": "pay",
+            "label": "Payment failed"
+          },
+          {
+            "id": "addr",
+            "label": "Change address"
+          },
+          {
+            "id": "other",
+            "label": "Something else"
+          }
+        ],
+        "next": {
+          "pay": "payReassure",
+          "addr": "askAddress",
+          "other": "aiHelp",
+          "typed": "aiHelp"
+        }
+      },
+      "payReassure": {
+        "id": "payReassure",
+        "kind": "message",
+        "name": "Reassure",
+        "text": "Sorry about that. Failed payments are never charged, and any hold is released within 24 hours.",
+        "next": {
+          "next": "askEmail"
+        }
+      },
+      "askEmail": {
+        "id": "askEmail",
+        "kind": "question",
+        "name": "Ask for email",
+        "text": "What email did you order with?",
+        "answer": "email",
+        "saveAs": "Email",
+        "tries": 2,
+        "retry": "That doesn't look like an email. Try again, like name@example.com.",
+        "next": {
+          "ok": "payTicket",
+          "bad": "toTeam"
+        }
+      },
+      "payTicket": {
+        "id": "payTicket",
+        "kind": "ticket",
+        "name": "Payment ticket",
+        "title": "Payment failed at checkout",
+        "contact": "Email",
+        "includeChat": true,
+        "next": {
+          "created": "ticketDone",
+          "failed": "toTeam"
+        }
+      },
+      "ticketDone": {
+        "id": "ticketDone",
+        "kind": "message",
+        "name": "Ticket confirmation",
+        "text": "Done. We've opened a ticket and will email you at {Email}.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "askAddress": {
+        "id": "askAddress",
+        "kind": "question",
+        "name": "Ask for the new address",
+        "text": "What's the new delivery address?",
+        "answer": "text",
+        "saveAs": "Address",
+        "tries": 1,
+        "retry": "Please type the new address.",
+        "next": {
+          "ok": "tagAddr",
+          "bad": "toTeam"
+        }
+      },
+      "tagAddr": {
+        "id": "tagAddr",
+        "kind": "tag",
+        "name": "Tag address change",
+        "tags": [
+          "address-change"
+        ],
+        "next": {
+          "next": "addrDone"
+        }
+      },
+      "addrDone": {
+        "id": "addrDone",
+        "kind": "message",
+        "name": "Confirm the address",
+        "text": "Thanks. I've noted: {Address}. Our delivery team will confirm it.",
+        "next": {
+          "next": "toTeam"
+        }
+      },
+      "aiHelp": {
+        "id": "aiHelp",
+        "kind": "ai",
+        "name": "Let AI answer",
+        "text": "What would you like to know?",
+        "help": "Checkout, payments and delivery",
+        "turns": 2,
+        "next": {
+          "answered": "finish",
+          "person": "toTeam",
+          "off": "toTeam"
+        }
+      },
+      "finish": {
+        "id": "finish",
+        "kind": "end",
+        "name": "Finish",
+        "text": "Anything else? Just type it here.",
+        "next": {}
+      },
+      "toTeam": {
+        "id": "toTeam",
+        "kind": "handoff",
+        "name": "Hand to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "Connecting you with our team.",
+        "next": {}
+      }
+    }
+  }
+}

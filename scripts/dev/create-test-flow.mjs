@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Creates (or updates) and PUBLISHES the "SDK test flow" on a chat console, so
-// the SDK's flow features can be tried end to end without clicking a flow
-// together by hand.
+// Creates (or updates) and PUBLISHES the test flows on a chat console, so the
+// SDK's flow features can be tried end to end without clicking flows together.
+//
+// Reads `test-flow.json` and every `flows/*.json` next to this script.
 //
 //   PowerShell:  $env:ADMIN_TOKEN = "<paste here>"; node scripts/dev/create-test-flow.mjs
 //   bash:        ADMIN_TOKEN=<paste here> node scripts/dev/create-test-flow.mjs
@@ -15,26 +16,39 @@
 //
 // Options (environment variables):
 //   BASE   API prefix. Default: https://chat-support-dev.dhaamai.com/chat-services/api/v1
-//   LABEL  Page label the flow starts on. Default: from test-flow.json ("home")
-//   DRY    Set to 1 to print what would be sent, touching nothing.
+//   ONLY   Only the flow whose name contains this text (case-insensitive).
+//   DRY    Set to 1 to print the flow names, touching nothing.
 //
-// Idempotent: a flow with the same name is UPDATED, never duplicated. Other
-// flows are read but never modified.
+// Idempotent: a flow with the same name is UPDATED, never duplicated. Flows this
+// script does not own are read but never modified. A flow whose JSON says
+// `"enabled": false` is published but left switched off.
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const HERE = dirname(fileURLToPath(import.meta.url));
 const BASE = (process.env.BASE ?? 'https://chat-support-dev.dhaamai.com/chat-services/api/v1').replace(/\/$/, '');
 const TOKEN = process.env.ADMIN_TOKEN;
 const DRY = process.env.DRY === '1';
+const ONLY = process.env.ONLY?.toLowerCase();
 
-const flow = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'test-flow.json'), 'utf8'));
-if (process.env.LABEL) flow.rules.labels = [process.env.LABEL.trim().toLowerCase()];
+const files = [
+  join(HERE, 'test-flow.json'),
+  ...readdirSync(join(HERE, 'flows'))
+    .filter((f) => f.endsWith('.json'))
+    .sort()
+    .map((f) => join(HERE, 'flows', f)),
+];
+const definitions = files
+  .map((file) => JSON.parse(readFileSync(file, 'utf8')))
+  .filter((flow) => ONLY === undefined || flow.name.toLowerCase().includes(ONLY));
 
 if (DRY) {
-  console.log('DRY RUN — nothing is sent. The flow would be:\n');
-  console.log(JSON.stringify(flow, null, 2));
+  console.log('DRY RUN — nothing is sent. These flows would be created or updated:');
+  for (const flow of definitions) {
+    console.log(`  - ${flow.name}  [starts: ${flow.rules.trigger}${flow.rules.labels.length ? ` (${flow.rules.labels})` : ''}${flow.rules.phrases.length ? ` (${flow.rules.phrases})` : ''}${flow.rules.hours !== 'any' ? `, ${flow.rules.hours}` : ''}${flow.enabled ? '' : ', OFF'}]`);
+  }
   process.exit(0);
 }
 
@@ -68,67 +82,69 @@ async function call(method, path, body) {
   return json;
 }
 
-const summarize = (f) =>
-  `${f.name}  [${f.status}${f.enabled ? ', on' : ', OFF'}]  starts: ${f.rules?.trigger}${
-    f.rules?.labels?.length ? ` (${f.rules.labels.join(',')})` : ''
-  }`;
+const start = (f) =>
+  `${f.rules?.trigger}${f.rules?.labels?.length ? ` (${f.rules.labels.join(',')})` : ''}${
+    f.rules?.phrases?.length ? ` (says: ${f.rules.phrases.join(', ')})` : ''
+  }${f.rules?.hours && f.rules.hours !== 'any' ? `, ${f.rules.hours}` : ''}`;
+const summarize = (f) => `${f.name}  [${f.status}${f.enabled ? ', on' : ', OFF'}]  starts: ${start(f)}`;
 
+let failures = 0;
 try {
-  // 1. What is on this console already (read only).
   const listed = await call('GET', '/admin/flows');
-  const flows = listed.data ?? [];
-  console.log(`Existing flows (${flows.length}):`);
-  for (const f of flows) console.log(`  - ${summarize(f)}`);
+  const existingFlows = listed.data ?? [];
+  console.log(`Flows already on this console (${existingFlows.length}):`);
+  for (const f of existingFlows) console.log(`  - ${summarize(f)}`);
   if (listed.meta?.engineEnabled === false) {
     console.warn('\n!! This server reports the flow engine is OFF (FLOWS_ENGINE_ENABLED). Published flows will not run.');
   }
 
-  // 2. Dry-run through the server's own interpreter: no side effects.
-  const simulated = await call('POST', '/admin/flows/simulate', {
-    rules: flow.rules,
-    graph: flow.graph,
-    state: null,
-    input: { type: 'start' },
-    env: { aiEnabled: false, page: { label: flow.rules.labels[0] }, deskOpen: true, aiOutcome: null },
-  });
-  const sim = simulated.data ?? {};
-  console.log(`\nSimulation: starts here = ${sim.startsHere}${sim.whyNot ? ` (${sim.whyNot})` : ''}`);
-  for (const line of sim.transcript ?? []) {
-    console.log(`  ${line.who}: ${line.text}${line.buttons ? `  [${line.buttons.map((b) => b.label).join(' | ')}]` : ''}`);
+  for (const flow of definitions) {
+    console.log(`\n== ${flow.name}`);
+    try {
+      // Dry-run through the server's own interpreter: no side effects.
+      const label = flow.rules.labels[0];
+      const simulated = await call('POST', '/admin/flows/simulate', {
+        rules: flow.rules,
+        graph: flow.graph,
+        state: null,
+        input: { type: 'start' },
+        env: { aiEnabled: false, page: label ? { label } : {}, deskOpen: flow.rules.hours !== 'open', aiOutcome: null },
+      });
+      const sim = simulated.data ?? {};
+      for (const line of sim.transcript ?? []) {
+        console.log(`   ${line.who}: ${line.text}${line.buttons ? `  [${line.buttons.map((b) => b.label).join(' | ')}]` : ''}`);
+      }
+
+      const existing = existingFlows.find((f) => f.name === flow.name);
+      const saved = existing
+        ? (await call('PUT', `/admin/flows/${existing.id}`, {
+            description: flow.description,
+            enabled: flow.enabled,
+            rules: flow.rules,
+            graph: flow.graph,
+            expectedVersion: existing.version,
+          })).data
+        : (await call('POST', '/admin/flows', flow)).data;
+      const published = (await call('POST', `/admin/flows/${saved.id}/publish`)).data;
+      console.log(`   ${existing ? 'updated' : 'created'} + published: ${summarize(published)}  (version ${published.publishedVersion})`);
+    } catch (error) {
+      failures += 1;
+      console.error(`   FAILED: ${error.message}`);
+      if (error.details) console.error(JSON.stringify(error.details, null, 2).slice(0, 800));
+    }
   }
 
-  // 3. Create, or update the same-named flow.
-  const existing = flows.find((f) => f.name === flow.name);
-  let saved;
-  if (existing) {
-    saved = (await call('PUT', `/admin/flows/${existing.id}`, {
-      description: flow.description,
-      enabled: flow.enabled,
-      rules: flow.rules,
-      graph: flow.graph,
-      expectedVersion: existing.version,
-    })).data;
-    console.log(`\nUpdated existing flow ${saved.id}`);
-  } else {
-    saved = (await call('POST', '/admin/flows', flow)).data;
-    console.log(`\nCreated flow ${saved.id}`);
+  const after = (await call('GET', '/admin/flows')).data ?? [];
+  const live = after.filter((f) => f.enabled && f.status === 'published');
+  console.log(`\nLive now (${live.length}): a page flow beats a "chat opens" flow at session creation, and nothing`);
+  console.log('interrupts a flow already running in a chat:');
+  for (const f of live) console.log(`  - ${summarize(f)}`);
+  const off = after.filter((f) => !f.enabled);
+  if (off.length > 0) {
+    console.log(`\nSwitched off (turn on in the console to test): ${off.map((f) => f.name).join(', ')}`);
   }
-
-  // 4. Publish. Only errors block it; the server says exactly which.
-  const published = (await call('POST', `/admin/flows/${saved.id}/publish`)).data;
-  console.log(`Published: ${summarize(published)}  (version ${published.publishedVersion})`);
-
-  // 5. Say what else will compete with it, since that is the usual reason a
-  //    flow "does not start".
-  const rivals = flows.filter((f) => f.id !== saved.id && f.enabled && f.status === 'published');
-  if (rivals.length > 0) {
-    console.log('\nOther live flows on this console (a page flow beats a "chat opens" flow at session creation,');
-    console.log('but nothing interrupts a flow that is already running in a chat):');
-    for (const f of rivals) console.log(`  - ${summarize(f)}`);
-  }
-  console.log(`\nDone. Try it: new guest, open the widget on the "${flow.rules.labels[0]}" page.`);
 } catch (error) {
   console.error(`\nFailed: ${error.message}`);
-  if (error.details) console.error(JSON.stringify(error.details, null, 2).slice(0, 1500));
   process.exit(1);
 }
+process.exit(failures > 0 ? 1 : 0);

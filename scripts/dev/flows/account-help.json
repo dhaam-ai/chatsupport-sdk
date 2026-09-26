@@ -1,0 +1,164 @@
+{
+  "name": "Test - Account help",
+  "description": "Page: account. Phone and number questions, a check, nested buttons, handoff.",
+  "enabled": true,
+  "rules": {
+    "trigger": "page",
+    "labels": [
+      "account"
+    ],
+    "url": "",
+    "phrases": [],
+    "conditions": [],
+    "hours": "any",
+    "often": "chat"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "menu",
+    "steps": {
+      "menu": {
+        "id": "menu",
+        "kind": "buttons",
+        "name": "Account menu",
+        "text": "How can we help with your account?",
+        "buttons": [
+          {
+            "id": "phone",
+            "label": "Update my phone"
+          },
+          {
+            "id": "rewards",
+            "label": "My rewards"
+          },
+          {
+            "id": "del",
+            "label": "Delete my account"
+          }
+        ],
+        "next": {
+          "phone": "askNewPhone",
+          "rewards": "askPoints",
+          "del": "confirmDel",
+          "typed": "toTeam"
+        }
+      },
+      "askNewPhone": {
+        "id": "askNewPhone",
+        "kind": "question",
+        "name": "Ask for the new phone",
+        "text": "What's the new phone number?",
+        "answer": "phone",
+        "saveAs": "New phone",
+        "tries": 2,
+        "retry": "Please include the digits, like +91 98765 43210.",
+        "next": {
+          "ok": "phoneDone",
+          "bad": "toTeam"
+        }
+      },
+      "phoneDone": {
+        "id": "phoneDone",
+        "kind": "message",
+        "name": "Confirm the phone",
+        "text": "Got it: {New phone}. We'll update it after a quick check.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "askPoints": {
+        "id": "askPoints",
+        "kind": "question",
+        "name": "Ask for a points guess",
+        "text": "About how many reward points do you think you have?",
+        "answer": "number",
+        "saveAs": "Points",
+        "tries": 2,
+        "retry": "Please type just a number, like 250.",
+        "next": {
+          "ok": "pointsCheck",
+          "bad": "toTeam"
+        }
+      },
+      "pointsCheck": {
+        "id": "pointsCheck",
+        "kind": "check",
+        "name": "Was a number given?",
+        "check": {
+          "what": "answer",
+          "key": "Points",
+          "op": "set",
+          "value": ""
+        },
+        "next": {
+          "yes": "pointsMsg",
+          "no": "toTeam"
+        }
+      },
+      "pointsMsg": {
+        "id": "pointsMsg",
+        "kind": "message",
+        "name": "Promise a check",
+        "text": "Thanks. I'll compare {Points} with your balance and reply.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "confirmDel": {
+        "id": "confirmDel",
+        "kind": "buttons",
+        "name": "Confirm deletion",
+        "text": "Deleting your account is permanent. Are you sure?",
+        "buttons": [
+          {
+            "id": "yes",
+            "label": "Yes, delete it"
+          },
+          {
+            "id": "no",
+            "label": "No, keep it"
+          }
+        ],
+        "next": {
+          "yes": "toTeamDel",
+          "no": "kept",
+          "typed": "kept"
+        }
+      },
+      "kept": {
+        "id": "kept",
+        "kind": "message",
+        "name": "Nothing changed",
+        "text": "Good. Nothing has changed.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "toTeamDel": {
+        "id": "toTeamDel",
+        "kind": "handoff",
+        "name": "Hand deletion to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "I'm handing you to our team to do this safely.",
+        "next": {}
+      },
+      "finish": {
+        "id": "finish",
+        "kind": "end",
+        "name": "Finish",
+        "text": "Anything else? Just type it here.",
+        "next": {}
+      },
+      "toTeam": {
+        "id": "toTeam",
+        "kind": "handoff",
+        "name": "Hand to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "Connecting you with our team.",
+        "next": {}
+      }
+    }
+  }
+}
