@@ -131,5 +131,17 @@ export function configFromAttributes(bag: AttributeBag): WidgetConfig {
     if (value !== undefined) config[key] = value;
   }
 
+  // `data-page-label` / `data-page-url`: the declarative form of `page` for a
+  // site that cannot run code on navigation. Attributes and store need an
+  // object, which a flat `data-*` value cannot express — use `setPage` for those.
+  const pageLabel = optional(bag, 'pageLabel');
+  const pageUrl = optional(bag, 'pageUrl');
+  if (pageLabel !== undefined || pageUrl !== undefined) {
+    config['page'] = {
+      ...(pageLabel === undefined ? {} : { label: pageLabel }),
+      ...(pageUrl === undefined ? {} : { url: pageUrl }),
+    };
+  }
+
   return config as unknown as WidgetConfig;
 }

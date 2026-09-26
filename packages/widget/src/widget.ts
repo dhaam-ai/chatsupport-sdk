@@ -35,6 +35,7 @@ import type {
   HeaderAppearance,
   LauncherIcon,
   LauncherStyle,
+  PageContext,
   ResolvedConfig,
   ThreadAppearance,
   WidgetConfig,
@@ -131,6 +132,14 @@ export interface ChatWidget {
   close(): void;
   toggle(): void;
   isOpen(): boolean;
+  /**
+   * Tells the server where the visitor is, so flows that start on a page can
+   * run. Call it on every route change of a single-page app; it is cheap and
+   * safe to over-call (an unchanged page sends nothing, a burst is coalesced,
+   * and the server's rate limit is respected). A `url` you leave out defaults
+   * to the current page. Never throws.
+   */
+  setPage(page: PageContext): void;
   /** The underlying store, for a host that wants to send programmatically. */
   readonly store: ChatStore;
   /** Removes every node, listener, timer, and the socket. Idempotent. */
@@ -672,6 +681,21 @@ interface ProductSurface {
 export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const config = resolveConfig(rawConfig);
   const { store, rest } = createWidgetStore(config);
+
+  // Where the visitor is. Set BEFORE anything connects, so the first hello
+  // carries it and a page flow can start when the session is created.
+  const withCurrentUrl = (page: PageContext | undefined): PageContext => {
+    const href = typeof location === 'undefined' ? undefined : location.href;
+    return { ...(href !== undefined && /^https?:/.test(href) ? { url: href } : {}), ...page };
+  };
+  const setPage = (page: PageContext | undefined): void => {
+    try {
+      store.client.setPageContext(withCurrentUrl(page));
+    } catch (error) {
+      config.onError(error);
+    }
+  };
+  setPage(config.page);
   const localParticipantId = config.identity.userId;
 
   /**
@@ -5336,6 +5360,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     close,
     toggle,
     isOpen: () => open,
+    setPage: (page) => setPage(page),
     destroy() {
       if (destroyed) return;
       destroyed = true;

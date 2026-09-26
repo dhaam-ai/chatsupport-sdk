@@ -606,8 +606,32 @@ export interface WidgetConfig {
   /** Existing session to join on connect, if the host already knows one. */
   readonly sessionId?: string;
 
+  /**
+   * Where the visitor is, so chat flows that start "on a page" can run. Sent on
+   * the hello; keep it current with `widget.setPage()` (or `DhaamChat.setPage`)
+   * on every route change. When omitted, the widget sends the page URL only.
+   * Never put personal data in `attributes`.
+   */
+  readonly page?: PageContext;
+
   /** Where widget-internal failures go. Defaults to a namespaced `console.warn`. */
   readonly onError?: (error: unknown) => void;
+}
+
+/**
+ * Where the visitor is (chatbot-workflows.md §9.1). Every field is optional and
+ * checked before it is sent: a field the server would reject is dropped on its
+ * own, so a wrong value here can never cost the visitor their chat.
+ */
+export interface PageContext {
+  /** A short page name — `home`, `product`, `cart`, `checkout`, `payment`, `order`, `account`, `search`, or your own. Lower-cased; letters, digits, `_`, `-`; at most 64. */
+  readonly label?: string;
+  /** An http(s) URL or a path, at most 2048 characters. Defaults to the current page. */
+  readonly url?: string;
+  /** Up to 20 scalar values (strings at most 200 characters). `currency` must be an ISO 4217 code. */
+  readonly attributes?: Readonly<Record<string, string | number | boolean>>;
+  /** The storefront's store, for store-scoped flows. */
+  readonly store?: { readonly id: string; readonly outletId?: string };
 }
 
 /** Everything resolved — no optionals left for the UI layer to re-default. */

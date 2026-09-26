@@ -26,7 +26,7 @@
 import { configFromAttributes } from './attributes.js';
 import { getWidget, mount } from './index.js';
 import type { ChatWidget } from './widget.js';
-import type { WidgetConfig } from './config.js';
+import type { PageContext, WidgetConfig } from './config.js';
 import type { ChatEventHandler, ChatEventName, Unsubscribe } from '@dhaam-ccrm/js';
 
 /** The API a `<script>`-tag integrator gets, on `window.DhaamChat`. */
@@ -36,6 +36,15 @@ export interface DhaamChatGlobal {
   close(): void;
   toggle(): void;
   destroy(): void;
+
+  /**
+   * Tells the server where the visitor is, so flows that start on a page can
+   * run — `DhaamChat.setPage({ label: 'checkout' })`. Call it on every route
+   * change of a single-page app. Order-independent like `on`: called before
+   * the widget exists, the latest value is held and sent on the first hello.
+   * Never throws.
+   */
+  setPage(page: PageContext): void;
 
   /**
    * Subscribes to core's §6.5 event catalog. Returns an unsubscribe.
@@ -159,8 +168,15 @@ function locateScript(): HTMLElement | null {
 function mountAndAttach(config: WidgetConfig): ChatWidget {
   const widget = mount(config);
   attachAll(widget);
+  // A page named before the widget existed. Applied before the first hello is
+  // built (the token fetch that precedes it is asynchronous), and over the
+  // config's own `page`: a runtime call is the more current of the two.
+  if (pendingPage !== undefined) widget.setPage(pendingPage);
   return widget;
 }
+
+/** The latest `DhaamChat.setPage` made while no widget was mounted. */
+let pendingPage: PageContext | undefined;
 
 function install(): void {
   const api: DhaamChatGlobal = {
@@ -168,6 +184,11 @@ function install(): void {
     open: () => getWidget()?.open(),
     close: () => getWidget()?.close(),
     toggle: () => getWidget()?.toggle(),
+    setPage: (page) => {
+      const widget = getWidget();
+      if (widget !== null) widget.setPage(page);
+      else pendingPage = page;
+    },
     destroy: () => {
       // Released BEFORE the teardown that would invalidate them, but the
       // registrations themselves are kept: a host that subscribed once and
