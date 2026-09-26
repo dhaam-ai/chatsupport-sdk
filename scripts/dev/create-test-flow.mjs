@@ -46,7 +46,9 @@ if (!TOKEN) {
 async function call(method, path, body) {
   const response = await fetch(`${BASE}${path}`, {
     method,
-    headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    // `content-type` only WITH a body: the server rejects a bodiless request that
+    // claims to be JSON ("Body cannot be empty"), which is what publish is.
+    headers: { authorization: `Bearer ${TOKEN}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
