@@ -110,12 +110,7 @@ console.log('');
 // Increased to 124 KiB (126,976 B) for the staff (admin/outlet) Messages-list
 // redesign, WhatsApp-style bubbles and the history loading spinner — ~600 B
 // over the previous ceiling, almost all of it stylesheet.
-// Increased to 128 KiB (131,072 B) for the out-of-hours bot-flow engine (step
-// parser, step machine, flow view and its stylesheet), which is what "Collect a
-// message" in the console's Behaviour settings promises and the widget used to
-// ignore. Measured 126,987 B gzip on this build — 11 B over the old ceiling —
-// so the new ceiling leaves ~4 KiB of headroom rather than a formality.
-const WIDGET_GZIP_BUDGET = 131_072;
+const WIDGET_GZIP_BUDGET = 126_976;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,

@@ -230,6 +230,8 @@ export function createConformanceChatClient(initial?: Partial<ChatState>): Confo
     // calling this is exercising real (if trivial) behaviour, not hitting an
     // operation this harness has no story for.
     setContactInfo: () => {},
+    // Advisory like contact info, and with no server to tell: a no-op.
+    setPageContext: () => {},
     submitCsat: notConfigured('submitCsat') as unknown as (
       sessionId: string,
       rating: number,
