@@ -102,6 +102,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     AttachmentUploader? attachmentUploader,
     AttachmentPicker attachmentPicker = filePickerAttachmentPicker,
     AttachmentPicker cameraAttachmentPicker = cameraImageAttachmentPicker,
+    AttachmentPicker galleryAttachmentPicker = galleryImageAttachmentPicker,
     VoiceDeviceFactory createVoiceDevice = RecordVoiceDevice.new,
   })  : _client = client,
         _createVoiceDevice = createVoiceDevice,
@@ -114,6 +115,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         _attachmentUploader = attachmentUploader,
         _attachmentPicker = attachmentPicker,
         _cameraAttachmentPicker = cameraAttachmentPicker,
+        _galleryAttachmentPicker = galleryAttachmentPicker,
         _initialSessionId = sessionId,
         _screens = ChatScreens(
           initial: initialScreen ??
@@ -277,6 +279,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// something the package already has.
   final AttachmentPicker _attachmentPicker;
   final AttachmentPicker _cameraAttachmentPicker;
+  final AttachmentPicker _galleryAttachmentPicker;
 
   /// Builds the microphone. Defaults to the real one, on `record`.
   ///
@@ -999,6 +1002,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     return AttachmentDraftController(
       picker: _attachmentPicker,
       cameraPicker: _cameraAttachmentPicker,
+      galleryPicker: _galleryAttachmentPicker,
       uploader: uploader,
       onError: onError,
     );

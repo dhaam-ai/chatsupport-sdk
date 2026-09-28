@@ -36,15 +36,18 @@ class AttachmentDraftController extends ChangeNotifier {
   AttachmentDraftController({
     required AttachmentPicker picker,
     AttachmentPicker? cameraPicker,
+    AttachmentPicker? galleryPicker,
     required AttachmentUploader uploader,
     required FormErrorReporter onError,
   })  : _picker = picker,
         _cameraPicker = cameraPicker ?? picker,
+        _galleryPicker = galleryPicker ?? picker,
         _uploader = uploader,
         _onError = onError;
 
   final AttachmentPicker _picker;
   final AttachmentPicker _cameraPicker;
+  final AttachmentPicker _galleryPicker;
   final AttachmentUploader _uploader;
   final FormErrorReporter _onError;
 
@@ -156,6 +159,12 @@ class AttachmentDraftController extends ChangeNotifier {
   /// the draft.
   Future<void> pickFromCamera() async {
     await _pickWith(_cameraPicker);
+  }
+
+  /// Asks the platform gallery for an image and, if it can be sent, makes it
+  /// the draft.
+  Future<void> pickFromGallery() async {
+    await _pickWith(_galleryPicker);
   }
 
   Future<void> _pickWith(AttachmentPicker picker) async {
