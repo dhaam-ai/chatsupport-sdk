@@ -489,6 +489,12 @@ class _ComposerState extends State<Composer> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
+                        if (attachments != null)
+                          AttachmentImageButton(
+                            controller: attachments,
+                            enabled: widget.fileUploads,
+                            composerEnabled: widget.enabled,
+                          ),
                         IconButton(
                           focusNode: _emojiButtonFocus,
                           tooltip: 'Insert an emoji',

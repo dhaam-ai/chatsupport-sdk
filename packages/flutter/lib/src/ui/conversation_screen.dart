@@ -360,7 +360,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               top: false,
               child: Padding(
                 padding:
-                    EdgeInsets.fromLTRB(8, state.consentAgreed ? 8 : 0, 8, 0),
+                    EdgeInsets.fromLTRB(8, 4, 8, 0),
                 // The ended footer is a SIBLING of the composer, not a
                 // product surface: the customer is deciding about the
                 // transcript they are looking at, and hiding it to show two

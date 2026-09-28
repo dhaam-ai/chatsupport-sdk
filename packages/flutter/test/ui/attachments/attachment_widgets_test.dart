@@ -51,6 +51,7 @@ Widget _host(Widget child) {
 void main() {
   late List<PickedAttachment?> picks;
   late List<PickedAttachment?> cameraPicks;
+  late List<PickedAttachment?> galleryPicks;
   late AttachmentDraftController controller;
 
   AttachmentDraftController build({
@@ -58,10 +59,14 @@ void main() {
   }) {
     int next = 0;
     int nextCamera = 0;
+    int nextGallery = 0;
     return AttachmentDraftController(
       picker: () async => next < picks.length ? picks[next++] : null,
       cameraPicker: () async =>
           nextCamera < cameraPicks.length ? cameraPicks[nextCamera++] : null,
+      galleryPicker: () async => nextGallery < galleryPicks.length
+          ? galleryPicks[nextGallery++]
+          : null,
       uploader: uploader ?? (PickedAttachment file) async => _meta,
       onError: _ignore,
     );
@@ -70,6 +75,13 @@ void main() {
   setUp(() {
     picks = <PickedAttachment?>[_file()];
     cameraPicks = <PickedAttachment?>[_photo()];
+    galleryPicks = <PickedAttachment?>[
+      PickedAttachment(
+        fileName: 'gallery.jpg',
+        mimeType: 'image/jpeg',
+        bytes: Uint8List(2048),
+      )
+    ];
     controller = build();
   });
 
@@ -141,6 +153,36 @@ void main() {
       await controller.pickFromCamera();
 
       expect(controller.draft?.fileName, 'camera.jpg');
+    });
+
+    test('pickFromGallery uses the gallery picker', () async {
+      controller.dispose();
+      controller = AttachmentDraftController(
+        picker: () async => _file(fileName: 'wrong-file.pdf'),
+        galleryPicker: () async => PickedAttachment(
+          fileName: 'gallery.jpg',
+          mimeType: 'image/jpeg',
+          bytes: Uint8List(2048),
+        ),
+        uploader: (PickedAttachment file) async => _meta,
+        onError: _ignore,
+      );
+
+      await controller.pickFromGallery();
+
+      expect(controller.draft?.fileName, 'gallery.jpg');
+    });
+
+    testWidgets('image button fills the draft from the gallery',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(_host(
+        AttachmentImageButton(controller: controller, enabled: true),
+      ));
+
+      await tester.tap(_iconButton('Attach an image'));
+      await tester.pump();
+
+      expect(controller.draft?.fileName, 'gallery.jpg');
     });
 
     testWidgets('is disabled while the composer itself is',

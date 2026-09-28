@@ -115,6 +115,43 @@ class AttachmentAttachButton extends StatelessWidget {
   }
 }
 
+/// The image button. Opens the platform gallery directly.
+class AttachmentImageButton extends StatelessWidget {
+  const AttachmentImageButton({
+    super.key,
+    required this.controller,
+    required this.enabled,
+    this.composerEnabled = true,
+  });
+
+  final AttachmentDraftController controller;
+
+  /// `RemoteConfig.fileUploads`. When false this widget renders nothing.
+  final bool enabled;
+
+  /// Whether the composer as a whole accepts input.
+  final bool composerEnabled;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return const SizedBox.shrink();
+
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (BuildContext context, Widget? child) {
+        final bool usable = composerEnabled && !controller.isUploading;
+        return IconButton(
+          key: const Key('composer.image'),
+          tooltip: 'Attach an image',
+          icon: const Icon(Icons.image),
+          onPressed:
+              usable ? () => unawaited(controller.pickFromGallery()) : null,
+        );
+      },
+    );
+  }
+}
+
 class _AttachmentMenuRow extends StatelessWidget {
   const _AttachmentMenuRow({required this.icon, required this.label});
 

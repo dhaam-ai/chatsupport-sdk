@@ -14,9 +14,16 @@ import 'package:mime/mime.dart';
 import 'attachment_draft.dart';
 
 /// Opens the platform camera and returns the captured image as an attachment.
-Future<PickedAttachment?> cameraImageAttachmentPicker() async {
+Future<PickedAttachment?> cameraImageAttachmentPicker() =>
+    _pickImageAttachment(ImageSource.camera);
+
+/// Opens the platform gallery and returns the selected image as an attachment.
+Future<PickedAttachment?> galleryImageAttachmentPicker() =>
+    _pickImageAttachment(ImageSource.gallery);
+
+Future<PickedAttachment?> _pickImageAttachment(ImageSource source) async {
   final XFile? image = await ImagePicker().pickImage(
-    source: ImageSource.camera,
+    source: source,
   );
   if (image == null) return null;
 
