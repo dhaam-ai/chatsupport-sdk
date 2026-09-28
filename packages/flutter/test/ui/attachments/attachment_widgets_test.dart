@@ -11,7 +11,6 @@ import 'dart:typed_data';
 import 'package:dhaam_chat/dhaam_chat.dart' show AttachmentMetadata;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 PickedAttachment _file({
@@ -25,6 +24,12 @@ PickedAttachment _file({
   );
 }
 
+PickedAttachment _photo() => PickedAttachment(
+      fileName: 'camera.jpg',
+      mimeType: 'image/jpeg',
+      bytes: Uint8List(2048),
+    );
+
 const AttachmentMetadata _meta = AttachmentMetadata(
   url: 'https://cdn.example.com/receipt.pdf',
   fileName: 'receipt.pdf',
@@ -32,6 +37,10 @@ const AttachmentMetadata _meta = AttachmentMetadata(
   size: 2048,
   mediaType: 'DOCUMENT',
 );
+
+Finder _iconButton(String tooltip) => find.byWidgetPredicate(
+      (Widget widget) => widget is IconButton && widget.tooltip == tooltip,
+    );
 
 void _ignore(Object error, StackTrace stackTrace) {}
 
@@ -41,14 +50,18 @@ Widget _host(Widget child) {
 
 void main() {
   late List<PickedAttachment?> picks;
+  late List<PickedAttachment?> cameraPicks;
   late AttachmentDraftController controller;
 
   AttachmentDraftController build({
     Future<AttachmentMetadata> Function(PickedAttachment file)? uploader,
   }) {
     int next = 0;
+    int nextCamera = 0;
     return AttachmentDraftController(
       picker: () async => next < picks.length ? picks[next++] : null,
+      cameraPicker: () async =>
+          nextCamera < cameraPicks.length ? cameraPicks[nextCamera++] : null,
       uploader: uploader ?? (PickedAttachment file) async => _meta,
       onError: _ignore,
     );
@@ -56,6 +69,7 @@ void main() {
 
   setUp(() {
     picks = <PickedAttachment?>[_file()];
+    cameraPicks = <PickedAttachment?>[_photo()];
     controller = build();
   });
 
@@ -70,7 +84,7 @@ void main() {
 
       // Absent, not disabled. A greyed paperclip invites the customer to
       // work out why; an absent one says nothing, which is the truth.
-      expect(find.byIcon(Icons.attach_file), findsNothing);
+      expect(_iconButton('Attach a file'), findsNothing);
       expect(find.byType(IconButton), findsNothing);
     });
 
@@ -80,23 +94,53 @@ void main() {
         AttachmentAttachButton(controller: controller, enabled: true),
       ));
 
-      expect(find.byIcon(Icons.attach_file), findsOneWidget);
+      expect(_iconButton('Attach a file'), findsOneWidget);
       expect(
         tester.widget<IconButton>(find.byType(IconButton)).onPressed,
         isNotNull,
       );
     });
 
-    testWidgets('picking through it fills the draft',
+    testWidgets('tapping it opens file and camera choices',
         (WidgetTester tester) async {
       await tester.pumpWidget(_host(
         AttachmentAttachButton(controller: controller, enabled: true),
       ));
 
-      await tester.tap(find.byIcon(Icons.attach_file));
+      await tester.tap(_iconButton('Attach a file'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('File'), findsOneWidget);
+      expect(find.text('Camera'), findsOneWidget);
+      expect(controller.hasDraft, isFalse);
+    });
+
+    testWidgets('picking file through it fills the draft',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(_host(
+        AttachmentAttachButton(controller: controller, enabled: true),
+      ));
+
+      await tester.tap(_iconButton('Attach a file'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('File'));
       await tester.pumpAndSettle();
 
       expect(controller.draft?.fileName, 'receipt.pdf');
+    });
+
+    test('pickFromCamera uses the camera picker', () async {
+      controller.dispose();
+      controller = AttachmentDraftController(
+        picker: () async => _file(fileName: 'wrong-file.pdf'),
+        cameraPicker: () async => _photo(),
+        uploader: (PickedAttachment file) async => _meta,
+        onError: _ignore,
+      );
+
+      await controller.pickFromCamera();
+
+      expect(controller.draft?.fileName, 'camera.jpg');
     });
 
     testWidgets('is disabled while the composer itself is',
@@ -186,7 +230,8 @@ void main() {
       expect(
         tester
             .getSemantics(find.text(kAttachmentTooLargeMessage))
-            .hasFlag(SemanticsFlag.isLiveRegion),
+            .flagsCollection
+            .isLiveRegion,
         isTrue,
       );
     });

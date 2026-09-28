@@ -101,6 +101,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     IssueReporter? issueReporter,
     AttachmentUploader? attachmentUploader,
     AttachmentPicker attachmentPicker = filePickerAttachmentPicker,
+    AttachmentPicker cameraAttachmentPicker = cameraImageAttachmentPicker,
     VoiceDeviceFactory createVoiceDevice = RecordVoiceDevice.new,
   })  : _client = client,
         _createVoiceDevice = createVoiceDevice,
@@ -112,6 +113,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         _issueReporter = issueReporter,
         _attachmentUploader = attachmentUploader,
         _attachmentPicker = attachmentPicker,
+        _cameraAttachmentPicker = cameraAttachmentPicker,
         _initialSessionId = sessionId,
         _screens = ChatScreens(
           initial: initialScreen ??
@@ -274,6 +276,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// touches no `MethodChannel` — without obliging every host to supply
   /// something the package already has.
   final AttachmentPicker _attachmentPicker;
+  final AttachmentPicker _cameraAttachmentPicker;
 
   /// Builds the microphone. Defaults to the real one, on `record`.
   ///
@@ -483,6 +486,11 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         conversationOpened: state.conversationOpened,
         hasSession: state.session != null,
         hasMessages: state.messages.isNotEmpty,
+        csatLoadingSessionId: state.messagesLoading &&
+                endedSessionId != null &&
+                state.messages.isEmpty
+            ? endedSessionId
+            : null,
         // A DECISION, not the inputs to one — see the field's own doc. It is
         // reached through [dueCsatCard] so that this and the ended footer ask
         // one question of one answerer, which is what stops the two of them
@@ -565,6 +573,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     final RestClient? rest = _rest;
     if (rest == null || _initialHistoryLimit <= 0) return;
     final int epoch = ++_historyEpoch;
+    emit(state.copyWith(messagesLoading: true));
 
     try {
       final page = await rest.listMessages(
@@ -573,6 +582,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       loadMessageHistory(page.messages);
     } catch (error, stackTrace) {
       if (isClosed || epoch != _historyEpoch) return;
+      emit(state.copyWith(messagesLoading: false));
+      _syncSurfaces();
       FlutterError.reportError(FlutterErrorDetails(
         exception: error,
         stack: stackTrace,
@@ -684,7 +695,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
       _byId[message.id] = message;
     }
     final List<ChatMessage> ordered = _orderedMessages();
-    emit(state.copyWith(messages: ordered));
+    emit(state.copyWith(messages: ordered, messagesLoading: false));
     _syncSurfaces();
   }
 
@@ -791,6 +802,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         conversationOpened: true,
         clearSelectedTopic: true,
         messages: switchingSessions ? const <ChatMessage>[] : null,
+        messagesLoading: _rest != null && _initialHistoryLimit > 0,
       ),
     );
     unawaited(_loadInitialMessageHistory(sessionId));
@@ -986,6 +998,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     if (uploader == null) return null;
     return AttachmentDraftController(
       picker: _attachmentPicker,
+      cameraPicker: _cameraAttachmentPicker,
       uploader: uploader,
       onError: onError,
     );

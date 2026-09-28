@@ -82,6 +82,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:dhaam_chat/dhaam_chat.dart' show PublishableKey;
 import 'package:flutter/services.dart';
 
+import '../../app_assets.dart';
 import '../../storage/chat_storage.dart';
 
 /// Makes the sound. Must not throw; [Chime] guards it anyway.
@@ -95,7 +96,7 @@ typedef ChimePlayerFactory = ChimePlayer Function();
 ///
 /// The same literal `pubspec.yaml` registers under `flutter: assets:`;
 /// `chime_asset_test.dart` asserts the two have not drifted.
-const String kChimeAssetPath = 'assets/chime.wav';
+const String kChimeAssetPath = AppAssets.chime;
 
 /// The key the chime has in a HOST application's asset bundle.
 ///
@@ -111,7 +112,7 @@ const String kChimeAssetPath = 'assets/chime.wav';
 /// application, so the asset is keyed `assets/chime.wav` and a lookup of the
 /// string below finds nothing. That is why `chime_asset_test.dart` reads the
 /// file from disk rather than through `rootBundle`.
-const String kChimeAssetKey = 'packages/dhaam_chat_flutter/$kChimeAssetPath';
+const String kChimeAssetKey = AppAssets.chimeBundleKey;
 
 /// The DEFAULT player: the bundled chime, through the platform's audio stack.
 ///

@@ -325,7 +325,7 @@ class HeaderMenu extends StatelessWidget {
     final ColorScheme colors = Theme.of(context).colorScheme;
 
     return PopupMenuButton<HeaderMenuAction>(
-      icon: const Icon(Icons.more_horiz),
+      icon: const Icon(Icons.more_vert),
       // The same name the reference gives its toggle. `PopupMenuButton` has
       // no `semanticLabel` of its own in this SDK (checked, not assumed) —
       // it forwards `tooltip` to the `IconButton` it builds, which is what
