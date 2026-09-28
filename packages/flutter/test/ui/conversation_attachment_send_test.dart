@@ -67,8 +67,8 @@ Widget _wrap(ChatWidgetCubit cubit) => BlocProvider<ChatWidgetCubit>.value(
       child: const MaterialApp(home: Scaffold(body: ConversationScreen())),
     );
 
-Finder get _paperclip => find.widgetWithIcon(IconButton, Icons.attach_file);
-Finder get _send => find.widgetWithIcon(IconButton, Icons.send);
+Finder get _paperclip => find.byTooltip('Attach a file');
+Finder get _send => find.byTooltip('Send message');
 Finder get _box => find.byKey(const Key('composer.message'));
 
 void main() {
@@ -117,6 +117,8 @@ void main() {
   /// Taps the paperclip and lets the (fake) picker resolve.
   Future<void> attach(WidgetTester tester) async {
     await tester.tap(_paperclip);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('File'));
     await flush(tester);
   }
 

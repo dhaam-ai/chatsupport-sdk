@@ -64,8 +64,8 @@ const List<String> _labels = <String>[
 
 const List<String> _faces = <String>['😞', '🙁', '😐', '🙂', '😄'];
 
-const String _starFilled = '★';
-const String _starEmpty = '☆';
+const IconData _starFilled = Icons.star_rounded;
+const IconData _starEmpty = Icons.star_border_rounded;
 
 /// The top of the scale. Five, in both styles and in the console.
 const int kCsatMaxScore = 5;
@@ -222,7 +222,7 @@ class _CsatCardViewState extends State<CsatCardView> {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        // crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Semantics(
@@ -287,9 +287,16 @@ class _CsatCardViewState extends State<CsatCardView> {
   Widget _option(ThemeData theme, int index) {
     final int value = index + 1;
     final bool lit = _isLit(value);
-    final String glyph = widget.style == CsatStyle.emoji
-        ? _faces[index]
-        : (lit ? _starFilled : _starEmpty);
+    final TextStyle? glyphStyle = theme.textTheme.headlineSmall?.copyWith(
+      color: lit ? theme.colorScheme.primary : null,
+    );
+    final Widget glyph = widget.style == CsatStyle.emoji
+        ? Text(_faces[index], style: glyphStyle)
+        : Icon(
+            lit ? _starFilled : _starEmpty,
+            color: glyphStyle?.color,
+            size: glyphStyle?.fontSize,
+          );
 
     return Semantics(
       key: csatOptionKey(value),
@@ -314,12 +321,7 @@ class _CsatCardViewState extends State<CsatCardView> {
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
             child: ExcludeSemantics(
-              child: Text(
-                glyph,
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  color: lit ? theme.colorScheme.primary : null,
-                ),
-              ),
+              child: glyph,
             ),
           ),
         ),
@@ -329,7 +331,7 @@ class _CsatCardViewState extends State<CsatCardView> {
 
   Widget _commentRow() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      // crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         const SizedBox(height: 12),
@@ -337,7 +339,7 @@ class _CsatCardViewState extends State<CsatCardView> {
           controller: _comment,
           maxLines: 2,
           decoration: const InputDecoration(
-            labelText: 'Tell us more',
+            // labelText: 'Tell us more',
             hintText: 'Tell us more (optional)',
             border: OutlineInputBorder(),
           ),

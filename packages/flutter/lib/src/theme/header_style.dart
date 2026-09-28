@@ -43,9 +43,9 @@ double _relativeLuminance(Color color) {
   double channel(double srgb) => srgb <= 0.03928
       ? srgb / 12.92
       : math.pow((srgb + 0.055) / 1.055, 2.4).toDouble();
-  return 0.2126 * channel(color.red / 255) +
-      0.7152 * channel(color.green / 255) +
-      0.0722 * channel(color.blue / 255);
+  return 0.2126 * channel(color.r) +
+      0.7152 * channel(color.g) +
+      0.0722 * channel(color.b);
 }
 
 /// A foreground that stays readable on [color] — mirrors `styles.ts`'s
@@ -100,9 +100,9 @@ HeaderOverlay? headerOverlay(HeaderAppearance header) {
         // 0%, 50%, 100% stops at a, 0.3a, 0 — headerLayers's own curve,
         // ported coefficient for coefficient.
         colors: <Color>[
-          Colors.black.withOpacity(a),
-          Colors.black.withOpacity(a * 0.3),
-          Colors.black.withOpacity(0),
+          Colors.black.withValues(alpha: a),
+          Colors.black.withValues(alpha: a * 0.3),
+          Colors.black.withValues(alpha: 0),
         ],
         stops: const <double>[0, 0.5, 1],
       ),

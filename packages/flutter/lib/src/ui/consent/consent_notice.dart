@@ -55,7 +55,7 @@ class ConsentNotice extends StatelessWidget {
 
     final ThemeData theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+      padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
       // The port of the reference's `role="group"` + `aria-label="Consent"`.
       // `explicitChildNodes` keeps the notice and the button as their own
       // nodes underneath it — a group that swallowed its children would
@@ -65,22 +65,21 @@ class ConsentNotice extends StatelessWidget {
         container: true,
         explicitChildNodes: true,
         label: 'Consent',
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Text(
-              text,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.tonal(
-                onPressed: onAgree,
-                child: const Text('I agree'),
+            Flexible(
+              child: Text(
+                text,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
+            ),
+            const SizedBox(width: 5),
+            FilledButton(
+              onPressed: onAgree,
+              child: const Text('I agree'),
             ),
           ],
         ),

@@ -10,6 +10,7 @@
 /// `dhaam_chat.dart` itself has.
 library;
 
+export 'src/app_assets.dart';
 export 'src/chat_widget.dart';
 // `remote_config.dart` re-exports `appearance.dart` itself (the two are one
 // module split across two files — see remote_config.dart's header), so these

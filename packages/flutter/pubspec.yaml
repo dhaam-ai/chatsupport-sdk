@@ -46,20 +46,21 @@ dependencies:
   # verified by running it, not assumed — so 6.3.1 is the one both apps and
   # this package can actually share. https://pub.dev/packages/url_launcher
   url_launcher: ^6.3.1
-  # The platform file chooser behind `AttachmentPicker`
-  # (`lib/src/ui/attachments/`). Chosen over `image_picker` — which was the
-  # other candidate — because `composer.ts`, the surface this ports, has ONE
-  # attach affordance, not a photo button and a file button; `file_picker`
-  # covers both a document and a gallery pick through `FileType`, while
-  # `image_picker` would additionally oblige every host to declare camera
-  # permission strings for a camera path the reference widget does not have.
-  # A second plugin duplicating the first's capability could not be given an
-  # honest rationale here, which this file requires of every entry.
+  # The platform file chooser behind the composer's File attachment action
+  # (`lib/src/ui/attachments/`). Camera capture lives on `image_picker` below;
+  # keeping documents and camera as separate plugin calls is what lets the UI
+  # show separate "File" and "Camera" choices without a camera press opening a
+  # document browser.
   # ^11.0.3, not the newer ^12: `flutter pub get` here resolves 11.0.3 and
   # reports 12.2.0 as "incompatible with dependency constraints" — verified by
   # running it, the same way the url_launcher pin above was.
   # https://pub.dev/packages/file_picker
   file_picker: ^11.0.3
+  # The camera capture path behind the composer's Camera attachment action.
+  # Hosts that enable this path must include the native camera/photo
+  # permission strings required by image_picker for their target platforms.
+  # https://pub.dev/packages/image_picker
+  image_picker: ^1.1.2
   # Resolves a picked file's media type, which `file_picker` does not report:
   # `PlatformFile` carries a name, a size and bytes, and no MIME at all.
   # Without this every Dart-originated upload would declare
@@ -212,6 +213,7 @@ dependencies:
   # `packages/dhaam_chat_flutter/assets/chime.wav` with no host wiring.
   # https://pub.dev/packages/audioplayers
   audioplayers: ^6.4.0
+  flutter_svg: ^2.0.10
 
 dev_dependencies:
   flutter_test:
@@ -254,3 +256,4 @@ dev_dependencies:
 flutter:
   assets:
     - assets/chime.wav
+    - assets/icons/

@@ -18,7 +18,9 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
+import '../app_assets.dart';
 import '../nav/chat_screens.dart';
 
 /// Capped, same as `nav.ts`'s own badge: "the badge is a 16px disc and a
@@ -51,30 +53,39 @@ class ChatBottomNav extends StatelessWidget {
       // Tracks the theme's own surface rather than a hardcoded white, so
       // this bar matches whichever brightness chatThemeData resolved to.
       color: Theme.of(context).colorScheme.surface,
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: <Widget>[
-            if (showHome)
-              Expanded(
-                child: _NavTab(
-                  icon: Icons.home_rounded,
-                  label: 'Home',
-                  selected: active == ScreenName.home,
-                  onTap: () => onSelect(ScreenName.home),
-                ),
-              ),
-            Expanded(
-              child: _NavTab(
-                icon: Icons.forum_outlined,
-                label: 'Messages',
-                selected: active == ScreenName.messages,
-                unreadCount: unreadCount,
-                onTap: () => onSelect(ScreenName.messages),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Divider(height: 8, thickness: 0.5),
+          SafeArea(
+            top: false,
+            child: IntrinsicHeight(
+              child: Row(
+                children: <Widget>[
+                  if (showHome)
+                    Expanded(
+                      child: _NavTab(
+                        iconAsset: AppAssets.homeIcon,
+                        label: 'Home',
+                        selected: active == ScreenName.home,
+                        onTap: () => onSelect(ScreenName.home),
+                      ),
+                    ),
+                  if (showHome) const VerticalDivider(width: 1, thickness: 0.5),
+                  Expanded(
+                    child: _NavTab(
+                      iconAsset: AppAssets.messagesIcon,
+                      label: 'Messages',
+                      selected: active == ScreenName.messages,
+                      unreadCount: unreadCount,
+                      onTap: () => onSelect(ScreenName.messages),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -82,14 +93,14 @@ class ChatBottomNav extends StatelessWidget {
 
 class _NavTab extends StatelessWidget {
   const _NavTab({
-    required this.icon,
+    required this.iconAsset,
     required this.label,
     required this.selected,
     required this.onTap,
     this.unreadCount = 0,
   });
 
-  final IconData icon;
+  final String iconAsset;
   final String label;
   final bool selected;
   final VoidCallback onTap;
@@ -100,7 +111,13 @@ class _NavTab extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final Color color = selected ? scheme.primary : scheme.onSurfaceVariant;
 
-    Widget iconWidget = Icon(icon, color: color);
+    Widget iconWidget = SvgPicture.asset(
+      iconAsset,
+      package: AppAssets.packageName,
+      width: 24,
+      height: 24,
+      colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
+    );
     if (unreadCount > 0) {
       // Badge.count exists on this SDK (Flutter 3.24.4) but caps at 999+
       // with no way to lower that (verified against the pinned SDK's own

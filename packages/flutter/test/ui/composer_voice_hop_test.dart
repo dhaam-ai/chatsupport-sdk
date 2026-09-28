@@ -57,7 +57,7 @@ void _ignore(Object error, StackTrace stackTrace) {}
 Uint8List _audio([int size = 3]) => Uint8List(size);
 
 Finder get _mic => find.byKey(const Key('composer.voice'));
-Finder get _send => find.widgetWithIcon(IconButton, Icons.send);
+Finder get _send => find.byTooltip('Send message');
 
 void main() {
   late List<PickedAttachment> uploadedFiles;

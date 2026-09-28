@@ -14,8 +14,12 @@
 /// whatever row T13 settles on.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../../app_assets.dart';
+import '../svg_asset_icon.dart';
 import 'attachment_draft.dart';
 import 'attachment_draft_controller.dart';
 
@@ -65,12 +69,67 @@ class AttachmentAttachButton extends StatelessWidget {
         final bool usable = composerEnabled && !controller.isUploading;
         return IconButton(
           tooltip: 'Attach a file',
-          icon: const Icon(Icons.attach_file),
+          icon: const SvgAssetIcon(AppAssets.attachmentIcon),
           // Matches the web original's `aria-label`, which is the same
           // string. A paperclip glyph names nothing on its own.
-          onPressed: usable ? controller.pick : null,
+          onPressed: usable ? () => _showAttachmentMenu(context) : null,
         );
       },
+    );
+  }
+
+  Future<void> _showAttachmentMenu(BuildContext context) async {
+    final RenderBox button = context.findRenderObject()! as RenderBox;
+    final RenderBox overlay =
+        Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final Offset topLeft = button.localToGlobal(Offset.zero, ancestor: overlay);
+    final Rect buttonRect = topLeft & button.size;
+
+    await showMenu<void>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        buttonRect.left,
+        buttonRect.top,
+        overlay.size.width - buttonRect.right,
+        overlay.size.height - buttonRect.bottom,
+      ),
+      items: <PopupMenuEntry<void>>[
+        PopupMenuItem<void>(
+          key: const Key('attachment.menu.file'),
+          onTap: () => unawaited(controller.pick()),
+          child: const _AttachmentMenuRow(
+            icon: Icons.insert_drive_file_outlined,
+            label: 'File',
+          ),
+        ),
+        PopupMenuItem<void>(
+          key: const Key('attachment.menu.camera'),
+          onTap: () => unawaited(controller.pickFromCamera()),
+          child: const _AttachmentMenuRow(
+            icon: Icons.photo_camera_outlined,
+            label: 'Camera',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AttachmentMenuRow extends StatelessWidget {
+  const _AttachmentMenuRow({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Icon(icon, size: 18),
+        const SizedBox(width: 12),
+        Text(label),
+      ],
     );
   }
 }

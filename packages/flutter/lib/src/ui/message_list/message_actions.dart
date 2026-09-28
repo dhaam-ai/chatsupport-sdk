@@ -39,6 +39,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
+import '../../app_assets.dart';
+import '../svg_asset_icon.dart';
+
 /// How long the Copy item shows its outcome before the menu closes itself.
 ///
 /// Long enough to be read, short enough that the menu does not feel stuck.
@@ -263,6 +266,18 @@ class _MessageActionsState extends State<MessageActions> {
 
   @override
   Widget build(BuildContext context) {
+    final VoidCallback? onReply = widget.onReply;
+    if (onReply != null) {
+      return IconButton(
+        focusNode: _toggleFocus,
+        tooltip: 'Reply',
+        iconSize: 18,
+        visualDensity: VisualDensity.compact,
+        onPressed: onReply,
+        icon: const SvgAssetIcon(AppAssets.replyToIcon, size: 18),
+      );
+    }
+
     return Focus(
       onKeyEvent: _onKey,
       skipTraversal: true,
@@ -330,15 +345,6 @@ class _MessageActionsState extends State<MessageActions> {
                           ? null
                           : () => unawaited(_controller.copy(widget.onCopy)),
                     ),
-                    if (widget.onReply != null)
-                      _MenuItem(
-                        icon: Icons.reply_rounded,
-                        label: 'Reply',
-                        onPressed: () {
-                          _controller.close();
-                          widget.onReply!();
-                        },
-                      ),
                   ],
                 ),
               ),

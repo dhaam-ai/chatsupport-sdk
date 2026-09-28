@@ -235,8 +235,10 @@ class _ChatWidgetState extends State<ChatWidget> {
                                 HomeScreen(onClose: widget.onClose),
                               ScreenName.messages => MessagesScreen(
                                   onBack: widget.showHomeTab
-                                      ? null
-                                      : widget.cubit.showConversation),
+                                      ? () => widget.cubit
+                                          .switchTab(ScreenName.home)
+                                      : widget.cubit.showConversation,
+                                  onClose: widget.onClose),
                               ScreenName.conversation => ConversationScreen(
                                   onConversationEnded: widget.onClose,
                                 ),
@@ -244,7 +246,8 @@ class _ChatWidgetState extends State<ChatWidget> {
                           ),
                         ],
                       ),
-                bottomNavigationBar: widget.showBottomNav
+                bottomNavigationBar: widget.showBottomNav &&
+                        state.screen != ScreenName.conversation
                     ? ChatBottomNav(
                         active: state.screen,
                         unreadCount: state.unreadCount,
@@ -289,17 +292,27 @@ class _ConversationAppBar extends StatelessWidget
       // server-side, so a departed agent's name stayed in the header. It
       // also fell back to the literal 'Conversation' rather than the
       // merchant's own configured title.
-      title: IdentityHeader(
-        session: state.session,
-        // `config.title` is the merchant's; 'Conversation' stays the last
-        // resort for a tenant that published none. Composing a new
-        // conversation outranks both — there is nobody to name yet.
-        fallbackTitle: state.composingNew
-            ? 'New conversation'
-            : (state.config.title ?? 'Conversation'),
+      title: Row(
+        children: [
+          HeaderAvatar(session: state.session, config: state.config),
+          SizedBox(width: 10,),
+          IdentityHeader(
+            session: state.session,
+            // `config.title` is the merchant's; 'Conversation' stays the last
+            // resort for a tenant that published none. Composing a new
+            // conversation outranks both — there is nobody to name yet.
+            fallbackTitle: state.composingNew
+                ? 'New conversation'
+                : (state.config.title ?? 'Conversation'),
+          ),
+        ],
       ),
+      titleSpacing: 0,
       leading: state.canGoBack
-          ? BackButton(onPressed: cubit.back)
+          ? IconButton(
+        onPressed: cubit.back,
+        icon: const Icon(Icons.arrow_back_ios_new_rounded),
+      )
           : onClose == null
               ? null
               : IconButton(
@@ -310,7 +323,7 @@ class _ConversationAppBar extends StatelessWidget
       actions: <Widget>[
         // Reads the SAME `isHandledByCurrent` gate the title does, which is
         // what stops a face of Ada sitting beside "Acme Support".
-        HeaderAvatar(session: state.session, config: state.config),
+
         HeaderMenu(
           canEnd: cubit.canEndConversation,
           privacyUrl: state.config.privacyUrl,
