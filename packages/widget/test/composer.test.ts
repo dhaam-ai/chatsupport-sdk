@@ -2,8 +2,9 @@
 //
 // Focused on what this file's slices changed: the box that nests the icon row
 // inside the input's own border, the link popover that replaced the browser
-// prompt, and the suggestion path (`submit(text)`) the bot's chips go
-// through. Every other composer behaviour (attach, emoji, mic, typed send)
+// prompt, the suggestion path (`submit(text)`) the bot's chips go through,
+// and what a picked file must be before it can become a pending attachment.
+// Every other composer behaviour (emoji, mic, typed send)
 // already has incidental coverage across the integration suites
 // (remote-config-gating.test.ts, widget-dom.test.ts, connecting-state.test.ts
 // and others) and is left alone here rather than backfilled — see the
@@ -388,4 +389,236 @@ describe('the reply chip', () => {
     chip(composer).querySelector<HTMLButtonElement>('.dh-reply-clear')!.click();
     expect(onCancelReply).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('picking a file', () => {
+  const MIB = 1024 * 1024;
+  const TYPE_REFUSAL =
+    'That type of file cannot be sent. Try a photo, a video (MP4, WebM or MOV), an audio clip, a PDF or an Office document.';
+
+  // jsdom has no object URLs; the image thumbnail needs one. Spies, so the
+  // revoke bookkeeping can be asserted on, not just survived.
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let revokeObjectURL: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    let next = 0;
+    createObjectURL = vi.fn(() => `blob:preview-${(next += 1)}`);
+    revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+  });
+  afterEach(() => {
+    // Destroyed here, before the stubs go: destroy() revokes, and the outer
+    // afterEach that would otherwise do it runs after this one.
+    for (const composer of built.splice(0)) composer.destroy();
+    Reflect.deleteProperty(URL, 'createObjectURL');
+    Reflect.deleteProperty(URL, 'revokeObjectURL');
+  });
+
+  const fileInput = (composer: ComposerView) => composer.node.querySelector<HTMLInputElement>('input.dh-file')!;
+  const preview = (composer: ComposerView) => composer.node.querySelector<HTMLElement>('.dh-preview')!;
+  const errorLine = (composer: ComposerView) => composer.node.querySelector<HTMLElement>('.dh-error')!;
+
+  /** A File whose reported size is `size`, without allocating it. */
+  function file(name: string, type: string, size = 1024): File {
+    const picked = new File(['x'], name, { type });
+    Object.defineProperty(picked, 'size', { value: size });
+    return picked;
+  }
+
+  /** Whichever input the "Attach an image" button actually opens — not a selector guess. */
+  function imageInput(composer: ComposerView): HTMLInputElement {
+    let opened: HTMLInputElement | null = null;
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) {
+      opened = this;
+    });
+    composer.node.querySelector<HTMLButtonElement>('button[aria-label="Attach an image"]')!.click();
+    click.mockRestore();
+    expect(opened).not.toBe(fileInput(composer));
+    return opened!;
+  }
+
+  /** What the OS picker does: set the input's files, then fire `change`. */
+  function pick(composer: ComposerView, picked: File, inputEl = fileInput(composer)): void {
+    Object.defineProperty(inputEl, 'files', { value: [picked], configurable: true });
+    inputEl.dispatchEvent(new Event('change'));
+  }
+
+  function expectRefused(composer: ComposerView, message: string): void {
+    expect(errorLine(composer).hidden).toBe(false);
+    expect(errorLine(composer).textContent).toBe(message);
+    expect(preview(composer).hidden).toBe(true);
+    expect(sendButton(composer).disabled).toBe(true);
+  }
+
+  describe('the picker hint', () => {
+    it('offers the video types the server takes, including an iPhone .mov', () => {
+      const { composer } = build();
+      const accepted = fileInput(composer).accept.split(',');
+      expect(accepted).toContain('video/mp4');
+      expect(accepted).toContain('video/quicktime');
+      expect(accepted).toContain('video/webm');
+    });
+
+    it('leaves SVG out — it is a scriptable document once served back from the CDN', () => {
+      const { composer } = build();
+      expect(fileInput(composer).accept.split(',')).not.toContain('image/svg+xml');
+    });
+  });
+
+  describe('size', () => {
+    it('accepts a file of exactly 50 MiB — the server’s own cap', () => {
+      const { composer } = build();
+      pick(composer, file('clip.mp4', 'video/mp4', 50 * MIB));
+      expect(preview(composer).hidden).toBe(false);
+      expect(errorLine(composer).hidden).toBe(true);
+      expect(sendButton(composer).disabled).toBe(false);
+    });
+
+    it('refuses one byte over, naming the limit', () => {
+      const { composer } = build();
+      pick(composer, file('clip.mp4', 'video/mp4', 50 * MIB + 1));
+      expectRefused(composer, 'That file is too large. The limit is 50.0 MB.');
+    });
+  });
+
+  describe('type', () => {
+    it.each([
+      ['an executable', 'setup.exe', 'application/x-msdownload'],
+      ['a file the browser could not type', 'mystery', ''],
+      ['an SVG, which the server would take but the CDN would serve as a document', 'logo.svg', 'image/svg+xml'],
+      ['a video type the server does not list', 'clip.mkv', 'video/x-matroska'],
+    ])('refuses %s, saying what can be sent', (_label, name, type) => {
+      const { composer, onSendAttachment } = build();
+      pick(composer, file(name, type));
+      expectRefused(composer, TYPE_REFUSAL);
+      expect(onSendAttachment).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['video/mp4'],
+      ['video/quicktime'],
+      ['video/webm'],
+      ['image/jpeg'],
+      ['application/pdf'],
+      ['text/csv'],
+      // The server judges the base type; parameters do not make it a different one.
+      ['video/mp4; codecs="avc1.42E01E"'],
+    ])('accepts %s', (type) => {
+      const { composer } = build();
+      pick(composer, file('f', type));
+      expect(preview(composer).hidden).toBe(false);
+      expect(errorLine(composer).hidden).toBe(true);
+    });
+
+    it('refuses on type before size — shrinking an .exe would not help', () => {
+      const { composer } = build();
+      pick(composer, file('setup.exe', 'application/x-msdownload', 50 * MIB + 1));
+      expect(errorLine(composer).textContent).toBe(TYPE_REFUSAL);
+    });
+
+    it('sends what it accepted', async () => {
+      const { composer, onSendAttachment } = build();
+      const clip = file('clip.mov', 'video/quicktime');
+      pick(composer, clip);
+      sendButton(composer).click();
+      await vi.waitFor(() => expect(onSendAttachment).toHaveBeenCalledWith(clip));
+    });
+  });
+
+  describe('the image button', () => {
+    it('offers only the image types the server stores — no SVG, no HEIC', () => {
+      const { composer } = build();
+      expect(imageInput(composer).accept).toBe('image/jpeg,image/png,image/gif,image/webp');
+    });
+
+    it('refuses an SVG in the same words as the file picker', () => {
+      const { composer } = build();
+      pick(composer, file('logo.svg', 'image/svg+xml'), imageInput(composer));
+      expectRefused(composer, TYPE_REFUSAL);
+    });
+
+    it('refuses an image over the 50 MB cap with the cap the composer enforces', () => {
+      const { composer } = build();
+      pick(composer, file('huge.png', 'image/png', 50 * MIB + 1), imageInput(composer));
+      expectRefused(composer, 'That file is too large. The limit is 50.0 MB.');
+    });
+
+    it('replaces a pending video: its glyph goes, and the new thumb is the only preview', () => {
+      const { composer } = build();
+      pick(composer, file('clip.mp4', 'video/mp4'));
+      pick(composer, file('photo.png', 'image/png'), imageInput(composer));
+
+      expect(composer.node.querySelector<HTMLElement>('.dh-preview-glyph')!.hidden).toBe(true);
+      expect(composer.node.querySelector<HTMLImageElement>('.dh-preview-thumb')!.hidden).toBe(false);
+      expect(composer.node.querySelector('.dh-preview-name')?.textContent).toBe('photo.png');
+      expect(sendButton(composer).disabled).toBe(false);
+    });
+
+    it('revokes the previous image preview when a second image is picked', () => {
+      const { composer } = build();
+      pick(composer, file('a.png', 'image/png'), imageInput(composer));
+      pick(composer, file('b.png', 'image/png'), imageInput(composer));
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview-1');
+    });
+  });
+
+  describe('the pending-attachment preview', () => {
+    const thumb = (composer: ComposerView) => composer.node.querySelector<HTMLImageElement>('.dh-preview-thumb')!;
+    const glyph = (composer: ComposerView) => composer.node.querySelector<HTMLElement>('.dh-preview-glyph')!;
+
+    it('shows a video’s name, size and a video glyph in the thumb slot', () => {
+      const { composer } = build();
+      pick(composer, file('clip.mp4', 'video/mp4', 12 * MIB));
+
+      expect(preview(composer).hidden).toBe(false);
+      expect(composer.node.querySelector('.dh-preview-name')?.textContent).toBe('clip.mp4');
+      expect(composer.node.querySelector('.dh-preview-size')?.textContent).toBe('12.0 MB');
+      expect(glyph(composer).hidden).toBe(false);
+      expect(glyph(composer).querySelector('svg[aria-hidden="true"] path')).not.toBeNull();
+      expect(thumb(composer).hidden).toBe(true);
+      // No object URL for a video: nothing to decode, nothing to revoke.
+      expect(createObjectURL).not.toHaveBeenCalled();
+    });
+
+    it('keeps the glyph off an image, which gets its own thumbnail', () => {
+      const { composer } = build();
+      pick(composer, file('photo.jpg', 'image/jpeg'));
+
+      expect(glyph(composer).hidden).toBe(true);
+      expect(thumb(composer).hidden).toBe(false);
+      expect(thumb(composer).getAttribute('src')).toBe('blob:preview-1');
+    });
+
+    it('revokes the image’s object URL when a video replaces it, and draws no stale thumb', () => {
+      const { composer } = build();
+      pick(composer, file('photo.jpg', 'image/jpeg'));
+      pick(composer, file('clip.mov', 'video/quicktime'));
+
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview-1');
+      expect(thumb(composer).hasAttribute('src')).toBe(false);
+      expect(glyph(composer).hidden).toBe(false);
+    });
+
+    it('drops the glyph when a video is replaced by an image', () => {
+      const { composer } = build();
+      pick(composer, file('clip.mov', 'video/quicktime'));
+      pick(composer, file('photo.jpg', 'image/jpeg'));
+
+      expect(glyph(composer).hidden).toBe(true);
+      expect(thumb(composer).hidden).toBe(false);
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+    });
+
+    it('clears the glyph with the attachment', () => {
+      const { composer } = build();
+      pick(composer, file('clip.mp4', 'video/mp4'));
+      composer.node.querySelector<HTMLButtonElement>('button[aria-label="Remove attachment"]')!.click();
+
+      expect(preview(composer).hidden).toBe(true);
+      expect(glyph(composer).hidden).toBe(true);
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+    });
+  });
+
 });

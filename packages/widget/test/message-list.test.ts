@@ -618,6 +618,94 @@ describe('rendering', () => {
   });
 });
 
+describe('a video attachment', () => {
+  const url = 'https://cdn.example.com/files/clip.mov';
+
+  function renderVideo(attachmentUrl: string, mimeType = 'video/quicktime') {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({
+            senderId: AGENT,
+            senderType: 'AGENT',
+            content: attachmentUrl,
+            attachment: { url: attachmentUrl, fileName: 'clip.mov', mimeType, mediaType: 'video', size: 10 },
+          }),
+        ],
+      }),
+      ME,
+    );
+    return view;
+  }
+
+  it('plays inline: src, controls, metadata-only preload, inline on iOS, and a name', () => {
+    const view = renderVideo(url);
+    const video = view.log.querySelector<HTMLVideoElement>('video.dh-attachment-video');
+
+    expect(video).not.toBeNull();
+    expect(video!.getAttribute('src')).toBe(url);
+    expect(video!.hasAttribute('controls')).toBe(true);
+    expect(video!.getAttribute('preload')).toBe('metadata');
+    expect(video!.hasAttribute('playsinline')).toBe(true);
+    expect(video!.getAttribute('aria-label')).toBe('Video: clip.mov');
+    // No link alongside it while it is playable.
+    expect(view.log.querySelector('a.dh-attachment')).toBeNull();
+  });
+
+  // Chrome's canPlayType says '' for video/quicktime yet usually decodes an
+  // iPhone .mov — a type hint would refuse the most common video sent.
+  it('carries no type hint, on the element or on a <source> child', () => {
+    const view = renderVideo(url);
+    expect(view.log.querySelector('video')!.hasAttribute('type')).toBe(false);
+    expect(view.log.querySelector('video source')).toBeNull();
+  });
+
+  it.each([
+    'javascript:alert(1)',
+    'data:video/mp4;base64,AAAA',
+    '\u0000javascript:alert(1)',
+  ])('refuses %j as a video source — no <video>, no link', (unsafe) => {
+    const view = renderVideo(unsafe, 'video/mp4');
+    expect(view.log.querySelector('video')).toBeNull();
+    expect(view.log.querySelector('a[href]')).toBeNull();
+  });
+
+  it('swaps in the download link when the browser cannot play it', () => {
+    const view = renderVideo('https://cdn.example.com/files/clip.avi', 'video/x-msvideo');
+    const video = view.log.querySelector('video')!;
+    const wrapper = video.parentElement!;
+
+    video.dispatchEvent(new Event('error'));
+
+    expect(view.log.querySelector('video')).toBeNull();
+    const link = wrapper.querySelector<HTMLAnchorElement>('a.dh-attachment');
+    expect(link).not.toBeNull();
+    expect(link!.getAttribute('href')).toBe('https://cdn.example.com/files/clip.avi');
+    expect(link!.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(link!.textContent).toBe('clip.mov');
+    // Still inside the bubble, where the row's keyed attachment node is.
+    expect(wrapper.closest('.dh-msg')).not.toBeNull();
+  });
+
+  it('keeps the fallback link across a re-render — the row does not rebuild the player', () => {
+    const { view } = build();
+    const attached = message({
+      senderId: AGENT,
+      senderType: 'AGENT',
+      content: url,
+      attachment: { url, fileName: 'clip.mov', mimeType: 'video/quicktime', mediaType: 'video', size: 10 },
+    });
+    view.render(state({ messages: [attached] }), ME);
+    view.log.querySelector('video')!.dispatchEvent(new Event('error'));
+
+    view.render(state({ messages: [attached] }), ME);
+
+    expect(view.log.querySelector('video')).toBeNull();
+    expect(view.log.querySelectorAll('a.dh-attachment')).toHaveLength(1);
+  });
+});
+
 describe('describing an attachment to the live region', () => {
   // Goes through the actual announcement path (an incoming message from the
   // agent) rather than reaching into the module, since `describeContent` is
@@ -626,6 +714,7 @@ describe('describing an attachment to the live region', () => {
   const cases: Array<[string, string]> = [
     ['image/png', 'sent an image'],
     ['audio/webm', 'sent a voice message'],
+    ['video/mp4', 'sent a video'],
     ['application/pdf', 'sent a file'],
   ];
 

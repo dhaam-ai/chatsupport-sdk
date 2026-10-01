@@ -1656,13 +1656,18 @@ button {
   text-decoration: underline;
   color: inherit;
 }
-.dh-attachment-image {
+.dh-attachment-image,
+.dh-attachment-video {
   display: block;
   max-width: 100%;
   max-height: 220px;
   border-radius: 8px;
   margin-top: calc(var(--dh-space) * 1);
 }
+/* Black, not the bubble colour: with preload="metadata" and no poster the
+   player can be an empty box until played, and black is what reads as
+   "video" rather than as a rendering fault. */
+.dh-attachment-video { max-height: 240px; background: #000; }
 .dh-audio { margin-top: calc(var(--dh-space) * 1); max-width: 100%; }
 
 .dh-empty {
@@ -2607,6 +2612,17 @@ button {
   border-radius: 6px;
   object-fit: cover;
   flex: none;
+}
+/* Same 40px slot as the image thumb, so a video's row lines up with a photo's. */
+.dh-preview-glyph {
+  width: 40px; height: 40px;
+  border-radius: 6px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--dh-surface);
+  border: 1px solid var(--dh-border);
+  color: var(--dh-text-muted);
 }
 .dh-preview-name {
   flex: 1;

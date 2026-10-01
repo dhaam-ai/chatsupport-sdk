@@ -15,8 +15,43 @@ import type { EmojiPickerView } from './emoji.js';
 import { createVoiceRecorder } from './voice.js';
 import type { VoiceRecorder } from './voice.js';
 
-/** Above this, the browser will reject or the server will 413. Refused with words, not silence. */
-const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+/**
+ * The upload endpoint's own cap (chat-service-node computes it as
+ * `50 * 1024 * 1024`). Above this the server refuses, so it is refused here
+ * first, with words, not silence.
+ */
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+
+/**
+ * The types `POST /chat-services/api/v1/upload` accepts — chat-service-node's
+ * `ALLOWED_MIME_TYPES` in s3-client.ts, which judges the BASE type with any
+ * `;params` stripped — minus one.
+ *
+ * Mirrored rather than left to the server because a refused upload is
+ * invisible: core's `sendAttachment` records the failure in `lastError`
+ * instead of rejecting, and nothing in the widget shows that. So the composer
+ * refuses at pick time whatever the server would refuse, or the customer
+ * watches a file "send" and silently vanish.
+ *
+ * `image/svg+xml` is the one deliberate omission. The server accepts it, but
+ * an SVG served back from the attachment CDN is a document that can carry
+ * script — a stored-XSS vector against anyone who opens the link. Refusing it
+ * here only narrows what the server allows; nothing the server would refuse
+ * gets through.
+ *
+ * If the server's list changes, change this one with it.
+ */
+const ACCEPTED_ATTACHMENT_TYPES: readonly string[] = [
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+  'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo',
+  'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain', 'text/csv',
+];
 
 /**
  * Heroicons' `link` outline, lifted verbatim from the installed package —
@@ -29,6 +64,16 @@ const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
  */
 const LINK_ICON = [
   'M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244',
+];
+
+/**
+ * Heroicons' `video-camera` outline, verbatim from
+ * `node_modules/@heroicons/react/24/outline/VideoCameraIcon.js` (v2.2.0) in
+ * `chatsupport_react` — same sourcing, and same reason for living here rather
+ * than in `ICONS`, as {@link LINK_ICON}: the attachment preview is its only user.
+ */
+const VIDEO_ICON = [
+  'm15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z',
 ];
 
 /**
@@ -101,6 +146,13 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
 
   // ── attachment preview ────────────────────────────────────────────────
   const previewThumb = el('img', { attrs: { class: 'dh-preview-thumb', alt: '' } });
+  // A glyph, not a decoded first frame: getting a frame means loading up to
+  // 50 MB into a <video> on a phone just to draw 40px of it. Decorative, like
+  // the thumb's empty alt — the file name beside it says what it is.
+  const previewGlyph = el('span', {
+    attrs: { class: 'dh-preview-glyph', hidden: true },
+    children: [icon(VIDEO_ICON, 20)],
+  });
   const previewName = el('span', { attrs: { class: 'dh-preview-name' } });
   const previewSize = el('span', { attrs: { class: 'dh-preview-size' } });
   const previewClear = el('button', {
@@ -110,7 +162,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   });
   const preview = el('div', {
     attrs: { class: 'dh-preview', hidden: true },
-    children: [previewThumb, previewName, previewSize, previewClear],
+    children: [previewThumb, previewGlyph, previewName, previewSize, previewClear],
   });
 
   // ── recording strip ───────────────────────────────────────────────────
@@ -135,34 +187,35 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
 
   // ── controls ──────────────────────────────────────────────────────────
   const fileInput = el('input', {
-    attrs: { class: 'dh-file', type: 'file', tabindex: '-1', 'aria-hidden': 'true' },
-    on: { change: () => acceptFile() },
+    attrs: {
+      class: 'dh-file',
+      type: 'file',
+      tabindex: '-1',
+      'aria-hidden': 'true',
+      // A hint that steers the OS picker, not a gate — the picker lets the
+      // customer switch to "all files" — so `acceptFile` checks again
+      // (https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/accept).
+      accept: ACCEPTED_ATTACHMENT_TYPES.join(','),
+    },
+    on: { change: () => acceptFile(fileInput) },
   });
 
+  // The image button's picker. Same gate as the file input, through the same
+  // `acceptFile`, so a photo is refused in the same words, under the same 50 MB
+  // cap, and replaces a pending attachment (revoking its preview) exactly as a
+  // picked file does. `accept` is the image half of the server's list rather
+  // than `image/*`, which would offer SVG and HEIC: one the composer refuses,
+  // the other the server does.
   const imageInput = el('input', {
-    attrs: { class: 'dh-file', type: 'file', accept: 'image/*', tabindex: '-1', 'aria-hidden': 'true', hidden: true },
-    on: {
-      change: () => {
-        const file = (imageInput as HTMLInputElement).files?.[0];
-        if (file) {
-          if (file.size > MAX_ATTACHMENT_BYTES) {
-            report(new Error('File too large'), 'Files must be under 25 MB.');
-            (imageInput as HTMLInputElement).value = '';
-            return;
-          }
-          pendingFile = file;
-          previewName.textContent = file.name;
-          previewSize.textContent = formatBytes(file.size);
-          previewUrl = URL.createObjectURL(file);
-          previewThumb.src = previewUrl;
-          previewThumb.hidden = false;
-          preview.hidden = false;
-          showError(null);
-          syncSendState();
-        }
-        (imageInput as HTMLInputElement).value = '';
-      },
+    attrs: {
+      class: 'dh-file',
+      type: 'file',
+      accept: ACCEPTED_ATTACHMENT_TYPES.filter((type) => type.startsWith('image/')).join(','),
+      tabindex: '-1',
+      'aria-hidden': 'true',
+      hidden: true,
     },
+    on: { change: () => acceptFile(imageInput) },
   });
 
   const imageButton = el('button', {
@@ -491,12 +544,23 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     callbacks.onTyping();
   }
 
-  function acceptFile(): void {
-    const file = fileInput.files?.[0] ?? null;
+  function acceptFile(source: HTMLInputElement): void {
+    const file = source.files?.[0] ?? null;
     // Reset immediately so re-picking the SAME file fires `change` again —
     // the input keeps its value otherwise and the second attempt is silent.
-    fileInput.value = '';
+    source.value = '';
     if (file === null) return;
+
+    // Type before size: shrinking a file of a type that can never be sent is
+    // wasted effort, so that is the answer worth giving first. An empty type
+    // (the browser could not tell) is refused too — nothing untyped is on the
+    // server's list either.
+    if (!ACCEPTED_ATTACHMENT_TYPES.includes(baseMimeType(file.type))) {
+      showError(
+        'That type of file cannot be sent. Try a photo, a video (MP4, WebM or MOV), an audio clip, a PDF or an Office document.',
+      );
+      return;
+    }
 
     if (file.size > MAX_ATTACHMENT_BYTES) {
       showError(`That file is too large. The limit is ${formatBytes(MAX_ATTACHMENT_BYTES)}.`);
@@ -520,6 +584,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       previewThumb.hidden = true;
       previewThumb.removeAttribute('src');
     }
+    previewGlyph.hidden = !file.type.startsWith('video/');
 
     preview.hidden = false;
     showError(null);
@@ -537,6 +602,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       previewUrl = null;
     }
     previewThumb.removeAttribute('src');
+    previewGlyph.hidden = true;
     syncSendState();
   }
 
@@ -660,6 +726,11 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       clearAttachment();
     },
   };
+}
+
+/** `"Video/MP4; codecs=avc1"` → `"video/mp4"` — the form the server judges. */
+function baseMimeType(type: string): string {
+  return (type.split(';')[0] ?? '').trim().toLowerCase();
 }
 
 function formatBytes(bytes: number): string {
