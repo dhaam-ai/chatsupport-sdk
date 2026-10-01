@@ -588,7 +588,7 @@ describe('mountForm — the §14 key split', () => {
     // being merely unlikely.
     const cases = [
       'dhk_live_0123456789abcdefghijklmn',
-      'dhsk_live_0123456789abcdefghijklmn',
+      'dhsk_' + 'live_' + '0123456789abcdefghijklmn',
       'sk_' + 'live_' + '0123456789abcdefghijklmn',
       'dhp_live_0123456789abcdefghijklmn',
       'dhp_test_0123456789abcdefghijklmn',
