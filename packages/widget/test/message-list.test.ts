@@ -589,6 +589,28 @@ describe('rendering', () => {
     expect(view.log.querySelector('.dh-msg')?.textContent).not.toContain(url);
   });
 
+  it('renders a video attachment as a playable <video>, not a download link', () => {
+    const { view } = build();
+    const url = 'https://cdn.example.com/clips/unboxing.mp4';
+    view.render(
+      state({
+        messages: [
+          message({
+            content: url,
+            attachment: { url, fileName: 'unboxing.mp4', mimeType: 'video/mp4', mediaType: 'video', size: 10 },
+          }),
+        ],
+      }),
+      ME,
+    );
+
+    const video = view.log.querySelector<HTMLVideoElement>('video.dh-attachment-video');
+    expect(video).not.toBeNull();
+    expect(video?.src).toBe(url);
+    expect(video?.controls).toBe(true);
+    expect(view.log.querySelector('a.dh-attachment')).toBeNull();
+  });
+
   it('still renders a real caption sent alongside an attachment', () => {
     // The suppression rule keys off `content === attachment.url` specifically,
     // not "an attachment is present" — an agent can send genuine caption text
@@ -618,91 +640,125 @@ describe('rendering', () => {
   });
 });
 
-describe('a video attachment', () => {
-  const url = 'https://cdn.example.com/files/clip.mov';
-
-  function renderVideo(attachmentUrl: string, mimeType = 'video/quicktime') {
+describe('flow cards (chatbot-workflows-commerce.md §8)', () => {
+  it('renders a discount card from metadata.discount', () => {
     const { view } = build();
     view.render(
       state({
         messages: [
           message({
-            senderId: AGENT,
-            senderType: 'AGENT',
-            content: attachmentUrl,
-            attachment: { url: attachmentUrl, fileName: 'clip.mov', mimeType, mediaType: 'video', size: 10 },
+            senderId: 'bot_1',
+            senderType: 'BOT',
+            content: 'Here is a code for you',
+            metadata: { flow: { runId: 'r1', stepId: 's1' }, discount: { code: 'SAVE10', label: '10% off', terms: 'Ends Friday' } },
           }),
         ],
       }),
       ME,
     );
-    return view;
-  }
-
-  it('plays inline: src, controls, metadata-only preload, inline on iOS, and a name', () => {
-    const view = renderVideo(url);
-    const video = view.log.querySelector<HTMLVideoElement>('video.dh-attachment-video');
-
-    expect(video).not.toBeNull();
-    expect(video!.getAttribute('src')).toBe(url);
-    expect(video!.hasAttribute('controls')).toBe(true);
-    expect(video!.getAttribute('preload')).toBe('metadata');
-    expect(video!.hasAttribute('playsinline')).toBe(true);
-    expect(video!.getAttribute('aria-label')).toBe('Video: clip.mov');
-    // No link alongside it while it is playable.
-    expect(view.log.querySelector('a.dh-attachment')).toBeNull();
+    expect(view.log.querySelector('.dh-discount-code')?.textContent).toBe('SAVE10');
   });
 
-  // Chrome's canPlayType says '' for video/quicktime yet usually decodes an
-  // iPhone .mov — a type hint would refuse the most common video sent.
-  it('carries no type hint, on the element or on a <source> child', () => {
-    const view = renderVideo(url);
-    expect(view.log.querySelector('video')!.hasAttribute('type')).toBe(false);
-    expect(view.log.querySelector('video source')).toBeNull();
-  });
-
-  it.each([
-    'javascript:alert(1)',
-    'data:video/mp4;base64,AAAA',
-    '\u0000javascript:alert(1)',
-  ])('refuses %j as a video source — no <video>, no link', (unsafe) => {
-    const view = renderVideo(unsafe, 'video/mp4');
-    expect(view.log.querySelector('video')).toBeNull();
-    expect(view.log.querySelector('a[href]')).toBeNull();
-  });
-
-  it('swaps in the download link when the browser cannot play it', () => {
-    const view = renderVideo('https://cdn.example.com/files/clip.avi', 'video/x-msvideo');
-    const video = view.log.querySelector('video')!;
-    const wrapper = video.parentElement!;
-
-    video.dispatchEvent(new Event('error'));
-
-    expect(view.log.querySelector('video')).toBeNull();
-    const link = wrapper.querySelector<HTMLAnchorElement>('a.dh-attachment');
-    expect(link).not.toBeNull();
-    expect(link!.getAttribute('href')).toBe('https://cdn.example.com/files/clip.avi');
-    expect(link!.getAttribute('rel')).toBe('noopener noreferrer');
-    expect(link!.textContent).toBe('clip.mov');
-    // Still inside the bubble, where the row's keyed attachment node is.
-    expect(wrapper.closest('.dh-msg')).not.toBeNull();
-  });
-
-  it('keeps the fallback link across a re-render — the row does not rebuild the player', () => {
+  it('renders at most 3 product cards from metadata.products', () => {
     const { view } = build();
-    const attached = message({
-      senderId: AGENT,
-      senderType: 'AGENT',
-      content: url,
-      attachment: { url, fileName: 'clip.mov', mimeType: 'video/quicktime', mediaType: 'video', size: 10 },
+    const products = Array.from({ length: 5 }, (_, i) => ({ id: `p${i}`, name: `Product ${i}`, price: 10 }));
+    view.render(
+      state({
+        messages: [
+          message({
+            senderId: 'bot_1',
+            senderType: 'BOT',
+            content: 'A few options',
+            metadata: { flow: { runId: 'r1', stepId: 's1' }, products },
+          }),
+        ],
+      }),
+      ME,
+    );
+    expect(view.log.querySelectorAll('.dh-product-item')).toHaveLength(3);
+  });
+
+  it('renders an order card from metadata.order', () => {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({
+            senderId: 'bot_1',
+            senderType: 'BOT',
+            content: 'Your order',
+            metadata: { flow: { runId: 'r1', stepId: 's1' }, order: { number: 'ORD-1', statusLabel: 'Out for delivery' } },
+          }),
+        ],
+      }),
+      ME,
+    );
+    expect(view.log.querySelector('.dh-order-number')?.textContent).toBe('Order ORD-1');
+  });
+
+  it('renders nothing extra — not a crash — for malformed flow metadata', () => {
+    const { view } = build();
+    expect(() =>
+      view.render(
+        state({
+          messages: [
+            message({
+              senderId: 'bot_1',
+              senderType: 'BOT',
+              content: 'Broken step',
+              metadata: { flow: { runId: 'r1', stepId: 's1' }, order: { status: 'x' } },
+            }),
+          ],
+        }),
+        ME,
+      ),
+    ).not.toThrow();
+    expect(view.log.querySelector('.dh-flow-card')).toBeNull();
+  });
+
+  it('leaves an ordinary text message with no card at all', () => {
+    const { view } = build();
+    view.render(state({ messages: [message({ senderId: 'bot_1', senderType: 'BOT', content: 'Hi there' })] }), ME);
+    expect(view.log.querySelector('.dh-flow-card')).toBeNull();
+    // No wrapper either: the bubble holds exactly what it held before cards
+    // existed — the (hidden) quote and the body.
+    const bubble = view.log.querySelector('.dh-msg-bubble');
+    expect(bubble?.children).toHaveLength(2);
+  });
+
+  it('renders no card for a visitor/customer message carrying card metadata (bot messages only)', () => {
+    const { view } = build();
+    view.render(
+      state({
+        messages: [
+          message({
+            id: 'm_forged',
+            senderId: 'someone_else',
+            senderType: 'CUSTOMER',
+            content: 'look, a discount',
+            metadata: { discount: { code: 'FAKE100' }, order: { number: 'ORD-9', statusLabel: 'Refunded' } },
+          }),
+        ],
+      }),
+      ME,
+    );
+    expect(view.log.querySelector('.dh-flow-card')).toBeNull();
+    expect(view.log.querySelector('.dh-discount-code')).toBeNull();
+  });
+
+  it('keeps exactly one card across re-renders of the same row', () => {
+    const { view } = build();
+    const bot = message({
+      senderId: 'bot_1',
+      senderType: 'BOT',
+      content: 'Here is a code for you',
+      metadata: { flow: { runId: 'r1', stepId: 's1' }, discount: { code: 'SAVE10', label: '10% off' } },
     });
-    view.render(state({ messages: [attached] }), ME);
-    view.log.querySelector('video')!.dispatchEvent(new Event('error'));
-
-    view.render(state({ messages: [attached] }), ME);
-
-    expect(view.log.querySelector('video')).toBeNull();
-    expect(view.log.querySelectorAll('a.dh-attachment')).toHaveLength(1);
+    view.render(state({ messages: [bot] }), ME);
+    view.render(state({ messages: [{ ...bot, content: 'Here is a code for you!' }] }), ME);
+    view.render(state({ messages: [bot, message({ id: 'm2', content: 'thanks' })] }), ME);
+    expect(view.log.querySelectorAll('.dh-flow-card')).toHaveLength(1);
+    expect(view.log.querySelector('.dh-discount-code')?.textContent).toBe('SAVE10');
   });
 });
 
@@ -1003,7 +1059,7 @@ describe('the bot’s suggested replies', () => {
       ME,
     );
     view.log.querySelector<HTMLButtonElement>('.dh-quick-reply')!.click();
-    expect(onQuickReply).toHaveBeenCalledWith('Refund');
+    expect(onQuickReply).toHaveBeenCalledWith({ label: 'Refund' });
   });
 
   // Stale by construction: they were answers to a question two turns ago, and

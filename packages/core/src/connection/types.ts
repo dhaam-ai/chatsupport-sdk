@@ -20,7 +20,7 @@
 
 import type { AuthBackoffPolicy, TransportBackoffPolicy } from '../backoff/index.js';
 import type { ScheduleTimer } from '../presence/time.js';
-import type { ClientFramePayloadMap, ServerFrame } from '../protocol/index.js';
+import type { ClientFramePayloadMap, ServerFrame, VisitorContext } from '../protocol/index.js';
 import type { ChatStore } from '../state/index.js';
 import type {
   AckOutcome,
@@ -170,6 +170,16 @@ export interface ConnectionControllerOptions {
 
   /** See `ConnectionHelloPayload.clientId`. Set once, sent on every hello. */
   readonly clientId?: string;
+  /**
+   * Where the visitor is, asked for on EVERY hello (reconnects included) —
+   * chat flows that start on a page are chosen when the session is created, and
+   * the server keeps the context per connection. Return `undefined` when
+   * nothing is known: the key is then absent from the hello, which is what
+   * leaves every host that never sets a page byte-for-byte unchanged. A
+   * provider that throws is treated the same way; a page context must never
+   * cost the visitor their chat.
+   */
+  readonly pageContext?: () => VisitorContext | undefined;
 
   /** Initial conversation subject / store name, if any. */
   readonly subject?: string;

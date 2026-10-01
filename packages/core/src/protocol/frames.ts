@@ -30,8 +30,78 @@ export type EmptyPayload = Record<string, never>;
  * last applied `seq` per D2 (§0.5) — omit on a genuinely first connection,
  * where there is no prior applied frame to resume from.
  */
+/**
+ * Where the visitor is (chatbot-workflows.md §9.1). Untrusted input the server
+ * uses only to pick which flow starts; it never grants access. Build it with
+ * `normalizeVisitorContext`, which drops any field the server would reject.
+ */
+export interface VisitorContext {
+  /** `^[a-z0-9][a-z0-9_-]{0,63}$` - a short page name: `checkout`, `order`, ... */
+  label?: string;
+  /** At most 2048 characters; an http(s) URL or a path. */
+  url?: string;
+  /** At most 20 keys, key `^[A-Za-z0-9_.-]{1,40}$`, strings at most 200; `currency` is ISO 4217. No personal data. */
+  attributes?: Record<string, string | number | boolean>;
+  /** The storefront's store (and outlet), ids at most 80 characters. */
+  store?: { id: string; outletId?: string };
+}
+
+/** `context.update`: REPLACES the stored context - fields not sent are cleared. */
+export interface ContextUpdatePayload extends VisitorContext {
+  /** Absent = the session this connection last joined, as for `message.send`. */
+  sessionId?: string;
+}
+
+export const VISITOR_EVENT_NAMES = [
+  'search',
+  'cart_updated',
+  'exit_intent',
+  'product_viewed',
+  'checkout_error',
+  'custom',
+] as const;
+export type VisitorEventName = (typeof VISITOR_EVENT_NAMES)[number];
+
+/**
+ * `visitor.event` (chatbot-workflows-commerce.md §4). Not a message: never
+ * stored, never in the transcript. Field-for-field
+ * chat-service-node's `VisitorEventPayload` (protocol/types.ts). Build one
+ * with `normalizeVisitorEvent` (visitor-event.ts), which drops anything the
+ * server would silently discard — see that module for which of the 6 names
+ * above this SDK actually sends today.
+ */
+export interface VisitorEventPayload {
+  name: VisitorEventName;
+  /** At most 12 keys of scalars, strings at most 200; per-event rules in visitor-event.ts. */
+  props?: Record<string, string | number | boolean>;
+}
+
+/** `flow.inviteDismissed` (chatbot-workflows-commerce.md §6). */
+export interface FlowInviteDismissedPayload {
+  inviteId: string;
+}
+
+/**
+ * `flow.invite`, server → client (chatbot-workflows-commerce.md §6): a flow
+ * would like to start and there is no chat yet.
+ */
+export interface FlowInvitePayload {
+  inviteId: string;
+  text: string;
+  buttons?: { id: string; label: string }[];
+  /** The flow is set to "Open the chat and start" (Amendment D). */
+  autoOpen?: true;
+}
+
 export interface ConnectionHelloPayload {
   token: string;
+
+  /**
+   * Where the visitor is, so page flows can start at session creation. Dropped
+   * by the server when invalid and never a reason to fail the hello, but this
+   * SDK still only sends a normalised one. Absent, not `{}`, when nothing is known.
+   */
+  context?: VisitorContext;
 
   /**
    * The tenant this connection belongs to — and, by its PRESENCE, which of the
@@ -114,6 +184,15 @@ export interface ConnectionHelloPayload {
    * §7.2/D4 wants absence rather than a null.
    */
   newSession?: boolean;
+
+  /**
+   * Accepts a server-pushed `flow.invite` (chatbot-workflows-commerce.md §6):
+   * carries the invite forward onto the hello that follows
+   * `client.acceptInvite(inviteId)`. Set only by that method, latched the
+   * same way `subject`/`topic` are, and cleared once an ack confirms a hello
+   * carried it — see `ConnectionController.carryInvite`'s doc.
+   */
+  inviteId?: string;
 
   /**
    * The customer's chosen subject/topic for the session this hello may
@@ -641,12 +720,15 @@ export const CLIENT_TO_SERVER_FRAME_TYPES = [
   'presence.set',
   'presence.query',
   'system.heartbeat',
+  'context.update',
+  'visitor.event',
+  'flow.inviteDismissed',
 ] as const;
 
 export type ClientToServerFrameType = (typeof CLIENT_TO_SERVER_FRAME_TYPES)[number];
 
 /**
- * The 13 plain-`Frame<T>`-shaped server→client push types — excludes `ack`
+ * The 14 plain-`Frame<T>`-shaped server→client push types — excludes `ack`
  * and `error`, which use the `AckFrame`/`ErrorFrame` envelope shapes
  * instead (§7.2).
  */
@@ -663,6 +745,7 @@ export const SERVER_PUSH_FRAME_TYPES = [
   'message.delivered',
   'presence.update',
   'ticket.linked',
+  'flow.invite',
   'system.pong',
 ] as const;
 
@@ -697,6 +780,9 @@ export interface ClientFramePayloadMap {
   'presence.set': PresenceSetPayload;
   'presence.query': PresenceQueryPayload;
   'system.heartbeat': EmptyPayload;
+  'context.update': ContextUpdatePayload;
+  'visitor.event': VisitorEventPayload;
+  'flow.inviteDismissed': FlowInviteDismissedPayload;
 }
 
 export interface ServerPushFramePayloadMap {
@@ -712,6 +798,7 @@ export interface ServerPushFramePayloadMap {
   'message.delivered': MessageDeliveredPayload;
   'presence.update': PresenceUpdatePayload;
   'ticket.linked': TicketLinkedPayload;
+  'flow.invite': FlowInvitePayload;
   'system.pong': EmptyPayload;
 }
 

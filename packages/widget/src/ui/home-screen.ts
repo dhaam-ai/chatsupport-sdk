@@ -15,6 +15,7 @@
 import { el, icon, ICONS } from './dom.js';
 import { relativeTimeLabel } from './session-picker.js';
 import { statusPill } from './session-status.js';
+import { getCustomerConversationTitle } from './messages-screen.js';
 import type { ChatStatus } from '@dhaam-ccrm/core';
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 import type { ResolvedEntry } from '../remote-config.js';
@@ -307,6 +308,9 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreenView
     setGreeting(greeting, subGreeting) {
       greetingTitle.textContent = greeting;
       greetingSub.textContent = subGreeting;
+      // The native hover tooltip — styles.ts clamps both to 2 lines.
+      greetingTitle.title = greeting;
+      greetingSub.title = subGreeting;
       greetingTitle.hidden = greeting === '';
       greetingSub.hidden = subGreeting === '';
       greetingBlock.hidden = greeting === '' && subGreeting === '';
@@ -321,6 +325,9 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreenView
       const copy = ctaCopy(entry, subtitle, customTitle);
       ctaTitle.textContent = copy.title;
       ctaSubtitle.textContent = copy.sub;
+      // The native hover tooltip — styles.ts truncates both to one line.
+      ctaTitle.title = copy.title;
+      ctaSubtitle.title = copy.sub;
       ctaSubtitle.hidden = copy.sub === '';
       const hasCustomCta = Boolean(customTitle && customTitle.trim() !== '');
       onCtaPress =
@@ -359,20 +366,17 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreenView
       recentSection.hidden = recent === null || !SHOWN_IN_RECENT[recent.status];
       if (recent === null) return;
 
-      // NOT a subject line. The reference product shows one ("Delivery
-      // issue", "Refund request"), but that is its own mock data: there is no
-      // subject, title or topic on `chat_sessions`, in the REST projection, or
-      // on core's `ChatSessionSummary`. Inventing one — from the first message,
-      // say — would put a label on the row that the customer never wrote and
-      // that nothing else in the product agrees with.
-      //
+      // Same name the Messages row for this same session shows — see
+      // `getCustomerConversationTitle` (ui/messages-screen.ts) for the
+      // resolution order. This card used to compute its own, shorter chain
+      // that stopped before `subject`, so a session with no store/merchant/
+      // admin name and a generic bot handler (the common case right after a
+      // Common Question tap — see `startCommonQuestion`, widget.ts) showed
+      // the bot's own name ("Assistant") here while Messages, one tab over,
+      // showed the question the customer actually tapped for the identical
+      // session. One session, one name, resolved once.
       const s = recent as any;
-      recentTitle.textContent =
-        s.storeName?.trim() ||
-        s.merchantName?.trim() ||
-        recent.handledBy?.displayName ||
-        s.adminName?.trim() ||
-        'Support';
+      recentTitle.textContent = getCustomerConversationTitle(s);
       // ALWAYS a pill, for every status. This used to carry a private
       // three-status table (RESOLVED/CLOSED/WAITING_FOR_AGENT) and render
       // nothing at all for OPEN, ASSIGNED and ON_HOLD — so the conversation a

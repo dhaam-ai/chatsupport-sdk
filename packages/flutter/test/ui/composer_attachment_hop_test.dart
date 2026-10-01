@@ -48,11 +48,7 @@ void _ignore(Object error, StackTrace stackTrace) {}
 Widget _host(Widget child) =>
     MaterialApp(home: Scaffold(body: Material(child: child)));
 
-Finder _iconButton(String tooltip) => find.byWidgetPredicate(
-      (Widget widget) => widget is IconButton && widget.tooltip == tooltip,
-    );
-
-Finder get _sendButton => _iconButton('Send message');
+Finder get _sendButton => find.widgetWithIcon(IconButton, Icons.send);
 Finder get _messageBox => find.byKey(const Key('composer.message'));
 
 bool _sendEnabled(WidgetTester tester) =>
@@ -99,14 +95,15 @@ void main() {
         (WidgetTester tester) async {
       await tester.pumpWidget(composer());
 
-      expect(_iconButton('Attach a file'), findsOneWidget);
+      expect(
+          find.widgetWithIcon(IconButton, Icons.attach_file), findsOneWidget);
     });
 
     testWidgets('and is absent entirely when RemoteConfig turns uploads off',
         (WidgetTester tester) async {
       await tester.pumpWidget(composer(fileUploads: false));
 
-      expect(_iconButton('Attach a file'), findsNothing);
+      expect(find.widgetWithIcon(IconButton, Icons.attach_file), findsNothing);
     });
 
     testWidgets(
@@ -117,16 +114,14 @@ void main() {
         attachments: attachments,
       )));
 
-      expect(_iconButton('Attach a file'), findsNothing);
+      expect(find.widgetWithIcon(IconButton, Icons.attach_file), findsNothing);
     });
 
     testWidgets('picking a file shows it in the draft bar',
         (WidgetTester tester) async {
       await tester.pumpWidget(composer());
 
-      await tester.tap(_iconButton('Attach a file'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('File'));
+      await tester.tap(find.widgetWithIcon(IconButton, Icons.attach_file));
       await tester.pumpAndSettle();
 
       expect(find.text('receipt.pdf'), findsOneWidget);
@@ -339,11 +334,16 @@ void main() {
       await tester.pump();
 
       expect(
-        tester.widget<IconButton>(_iconButton('Insert an emoji')).onPressed,
+        tester
+            .widget<IconButton>(
+                find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined))
+            .onPressed,
         isNull,
       );
       expect(
-        tester.widget<IconButton>(_iconButton('Insert a link')).onPressed,
+        tester
+            .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.link))
+            .onPressed,
         isNull,
       );
 

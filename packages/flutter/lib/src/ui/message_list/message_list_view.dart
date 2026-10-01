@@ -76,7 +76,6 @@ class MessageListView extends StatefulWidget {
     required this.callbacks,
     this.presenter,
     this.attachmentBuilder,
-    this.trailing,
   });
 
   final MessageListInputs inputs;
@@ -93,10 +92,6 @@ class MessageListView extends StatefulWidget {
   final Widget Function(BuildContext context, AttachmentMetadata attachment)?
       attachmentBuilder;
 
-  /// A conversation-level item drawn after the transcript, such as feedback
-  /// for an ended chat.
-  final Widget? trailing;
-
   @override
   State<MessageListView> createState() => _MessageListViewState();
 }
@@ -107,7 +102,6 @@ class MessageListView extends StatefulWidget {
 /// those as message ids, and a message whose id happened to match would
 /// silently claim the typing row's position.
 const Key _typingRowKey = ValueKey<Type>(TypingIndicator);
-const Key _trailingRowKey = ValueKey<String>('message-list.trailing');
 
 class _MessageListViewState extends State<MessageListView> {
   final ScrollController _scroll = ScrollController();
@@ -200,11 +194,7 @@ class _MessageListViewState extends State<MessageListView> {
     // bubble appear underneath the message they were reading instead of
     // after it.
     final bool typing = widget.inputs.isTyping;
-    final bool hasTrailing = widget.trailing != null;
-    final int typingIndex = render.rows.length;
-    final int trailingIndex = typingIndex + (typing ? 1 : 0);
-    final int itemCount =
-        render.rows.length + (typing ? 1 : 0) + (hasTrailing ? 1 : 0);
+    final int itemCount = render.rows.length + (typing ? 1 : 0);
 
     return Column(
       children: <Widget>[
@@ -235,17 +225,14 @@ class _MessageListViewState extends State<MessageListView> {
                       // restarts its dots mid-bounce every time a message
                       // lands.
                       if (key == _typingRowKey) {
-                        return typing ? typingIndex : null;
-                      }
-                      if (key == _trailingRowKey) {
-                        return hasTrailing ? trailingIndex : null;
+                        return typing ? render.rows.length : null;
                       }
                       final String? id =
                           key is ValueKey<String> ? key.value : null;
                       return id == null ? null : _indexById[id];
                     },
                     itemBuilder: (BuildContext context, int index) {
-                      if (typing && index == typingIndex) {
+                      if (index == render.rows.length) {
                         return Padding(
                           key: _typingRowKey,
                           padding: const EdgeInsets.symmetric(vertical: 4),
@@ -253,13 +240,6 @@ class _MessageListViewState extends State<MessageListView> {
                             label: render.typingLabel,
                             avatarLetter: render.typingAvatarLetter,
                           ),
-                        );
-                      }
-                      if (hasTrailing && index == trailingIndex) {
-                        return Padding(
-                          key: _trailingRowKey,
-                          padding: const EdgeInsets.fromLTRB(0, 8, 0, 12),
-                          child: widget.trailing,
                         );
                       }
                       final MessageRow row = render.rows[index];
@@ -317,89 +297,76 @@ class MessageBubbleRow extends StatelessWidget {
     final Color bubbleColor =
         row.outgoing ? scheme.primary : scheme.surfaceContainerHighest;
     final Color textColor = row.outgoing ? scheme.onPrimary : scheme.onSurface;
-    final Widget actions = MessageActions(
-      onCopy: () => callbacks.onCopyMessage(row.message),
-      onReply: callbacks.onReplyToMessage == null
-          ? null
-          : () => callbacks.onReplyToMessage!(
-                row.message,
-                row.replyAttribution,
-              ),
-    );
 
-    final Widget bubbleContent = Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 14,
-        vertical: 10,
-      ),
-      decoration: BoxDecoration(
-        color: bubbleColor,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          if (row.quote != null)
-            _QuoteStrip(quote: row.quote!, color: textColor),
-          if (row.message.attachment != null && attachmentBuilder != null)
-            attachmentBuilder!(context, row.message.attachment!),
-          if (row.text.isNotEmpty)
-            LinkifiedText(
-              row.text,
-              style: TextStyle(color: textColor),
-              onOpenLink: callbacks.onOpenLink,
-            ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisAlignment:
+          row.outgoing ? MainAxisAlignment.end : MainAxisAlignment.start,
+      children: <Widget>[
+        if (row.avatarLetter != null) ...<Widget>[
+          MessageAvatar(letter: row.avatarLetter!),
+          const SizedBox(width: 6),
         ],
-      ),
-    );
-    final Widget bubbleAndActions = Column(
-      crossAxisAlignment:
-          row.outgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          mainAxisAlignment:
-              row.outgoing ? MainAxisAlignment.end : MainAxisAlignment.start,
-          children: <Widget>[
-            if (row.outgoing) actions,
-            Flexible(child: bubbleContent),
-            if (!row.outgoing) actions,
-          ],
-        ),
-        _MetaRow(row: row, callbacks: callbacks),
-      ],
-    );
-
-    final String? avatarLetter = row.avatarLetter;
-    if (avatarLetter == null) return bubbleAndActions;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        if (row.showAuthorName && row.senderName != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: <Widget>[
-                MessageAvatar(letter: avatarLetter),
-                const SizedBox(width: 6),
-                Text(
-                  row.senderName!,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
-                      ),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: row.outgoing
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
+            children: <Widget>[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
                 ),
-              ],
-            ),
+                decoration: BoxDecoration(
+                  color: bubbleColor,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    // Above the text rather than beside the timestamp: the
+                    // customer needs to know who is speaking BEFORE they
+                    // read the words, and a name discovered underneath them
+                    // arrives too late to frame what they just read.
+                    if (row.showAuthorName && row.senderName != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text(
+                          row.senderName!,
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelSmall
+                              ?.copyWith(color: textColor),
+                        ),
+                      ),
+                    if (row.quote != null)
+                      _QuoteStrip(quote: row.quote!, color: textColor),
+                    if (row.message.attachment != null &&
+                        attachmentBuilder != null)
+                      attachmentBuilder!(context, row.message.attachment!),
+                    if (row.text.isNotEmpty)
+                      LinkifiedText(
+                        row.text,
+                        style: TextStyle(color: textColor),
+                        onOpenLink: callbacks.onOpenLink,
+                      ),
+                  ],
+                ),
+              ),
+              _MetaRow(row: row, callbacks: callbacks),
+            ],
           ),
-        if (!row.showAuthorName || row.senderName == null)
-          MessageAvatar(letter: avatarLetter),
-        Padding(
-          padding: const EdgeInsets.only(left: 30),
-          child: bubbleAndActions,
+        ),
+        MessageActions(
+          onCopy: () => callbacks.onCopyMessage(row.message),
+          onReply: callbacks.onReplyToMessage == null
+              ? null
+              : () => callbacks.onReplyToMessage!(
+                    row.message,
+                    row.replyAttribution,
+                  ),
         ),
       ],
     );

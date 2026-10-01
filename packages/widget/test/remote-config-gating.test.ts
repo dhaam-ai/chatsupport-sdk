@@ -420,14 +420,76 @@ describe('the out-of-hours form is driven by isOpenNow + offlineMode', () => {
     expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(true);
   });
 
-  it('leaves the composer alone under SHOW_MESSAGE', async () => {
-    stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: false }));
+  // SHOW_MESSAGE (WIDGET_CONFIG_SCHEMA §G): "render behaviour.offlineMessage,
+  // no chat input". The visitor reads the merchant's message and cannot reply.
+  it('shows the merchant’s message and no composer under SHOW_MESSAGE while closed', async () => {
+    stubFetch(
+      published({
+        offlineMode: OFFLINE_MODE.SHOW_MESSAGE,
+        isOpenNow: false,
+        behaviour: { offlineMessage: 'Back at 9am.' },
+      }),
+    );
     // See "does not gate when the merchant left pre-chat off" above for why
     // `sessionId` is what puts this test on the conversation screen.
     mount(config({ sessionId: 'sess_1' }));
     await settle();
 
+    expect(find('.dh-offline-notice')?.textContent).toContain('Back at 9am.');
     expect(find('.dh-offline-form')).toBeNull();
+    expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(true);
+  });
+
+  it('says something sensible under SHOW_MESSAGE when the merchant wrote no message', async () => {
+    stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: false }));
+    mount(config({ sessionId: 'sess_1' }));
+    await settle();
+
+    expect(find('.dh-offline-notice')?.textContent?.trim()).not.toBe('');
+  });
+
+  // Flows run on the server (chatbot-workflows.md §1, §11.3): the widget never
+  // executes one, whatever the `flows` array carries. A published OFFLINE flow
+  // in the payload must not change what COLLECT_MESSAGE shows.
+  it('still shows the built-in form under COLLECT_MESSAGE when an OFFLINE flow is published', async () => {
+    stubFetch(
+      published({
+        offlineMode: OFFLINE_MODE.COLLECT_MESSAGE,
+        isOpenNow: false,
+        flows: [
+          {
+            id: 'flow-1',
+            name: 'Out of hours',
+            trigger: 4,
+            keywords: [],
+            pagePattern: '',
+            steps: [{ id: 'a', kind: 'message', text: 'We are closed right now.' }],
+          },
+        ],
+      }),
+    );
+    mount(config());
+    await settle();
+
+    expect(find('.dh-offline-form')).not.toBeNull();
+    expect(find('.dh-flow')).toBeNull();
+  });
+
+  it('leaves the composer alone under SHOW_MESSAGE while the team is open', async () => {
+    stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: true }));
+    mount(config({ sessionId: 'sess_1' }));
+    await settle();
+
+    expect(find('.dh-offline-notice')).toBeNull();
+    expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
+  });
+
+  it('leaves the composer alone when the tenant does not follow business hours', async () => {
+    stubFetch(published({ offlineMode: OFFLINE_MODE.SHOW_MESSAGE, isOpenNow: null }));
+    mount(config({ sessionId: 'sess_1' }));
+    await settle();
+
+    expect(find('.dh-offline-notice')).toBeNull();
     expect(find<HTMLElement>('.dh-composer')?.hidden).toBe(false);
   });
 
@@ -944,6 +1006,23 @@ describe('the merchant’s greeting', () => {
   });
 });
 
+describe('Allow file uploads', () => {
+  const attachButtons = () =>
+    [...shadow().querySelectorAll<HTMLButtonElement>('button[aria-label^="Attach"]')];
+
+  it('offers the image and file buttons by default', async () => {
+    await mountFresh(published());
+    expect(attachButtons()).toHaveLength(2);
+    expect(attachButtons().every((button) => !button.hidden)).toBe(true);
+  });
+
+  it('hides both when the merchant turns uploads off', async () => {
+    await mountFresh(published({ behaviour: { fileUploads: false } }));
+    expect(attachButtons()).toHaveLength(2);
+    expect(attachButtons().every((button) => button.hidden)).toBe(true);
+  });
+});
+
 describe('the consent gate', () => {
   const consentConfig = published({
     behaviour: { consentRequired: true, consentText: 'You agree to our privacy policy.' },
@@ -1059,8 +1138,8 @@ describe('report an issue', () => {
     await settle();
     expect(find<HTMLElement>('.dh-home')?.hidden).toBe(false);
 
-    find<HTMLButtonElement>('.dh-hmenu-toggle')!.click();
-    const item = [...shadow().querySelectorAll<HTMLButtonElement>('.dh-hmenu-item')].find((button) =>
+    find<HTMLButtonElement>('.dh-header .dh-hmenu-toggle')!.click();
+    const item = [...shadow().querySelectorAll<HTMLButtonElement>('.dh-header .dh-hmenu-item')].find((button) =>
       button.textContent?.includes('Report an issue'),
     );
     item!.click();
@@ -1121,12 +1200,16 @@ describe('report an issue', () => {
 });
 
 describe('the conversation menu', () => {
+  // Scoped to .dh-header: ui/attach-menu.ts (the composer's File/Video menu)
+  // reuses the same .dh-hmenu-toggle/.dh-hmenu/.dh-hmenu-item classes for its
+  // own, unrelated popup, so an unscoped query here would also pick up
+  // "File" and "Video" from the composer sitting lower in the same shadow root.
   const openMenu = () => {
-    find<HTMLButtonElement>('.dh-hmenu-toggle')!.click();
-    return find<HTMLElement>('.dh-hmenu')!;
+    find<HTMLButtonElement>('.dh-header .dh-hmenu-toggle')!.click();
+    return find<HTMLElement>('.dh-header .dh-hmenu')!;
   };
   const labels = () =>
-    [...shadow().querySelectorAll<HTMLElement>('.dh-hmenu-item')]
+    [...shadow().querySelectorAll<HTMLElement>('.dh-header .dh-hmenu-item')]
       .filter((n) => !n.hidden)
       .map((n) => n.textContent?.trim());
 
@@ -1134,8 +1217,8 @@ describe('the conversation menu', () => {
     stubFetch(published());
     mount(config());
     await settle();
-    expect(find<HTMLElement>('.dh-hmenu')?.hidden).toBe(true);
-    expect(find('.dh-hmenu-toggle')?.getAttribute('aria-expanded')).toBe('false');
+    expect(find<HTMLElement>('.dh-header .dh-hmenu')?.hidden).toBe(true);
+    expect(find('.dh-header .dh-hmenu-toggle')?.getAttribute('aria-expanded')).toBe('false');
   });
 
   // The menu's whole contract: nothing in it is decorative. Privacy and Report
@@ -1172,7 +1255,7 @@ describe('the conversation menu', () => {
     await settle();
     openMenu();
 
-    const link = [...shadow().querySelectorAll<HTMLAnchorElement>('a.dh-hmenu-item')][0]!;
+    const link = [...shadow().querySelectorAll<HTMLAnchorElement>('.dh-header a.dh-hmenu-item')][0]!;
     expect(link.hidden).toBe(false);
     expect(link.getAttribute('href')).toBe('https://acme.test/privacy');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
@@ -1196,12 +1279,12 @@ describe('the conversation menu', () => {
     await settle();
     openMenu();
 
-    const mute = find<HTMLElement>('.dh-hmenu-item')!;
+    const mute = find<HTMLElement>('.dh-header .dh-hmenu-item')!;
     expect(mute.getAttribute('role')).toBe('menuitem');
     expect(mute.textContent).toBe('Mute notifications');
     mute.click();
 
     openMenu();
-    expect(find<HTMLElement>('.dh-hmenu-item')?.textContent).toBe('Unmute notifications');
+    expect(find<HTMLElement>('.dh-header .dh-hmenu-item')?.textContent).toBe('Unmute notifications');
   });
 });

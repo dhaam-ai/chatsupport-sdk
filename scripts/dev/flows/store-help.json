@@ -1,0 +1,96 @@
+{
+  "name": "Test - Store help",
+  "description": "Page: store. Buttons to plain answers, and a handoff to the store's team.",
+  "enabled": true,
+  "rules": {
+    "trigger": "page",
+    "labels": [
+      "store"
+    ],
+    "url": "",
+    "phrases": [],
+    "conditions": [],
+    "hours": "any",
+    "often": "chat"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "ask",
+    "steps": {
+      "ask": {
+        "id": "ask",
+        "kind": "buttons",
+        "name": "Ask what they need",
+        "text": "Ordering from this store? How can we help?",
+        "buttons": [
+          {
+            "id": "menu",
+            "label": "Menu and prices"
+          },
+          {
+            "id": "hours",
+            "label": "Opening hours"
+          },
+          {
+            "id": "area",
+            "label": "Delivery to my area"
+          },
+          {
+            "id": "person",
+            "label": "Chat with a person"
+          }
+        ],
+        "next": {
+          "menu": "menuMsg",
+          "hours": "hoursMsg",
+          "area": "areaMsg",
+          "person": "toTeam",
+          "typed": "toTeam"
+        }
+      },
+      "menuMsg": {
+        "id": "menuMsg",
+        "kind": "message",
+        "name": "Explain the menu",
+        "text": "Prices are on each item and include taxes. Any delivery fee is shown before you pay.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "hoursMsg": {
+        "id": "hoursMsg",
+        "kind": "message",
+        "name": "Explain the hours",
+        "text": "The store's opening hours are at the top of this page. Orders placed while it is closed are scheduled.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "areaMsg": {
+        "id": "areaMsg",
+        "kind": "message",
+        "name": "Explain delivery",
+        "text": "We deliver to addresses near the store. Enter yours at checkout to confirm.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "finish": {
+        "id": "finish",
+        "kind": "end",
+        "name": "Finish",
+        "text": "Anything else? Just type it here.",
+        "next": {}
+      },
+      "toTeam": {
+        "id": "toTeam",
+        "kind": "handoff",
+        "name": "Hand to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "Connecting you with our team.",
+        "next": {}
+      }
+    }
+  }
+}

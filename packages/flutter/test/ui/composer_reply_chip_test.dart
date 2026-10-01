@@ -144,7 +144,7 @@ void main() {
 
     await tester.enterText(find.byKey(const Key('composer.message')), 'Yes');
     await tester.pump();
-    await tester.tap(find.byTooltip('Send message'));
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
     await tester.pump();
 
     // `onSend` carries TEXT and nothing else. The reply id cannot travel back

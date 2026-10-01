@@ -941,8 +941,8 @@ the first exists here.
 stream mode is the only capture path that works on all six platforms without
 `dart:io`, and its only universally-available encoder there is `pcm16bits`,
 which this package wraps in a WAVE header. The result is uncompressed: about
-32 KB per second at 16 kHz mono, so the 50 MiB attachment cap lands at
-roughly twenty-seven minutes rather than the hour a compressed codec would give.
+32 KB per second at 16 kHz mono, so the 25 MiB attachment cap lands at
+roughly thirteen minutes rather than the hour a compressed codec would give.
 Refused in words at the cap, like any other oversized file.
 
 **Taking `record` imposes three things on every host**, whether or not it

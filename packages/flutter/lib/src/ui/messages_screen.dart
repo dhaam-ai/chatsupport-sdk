@@ -25,20 +25,16 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../app_assets.dart';
 import '../session/chat_session_summary.dart';
 import '../session/session_display.dart';
 import '../state/chat_widget_cubit.dart';
 import '../state/chat_widget_state.dart';
 import '../theme/chat_theme.dart';
-import 'session_status_pill.dart';
-import 'svg_asset_icon.dart';
 
 class MessagesScreen extends StatefulWidget {
-  const MessagesScreen({super.key, this.onBack, this.onClose});
+  const MessagesScreen({super.key, this.onBack});
 
   final VoidCallback? onBack;
-  final VoidCallback? onClose;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -101,50 +97,46 @@ class _MessagesScreenState extends State<MessagesScreen> {
         return SafeArea(
           child: Column(
             children: <Widget>[
-              _MessagesHeader(
-                onBack: widget.onBack,
-                onClose: widget.onClose,
-              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: _SearchField(controller: _search, radius: radius),
-              ),
-              const Divider(
-                height: 8,
-                thickness: 0.5,
+                child: Row(
+                  children: <Widget>[
+                    if (widget.onBack != null) ...<Widget>[
+                      IconButton(
+                        tooltip: 'Back',
+                        icon: const Icon(Icons.arrow_back),
+                        onPressed: widget.onBack,
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: _SearchField(controller: _search, radius: radius),
+                    ),
+                  ],
+                ),
               ),
               Expanded(
                 child: visible.isEmpty
                     ? _EmptyState(hasQuery: _query.isNotEmpty)
                     : ListView.separated(
-                        padding: EdgeInsets.zero,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         itemCount: visible.length,
-                        separatorBuilder: (_, __) => const Divider(
-                          height: 8,
-                          thickness: 0.5,
-                        ),
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (BuildContext context, int index) {
                           final ChatSessionSummary summary = visible[index];
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: _ConversationRow(
-                              summary: summary,
-                              radius: radius,
-                              onTap: () => cubit.openConversation(summary.id),
-                            ),
+                          return _ConversationRow(
+                            summary: summary,
+                            radius: radius,
+                            onTap: () => cubit.openConversation(summary.id),
                           );
                         },
                       ),
-              ),
-              const Divider(
-                height: 8,
-                thickness: 0.5,
               ),
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: FilledButton.icon(
                   onPressed: cubit.startNewConversation,
-                  icon: const SvgAssetIcon(AppAssets.editIcon, size: 18,),
+                  icon: const Icon(Icons.add),
                   label: const Text('New conversation'),
                   style: FilledButton.styleFrom(
                     minimumSize: const Size.fromHeight(44),
@@ -161,107 +153,26 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 }
 
-class _MessagesHeader extends StatelessWidget {
-  const _MessagesHeader({this.onBack, this.onClose});
-
-  final VoidCallback? onBack;
-  final VoidCallback? onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
-      ),
-      child: SizedBox(
-        height: 64,
-        child: NavigationToolbar(
-          centerMiddle: false,
-          leading: onBack == null
-              ? null
-              : IconButton(
-                  tooltip: 'Back',
-                  icon: const Icon(Icons.arrow_back_ios),
-                  onPressed: onBack,
-                ),
-          middle: Text(
-            'Messages',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          trailing: onClose == null
-              ? null
-              : IconButton(
-                  tooltip: 'Close chat',
-                  icon: const Icon(Icons.close),
-                  onPressed: onClose,
-                ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SearchField extends StatefulWidget {
+class _SearchField extends StatelessWidget {
   const _SearchField({required this.controller, required this.radius});
 
   final TextEditingController controller;
   final double radius;
 
   @override
-  State<_SearchField> createState() => _SearchFieldState();
-}
-
-class _SearchFieldState extends State<_SearchField> {
-  final FocusNode _focusNode = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _focusNode.addListener(_onFocusChanged);
-  }
-
-  @override
-  void dispose() {
-    _focusNode.removeListener(_onFocusChanged);
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  void _onFocusChanged() => setState(() {});
-
-  @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    final Color borderColor =
-        _focusNode.hasFocus ? scheme.primary : scheme.outlineVariant;
-
     return TextField(
-      controller: widget.controller,
-      focusNode: _focusNode,
+      controller: controller,
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: 'Search conversations',
         prefixIcon: const Icon(Icons.search),
         isDense: true,
+        filled: true,
+        fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(widget.radius),
-          borderSide: BorderSide(color: borderColor),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(widget.radius),
-          borderSide: BorderSide(color: scheme.outlineVariant),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(widget.radius),
-          borderSide: BorderSide(color: scheme.primary),
-        ),
+            borderRadius: BorderRadius.circular(radius),
+            borderSide: BorderSide.none),
       ),
     );
   }
@@ -309,16 +220,15 @@ class _ConversationRow extends StatelessWidget {
         'Conversation';
     final String preview = summary.lastMessagePreview ?? '';
     final String handled = handledByText(summary.handledBy);
-    final String pill = homeStatusPill(summary.status);
     final String time =
         relativeTimeLabel(summary.lastMessageAt ?? summary.createdAt);
 
     return Material(
       color: scheme.surface,
-      // shape: RoundedRectangleBorder(
-      //   borderRadius: BorderRadius.circular(radius),
-      //   side: BorderSide(color: scheme.outlineVariant),
-      // ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radius),
+        side: BorderSide(color: scheme.outlineVariant),
+      ),
       child: InkWell(
         borderRadius: BorderRadius.circular(radius),
         onTap: onTap,
@@ -328,33 +238,65 @@ class _ConversationRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: <Widget>[
-                  Flexible(
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            heading,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleSmall,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        SessionStatusPill(
-                          status: summary.status,
-                          label: pill,
-                        ),
-                      ],
+                  Expanded(
+                    child: Text(
+                      heading,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Row(
-                    children: [
+                  Text(
+                    time,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                chatStatusLabel(summary.status),
+                style: Theme.of(context)
+                    .textTheme
+                    .labelSmall
+                    ?.copyWith(color: scheme.primary),
+              ),
+              if (preview.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              if (handled.isNotEmpty || summary.unreadCount > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    children: <Widget>[
+                      if (handled.isNotEmpty)
+                        Expanded(
+                          child: Text(
+                            handled,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ),
                       if (summary.unreadCount > 0)
                         Container(
-                          margin: EdgeInsets.only(right: 5),
                           padding: const EdgeInsets.symmetric(
                               horizontal: 7, vertical: 1),
                           decoration: BoxDecoration(
@@ -370,48 +312,9 @@ class _ConversationRow extends StatelessWidget {
                                 ?.copyWith(color: scheme.onError),
                           ),
                         ),
-                      Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        size: 15,
-                      ),
                     ],
                   ),
-                ],
-              ),
-              if (preview.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    preview,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
                 ),
-              if (handled.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                    handled,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context)
-                        .textTheme
-                        .labelSmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                ),
-              Text(
-                time,
-                textAlign: TextAlign.right,
-                style: Theme.of(context)
-                    .textTheme
-                    .labelSmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
             ],
           ),
         ),

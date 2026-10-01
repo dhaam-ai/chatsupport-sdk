@@ -10,7 +10,9 @@ describe('CHAT_EVENT_NAMES', () => {
   // `conversationStarted` was added by the 2026-08-21 §6.5 amendment — the
   // agent-initiated conversation. See its entry in events.ts for why it is
   // disjoint from `statusChange` rather than folded into it.
-  it('lists exactly the seventeen events in §6.5', () => {
+  // `flowInvite` and `flowInviteCleared` were added by the §6 flow-sdk part 2
+  // plan (Task 4).
+  it('lists exactly the nineteen events in §6.5', () => {
     expect([...CHAT_EVENT_NAMES]).toEqual([
       'connected',
       'reconnecting',
@@ -28,6 +30,8 @@ describe('CHAT_EVENT_NAMES', () => {
       'presenceUpdate',
       'ticketLinked',
       'tokenRefreshed',
+      'flowInvite',
+      'flowInviteCleared',
       'error',
     ]);
   });

@@ -211,8 +211,8 @@ describe('Messages — a CLOSED conversation is not listed', () => {
     await goToMessages();
 
     expect(messagesRows()).toHaveLength(0);
-    expect(messagesPane().querySelector('.dh-messages-empty')?.textContent).toBe(
-      'No conversations yet.',
+    expect(messagesPane().querySelector('.dh-messages-empty-title')?.textContent).toBe(
+      'No conversations yet',
     );
   });
 

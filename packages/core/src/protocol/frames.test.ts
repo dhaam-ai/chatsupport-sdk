@@ -8,7 +8,7 @@ import {
 import type { AnyFrame } from './frames.js';
 
 describe('frame type catalog — §7.3', () => {
-  it('has exactly the 13 client→server frame types', () => {
+  it('has exactly the 16 client→server frame types', () => {
     expect(CLIENT_TO_SERVER_FRAME_TYPES).toEqual([
       'connection.hello',
       'connection.reauth',
@@ -23,10 +23,13 @@ describe('frame type catalog — §7.3', () => {
       'presence.set',
       'presence.query',
       'system.heartbeat',
+      'context.update',
+      'visitor.event',
+      'flow.inviteDismissed',
     ]);
   });
 
-  it('has exactly the 13 plain server push frame types (excludes ack/error)', () => {
+  it('has exactly the 14 plain server push frame types (excludes ack/error)', () => {
     expect(SERVER_PUSH_FRAME_TYPES).toEqual([
       'connection.ack',
       'session.updated',
@@ -40,6 +43,7 @@ describe('frame type catalog — §7.3', () => {
       'message.delivered',
       'presence.update',
       'ticket.linked',
+      'flow.invite',
       'system.pong',
     ]);
     expect(SERVER_PUSH_FRAME_TYPES).not.toContain('ack');
@@ -50,9 +54,9 @@ describe('frame type catalog — §7.3', () => {
     expect(SERVER_TO_CLIENT_FRAME_TYPES).toEqual([...SERVER_PUSH_FRAME_TYPES, 'ack', 'error']);
   });
 
-  it('has 26 distinct frame type strings total (typing.start/stop shared, not double-counted)', () => {
+  it('has 30 distinct frame type strings total (typing.start/stop shared, not double-counted)', () => {
     const distinct = new Set(ALL_FRAME_TYPES);
-    expect(distinct.size).toBe(26);
+    expect(distinct.size).toBe(30);
   });
 
   it('typing.start and typing.stop are the one shared pair used in both directions (§7.3)', () => {
@@ -102,6 +106,12 @@ function describeFrame(frame: AnyFrame): string {
       return `presenceQuery:${(frame.d.participantIds ?? []).length}`;
     case 'system.heartbeat':
       return 'heartbeat';
+    case 'context.update':
+      return `contextUpdate:${frame.d.label ?? ''}`;
+    case 'visitor.event':
+      return `visitorEvent:${frame.d.name}`;
+    case 'flow.inviteDismissed':
+      return `inviteDismissed:${frame.d.inviteId}`;
     case 'connection.ack':
       return `ack:${frame.d.seq}:${frame.d.session?.sessionId}`;
     case 'session.updated':
@@ -122,6 +132,8 @@ function describeFrame(frame: AnyFrame): string {
       return `presenceUpdate:${frame.d.participantId}:${frame.d.status}`;
     case 'ticket.linked':
       return `ticketLinked:${frame.d.ticketId}`;
+    case 'flow.invite':
+      return `flowInvite:${frame.d.inviteId}:${frame.d.autoOpen ?? false}`;
     case 'system.pong':
       return 'pong';
     case 'ack': {
@@ -172,6 +184,16 @@ describe('exhaustive switch(frame.t) narrowing', () => {
         d: {},
       }),
     ).toBe('leave');
+
+    expect(
+      describeFrame({
+        v: 1,
+        t: 'visitor.event',
+        id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        ts: 1,
+        d: { name: 'exit_intent', props: {} },
+      }),
+    ).toBe('visitorEvent:exit_intent');
   });
 
   it('narrows every server→client push frame type correctly', () => {
@@ -204,6 +226,16 @@ describe('exhaustive switch(frame.t) narrowing', () => {
         d: { sessionId: 'sess_1', closeReason: 'SWITCHED' },
       }),
     ).toBe('sessionClosed:SWITCHED');
+
+    expect(
+      describeFrame({
+        v: 1,
+        t: 'flow.invite',
+        id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+        ts: 1,
+        d: { inviteId: 'inv_1', text: 'Need a hand?' },
+      }),
+    ).toBe('flowInvite:inv_1:false');
   });
 
   it('narrows the generic ack frame on both the ok:true and ok:false branches', () => {

@@ -6,11 +6,10 @@
 // session gets a card, and whether one is due at all, is the CSAT machine's
 // question and is covered in `csat_surface_test.dart`.
 
-import 'dart:ui' show CheckedState, Tristate;
-
 import 'package:dhaam_chat/dhaam_chat.dart' show CsatRated;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -52,44 +51,21 @@ Text _glyph(WidgetTester tester, int score) => tester.widget<Text>(
       ),
     );
 
-Icon _star(WidgetTester tester, int score) => tester.widget<Icon>(
-      find.descendant(
-        of: find.byKey(csatOptionKey(score)),
-        matching: find.byType(Icon),
-      ),
-    );
-
 List<String> _glyphs(WidgetTester tester) => <String>[
       for (int score = 1; score <= kCsatMaxScore; score += 1)
         _glyph(tester, score).data!,
     ];
 
-List<IconData?> _stars(WidgetTester tester) => <IconData?>[
-      for (int score = 1; score <= kCsatMaxScore; score += 1)
-        _star(tester, score).icon,
-    ];
-
 List<bool> _isLit(WidgetTester tester) => <bool>[
       for (int score = 1; score <= kCsatMaxScore; score += 1)
-        _isOptionLit(tester, score),
+        _glyph(tester, score).style?.color == _lit,
     ];
-
-bool _isOptionLit(WidgetTester tester, int score) {
-  final Finder option = find.byKey(csatOptionKey(score));
-  final Finder icon = find.descendant(of: option, matching: find.byType(Icon));
-  if (icon.evaluate().isNotEmpty) {
-    return tester.widget<Icon>(icon).color == _lit;
-  }
-  return _glyph(tester, score).style?.color == _lit;
-}
 
 List<bool> _isChecked(WidgetTester tester) => <bool>[
       for (int score = 1; score <= kCsatMaxScore; score += 1)
         tester
-                .getSemantics(find.byKey(csatOptionKey(score)))
-                .flagsCollection
-                .isChecked ==
-            CheckedState.isTrue,
+            .getSemantics(find.byKey(csatOptionKey(score)))
+            .hasFlag(SemanticsFlag.isChecked),
     ];
 
 void main() {
@@ -102,8 +78,7 @@ void main() {
         expect(
           tester
               .getSemantics(find.byKey(csatOptionKey(score)))
-              .flagsCollection
-              .isInMutuallyExclusiveGroup,
+              .hasFlag(SemanticsFlag.isInMutuallyExclusiveGroup),
           isTrue,
           reason: 'option $score should be one answer of five, not a toggle',
         );
@@ -138,13 +113,7 @@ void main() {
       await tester.tap(find.byKey(csatOptionKey(4)));
       await tester.pump();
 
-      expect(_stars(tester), <IconData?>[
-        Icons.star_rounded,
-        Icons.star_rounded,
-        Icons.star_rounded,
-        Icons.star_rounded,
-        Icons.star_border_rounded,
-      ]);
+      expect(_glyphs(tester), <String>['★', '★', '★', '★', '☆']);
       expect(_isLit(tester), <bool>[true, true, true, true, false]);
     });
 
@@ -357,13 +326,7 @@ void main() {
       expect(find.text('Your rating'), findsWidgets);
       expect(find.text('How was your support experience?'), findsNothing);
       expect(_isChecked(tester), <bool>[false, false, false, true, false]);
-      expect(_stars(tester), <IconData?>[
-        Icons.star_rounded,
-        Icons.star_rounded,
-        Icons.star_rounded,
-        Icons.star_rounded,
-        Icons.star_border_rounded,
-      ]);
+      expect(_glyphs(tester), <String>['★', '★', '★', '★', '☆']);
 
       // Not a DISABLED submit — no submit at all, which is the difference
       // between "you cannot press this" and never inviting the press.
@@ -374,10 +337,8 @@ void main() {
       for (int score = 1; score <= kCsatMaxScore; score += 1) {
         expect(
           tester
-                  .getSemantics(find.byKey(csatOptionKey(score)))
-                  .flagsCollection
-                  .isEnabled ==
-              Tristate.isTrue,
+              .getSemantics(find.byKey(csatOptionKey(score)))
+              .hasFlag(SemanticsFlag.isEnabled),
           isFalse,
         );
       }

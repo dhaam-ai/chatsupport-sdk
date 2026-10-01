@@ -114,7 +114,7 @@ void main() {
     });
   });
 
-  group('the 50 MiB cap', () {
+  group('the 25 MiB cap', () {
     test('refuses an oversized file with words, not silence', () async {
       final AttachmentDraftController controller = controllerFor(
         <PickedAttachment?>[_file(size: kMaxAttachmentBytes + 1)],
@@ -124,7 +124,7 @@ void main() {
       await controller.pick();
 
       expect(controller.statusMessage, kAttachmentTooLargeMessage);
-      expect(controller.statusMessage, contains('50.0 MB'));
+      expect(controller.statusMessage, contains('25.0 MB'));
       expect(controller.hasDraft, isFalse);
     });
 
@@ -649,7 +649,7 @@ void main() {
           controllerFor(<PickedAttachment?>[]);
       addTearDown(controller.dispose);
 
-      // A long recording on a lossless codec really can clear 50 MiB. A cap
+      // A long recording on a lossless codec really does clear 25 MiB. A cap
       // enforced only on the picked-file path would let it through to be
       // refused by the server after the customer watched it upload.
       controller.setDraft(_file(size: kMaxAttachmentBytes + 1));

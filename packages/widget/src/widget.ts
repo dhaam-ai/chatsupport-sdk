@@ -17,7 +17,7 @@ import {
 import type { CloseReason } from '@dhaam-ccrm/core';
 import { ChatClientConfigError } from '@dhaam-ccrm/js';
 import type { ChatStore } from '@dhaam-ccrm/js';
-import type { ChatMessage, ChatSessionSummary, ChatState, ConnectionState } from '@dhaam-ccrm/js';
+import type { ChatMessage, ChatSession, ChatSessionSummary, ChatState, ConnectionState } from '@dhaam-ccrm/js';
 
 import {
   countQueuedSends,
@@ -35,6 +35,7 @@ import type {
   HeaderAppearance,
   LauncherIcon,
   LauncherStyle,
+  PageContext,
   ResolvedConfig,
   ThreadAppearance,
   WidgetConfig,
@@ -45,10 +46,14 @@ import { createChime } from './ui/chime.js';
 import { createConsentGate } from './ui/consent.js';
 import { createHeaderMenu } from './ui/header-menu.js';
 import { createUnavailable } from './ui/unavailable.js';
-import { createSignInRequired } from './ui/sign-in-required.js';
 import { createReportIssueForm } from './ui/report-issue.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
+import type { SendExtra } from './ui/composer.js';
+import { readInputHint } from './ui/input-hint.js';
+import type { InputHint } from './ui/input-hint.js';
+import { flowReplyMetadata } from './ui/quick-replies.js';
+import type { QuickReplyChip } from './ui/quick-replies.js';
 import {
   DEFAULT_AVATAR_IMAGE,
   DEFAULT_LOGO_IMAGE,
@@ -80,6 +85,7 @@ import type { PortalQueueRow } from './portal/portal-staff-client.js';
 import type { ConversationClient } from '@dhaam-ccrm/core';
 import { createNav } from './ui/nav.js';
 import type { NavTab } from './ui/nav.js';
+import { createTicketsScreen } from './ui/tickets-screen.js';
 import { createNewConversationScreen } from './ui/new-conversation.js';
 import type { NewConversationInput } from './ui/new-conversation.js';
 import { resolvePresentation } from './ui/presentation.js';
@@ -106,7 +112,9 @@ import type { CsatExistingRating } from './ui/csat.js';
 import { createEndConversationConfirm } from './ui/end-conversation.js';
 import { createEndedFooter } from './ui/ended-footer.js';
 import { createOfflineBanner } from './ui/offline-banner.js';
+import { createInviteBubble } from './ui/invite-bubble.js';
 import { createOfflineForm } from './ui/offline-form.js';
+import { createOfflineNotice } from './ui/offline-notice.js';
 import { createPreChatForm } from './ui/pre-chat-form.js';
 import type { PreChatAnswers } from './ui/pre-chat-form.js';
 import { createCommonQuestions } from './ui/common-questions.js';
@@ -117,6 +125,7 @@ import {
   fetchRemoteConfig,
   shouldCollectOffline,
   shouldMount,
+  shouldShowOfflineNotice,
 } from './remote-config.js';
 import type { AutoOpen, RemoteConfig, ResolvedEntry } from './remote-config.js';
 import { captureContactInfo } from './contact-info.js';
@@ -127,9 +136,37 @@ import type { WebformDraft, WebformReceipt } from './webform.js';
 /** How the host drives the widget after mounting it. */
 export interface ChatWidget {
   open(): void;
+  /**
+   * Opens the panel straight into one conversation's transcript — the same
+   * place tapping its row on Home or Messages lands — rather than `open()`'s
+   * landing screen. A `sessionId` the customer cannot see (not theirs, or
+   * gone) is not distinguished from any other failure: this never throws,
+   * and the panel still opens, just without switching screens.
+   */
+  openSession(sessionId: string): void;
   close(): void;
   toggle(): void;
   isOpen(): boolean;
+  /**
+   * Tells the server where the visitor is, so flows that start on a page can
+   * run. Call it on every route change of a single-page app; it is cheap and
+   * safe to over-call (an unchanged page sends nothing, a burst is coalesced,
+   * and the server's rate limit is respected). A `url` you leave out defaults
+   * to the current page. Never throws.
+   */
+  setPage(page: PageContext): void;
+  /**
+   * Reports a visitor fact the server's flow engine can trigger on
+   * (chatbot-workflows-commerce.md §4) — `search`, `cart_updated`,
+   * `exit_intent`, `product_viewed`. Never throws; a bad call is dropped
+   * with a warning to `config.onError`.
+   */
+  sendEvent(name: string, props?: Record<string, unknown>): void;
+  /**
+   * Dismisses whichever `flow.invite` the widget is currently showing a
+   * bubble for. A harmless no-op when nothing is showing.
+   */
+  dismissInvite(): void;
   /** The underlying store, for a host that wants to send programmatically. */
   readonly store: ChatStore;
   /** Removes every node, listener, timer, and the socket. Idempotent. */
@@ -169,6 +206,9 @@ const TERMINAL_CONNECTION_STATES: ReadonlySet<ConnectionState> = new Set(['suspe
  * so it must not be the larger half of the customer's worst case.
  */
 export const HISTORY_SETTLE_TIMEOUT_MS = 5_000;
+
+/** At most one `exit_intent` visitor event per this window. */
+const EXIT_INTENT_THROTTLE_MS = 10_000;
 
 /** Words for the states in which nothing is being attempted. */
 const SETTLED_CONNECTION_LABEL = {
@@ -295,9 +335,6 @@ const CONNECTION_COLOR: Record<ConnectionState, string> = {
  * which is the one action every customer needs to be able to reach.
  */
 const SESSION_PICKER_LIMIT = 10;
-
-/** The `userRole`s that mount the widget as portal staff rather than as a customer. */
-const PORTAL_STAFF_ROLES: ReadonlySet<unknown> = new Set(['admin', 'merchant', 'manager']);
 
 /** Everything the connection's state implies for the UI, decided in one place. */
 interface ConnectionStatus {
@@ -671,9 +708,59 @@ interface ProductSurface {
   destroy(): void;
 }
 
+/** What a chip tap sends beyond its label: the `flow_reply` metadata of a flow button, else nothing. */
+function sendExtraFor(chip: QuickReplyChip): SendExtra | undefined {
+  const metadata = flowReplyMetadata(chip);
+  return metadata === undefined ? undefined : { metadata };
+}
+
 export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   const config = resolveConfig(rawConfig);
   const { store, rest } = createWidgetStore(config);
+
+  // Where the visitor is. Set BEFORE anything connects, so the first hello
+  // carries it and a page flow can start when the session is created.
+  const withCurrentUrl = (page: PageContext | undefined): PageContext => {
+    const href = typeof location === 'undefined' ? undefined : location.href;
+    return { ...(href !== undefined && /^https?:/.test(href) ? { url: href } : {}), ...page };
+  };
+  const setPage = (page: PageContext | undefined): void => {
+    try {
+      store.client.setPageContext(withCurrentUrl(page));
+    } catch (error) {
+      config.onError(error);
+    }
+  };
+  setPage(config.page);
+
+  const sendEvent = (name: string, props?: Record<string, unknown>): void => {
+    try {
+      store.client.sendVisitorEvent(name, props);
+    } catch (error) {
+      config.onError(error);
+    }
+  };
+
+  /** Whichever invite the bubble is currently showing, or `null`. */
+  let currentInviteId: string | null = null;
+
+  const acceptInvite = (inviteId: string): void => {
+    store.client.acceptInvite(inviteId);
+    openPanel();
+    // Accepting an invite IS asking for the conversation it offered — land
+    // there directly rather than on whichever screen the panel happened to
+    // remember, the same optimistic-navigation call every other "put the
+    // conversation on screen" path makes (see `showConversation`'s own doc).
+    showConversation();
+  };
+  const dismissInvite = (inviteId: string): void => {
+    store.client.dismissInvite(inviteId);
+  };
+  // `update()` rebuilds its buttons unconditionally, so it is called ONLY
+  // from the `flowInvite`/`flowInviteCleared` handlers below — each fires on
+  // a real change — never from a render cycle.
+  const inviteBubble = createInviteBubble({ onAccept: acceptInvite, onDismiss: dismissInvite });
+  inviteBubble.setSender(config.title, config.avatarInitials);
   const localParticipantId = config.identity.userId;
 
   /**
@@ -964,6 +1051,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // Everything below reads `remote` through this holder rather than
   // capturing it, because it is replaced once, asynchronously, after mount.
   let remote: RemoteConfig = DEFAULT_REMOTE_CONFIG;
+
   /**
    * The published greeting, kept here because `applyHeaderAppearance` can run
    * before Home exists; `paintHomeGreeting` is wired once it does.
@@ -1059,18 +1147,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     onRetry: () => reconnect('manual'),
   });
 
-  // Console "Allow visitor chat" off → a guest gets a sign-in prompt, never a socket.
-  const signInRequired = createSignInRequired(config.onSignInRequest);
-  // Portal staff (admin, merchant, manager) are never guests, whatever profile
-  // they mount with (see `isPortalStaff`, declared later — read inline here so
-  // this works before that line runs). Without the merchant/manager roles a
-  // merchant mounted with no profile would be disconnected and shown "sign in"
-  // whenever the tenant turns visitor chat off.
-  const guestBlocked = (): boolean =>
-    isGuest && !PORTAL_STAFF_ROLES.has((config as any).userRole) && !remote.allowGuestChat;
-  /** True while a blocked guest's connect() is being withheld. */
-  let guestConnectHeld = false;
-
   const headerMenu = createHeaderMenu({
     onStartNew: () => openNewConversationFlow(),
     onEndConversation: () => endConversation(),
@@ -1126,23 +1202,40 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       return;
     }
 
-    // 'exit-intent' — the pointer heading for the browser chrome.
-    //
-    // Bound to `document`, and gated on a mouse: `mouseout` toward the top of
-    // the viewport is the conventional signal, and it is meaningless on a
-    // touch device, where the pointer never leaves because there is no
-    // pointer. Rather than approximate it with something a merchant did not
-    // choose (a scroll depth, a back gesture), a touch visitor simply gets
-    // nothing — the same answer `'never'` gives.
-    const onMouseOut = (event: MouseEvent): void => {
-      // `relatedTarget === null` means the pointer left the document itself
-      // rather than moving between two elements inside it.
-      if (event.relatedTarget !== null || event.clientY > 0) return;
-      fire();
+    // 'exit-intent': hooks the one always-on detector below. Releasing only
+    // unhooks the open; the `exit_intent` event keeps being sent.
+    exitIntentOpen = fire;
+    releaseAutoOpen = () => {
+      exitIntentOpen = null;
     };
-    document.addEventListener('mouseout', onMouseOut);
-    releaseAutoOpen = () => document.removeEventListener('mouseout', onMouseOut);
   }
+
+  /** The exit-intent auto-open, while armed; see `onExitIntent`. */
+  let exitIntentOpen: (() => void) | null = null;
+  let lastExitIntentSentAt = -Infinity;
+  /**
+   * The ONE exit-intent detector (chatbot-workflows-commerce.md §4), bound
+   * for the widget's whole life whatever `autoOpen` says: the flow engine's
+   * "About to leave with a cart" trigger needs the `exit_intent` event even
+   * when the merchant never chose the exit-intent auto-open. Two effects:
+   * the event (at most once per 10 s), and the auto-open when armed.
+   *
+   * `mouseout` toward the top of the viewport is the conventional signal; a
+   * touch device never produces it, so a touch visitor sends nothing and gets
+   * no exit-intent open — the same answer `'never'` gives.
+   */
+  const onExitIntent = (event: MouseEvent): void => {
+    // `relatedTarget === null` means the pointer left the document itself
+    // rather than moving between two elements inside it.
+    if (event.relatedTarget !== null || event.clientY > 0) return;
+    const now = Date.now();
+    if (now - lastExitIntentSentAt >= EXIT_INTENT_THROTTLE_MS) {
+      lastExitIntentSentAt = now;
+      store.client.sendVisitorEvent('exit_intent', {});
+    }
+    exitIntentOpen?.();
+  };
+  document.addEventListener('mouseout', onExitIntent);
   const remoteConfigAbort = new AbortController();
 
   /** Applies the parts of published config that are safe to change in place. */
@@ -1180,9 +1273,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // `syncScreens`'s `greetingBubble.textContent !== ''` check keeps
     // failing closed, the same as a merchant who genuinely wrote nothing.
     armGreeting((config as any).hideGreeting === true ? '' : next.greeting ?? '', next.greetingDelaySec);
-    syncGuestGate();
     consent.update(next.consentRequired, next.consentText ?? '');
     messageList.setTranscriptEmail(next.transcriptEmail);
+    composer.setAttachmentsEnabled(next.fileUploads);
     reportButton.hidden = !next.reportIssue;
     syncHeaderMenu();
     // The gate may have just opened or closed under the composer.
@@ -1277,12 +1370,22 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // reads `logoUrl`, which a publish can move without saying anything about
     // `avatarMode` — and its out-of-hours gate reads `remote`, which this
     // whole function just replaced.
-    applyHeaderAvatar(
-      rawConfig.avatarMode === undefined ? (next.avatarMode ?? config.avatarMode) : config.avatarMode,
+    const effectiveAvatarInitials =
       rawConfig.avatarInitials === undefined
         ? (next.avatarInitials ?? config.avatarInitials)
-        : config.avatarInitials,
+        : config.avatarInitials;
+    applyHeaderAvatar(
+      rawConfig.avatarMode === undefined ? (next.avatarMode ?? config.avatarMode) : config.avatarMode,
+      effectiveAvatarInitials,
       effectiveLogo,
+    );
+    // The invite bubble names its sender the same way the header does — see
+    // the unconditional effectiveLogo/accent comment above for why this can't
+    // wait for `next.title`/`next.avatarInitials` to be present on this
+    // publish specifically.
+    inviteBubble.setSender(
+      rawConfig.title === undefined ? (next.title ?? config.title) : config.title,
+      effectiveAvatarInitials,
     );
     applyBranding(
       rawConfig.showBranding === undefined
@@ -1562,7 +1665,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     window.addEventListener('load', sample, { once: true });
   }
 
-  const remoteBoot: Promise<void> = fetchRemoteConfig({
+  void fetchRemoteConfig({
     apiUrl: config.apiUrl,
     publishableKey: config.auth.publishableKey,
     signal: remoteConfigAbort.signal,
@@ -1678,6 +1781,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // ── panel ─────────────────────────────────────────────────────────────
   const statusDot = el('span', { attrs: { class: 'dh-status-dot', 'aria-hidden': 'true' } });
   const statusText = el('span', { attrs: { class: 'dh-status-text' } });
+  /** Keeps the native hover tooltip in step with whatever styles.ts's
+   * single-line ellipsis is truncating — every `statusText` repaint below
+   * goes through this instead of touching `.textContent` directly. */
+  function setStatusText(text: string): void {
+    statusText.textContent = text;
+    statusText.title = text;
+  }
   const status = el('div', {
     attrs: { class: 'dh-status', role: 'status', 'aria-live': 'polite' },
     children: [statusDot, statusText],
@@ -1700,6 +1810,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     children: [presenceDot, presenceText],
   });
   if (presenceTargetId !== undefined) status.hidden = true;
+
+  /**
+   * The second, DYNAMIC source `presenceLine` can render for: whichever real
+   * person (`handledBy.kind === 'AGENT'`) currently holds the conversation,
+   * on ANY mount — general support included, not only a `presenceTargetId`
+   * mount. Set by `syncAgentPresenceTarget` (below), read by the
+   * `presenceUpdate` listener (this function's own subscriptions) to decide
+   * which incoming entries are actually about the thing on screen right now.
+   */
+  let watchedAgentId: string | undefined;
 
   // Deliberately a sibling of `status`, not a child of it: `status` is a
   // `role="status"` live region, and a control inside one gets its label read
@@ -1872,7 +1992,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the bot suggested the words, but the person chose them. Routed through
     // the composer's own send path so a suggestion is subject to every rule a
     // typed message is, the consent gate and handoff keywords included.
-    onQuickReply: (text) => void composer.submit(text),
+    onQuickReply: (chip) => void composer.submit(chip.label, sendExtraFor(chip)),
     onReplyToMessage: (message, senderName) => startReply(message, senderName),
     // Read through `remote` at call time, never captured: a config publish
     // replaces `remote` wholesale, and the suggestion filter must judge by
@@ -1886,9 +2006,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     },
   });
 
+  // The greeting is the first thing said, so it lives at the top of the
+  // transcript (on the thread backdrop) rather than as a sibling below the
+  // log, where the log's `flex: 1` pushed it down beside the composer.
+  // Ahead of `loadOlder`, which the row anchoring in message-list.ts starts from.
+  messageList.log.insertBefore(greetingBubble, messageList.log.firstChild);
+
   const composer = createComposer({
     onCancelReply: () => cancelReply(),
-    onSend: async (text) => {
+    onSend: async (text, extra) => {
       // SEND FIRST, then escalate, and only once the send has actually
       // settled. The customer typed a sentence and expects it to arrive;
       // swallowing it because it matched a keyword would lose the question,
@@ -1909,9 +2035,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // metadata-kind precedent as `pre_chat` and `offline_message` below.
       // The excerpt rides along because the quoted message may not be in the
       // reader's loaded page at all.
+      //
+      // A flow button's tap sends `flow_reply` metadata instead: that is what
+      // the flow engine matches to the button (chatbot-workflows.md §9.5), and
+      // its `metadata.kind` cannot also be `reply`. The quote chip is still
+      // cleared above; it belonged to a different intent.
+      const flowMetadata = extra?.metadata;
       await store.client.sendMessage(
         text,
-        addressedTo === null
+        flowMetadata !== undefined
+          ? { metadata: flowMetadata }
+          : addressedTo === null
           ? undefined
           : {
               replyToMessageId: addressedTo.messageId,
@@ -1930,7 +2064,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // settled, from fresh state, which is what stops a keyword escalating
       // a conversation a human is already handling — that would ask the
       // agent to hand off to themselves.
+      //
+      // Not for a flow button: the merchant chose that label and the flow
+      // engine owns what "talk to a person" means inside a flow (its own
+      // `handoff` and `person` exits). Escalating here as well would race it.
       if (
+        flowMetadata === undefined &&
         botHoldsLiveConversation(store.getState()) &&
         asksForAHuman(text, remote.handoffKeywords)
       ) {
@@ -1994,6 +2133,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
      */
     readonly key: string | undefined;
   } | null = null;
+  /**
+   * Whether the header is CURRENTLY showing the "New conversation" title in
+   * place of the real one, for `syncScreens` to edge-trigger on — see the
+   * `headerRow` doc. Reset to the real label the moment this goes back to
+   * `false` while still on `conversation` (opened from inside an existing
+   * chat, so neither the Home nor the Messages branch runs to repaint it) —
+   * every other exit (Start succeeding, Cancel back to Home/Messages) already
+   * repaints the title through its own call.
+   */
+  let composingNewMinimal = false;
   /** The customer answered or skipped the pre-chat gate, for this widget's lifetime. */
   let preChatAnswered = false;
   /**
@@ -2134,13 +2283,31 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   });
 
   const isStaffOrAdmin = (config as any).userRole === 'admin' || (config as any).userRole === 'merchant';
-  const nav = createNav((tab: NavTab) => screens.swap(tab), !isStaffOrAdmin);
+  const nav = createNav(
+    (tab: NavTab) => {
+      // `config.onTicketsTab`'s own doc: a host with a real ticket portal
+      // names this instead of letting the tab switch to our placeholder
+      // screen. The current screen is left exactly as it is — the tab opens
+      // something elsewhere, it does not navigate this panel.
+      if (tab === 'tickets' && config.onTicketsTab) {
+        config.onTicketsTab();
+        return;
+      }
+      screens.swap(tab);
+    },
+    !isStaffOrAdmin,
+    !isStaffOrAdmin && !isGuest,
+  );
+
+  const ticketsScreen = createTicketsScreen();
 
   const homeScreen = createHomeScreen({
     onStartNew: () => openNewConversationFlow(),
     onOpenConversation: (sessionId) => {
       const recent = store.getState().pastSessions.find((s) => s.id === sessionId);
-      const title = recent ? getCustomerConversationTitle(recent, currentTitle()) : currentTitle();
+      // Header context: who is handling it outranks what it was about — see
+      // `getCustomerConversationTitle`'s own doc on `preferHandledBy`.
+      const title = recent ? getCustomerConversationTitle(recent, currentTitle(), true) : currentTitle();
       void selectSession(sessionId, title);
     },
     onSeeAll: () => screens.swap('messages'),
@@ -2174,6 +2341,40 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // `.dh-surface-host` play for the screens they stand in for.
   heroHeader.watchScroll(homeScreen.node);
 
+  // The hero itself never scrolls (`flex: none`, per `watchScroll`'s own
+  // doc above) and `.dh-panel` is `overflow: hidden`, so a wheel gesture
+  // with the pointer over the hero graphic — greeting, avatars, the CTA
+  // card — had no scrollable element under it at all and did nothing. Only
+  // moving the pointer down onto `.dh-home` itself actually scrolled,
+  // which reads as "scrolling only works from half the page". Forwarded
+  // here rather than giving the hero its own `overflow-y: auto`: it stays
+  // exactly what the rest of this mechanism assumes it is — a non-scrolling
+  // band that hands its wheel input to the one real scroll container
+  // instead of becoming a second one.
+  //
+  // `preventDefault()` UNCONDITIONALLY, before the "anything left to
+  // scroll" check, not only when it actually moves `.dh-home`. The hero is
+  // a SIBLING of `.dh-home`, not an ancestor of it, so `.dh-panel`'s own
+  // `overscroll-behavior: contain` — which only contains chaining FROM an
+  // element that is itself scrolling once it hits its edge — never enters
+  // the picture for a wheel event that starts on the hero: between the hero
+  // and the document there is no scrollable element at all for the browser
+  // to find, so its native fallback reached past the whole panel and
+  // scrolled the HOST page instead. A first version of this fix only called
+  // `preventDefault()` inside the branch that moves `.dh-home`, which left
+  // that leak open on every tick where Home had nothing further to give —
+  // reached constantly from the top of a short Home, which is exactly where
+  // a visitor's very first scroll gesture usually lands.
+  heroHeader.node.addEventListener(
+    'wheel',
+    (event) => {
+      event.preventDefault();
+      if (homeScreen.node.scrollHeight <= homeScreen.node.clientHeight) return;
+      homeScreen.node.scrollTop += event.deltaY;
+    },
+    { passive: false },
+  );
+
   const messagesScreen = createMessagesScreen({
     onOpenConversation: (sessionId, displayName, subtitleText) => {
       if (portalQueueIds.has(sessionId)) {
@@ -2204,7 +2405,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // rendering; customer flow is used when userRole is 'customer' or undefined.
   const portalUserRole = (config as any).userRole;
   const isPortalStaff =
-    PORTAL_STAFF_ROLES.has(portalUserRole) &&
+    (portalUserRole === 'admin' || portalUserRole === 'merchant' || portalUserRole === 'manager') &&
     config.auth.getToken !== undefined &&
     (config as any).target === undefined;
   const isMerchantPortal = portalUserRole === 'merchant' || portalUserRole === 'manager';
@@ -2463,7 +2664,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // In header section, show only the active customer name (e.g. "bikash"),
     // do not show "Customer • email" in subtitle
     subtitle = '';
-    statusText.textContent = '';
+    setStatusText('');
 
     portalThread.setError(null);
     portalThread.render(null, true);
@@ -2530,11 +2731,55 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   });
 
   /**
+   * The header row. Named so `syncScreens` can toggle `data-minimal` on it —
+   * while the new-conversation surface is up, the avatar/status/presence/⋯
+   * menu stand for an identity or a live session that either does not exist
+   * yet or is not what this screen is about, so they are hidden in favour of
+   * a plain "New conversation" title (still `identityHeader.node`, repainted
+   * in `syncScreens` via `identityHeader.setTitle`, not a second title
+   * element). Back and Close stay: Back is how a customer who navigated here
+   * returns, and Close always closes the whole panel regardless of screen.
+   */
+  const headerRow = el('header', {
+    attrs: { class: 'dh-header' },
+    children: [
+      backButton,
+      avatarHost,
+      el('div', {
+        attrs: { class: 'dh-header-identity-wrap' },
+        children: [identityHeader.node, presenceLine, heroHeader.headerAvatars, status],
+      }),
+      el('div', { attrs: { class: 'dh-header-spacer' } }),
+      reconnectButton,
+      headerMenu.node,
+      closeButton,
+    ],
+  });
+
+  /**
    * The composer's ordinary prompt, read from the component rather than
    * restated here. Restating it would put the same sentence in two files, and
    * the copy would drift the first time either one was edited alone.
    */
   const composerPlaceholder = composer.input.placeholder;
+
+  // The kind of answer the newest bot message is asking for (a flow question's
+  // `metadata.input.type`), and whether the offline-queue prompt is showing.
+  // The placeholder has two owners — the connection status and this hint — so
+  // both go through `applyComposerPlaceholder` and neither overwrites the other.
+  let inputHint: InputHint | null = null;
+  let composerQueueing = false;
+  function applyComposerPlaceholder(): void {
+    composer.input.placeholder = composerQueueing
+      ? QUEUEING_PLACEHOLDER
+      : (inputHint?.placeholder ?? composerPlaceholder);
+  }
+  function syncInputHint(next: InputHint | null): void {
+    if (next?.type === inputHint?.type) return;
+    inputHint = next;
+    composer.setInputHint(next);
+    applyComposerPlaceholder();
+  }
 
   /**
    * The bar that says the network is gone and the messages are safe.
@@ -2591,26 +2836,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       el('div', {
         attrs: { class: 'dh-brand-band' },
         children: [
-          el('header', {
-            attrs: { class: 'dh-header' },
-            children: [
-              // Shown once there is somewhere to go back TO (`screens.ts`'s
-              // back-stack) OR for a TARGETED mount, which has nowhere to go
-              // back to but still gets the button — see `syncScreens` (the
-              // one place `backButton.hidden` is set) and the button's own
-              // click-handler doc.
-              backButton,
-              avatarHost,
-              el('div', {
-                attrs: { class: 'dh-header-identity-wrap' },
-                children: [identityHeader.node, presenceLine, heroHeader.headerAvatars, status],
-              }),
-              el('div', { attrs: { class: 'dh-header-spacer' } }),
-              reconnectButton,
-              headerMenu.node,
-              closeButton,
-            ],
-          }),
+          headerRow,
           // Above the hero header and every screen, because it outranks all
           // of them: a customer with no signal needs to know that before they
           // read a greeting. Its own band rather than a line inside the
@@ -2627,11 +2853,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
           heroHeader.node,
         ],
       }),
-      // The three screens `ui/screens.ts` knows about. `conversation` has no
-      // node of its own here: it is whichever of surfaceHost/messageList.log
-      // is showing, exactly the same "stand in for the transcript" mechanism
+      // The screens `ui/screens.ts` knows about. `conversation` has no node
+      // of its own here: it is whichever of surfaceHost/messageList.log is
+      // showing, exactly the same "stand in for the transcript" mechanism
       // the product surfaces already used before screens existed.
       homeScreen.node,
+      ticketsScreen.node,
       messagesScreen.node,
       // A form or survey standing IN PLACE OF the conversation, never on top
       // of it — a chooser and the conversation it chooses between are
@@ -2640,7 +2867,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // cannot be reached there is no conversation, no list and no form worth
       // showing behind it.
       unavailable.node,
-      signInRequired.node,
       surfaceHost,
       // Mounted only for `userRole: 'admin'` — every other widget instance
       // (every existing customer-facing embed included) never puts this
@@ -2652,9 +2878,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // `querySelector('.dh-input')` during development of this feature.
       ...(isPortalStaff ? [portalThread.node] : []),
       messageList.log,
-      // Above the chips and below the transcript: the greeting is the first
-      // thing said, and the chips are the answers to it.
-      greetingBubble,
       // Sits right where the transcript is still empty — it reads most
       // naturally right above where the customer is about to type, not
       // competing with the header or buried inside the (empty) log.
@@ -2710,7 +2933,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     },
   });
 
-  shadow.append(launcher, panel);
+  shadow.append(launcher, panel, inviteBubble.node);
 
   // Down HERE, not beside its own definition further up, and for the reason
   // `activeSurface` is declared where it is: this call reaches `heroHeader`,
@@ -2862,6 +3085,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       (state) => state.messages,
       () => {
         const state = store.getState();
+        // A flow's question asks for a kind of answer while it is the newest
+        // thing on screen; the visitor answering (or anything newer arriving,
+        // or the chat ending) hands the ordinary keyboard back.
+        const newest = state.messages[state.messages.length - 1];
+        const ended = state.session?.status === 'CLOSED' || state.session?.status === 'RESOLVED';
+        syncInputHint(newest?.senderType === 'BOT' && !ended ? readInputHint(newest.metadata) : null);
         // chat-service only ever emits a real `typing.start` for a human
         // AGENT composing (bridge.ts/websocket-server.ts's broadcastTyping)
         // — the AI bot sends no such signal before its reply, so a BOT-mode
@@ -2983,6 +3212,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // state and emits this; before it was handled here, nothing in the widget
     // reacted at all — the transcript simply stopped accepting replies with
     // no explanation and no way forward.
+    store.on('flowInvite', (payload) => {
+      currentInviteId = payload.inviteId;
+      if (payload.autoOpen === true) {
+        acceptInvite(payload.inviteId);
+        return;
+      }
+      inviteBubble.update({ inviteId: payload.inviteId, text: payload.text, buttons: payload.buttons ?? [] });
+    }),
+    store.on('flowInviteCleared', ({ inviteId }) => {
+      if (currentInviteId !== inviteId) return;
+      currentInviteId = null;
+      inviteBubble.update(null);
+    }),
     store.on('sessionClosed', ({ closeReason }) => {
       // Whoever ended it, a row in both lists just changed status — see
       // `refreshSessions`. Before the parked/ended split below, because a
@@ -3037,6 +3279,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         // SAME subscription — a second session listener for it would be two
         // places that could disagree about whether an agent is present.
         syncHeaderAvatar();
+        // Same reasoning again: presence is "is THIS identity online", so it
+        // rides the identity subscription rather than deciding independently
+        // whether an agent is on the chat right now.
+        syncAgentPresenceTarget(session);
       },
       { immediate: true },
     ),
@@ -3077,13 +3323,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // this needs — `applyPresenceSnapshot` re-emits `presenceUpdate` per
     // entry, so a `select` here would just be a second, redundant listener
     // for the exact same moments this one already catches.
-    ...(presenceTargetId === undefined
-      ? []
-      : [
-          store.on('presenceUpdate', (entry) => {
-            if (entry.participantId === presenceTargetId) syncPresence(entry);
-          }),
-        ]),
+    //
+    // Unconditional, unlike the single `presenceTargetId` this used to gate
+    // on: `watchedAgentId` (`syncAgentPresenceTarget`, above) is the SAME
+    // kind of target but set dynamically, on every mount, not only a
+    // `presenceTargetId` one — a general support session gets an assigned
+    // AGENT's presence exactly the same way a store-targeted one gets the
+    // store's.
+    store.on('presenceUpdate', (entry) => {
+      if (entry.participantId === presenceTargetId || entry.participantId === watchedAgentId) {
+        syncPresence(entry);
+      }
+    }),
   ];
 
   /**
@@ -3552,6 +3803,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     if (destroyed) return;
     const state = store.getState();
 
+    // `SHOW_MESSAGE` while closed: the merchant's message, no composer. A ticket
+    // destination outranks it (the web form carries its own closed-hours copy),
+    // and a web form the visitor opened by hand is left alone, exactly as the
+    // collect gate below does.
+    if (shouldShowOfflineNotice(remote) && entry.primary !== 'ticket' && entry.secondary !== 'ticket') {
+      if (activeSurface?.kind === 'webform') {
+        syncScreens();
+        return;
+      }
+      openSurface('offline', () => createOfflineNotice(remote.offlineMessage));
+      return;
+    }
+
     if (shouldCollectOffline(remote)) {
       // The one carve-out gate 1 needs. A Row-2 tenant on `COLLECT_MESSAGE`
       // has BOTH entry points live at once: the Home CTA opens kind
@@ -3569,7 +3833,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       }
 
       const ticketDestinationExists = entry.primary === 'ticket' || entry.secondary === 'ticket';
-      openSurface('offline', () =>
+      openSurface(
+        'offline',
+        () =>
         ticketDestinationExists
           ? createWebformForm(
               {
@@ -3874,8 +4140,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * so the lists have one input rather than two that could disagree.
    */
   function refreshSessions(): void {
-    // A blocked guest has no conversations to list, and asking would mint a token.
-    if (destroyed || guestBlocked()) return;
+    if (destroyed) return;
     // Portal (admin/merchant/manager) mode never reads `pastSessions` — see
     // `syncSessionSurfaces`'s comment on why the customer-flow store's own
     // list is unused there. Skips the `GET /chat/sessions/customer` round
@@ -4037,7 +4302,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the picked conversation renders under.
     discardUserSurface();
     const past = store.getState().pastSessions.find((s) => s.id === sessionId);
-    const resolvedTitle = displayName || (past ? getCustomerConversationTitle(past, currentTitle()) : currentTitle());
+    // Header context: who is handling it outranks what it was about — see
+    // `getCustomerConversationTitle`'s own doc on `preferHandledBy`.
+    const resolvedTitle =
+      displayName || (past ? getCustomerConversationTitle(past, currentTitle(), true) : currentTitle());
     if (resolvedTitle) {
       activeConversationTitle = resolvedTitle;
       identityHeader.setTitle(resolvedTitle);
@@ -4045,7 +4313,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     }
     if (subtitleText !== undefined) {
       subtitle = isPortalStaff ? '' : subtitleText;
-      statusText.textContent = subtitle;
+      setStatusText(subtitle);
     }
     // Spinner until the picked conversation's first page lands — the store
     // still holds the previous conversation (or nothing) until switchSession
@@ -4279,18 +4547,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     );
   }
 
-  /** Follows "Allow visitor chat" as config lands: hold/drop or release the socket. */
-  function syncGuestGate(): void {
-    if (guestBlocked()) {
-      if (!guestConnectHeld && store.getState().connectionState !== 'idle') store.client.disconnect();
-      guestConnectHeld = true;
-    } else if (guestConnectHeld) {
-      guestConnectHeld = false;
-      store.client.connect().catch(report);
-    }
-    syncScreens();
-  }
-
   /** How long before an *automatic* recovery attempt may fire again. */
   const AUTO_RECONNECT_MIN_INTERVAL_MS = 5_000;
 
@@ -4327,7 +4583,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // through, which would tell the customer the service is down while it is
     // coming back. See ui/unavailable.ts for why this is a screen and not
     // just the status line it sits above.
-    const givenUp = TERMINAL_CONNECTION_STATES.has(connectionState) && !guestBlocked();
+    const givenUp = TERMINAL_CONNECTION_STATES.has(connectionState);
     unavailable.update(remote.supportEmail ?? '', reconnecting);
     const wasUnreachable = !unavailable.node.hidden;
     setPaneVisible(unavailable.node, givenUp);
@@ -4347,7 +4603,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // a resolved conversation has none to show.
     const ended = endedSession(state);
     if (ended !== null) {
-      statusText.textContent = statusLabel(ended.status);
+      setStatusText(statusLabel(ended.status));
       statusDot.style.display = 'none';
     } else {
       // The merchant's subtitle stands in for `'Online'` and for nothing
@@ -4356,10 +4612,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // a customer their message is on its way to somebody while it is going
       // nowhere. A healthy connection is the one state with nothing of its
       // own to report, so it is the one the merchant's words can have.
-      statusText.textContent =
+      setStatusText(
         connectionState === 'connected' && subtitle !== ''
           ? subtitle
-          : (isPortalStaff && portalConversationActive ? '' : status.label);
+          : (isPortalStaff && portalConversationActive ? '' : status.label),
+      );
       statusDot.style.display = '';
       statusDot.style.color = status.color;
     }
@@ -4373,7 +4630,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // The composer stays ENABLED throughout — core queues sends durably (§9.6)
     // and a customer in a lift must still be able to type their question. What
     // changes is only the promise made about what happens to it.
-    composer.input.placeholder = status.queueing ? QUEUEING_PLACEHOLDER : composerPlaceholder;
+    composerQueueing = status.queueing;
+    applyComposerPlaceholder();
 
     syncComposer();
   }
@@ -4397,7 +4655,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * alt-tab, which is frequent enough to be a poll rather than an intent.
    */
   function reconnect(trigger: 'manual' | 'auto'): void {
-    if (destroyed || reconnecting || guestBlocked()) return;
+    if (destroyed || reconnecting) return;
     if (!TERMINAL_CONNECTION_STATES.has(store.getState().connectionState)) return;
 
     if (trigger === 'auto') {
@@ -4467,24 +4725,56 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
-   * The counterparty's ONLINE/OFFLINE line — shared by both presence-eligible
-   * flows (a TARGETED mount's `presenceTargetId`, and a portal mount's
-   * per-conversation `portalPresenceTargetId`); each caller is already the
-   * one place that knows which flow is live, so this renders whatever it is
-   * handed rather than re-deciding eligibility. An `undefined` entry (never
-   * queried yet, the query came back empty, or presence is out of scope for
-   * whatever is open) and "genuinely offline" both read the same way here:
-   * hidden until there is a real answer, never a guess in either direction.
+   * The counterparty's ONLINE/OFFLINE line — shared by every presence-
+   * eligible flow (a TARGETED mount's `presenceTargetId`, a portal mount's
+   * per-conversation `portalPresenceTargetId`, and `watchedAgentId` below);
+   * each caller is already the one place that knows which flow is live, so
+   * this renders whatever it is handed rather than re-deciding eligibility.
+   * An `undefined` entry (never queried yet, the query came back empty, or
+   * presence is out of scope for whatever is open) and "genuinely offline"
+   * both read the same way here: hidden until there is a real answer, never
+   * a guess in either direction.
    */
   function syncPresence(entry: { readonly status: string } | undefined): void {
     if (entry === undefined) {
       presenceLine.hidden = true;
+    } else {
+      const online = entry.status === 'ONLINE';
+      presenceDot.setAttribute('data-online', String(online));
+      presenceText.textContent = online ? 'Online' : 'Offline';
+      presenceLine.hidden = false;
+    }
+    // `status` and `presenceLine` share one line (styles.ts) — never both.
+    // A targeted mount hides `status` for its whole life regardless (set once
+    // at construction too, so there is no flash before the first presence
+    // answer lands); everyone else only hides it while presence actually has
+    // something to say.
+    status.hidden = presenceTargetId !== undefined || !presenceLine.hidden;
+  }
+
+  /**
+   * Keeps `watchedAgentId` pointed at whoever is CURRENTLY handling the
+   * conversation, and repaints `presenceLine` for them — on any mount, not
+   * only a `presenceTargetId` one. `handledBy` naming a bot is not a person
+   * to show a status dot for; only `kind: 'AGENT'` is.
+   *
+   * A `presenceTargetId` mount keeps showing the STORE's own presence once no
+   * agent is on the chat (a store's presence outlives any one person on it);
+   * a general mount has nothing else to fall back to and just hides the line.
+   */
+  function syncAgentPresenceTarget(session: Pick<ChatSession, 'handledBy'> | null): void {
+    const agentId = session?.handledBy?.kind === 'AGENT' ? session.handledBy.id : undefined;
+    if (agentId === watchedAgentId) {
+      if (agentId !== undefined) syncPresence(store.getState().presence[agentId]);
       return;
     }
-    const online = entry.status === 'ONLINE';
-    presenceDot.setAttribute('data-online', String(online));
-    presenceText.textContent = online ? 'Online' : 'Offline';
-    presenceLine.hidden = false;
+    watchedAgentId = agentId;
+    if (agentId === undefined) {
+      syncPresence(presenceTargetId === undefined ? undefined : store.getState().presence[presenceTargetId]);
+      return;
+    }
+    syncPresence(store.getState().presence[agentId]);
+    store.client.queryPresence([agentId]);
   }
 
   /**
@@ -4526,12 +4816,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // couldn't reach the support service" notice invites the customer to type
     // a message that has nowhere to go, which is the exact failure the whole
     // screen exists to prevent.
-    const blocked = guestBlocked();
-    setPaneVisible(signInRequired.node, blocked && unavailable.node.hidden);
-    const unreachable = !unavailable.node.hidden || blocked;
+    const unreachable = !unavailable.node.hidden;
 
     const onHome = current === 'home' && !unreachable;
     const onMessages = current === 'messages' && !unreachable;
+    const onTickets = current === 'tickets' && !unreachable;
     const onConversation = current === 'conversation' && !unreachable;
     // The transcript and composer show only on the conversation screen, and
     // only while no product surface (an out-of-hours form, the pre-chat
@@ -4563,6 +4852,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     const showingEndedFooter = showingLog && ended && !csatDue;
 
     setPaneVisible(homeScreen.node, onHome);
+    setPaneVisible(ticketsScreen.node, onTickets);
     setPaneVisible(messagesScreen.node, onMessages);
     setPaneVisible(surfaceHost, onConversation && activeSurface !== null && !portalConversationActive);
     // The portal thread stands in for the transcript+composer exactly the
@@ -4582,11 +4872,51 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the button's own click-handler doc for why that is still correct.
     // For customers, also show on Messages screen to navigate back to Home.
     backButton.hidden = !(screens.canGoBack() || presenceTargetId !== undefined || (current === 'messages' && !isStaffOrAdmin));
+    // The compose form's own Cancel (ui/new-conversation.ts) duplicates
+    // Back once Back is already on screen — reached from Home, Messages, or
+    // the ⋯ menu, which is how the console design (no visible Cancel) was
+    // drawn. It stays reachable, not deleted, for the one path where Back
+    // is NOT shown: opened from an already-open conversation (`openSurface`'s
+    // `screens.go('conversation')` is then a no-op, so nothing pushed a
+    // back entry) — there `ui/new-conversation.ts`'s own Cancel is the only
+    // way out short of closing the whole panel. See `.dh-newconvo-form
+    // .dh-form-skip`'s own rule in ui/styles.ts for the CSS side of this.
+    host.setAttribute('data-back-available', String(!backButton.hidden));
+
+    // The compose form (`ui/new-conversation.ts`) is not an identity to
+    // announce — there is no session yet, or the one the header is about is
+    // not what the customer is currently doing. `data-minimal` is CSS's hook
+    // (ui/styles.ts) to hide the avatar/status/presence/⋯ menu; the title
+    // itself is repainted below — see `composingNewMinimal`'s own doc for why
+    // that needs an explicit edge-triggered restore and the other branches
+    // here do not.
+    const composingNew = onConversation && activeSurface?.kind === 'composingNew';
+    headerRow.dataset['minimal'] = composingNew ? 'true' : 'false';
 
     if (current === 'messages' && !isStaffOrAdmin) {
       identityHeader.setTitle('Messages');
+    } else if (current === 'tickets') {
+      identityHeader.setTitle('Ticket');
     } else if (current === 'home') {
       identityHeader.setTitle(currentTitle());
+    } else if (composingNew) {
+      identityHeader.setTitle('New conversation');
+    } else if (composingNewMinimal) {
+      identityHeader.update(state.session);
+    }
+    composingNewMinimal = composingNew;
+
+    // `presenceLine` names a specific conversation's handler — meaningless
+    // on Home/Messages, where no one conversation is on screen to be about.
+    // `syncAgentPresenceTarget` (widget.ts) only runs on a SESSION reference
+    // change, so leaving the conversation screen and coming back to the SAME
+    // session needs its own repaint here rather than waiting for one.
+    if (!onConversation) {
+      syncPresence(undefined);
+    } else if (watchedAgentId !== undefined) {
+      syncPresence(store.getState().presence[watchedAgentId]);
+    } else if (presenceTargetId !== undefined) {
+      syncPresence(store.getState().presence[presenceTargetId]);
     }
 
     // Stamp the current screen onto the host element so CSS can target it:
@@ -5135,7 +5465,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     discardUserSurface();
     openingLinesInFlight += 1;
     try {
-      await store.client.startNewSession({ subject: question.prompt });
+      // The row's own label, not the prompt: `subject` is what
+      // `getCustomerConversationTitle` (ui/messages-screen.ts) shows back to
+      // the customer as this conversation's name, and that should read like
+      // the question they tapped ("Track my order"), not the first-person
+      // line ghostwritten on their behalf as the opening message below
+      // ("Where is my order?").
+      await store.client.startNewSession({ subject: question.label });
       // Same as `startNewConversation`: a new row, and an old one that is
       // still open. See `refreshSessions`.
       refreshSessions();
@@ -5288,14 +5624,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // host's own "surface an incoming partner message" flow) is what actually
   // needs a live `store.client` to switch.
   const skipCustomerFlowConnect = isPortalStaff && portalUserRole === 'admin' && (config as any).target === undefined;
-  //
-  // A guest waits for published config: "Allow visitor chat" may be off, and a
-  // refused hello would only burn token mints. Signed-in visitors connect at once.
-  const connecting = skipCustomerFlowConnect
-    ? Promise.resolve()
-    : isGuest
-      ? remoteBoot.then(() => (guestConnectHeld ? undefined : store.client.connect()))
-      : store.client.connect();
+  const connecting = skipCustomerFlowConnect ? Promise.resolve() : store.client.connect();
 
   // One query, not a poll: `PresenceEntry`'s own doc says a change after this
   // arrives on its own via `presence.update`, which the subscription above
@@ -5344,16 +5673,29 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // its instruction silently discarded on every page load. And even landed,
     // `joinSession` changes no client state: it neither clears the transcript
     // that is on screen nor fetches the named session's history.
-    connecting.then(() => (guestConnectHeld ? undefined : openNamedSession(namedSession))).catch(report);
+    connecting.then(() => openNamedSession(namedSession)).catch(report);
   }
   if (config.openOnLoad) openPanel();
 
   return {
     store,
     open: openPanel,
+    openSession: (sessionId) => {
+      try {
+        openPanel();
+        selectSession(sessionId).catch(config.onError);
+      } catch (error) {
+        config.onError(error);
+      }
+    },
     close,
     toggle,
     isOpen: () => open,
+    setPage: (page) => setPage(page),
+    sendEvent: (name, props) => sendEvent(name, props),
+    dismissInvite: () => {
+      if (currentInviteId !== null) dismissInvite(currentInviteId);
+    },
     destroy() {
       if (destroyed) return;
       destroyed = true;
@@ -5362,9 +5704,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // down widget. The `destroyed` guard in there covers the race; this
       // releases the socket rather than leaving it to time out.
       remoteConfigAbort.abort();
-      // A pending delay timer, or a document-level `mouseout` listener that
-      // would otherwise outlive the shadow root.
+      // A pending delay timer, and the document-level `mouseout` listener,
+      // which would otherwise outlive the shadow root.
       releaseAutoOpen();
+      document.removeEventListener('mouseout', onExitIntent);
       clearTimeout(greetingTimer);
       clearTimeout(botThinkingTimer);
       window.removeEventListener('resize', onResize);

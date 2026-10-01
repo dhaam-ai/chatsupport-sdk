@@ -54,6 +54,8 @@ const PAYLOADS: { [E in ChatEventName]: ChatEventMap[E] } = {
   presenceUpdate: { participantId: 'agent-1', status: 'AWAY', lastSeen: '2026-01-01T00:00:02.000Z' },
   ticketLinked: { ticketId: 'T-1', ticketUrl: 'https://example.test/T-1' },
   tokenRefreshed: {},
+  flowInvite: { inviteId: 'invite-1', text: 'Start a flow?' },
+  flowInviteCleared: { inviteId: 'invite-1' },
   error: { source: 'protocol', code: 'RATE_LIMITED', message: 'slow down', retryable: true },
 };
 

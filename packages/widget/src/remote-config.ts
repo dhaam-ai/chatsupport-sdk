@@ -253,11 +253,6 @@ export interface RemoteConfig {
    * form, which files a ticket without a conversation.
    */
   readonly reportIssue: boolean;
-  /**
-   * `behaviour.allowGuestChat` — console "Allow visitor chat". `false` shows a
-   * guest (no `identity.profile`) a sign-in prompt instead of the chat.
-   */
-  readonly allowGuestChat: boolean;
   readonly preChatEnabled: boolean;
   readonly preChatFields: readonly PreChatField[];
   /** `behaviour.commonQuestions[]`. `[]` for a merchant who has configured
@@ -353,8 +348,6 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   // landed must look exactly as it did before, and a form that files tickets
   // is not something to start offering because a fetch failed.
   reportIssue: false,
-  // On: a config that never landed must not lock guests out.
-  allowGuestChat: true,
   preChatEnabled: false,
   preChatFields: [],
   commonQuestions: [],
@@ -877,7 +870,6 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     supportEmail: str(behaviour, 'supportEmail'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
     reportIssue: bool(behaviour, 'reportIssue', DEFAULT_REMOTE_CONFIG.reportIssue),
-    allowGuestChat: bool(behaviour, 'allowGuestChat', DEFAULT_REMOTE_CONFIG.allowGuestChat),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),
@@ -1068,24 +1060,18 @@ export function shouldCollectOffline(remote: RemoteConfig): boolean {
   return remote.isOpenNow === false && remote.offlineMode === OFFLINE_MODE.COLLECT_MESSAGE;
 }
 
-// A KNOWN, DELIBERATE DIVERGENCE FROM THE CONSOLE CONTRACT.
-//
-// The console specifies COLLECT_MESSAGE as "run the tenant's OFFLINE-trigger
-// bot flow, falling back to SHOW_MESSAGE when no published+enabled one
-// exists". This widget does not implement the bot-flow step machine at all —
-// that is a separate feature — so it renders a built-in offline form and does
-// NOT consult `flows` first.
-//
-// Chosen knowingly rather than by omission. Implementing only the fallback
-// half would leave a merchant who set COLLECT_MESSAGE without authoring an
-// OFFLINE flow with no form at all, which is strictly worse than the built-in
-// one: it collects the same name/contact/message an offline flow would. The
-// payload carries no flag saying the fallback happened, so nothing here could
-// distinguish the two cases even if it wanted to.
-//
-// What it costs: a merchant who DID author an OFFLINE flow gets the generic
-// form rather than their scripted one. Closing that needs the step machine.
-// `PublishedFlow.trigger === 4` is parsed and carried for exactly that.
+/**
+ * Whether the widget should show the merchant's out-of-hours message in place
+ * of the conversation: closed, and the merchant chose `SHOW_MESSAGE`.
+ *
+ * `isOpenNow === false` exactly — `null` means the tenant does not follow
+ * business hours, which is "not applicable", never "closed". Default
+ * `offlineMode` is SHOW_MESSAGE, so that rule is what keeps every tenant that
+ * never touched hours from meeting this notice.
+ */
+export function shouldShowOfflineNotice(remote: RemoteConfig): boolean {
+  return remote.isOpenNow === false && remote.offlineMode === OFFLINE_MODE.SHOW_MESSAGE;
+}
 
 /** Convenience for the UI layer: is the team closed right now? */
 export function isOutOfHours(remote: RemoteConfig): boolean {

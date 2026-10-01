@@ -101,11 +101,20 @@ describe('createMessagesScreen — rendering rows', () => {
     expect(rows[1]!.getAttribute('aria-current')).toBe('true');
   });
 
-  it('shows "No conversations yet." when there are none at all', () => {
+  it('shows "No conversations yet" — with an icon and a start button — when there are none at all', () => {
     const { screen } = build();
     screen.render([], null);
     expect(screen.node.querySelector<HTMLElement>('.dh-messages-empty')?.hidden).toBe(false);
-    expect(screen.node.querySelector('.dh-messages-empty')?.textContent).toBe('No conversations yet.');
+    expect(screen.node.querySelector('.dh-messages-empty-title')?.textContent).toBe('No conversations yet');
+    expect(screen.node.querySelector('.dh-messages-empty-body')?.textContent).toBe(
+      'When you message us, your conversations will show up here so you can pick them back up any time.',
+    );
+    expect(screen.node.querySelector('.dh-messages-empty-icon svg')).not.toBeNull();
+    expect(screen.node.querySelector<HTMLButtonElement>('.dh-messages-empty-action')?.textContent).toBe(
+      'New conversation',
+    );
+    // No rows to start a second "New conversation" affordance for.
+    expect(screen.node.querySelector<HTMLElement>('.dh-messages-footer')?.hidden).toBe(true);
   });
 
   it('reuses the same row node across renders rather than rebuilding it', () => {
@@ -168,15 +177,20 @@ describe('createMessagesScreen — search', () => {
     input.dispatchEvent(new Event('input'));
 
     expect(screen.node.querySelector<HTMLElement>('.dh-messages-empty')?.hidden).toBe(false);
-    expect(screen.node.querySelector('.dh-messages-empty')?.textContent).toBe('No conversations match your search.');
-    // The row is hidden, not removed — clearing the query must bring it back
-    // without a re-fetch.
+    expect(screen.node.querySelector('.dh-messages-empty-title')?.textContent).toBe('No matching conversations');
+    expect(screen.node.querySelector('.dh-messages-empty-body')?.textContent).toBe(
+      "Try a different word, or start a new conversation about it.",
+    );
+    // The underlying row IS still there, so the footer's own button stays
+    // hidden in favour of the empty state's — one affordance at a time.
     expect(screen.node.querySelectorAll('.dh-messages-item').length).toBe(1);
+    expect(screen.node.querySelector<HTMLElement>('.dh-messages-footer')?.hidden).toBe(true);
 
     input.value = '';
     input.dispatchEvent(new Event('input'));
     expect(screen.node.querySelector<HTMLElement>('.dh-messages-item')?.hidden).toBe(false);
     expect(screen.node.querySelector<HTMLElement>('.dh-messages-empty')?.hidden).toBe(true);
+    expect(screen.node.querySelector<HTMLElement>('.dh-messages-footer')?.hidden).toBe(false);
   });
 });
 

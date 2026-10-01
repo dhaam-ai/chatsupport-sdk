@@ -20,20 +20,6 @@ RemoteConfig _hero() => testRemoteConfig(
       ),
     );
 
-RemoteConfig _brandedHero() => testRemoteConfig(
-      logoUrl: 'https://x.test/logo.png',
-      header: const HeaderAppearance(
-        showLogo: true,
-        greeting: 'Hi there',
-        subGreeting: 'How can we help?',
-        showAvatars: true,
-        avatars: <String>[
-          'https://x.test/a.png',
-          'https://x.test/b.png',
-        ],
-      ),
-    );
-
 void main() {
   group('heroCollapseDecision — the arithmetic', () {
     // Guard 1: the slack margin. At (or near) the top the hero is whole.
@@ -165,8 +151,6 @@ void main() {
       WidgetTester tester, {
       required double contentHeight,
       double viewportHeight = 300,
-      RemoteConfig? config,
-      VoidCallback? onClose,
     }) async {
       final ScrollController controller = ScrollController();
       addTearDown(controller.dispose);
@@ -176,12 +160,11 @@ void main() {
             body: SizedBox(
               height: viewportHeight,
               child: CollapsingHeroHeader(
-                config: config ?? _hero(),
-                onClose: onClose,
-                controller: controller,
-                slivers: <Widget>[
-                  SliverToBoxAdapter(child: SizedBox(height: contentHeight)),
-                ],
+                config: _hero(),
+                child: ListView(
+                  controller: controller,
+                  children: <Widget>[SizedBox(height: contentHeight)],
+                ),
               ),
             ),
           ),
@@ -190,16 +173,17 @@ void main() {
       return controller;
     }
 
-    /// The height the pinned sliver header currently occupies.
-    double heroHeight(WidgetTester tester) {
-      final Finder header =
-          find.byKey(const ValueKey<String>('hero.sliverHeader'));
-      if (header.evaluate().isEmpty) return 0;
-      return tester.getSize(header.first).height;
-    }
-
-    double collapsedBarHeight(WidgetTester tester) => tester
-        .getSize(find.byKey(const ValueKey<String>('hero.collapsedBar')).first)
+    /// The height the hero actually occupies — zero once collapsed, because
+    /// `Align(heightFactor: 0)` reports zero for itself while still laying its
+    /// child out. Measured on the ClipRect that wraps it, not on
+    /// `CollapsingHeroHeader`, which now spans the whole screen it arranges.
+    double heroHeight(WidgetTester tester) => tester
+        .getSize(find
+            .ancestor(
+              of: find.byType(HeroHeader),
+              matching: find.byType(ClipRect),
+            )
+            .first)
         .height;
 
     testWidgets('renders the hero at full height at rest', (tester) async {
@@ -208,75 +192,18 @@ void main() {
       expect(heroHeight(tester), greaterThan(0));
     });
 
-    testWidgets('updates its height smoothly with scroll offset',
+    testWidgets('collapses to nothing once the visitor scrolls past the slack',
         (tester) async {
       final ScrollController controller =
           await pumpHome(tester, contentHeight: 2000);
       final double expanded = heroHeight(tester);
 
-      controller.jumpTo(50);
+      controller.jumpTo(kHeroCollapseSlackPx + 50);
       await tester.pump();
-      final double partiallyCollapsed = heroHeight(tester);
 
-      expect(expanded, greaterThan(0));
-      expect(partiallyCollapsed, lessThan(expanded));
-      expect(partiallyCollapsed, greaterThan(0));
-
-      controller.jumpTo(kExpandedHeroHeaderHeight);
-      await tester.pump();
+      // Collapsed means GONE, not a short bar — no compact layer exists.
       expect(heroHeight(tester), 0);
-    });
-
-    testWidgets('collapses to a compact branded app bar when assets exist',
-        (tester) async {
-      int closeCalls = 0;
-      final ScrollController controller = await pumpHome(
-        tester,
-        contentHeight: 2000,
-        config: _brandedHero(),
-        onClose: () => closeCalls += 1,
-      );
-      final double expanded = heroHeight(tester);
-
-      controller.jumpTo(kExpandedHeroHeaderHeight);
-      await tester.pump();
-
-      expect(heroHeight(tester), kCollapsedHeroBarHeight);
-      expect(collapsedBarHeight(tester), kCollapsedHeroBarHeight);
-
-      final Finder collapsedBar =
-          find.byKey(const ValueKey<String>('hero.collapsedBar'));
-      expect(
-        find.descendant(of: collapsedBar, matching: find.byType(Image)),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: collapsedBar,
-          matching: find.byWidgetPredicate(
-            (Widget widget) =>
-                widget is Container &&
-                widget.decoration is BoxDecoration &&
-                (widget.decoration! as BoxDecoration).shape ==
-                    BoxShape.circle &&
-                (widget.decoration! as BoxDecoration).image != null,
-          ),
-        ),
-        findsNWidgets(2),
-      );
-      expect(
-        find.descendant(
-            of: collapsedBar, matching: find.byTooltip('Close chat')),
-        findsOneWidget,
-      );
-
-      await tester.tap(
-        find.descendant(
-            of: collapsedBar, matching: find.byTooltip('Close chat')),
-      );
-      await tester.pump();
-      expect(closeCalls, 1);
-      expect(expanded, greaterThan(kCollapsedHeroBarHeight));
+      expect(expanded, greaterThan(0));
     });
 
     testWidgets('returns whole when the visitor scrolls back to the top',
@@ -285,7 +212,7 @@ void main() {
           await pumpHome(tester, contentHeight: 2000);
       final double expanded = heroHeight(tester);
 
-      controller.jumpTo(kExpandedHeroHeaderHeight);
+      controller.jumpTo(kHeroCollapseSlackPx + 50);
       await tester.pump();
       expect(heroHeight(tester), 0);
 
@@ -294,7 +221,11 @@ void main() {
       expect(heroHeight(tester), expanded);
     });
 
-    testWidgets('partially collapses on a Home that barely overflows',
+    // The oscillation, end to end: a Home barely taller than its window.
+    // Without the layout guard the collapse frees the hero's height, the
+    // offset clamps back to the top, the hero expands, and the two states
+    // strobe. With it, the hero simply stays.
+    testWidgets('refuses to collapse on a Home that barely overflows',
         (tester) async {
       final ScrollController controller =
           await pumpHome(tester, contentHeight: 260);
@@ -304,8 +235,7 @@ void main() {
       controller.jumpTo(controller.position.maxScrollExtent);
       await tester.pump();
 
-      expect(heroHeight(tester), lessThan(expanded));
-      expect(heroHeight(tester), greaterThan(0));
+      expect(heroHeight(tester), expanded);
     });
 
     // A hero outside any scroll view never collapses, and that is correct
@@ -318,9 +248,7 @@ void main() {
           home: Scaffold(
             body: CollapsingHeroHeader(
               config: _hero(),
-              slivers: const <Widget>[
-                SliverToBoxAdapter(child: SizedBox.shrink()),
-              ],
+              child: const SizedBox.shrink(),
             ),
           ),
         ),
@@ -337,15 +265,12 @@ void main() {
           home: Scaffold(
             body: CollapsingHeroHeader(
               config: testRemoteConfig(),
-              slivers: const <Widget>[
-                SliverToBoxAdapter(child: SizedBox.shrink()),
-              ],
+              child: const SizedBox.shrink(),
             ),
           ),
         ),
       );
-      expect(find.byKey(const ValueKey<String>('hero.sliverHeader')),
-          findsNothing);
+      expect(heroHeight(tester), 0);
     });
   });
 }

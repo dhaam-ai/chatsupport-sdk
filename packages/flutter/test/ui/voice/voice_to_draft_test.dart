@@ -6,7 +6,7 @@
 // `AttachmentDraftController.setDraft` exists so a note can enter the draft
 // without a picker, and the whole risk of adding it was that the second
 // entrance might not be guarded like the first. A four-minute recording
-// really can approach the 50 MiB cap, so "the cap applies to voice too" is a
+// really does approach the 25 MiB cap, so "the cap applies to voice too" is a
 // claim about a case that happens rather than a hypothetical.
 //
 // Nothing here touches a microphone. `VoiceDevice` is the seam and these

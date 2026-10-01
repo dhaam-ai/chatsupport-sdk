@@ -35,19 +35,13 @@ import 'attachment_draft.dart';
 class AttachmentDraftController extends ChangeNotifier {
   AttachmentDraftController({
     required AttachmentPicker picker,
-    AttachmentPicker? cameraPicker,
-    AttachmentPicker? galleryPicker,
     required AttachmentUploader uploader,
     required FormErrorReporter onError,
   })  : _picker = picker,
-        _cameraPicker = cameraPicker ?? picker,
-        _galleryPicker = galleryPicker ?? picker,
         _uploader = uploader,
         _onError = onError;
 
   final AttachmentPicker _picker;
-  final AttachmentPicker _cameraPicker;
-  final AttachmentPicker _galleryPicker;
   final AttachmentUploader _uploader;
   final FormErrorReporter _onError;
 
@@ -152,22 +146,6 @@ class AttachmentDraftController extends ChangeNotifier {
   /// [kAttachmentUnnamedMessage] for what letting a blank one through
   /// actually costs.
   Future<void> pick() async {
-    await _pickWith(_picker);
-  }
-
-  /// Asks the platform camera for an image and, if it can be sent, makes it
-  /// the draft.
-  Future<void> pickFromCamera() async {
-    await _pickWith(_cameraPicker);
-  }
-
-  /// Asks the platform gallery for an image and, if it can be sent, makes it
-  /// the draft.
-  Future<void> pickFromGallery() async {
-    await _pickWith(_galleryPicker);
-  }
-
-  Future<void> _pickWith(AttachmentPicker picker) async {
     // `composer.ts`: `attachButton.disabled = !enabled || uploading`. Picking
     // mid-upload would replace the very file being uploaded, and the upload
     // would go on to announce the one the customer just discarded.
@@ -175,7 +153,7 @@ class AttachmentDraftController extends ChangeNotifier {
 
     final PickedAttachment? file;
     try {
-      file = await picker();
+      file = await _picker();
     } catch (error, stackTrace) {
       // Caller-supplied code calling a platform channel: a denied permission,
       // an unregistered channel, a file that cannot be read. Same reasoning
@@ -206,7 +184,7 @@ class AttachmentDraftController extends ChangeNotifier {
   /// [pick] and this method both funnel through one private `_accept`, so
   /// there is one derivation of "may this file be the draft" rather than
   /// two. That is not tidiness. A four-minute voice note on a lossless
-  /// codec really can clear 50 MiB, and a second copy of the cap here — or
+  /// codec really does clear 25 MiB, and a second copy of the cap here — or
   /// worse, no cap at all on this path — would let it past a limit the
   /// picked-file path enforces, to be refused by the server after the
   /// customer watched it upload. The name check travels for the same reason

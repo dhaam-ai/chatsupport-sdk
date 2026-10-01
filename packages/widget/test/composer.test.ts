@@ -2,9 +2,8 @@
 //
 // Focused on what this file's slices changed: the box that nests the icon row
 // inside the input's own border, the link popover that replaced the browser
-// prompt, the suggestion path (`submit(text)`) the bot's chips go through,
-// and what a picked file must be before it can become a pending attachment.
-// Every other composer behaviour (emoji, mic, typed send)
+// prompt, and the suggestion path (`submit(text)`) the bot's chips go
+// through. Every other composer behaviour (attach, emoji, mic, typed send)
 // already has incidental coverage across the integration suites
 // (remote-config-gating.test.ts, widget-dom.test.ts, connecting-state.test.ts
 // and others) and is left alone here rather than backfilled — see the
@@ -75,11 +74,12 @@ describe('the icon row nests inside the input’s own border', () => {
     expect(directChildLabels).toEqual([
       'Attach an image',
       'Insert emoji', // the emoji picker's own trigger, inside its wrapper node
-      'Attach a file',
+      'Attach a file', // the attach menu's own toggle, inside its wrapper node (ui/attach-menu.ts)
       'Insert a link',
       'Send message',
       null, // the hidden file input, see ui/dom.ts's .dh-file
       null, // the hidden image input
+      null, // the hidden video input
     ]);
   });
 
@@ -391,234 +391,179 @@ describe('the reply chip', () => {
   });
 });
 
-describe('picking a file', () => {
-  const MIB = 1024 * 1024;
-  const TYPE_REFUSAL =
-    'That type of file cannot be sent. Try a photo, a video (MP4, WebM or MOV), an audio clip, a PDF or an Office document.';
+describe('the attach menu (ui/attach-menu.ts)', () => {
+  const toggle = (composer: ComposerView) =>
+    composer.node.querySelector<HTMLButtonElement>('button[aria-label="Attach a file"]')!;
+  const menu = (composer: ComposerView) => composer.node.querySelector<HTMLElement>('.dh-hmenu-up')!;
+  const menuItem = (composer: ComposerView, label: string) =>
+    [...menu(composer).querySelectorAll<HTMLButtonElement>('.dh-hmenu-item')].find((b) => b.textContent === label)!;
+  // The generic file input (triggered by "File") carries no `accept` at all —
+  // unlike the image/video pickers, which are restricted to one family.
+  const hiddenInput = (composer: ComposerView, accept?: string) =>
+    composer.node.querySelector<HTMLInputElement>(
+      accept === undefined ? 'input.dh-file:not([accept])' : `input.dh-file[accept="${accept}"]`,
+    )!;
 
-  // jsdom has no object URLs; the image thumbnail needs one. Spies, so the
-  // revoke bookkeeping can be asserted on, not just survived.
-  let createObjectURL: ReturnType<typeof vi.fn>;
-  let revokeObjectURL: ReturnType<typeof vi.fn>;
-  beforeEach(() => {
-    let next = 0;
-    createObjectURL = vi.fn(() => `blob:preview-${(next += 1)}`);
-    revokeObjectURL = vi.fn();
-    Object.assign(URL, { createObjectURL, revokeObjectURL });
-  });
-  afterEach(() => {
-    // Destroyed here, before the stubs go: destroy() revokes, and the outer
-    // afterEach that would otherwise do it runs after this one.
-    for (const composer of built.splice(0)) composer.destroy();
-    Reflect.deleteProperty(URL, 'createObjectURL');
-    Reflect.deleteProperty(URL, 'revokeObjectURL');
-  });
+  it('starts closed and opens on the toggle, offering exactly File and Video', () => {
+    const { composer } = build();
+    expect(menu(composer).hidden).toBe(true);
 
-  const fileInput = (composer: ComposerView) => composer.node.querySelector<HTMLInputElement>('input.dh-file')!;
-  const preview = (composer: ComposerView) => composer.node.querySelector<HTMLElement>('.dh-preview')!;
-  const errorLine = (composer: ComposerView) => composer.node.querySelector<HTMLElement>('.dh-error')!;
+    toggle(composer).click();
 
-  /** A File whose reported size is `size`, without allocating it. */
-  function file(name: string, type: string, size = 1024): File {
-    const picked = new File(['x'], name, { type });
-    Object.defineProperty(picked, 'size', { value: size });
-    return picked;
-  }
-
-  /** Whichever input the "Attach an image" button actually opens — not a selector guess. */
-  function imageInput(composer: ComposerView): HTMLInputElement {
-    let opened: HTMLInputElement | null = null;
-    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) {
-      opened = this;
-    });
-    composer.node.querySelector<HTMLButtonElement>('button[aria-label="Attach an image"]')!.click();
-    click.mockRestore();
-    expect(opened).not.toBe(fileInput(composer));
-    return opened!;
-  }
-
-  /** What the OS picker does: set the input's files, then fire `change`. */
-  function pick(composer: ComposerView, picked: File, inputEl = fileInput(composer)): void {
-    Object.defineProperty(inputEl, 'files', { value: [picked], configurable: true });
-    inputEl.dispatchEvent(new Event('change'));
-  }
-
-  function expectRefused(composer: ComposerView, message: string): void {
-    expect(errorLine(composer).hidden).toBe(false);
-    expect(errorLine(composer).textContent).toBe(message);
-    expect(preview(composer).hidden).toBe(true);
-    expect(sendButton(composer).disabled).toBe(true);
-  }
-
-  describe('the picker hint', () => {
-    it('offers the video types the server takes, including an iPhone .mov', () => {
-      const { composer } = build();
-      const accepted = fileInput(composer).accept.split(',');
-      expect(accepted).toContain('video/mp4');
-      expect(accepted).toContain('video/quicktime');
-      expect(accepted).toContain('video/webm');
-    });
-
-    it('leaves SVG out — it is a scriptable document once served back from the CDN', () => {
-      const { composer } = build();
-      expect(fileInput(composer).accept.split(',')).not.toContain('image/svg+xml');
-    });
+    expect(menu(composer).hidden).toBe(false);
+    expect(toggle(composer).getAttribute('aria-expanded')).toBe('true');
+    expect([...menu(composer).querySelectorAll('.dh-hmenu-item')].map((b) => b.textContent)).toEqual([
+      'File',
+      'Video',
+    ]);
   });
 
-  describe('size', () => {
-    it('accepts a file of exactly 50 MiB — the server’s own cap', () => {
-      const { composer } = build();
-      pick(composer, file('clip.mp4', 'video/mp4', 50 * MIB));
-      expect(preview(composer).hidden).toBe(false);
-      expect(errorLine(composer).hidden).toBe(true);
-      expect(sendButton(composer).disabled).toBe(false);
-    });
+  it('"File" opens the unrestricted picker and closes the menu', () => {
+    const { composer } = build();
+    const onFileClick = vi.fn();
+    hiddenInput(composer).addEventListener('click', onFileClick);
 
-    it('refuses one byte over, naming the limit', () => {
-      const { composer } = build();
-      pick(composer, file('clip.mp4', 'video/mp4', 50 * MIB + 1));
-      expectRefused(composer, 'That file is too large. The limit is 50.0 MB.');
-    });
+    toggle(composer).click();
+    menuItem(composer, 'File').click();
+
+    expect(onFileClick).toHaveBeenCalledTimes(1);
+    expect(menu(composer).hidden).toBe(true);
   });
 
-  describe('type', () => {
-    it.each([
-      ['an executable', 'setup.exe', 'application/x-msdownload'],
-      ['a file the browser could not type', 'mystery', ''],
-      ['an SVG, which the server would take but the CDN would serve as a document', 'logo.svg', 'image/svg+xml'],
-      ['a video type the server does not list', 'clip.mkv', 'video/x-matroska'],
-    ])('refuses %s, saying what can be sent', (_label, name, type) => {
-      const { composer, onSendAttachment } = build();
-      pick(composer, file(name, type));
-      expectRefused(composer, TYPE_REFUSAL);
-      expect(onSendAttachment).not.toHaveBeenCalled();
-    });
+  it('"Video" opens a video/*-only picker and closes the menu', () => {
+    const { composer } = build();
+    const onVideoClick = vi.fn();
+    hiddenInput(composer, 'video/*').addEventListener('click', onVideoClick);
 
-    it.each([
-      ['video/mp4'],
-      ['video/quicktime'],
-      ['video/webm'],
-      ['image/jpeg'],
-      ['application/pdf'],
-      ['text/csv'],
-      // The server judges the base type; parameters do not make it a different one.
-      ['video/mp4; codecs="avc1.42E01E"'],
-    ])('accepts %s', (type) => {
-      const { composer } = build();
-      pick(composer, file('f', type));
-      expect(preview(composer).hidden).toBe(false);
-      expect(errorLine(composer).hidden).toBe(true);
-    });
+    toggle(composer).click();
+    menuItem(composer, 'Video').click();
 
-    it('refuses on type before size — shrinking an .exe would not help', () => {
-      const { composer } = build();
-      pick(composer, file('setup.exe', 'application/x-msdownload', 50 * MIB + 1));
-      expect(errorLine(composer).textContent).toBe(TYPE_REFUSAL);
-    });
-
-    it('sends what it accepted', async () => {
-      const { composer, onSendAttachment } = build();
-      const clip = file('clip.mov', 'video/quicktime');
-      pick(composer, clip);
-      sendButton(composer).click();
-      await vi.waitFor(() => expect(onSendAttachment).toHaveBeenCalledWith(clip));
-    });
+    expect(onVideoClick).toHaveBeenCalledTimes(1);
+    expect(menu(composer).hidden).toBe(true);
   });
 
-  describe('the image button', () => {
-    it('offers only the image types the server stores — no SVG, no HEIC', () => {
-      const { composer } = build();
-      expect(imageInput(composer).accept).toBe('image/jpeg,image/png,image/gif,image/webp');
-    });
+  it('Escape closes the menu and returns focus to the toggle', () => {
+    const { composer } = build();
+    toggle(composer).click();
+    expect(menu(composer).hidden).toBe(false);
 
-    it('refuses an SVG in the same words as the file picker', () => {
-      const { composer } = build();
-      pick(composer, file('logo.svg', 'image/svg+xml'), imageInput(composer));
-      expectRefused(composer, TYPE_REFUSAL);
-    });
+    menu(composer).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
-    it('refuses an image over the 50 MB cap with the cap the composer enforces', () => {
-      const { composer } = build();
-      pick(composer, file('huge.png', 'image/png', 50 * MIB + 1), imageInput(composer));
-      expectRefused(composer, 'That file is too large. The limit is 50.0 MB.');
-    });
-
-    it('replaces a pending video: its glyph goes, and the new thumb is the only preview', () => {
-      const { composer } = build();
-      pick(composer, file('clip.mp4', 'video/mp4'));
-      pick(composer, file('photo.png', 'image/png'), imageInput(composer));
-
-      expect(composer.node.querySelector<HTMLElement>('.dh-preview-glyph')!.hidden).toBe(true);
-      expect(composer.node.querySelector<HTMLImageElement>('.dh-preview-thumb')!.hidden).toBe(false);
-      expect(composer.node.querySelector('.dh-preview-name')?.textContent).toBe('photo.png');
-      expect(sendButton(composer).disabled).toBe(false);
-    });
-
-    it('revokes the previous image preview when a second image is picked', () => {
-      const { composer } = build();
-      pick(composer, file('a.png', 'image/png'), imageInput(composer));
-      pick(composer, file('b.png', 'image/png'), imageInput(composer));
-      expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview-1');
-    });
+    expect(menu(composer).hidden).toBe(true);
+    expect(document.activeElement).toBe(toggle(composer));
   });
 
-  describe('the pending-attachment preview', () => {
-    const thumb = (composer: ComposerView) => composer.node.querySelector<HTMLImageElement>('.dh-preview-thumb')!;
-    const glyph = (composer: ComposerView) => composer.node.querySelector<HTMLElement>('.dh-preview-glyph')!;
+  it('a pointerdown outside the menu closes it', () => {
+    const { composer } = build();
+    toggle(composer).click();
+    expect(menu(composer).hidden).toBe(false);
 
-    it('shows a video’s name, size and a video glyph in the thumb slot', () => {
-      const { composer } = build();
-      pick(composer, file('clip.mp4', 'video/mp4', 12 * MIB));
+    // jsdom has no PointerEvent constructor — MouseEvent bubbles the same way, see message-list.test.ts.
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
 
-      expect(preview(composer).hidden).toBe(false);
-      expect(composer.node.querySelector('.dh-preview-name')?.textContent).toBe('clip.mp4');
-      expect(composer.node.querySelector('.dh-preview-size')?.textContent).toBe('12.0 MB');
-      expect(glyph(composer).hidden).toBe(false);
-      expect(glyph(composer).querySelector('svg[aria-hidden="true"] path')).not.toBeNull();
-      expect(thumb(composer).hidden).toBe(true);
-      // No object URL for a video: nothing to decode, nothing to revoke.
-      expect(createObjectURL).not.toHaveBeenCalled();
-    });
+    expect(menu(composer).hidden).toBe(true);
+  });
+});
 
-    it('keeps the glyph off an image, which gets its own thumbnail', () => {
-      const { composer } = build();
-      pick(composer, file('photo.jpg', 'image/jpeg'));
+describe('behaviour.fileUploads', () => {
+  const attachButtons = (composer: ComposerView) =>
+    [...composer.node.querySelectorAll<HTMLButtonElement>('button[aria-label^="Attach"]')];
 
-      expect(glyph(composer).hidden).toBe(true);
-      expect(thumb(composer).hidden).toBe(false);
-      expect(thumb(composer).getAttribute('src')).toBe('blob:preview-1');
-    });
+  it('shows the image and file buttons by default and hides both when switched off', () => {
+    const { composer } = build();
+    expect(attachButtons(composer)).toHaveLength(2);
+    expect(attachButtons(composer).every((b) => !b.hidden)).toBe(true);
 
-    it('revokes the image’s object URL when a video replaces it, and draws no stale thumb', () => {
-      const { composer } = build();
-      pick(composer, file('photo.jpg', 'image/jpeg'));
-      pick(composer, file('clip.mov', 'video/quicktime'));
+    composer.setAttachmentsEnabled(false);
+    expect(attachButtons(composer).every((b) => b.hidden)).toBe(true);
 
-      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
-      expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview-1');
-      expect(thumb(composer).hasAttribute('src')).toBe(false);
-      expect(glyph(composer).hidden).toBe(false);
-    });
+    composer.setAttachmentsEnabled(true);
+    expect(attachButtons(composer).every((b) => !b.hidden)).toBe(true);
+  });
+});
 
-    it('drops the glyph when a video is replaced by an image', () => {
-      const { composer } = build();
-      pick(composer, file('clip.mov', 'video/quicktime'));
-      pick(composer, file('photo.jpg', 'image/jpeg'));
+describe('submit(text, extra) — a tapped flow button', () => {
+  const extra = { metadata: { kind: 'flow_reply', runId: 'run-1', stepId: 'choose', buttonId: 'b1' } };
 
-      expect(glyph(composer).hidden).toBe(true);
-      expect(thumb(composer).hidden).toBe(false);
-      expect(revokeObjectURL).not.toHaveBeenCalled();
-    });
-
-    it('clears the glyph with the attachment', () => {
-      const { composer } = build();
-      pick(composer, file('clip.mp4', 'video/mp4'));
-      composer.node.querySelector<HTMLButtonElement>('button[aria-label="Remove attachment"]')!.click();
-
-      expect(preview(composer).hidden).toBe(true);
-      expect(glyph(composer).hidden).toBe(true);
-      expect(revokeObjectURL).not.toHaveBeenCalled();
-    });
+  it('hands the extra data to onSend for that one send', async () => {
+    const { composer, onSend } = build();
+    await composer.submit('Payment failed', extra);
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith('Payment failed', extra);
   });
 
+  it('does not leak onto the next message the customer types', async () => {
+    const { composer, onSend } = build();
+    await composer.submit('Payment failed', extra);
+
+    input(composer).value = 'and another thing';
+    input(composer).dispatchEvent(new Event('input'));
+    sendButton(composer).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSend).toHaveBeenLastCalledWith('and another thing');
+  });
+
+  it('does not leak when the tap was refused because the composer is disabled', async () => {
+    const { composer, onSend } = build();
+    composer.setEnabled(false);
+    await composer.submit('Payment failed', extra);
+    expect(onSend).not.toHaveBeenCalled();
+
+    composer.setEnabled(true);
+    input(composer).value = 'typed instead';
+    input(composer).dispatchEvent(new Event('input'));
+    sendButton(composer).click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenCalledWith('typed instead');
+  });
+});
+
+describe('setInputHint — the keyboard the flow’s question wants', () => {
+  const emailHint = {
+    type: 'email',
+    placeholder: 'Your email address',
+    inputMode: 'email',
+    autocomplete: 'email',
+  } as const;
+
+  it('switches the keyboard for the box, and hands the original back when cleared', () => {
+    const { composer } = build();
+    const box = input(composer);
+    const original = {
+      inputmode: box.getAttribute('inputmode'),
+      autocomplete: box.getAttribute('autocomplete'),
+      autocapitalize: box.getAttribute('autocapitalize'),
+      enterkeyhint: box.getAttribute('enterkeyhint'),
+    };
+
+    composer.setInputHint(emailHint);
+    expect(box.getAttribute('inputmode')).toBe('email');
+    expect(box.getAttribute('autocomplete')).toBe('email');
+    expect(box.getAttribute('autocapitalize')).toBe('none');
+    expect(box.getAttribute('enterkeyhint')).toBe('send');
+
+    composer.setInputHint(null);
+    expect({
+      inputmode: box.getAttribute('inputmode'),
+      autocomplete: box.getAttribute('autocomplete'),
+      autocapitalize: box.getAttribute('autocapitalize'),
+      enterkeyhint: box.getAttribute('enterkeyhint'),
+    }).toEqual(original);
+  });
+
+  it('never stops the box accepting text', async () => {
+    const { composer, onSend } = build();
+    composer.setInputHint(emailHint);
+    input(composer).value = 'not an email at all';
+    input(composer).dispatchEvent(new Event('input'));
+    sendButton(composer).click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onSend).toHaveBeenCalledWith('not an email at all');
+  });
 });

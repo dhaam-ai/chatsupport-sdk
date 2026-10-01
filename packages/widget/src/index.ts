@@ -142,7 +142,7 @@ export {
 export type { EmbedFormOptions, EmbedHandle, DhaamFormEmbedGlobal } from './form-embed.js';
 
 export type { ChatWidget } from './widget.js';
-export type { WidgetConfig, WidgetAuth, WidgetIdentity, ResolvedConfig } from './config.js';
+export type { WidgetConfig, WidgetAuth, WidgetIdentity, ResolvedConfig, PageContext } from './config.js';
 export type { PresentationMode, ResolvedPresentation } from './ui/presentation.js';
 
 // Re-exported because a host cannot fill in `WidgetIdentity.profile` without

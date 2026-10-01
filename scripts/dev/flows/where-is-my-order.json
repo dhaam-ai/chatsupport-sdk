@@ -1,0 +1,119 @@
+{
+  "name": "Test - Where is my order",
+  "description": "Page: order. Order-number and email questions, a check with a loop back, tag.",
+  "enabled": true,
+  "rules": {
+    "trigger": "page",
+    "labels": [
+      "order"
+    ],
+    "url": "",
+    "phrases": [],
+    "conditions": [],
+    "hours": "any",
+    "often": "chat"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "start",
+    "steps": {
+      "start": {
+        "id": "start",
+        "kind": "message",
+        "name": "Say hello",
+        "text": "Happy to check on your order.",
+        "next": {
+          "next": "askOrder"
+        }
+      },
+      "askOrder": {
+        "id": "askOrder",
+        "kind": "question",
+        "name": "Ask for order number",
+        "text": "What's your order number? It starts with DH.",
+        "answer": "order",
+        "saveAs": "Order number",
+        "tries": 3,
+        "retry": "That doesn't look like an order number. It starts with DH, like DH-10482.",
+        "next": {
+          "ok": "checkPrefix",
+          "bad": "toTeam"
+        }
+      },
+      "checkPrefix": {
+        "id": "checkPrefix",
+        "kind": "check",
+        "name": "Does it start with DH?",
+        "check": {
+          "what": "answer",
+          "key": "Order number",
+          "op": "contains",
+          "value": "DH"
+        },
+        "next": {
+          "yes": "askEmail",
+          "no": "notDh"
+        }
+      },
+      "notDh": {
+        "id": "notDh",
+        "kind": "message",
+        "name": "Explain the format",
+        "text": "That one doesn't start with DH. Please check your confirmation email.",
+        "next": {
+          "next": "askOrder"
+        }
+      },
+      "askEmail": {
+        "id": "askEmail",
+        "kind": "question",
+        "name": "Ask for email",
+        "text": "And the email you ordered with?",
+        "answer": "email",
+        "saveAs": "Email",
+        "tries": 2,
+        "retry": "That doesn't look like an email. Try again, like name@example.com.",
+        "next": {
+          "ok": "status",
+          "bad": "toTeam"
+        }
+      },
+      "status": {
+        "id": "status",
+        "kind": "message",
+        "name": "Promise the status",
+        "text": "Thanks {Email}. I'm checking order {Order number}. Our team will email you the status shortly.",
+        "next": {
+          "next": "tagOrder"
+        }
+      },
+      "tagOrder": {
+        "id": "tagOrder",
+        "kind": "tag",
+        "name": "Tag the chat",
+        "tags": [
+          "order-status"
+        ],
+        "next": {
+          "next": "finish"
+        }
+      },
+      "finish": {
+        "id": "finish",
+        "kind": "end",
+        "name": "Finish",
+        "text": "Anything else? Just type it here.",
+        "next": {}
+      },
+      "toTeam": {
+        "id": "toTeam",
+        "kind": "handoff",
+        "name": "Hand to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "Connecting you with our team.",
+        "next": {}
+      }
+    }
+  }
+}

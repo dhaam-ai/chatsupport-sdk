@@ -1,0 +1,117 @@
+{
+  "name": "Test - Refund request",
+  "description": "Starts when a visitor says refund. Buttons, phone question, tag, handoff.",
+  "enabled": true,
+  "rules": {
+    "trigger": "says",
+    "labels": [],
+    "url": "",
+    "phrases": [
+      "refund",
+      "money back"
+    ],
+    "conditions": [],
+    "hours": "any",
+    "often": "chat"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "intro",
+    "steps": {
+      "intro": {
+        "id": "intro",
+        "kind": "message",
+        "name": "Say sorry",
+        "text": "Sorry things didn't go well. I can help start a refund.",
+        "next": {
+          "next": "reason"
+        }
+      },
+      "reason": {
+        "id": "reason",
+        "kind": "buttons",
+        "name": "Ask what happened",
+        "text": "What happened?",
+        "buttons": [
+          {
+            "id": "nr",
+            "label": "Order didn't arrive"
+          },
+          {
+            "id": "dm",
+            "label": "Item damaged"
+          },
+          {
+            "id": "cm",
+            "label": "Changed my mind"
+          }
+        ],
+        "next": {
+          "nr": "askPhone",
+          "dm": "askPhone",
+          "cm": "policy",
+          "typed": "toTeam"
+        }
+      },
+      "policy": {
+        "id": "policy",
+        "kind": "message",
+        "name": "Explain the policy",
+        "text": "No problem. An order can be cancelled before it is prepared; after that a refund depends on the store.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "askPhone": {
+        "id": "askPhone",
+        "kind": "question",
+        "name": "Ask for a phone number",
+        "text": "What phone number can we reach you on?",
+        "answer": "phone",
+        "saveAs": "Phone",
+        "tries": 2,
+        "retry": "Please include the digits, like +91 98765 43210.",
+        "next": {
+          "ok": "tagRefund",
+          "bad": "toTeam"
+        }
+      },
+      "tagRefund": {
+        "id": "tagRefund",
+        "kind": "tag",
+        "name": "Tag refund request",
+        "tags": [
+          "refund-request"
+        ],
+        "next": {
+          "next": "thanks"
+        }
+      },
+      "thanks": {
+        "id": "thanks",
+        "kind": "message",
+        "name": "Confirm",
+        "text": "Thanks. We'll call you on {Phone} about your refund.",
+        "next": {
+          "next": "toTeam"
+        }
+      },
+      "finish": {
+        "id": "finish",
+        "kind": "end",
+        "name": "Finish",
+        "text": "Anything else? Just type it here.",
+        "next": {}
+      },
+      "toTeam": {
+        "id": "toTeam",
+        "kind": "handoff",
+        "name": "Hand to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "Connecting you with our team.",
+        "next": {}
+      }
+    }
+  }
+}

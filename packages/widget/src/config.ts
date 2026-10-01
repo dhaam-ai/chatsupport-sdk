@@ -324,6 +324,23 @@ export interface WidgetConfig {
   readonly onStartPartnerConversation?: () => void;
 
   /**
+   * Called instead of switching to this widget's own Ticket tab (`ui/nav.ts`
+   * / `ui/tickets-screen.ts`) when a logged-in customer taps it.
+   *
+   * This SDK has no ticket-listing endpoint of its own (see
+   * `ui/tickets-screen.ts`'s header) — a host that runs a real ticket portal
+   * elsewhere names this instead, typically to resolve a fresh URL (its own
+   * identity token included) and `window.open` it in a new tab. Fetching the
+   * token at CLICK time, in the host, is deliberate: only the host holds the
+   * credential the destination needs, and that credential can rotate after
+   * this widget mounted.
+   *
+   * Omitted: the tab still switches to this widget's own tickets screen (a
+   * placeholder today).
+   */
+  readonly onTicketsTab?: () => void;
+
+  /**
    * Treats a customer session's non-empty `subject` as if it were a
    * merchant/outlet target, for the purpose of what Home's "Recent
    * conversation" card and the Messages list show.
@@ -606,14 +623,32 @@ export interface WidgetConfig {
   /** Existing session to join on connect, if the host already knows one. */
   readonly sessionId?: string;
 
+  /**
+   * Where the visitor is, so chat flows that start "on a page" can run. Sent on
+   * the hello; keep it current with `widget.setPage()` (or `DhaamChat.setPage`)
+   * on every route change. When omitted, the widget sends the page URL only.
+   * Never put personal data in `attributes`.
+   */
+  readonly page?: PageContext;
+
   /** Where widget-internal failures go. Defaults to a namespaced `console.warn`. */
   readonly onError?: (error: unknown) => void;
+}
 
-  /**
-   * Called from the "Sign in" button shown to a guest when the console's
-   * "Allow visitor chat" is off. Omit it and the prompt shows no button.
-   */
-  readonly onSignInRequest?: () => void;
+/**
+ * Where the visitor is (chatbot-workflows.md §9.1). Every field is optional and
+ * checked before it is sent: a field the server would reject is dropped on its
+ * own, so a wrong value here can never cost the visitor their chat.
+ */
+export interface PageContext {
+  /** A short page name — `home`, `product`, `cart`, `checkout`, `payment`, `order`, `account`, `search`, or your own. Lower-cased; letters, digits, `_`, `-`; at most 64. */
+  readonly label?: string;
+  /** An http(s) URL or a path, at most 2048 characters. Defaults to the current page. */
+  readonly url?: string;
+  /** Up to 20 scalar values (strings at most 200 characters). `currency` must be an ISO 4217 code. */
+  readonly attributes?: Readonly<Record<string, string | number | boolean>>;
+  /** The storefront's store, for store-scoped flows. */
+  readonly store?: { readonly id: string; readonly outletId?: string };
 }
 
 /** Everything resolved — no optionals left for the UI layer to re-default. */

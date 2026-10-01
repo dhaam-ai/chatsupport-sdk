@@ -17,6 +17,7 @@ import type {
   CloseReason,
   EmptyPayload,
   ErrorCode,
+  FlowInvitePayload,
   PresenceEntry,
   TicketLinkedPayload,
 } from '../protocol/index.js';
@@ -155,6 +156,23 @@ export interface ChatEventMap {
   /** `getToken()` was successfully re-invoked (§10.3). Deliberately payload-free. */
   tokenRefreshed: EmptyPayload;
 
+  /**
+   * A server-pushed `flow.invite` (chatbot-workflows-commerce.md §6): a flow
+   * would like to start and there is no chat yet. The widget's invite bubble
+   * is the intended subscriber.
+   */
+  flowInvite: FlowInvitePayload;
+
+  /**
+   * The invite named by `inviteId` is no longer live — accepted via
+   * `client.acceptInvite` or declined via `client.dismissInvite`. There is no
+   * wire signal for an invite expiring on its own (`FlowInvitePayload` carries
+   * no TTL), so this never fires on a timer this SDK invents — only on one of
+   * those two calls. The widget's invite bubble subscribes to this rather than
+   * polling state, so it can hide the bubble the instant either happens.
+   */
+  flowInviteCleared: { inviteId: string };
+
   /** Any protocol- or transport-level error (§7.4). */
   error: ChatError;
 }
@@ -190,5 +208,7 @@ export const CHAT_EVENT_NAMES = [
   'presenceUpdate',
   'ticketLinked',
   'tokenRefreshed',
+  'flowInvite',
+  'flowInviteCleared',
   'error',
 ] as const satisfies readonly ChatEventName[];

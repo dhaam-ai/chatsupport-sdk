@@ -42,7 +42,8 @@ import { MessageController, upsertMessage } from '../messages/index.js';
 import type { LocalSender } from '../messages/index.js';
 import { PresenceCoordinator, systemClock, systemTimers } from '../presence/index.js';
 import type { Clock, ScheduleTimer } from '../presence/index.js';
-import { isParkedCloseReason } from '../protocol/index.js';
+import { PageContextSync } from './page-context-sync.js';
+import { isParkedCloseReason, normalizeVisitorEvent } from '../protocol/index.js';
 import type { ChatStatus, ErrorPayload, ServerFrame } from '../protocol/index.js';
 import { SendQueue } from '../queue/index.js';
 import type { QueuedSend, QueueTransport, RetryOutcome } from '../queue/index.js';
@@ -505,6 +506,9 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
         store.setState({ session: applyTicketLinked(store.getState().session, frame.d) });
         store.emit('ticketLinked', frame.d);
         return;
+      case 'flow.invite':
+        store.emit('flowInvite', frame.d);
+        return;
       case 'system.pong':
         return;
       default:
@@ -529,8 +533,21 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     return realTransport;
   };
 
+  // Where the visitor is (chatbot-workflows.md §9.2-9.3). Annotated, not
+  // inferred: it closes over `connectionController`, which in turn reads it for
+  // every hello, and an inferred type would be circular (TS7022).
+  const pageSync: PageContextSync = new PageContextSync({
+    isConnected: () => connectionController.state === 'connected',
+    send: (context) => {
+      realTransport.send('context.update', context);
+    },
+    schedule: schedule ?? systemTimers,
+    clock: now ?? systemClock,
+  });
+
   const connectionController = new ConnectionController({
     store,
+    pageContext: () => pageSync.forHello(),
     url: wsUrl,
     publishableKey,
     // See `ConnectionHelloPayload.clientId`: an unverified self-claim,
@@ -1086,6 +1103,65 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     } catch {
       // Same reasoning as rememberSelectedSession.
     }
+  }
+
+  /**
+   * Everything between "leave this conversation" and the `connect()` that
+   * opens a brand-new one — `startNewSession` and `acceptInvite` both. Does
+   * not connect: each caller latches what it needs, then connects. Returns
+   * false when a newer switch/new-session superseded this one mid-way.
+   */
+  async function tearDownForNewSession(payload?: {
+    readonly topic?: string;
+    readonly subject?: string;
+  }): Promise<boolean> {
+    // 2. Close the socket before forgetting the anchor, so no in-flight
+    //    frame can advance it again between the reset and the reconnect.
+    connectionController.disconnect();
+    presenceCoordinator.reset();
+
+    // 3. The anchor. Without this the next `connection.hello` carries a
+    //    `resumeFrom` from a history this client no longer holds, and the
+    //    v2 endpoint answers it with a NON-RETRYABLE `VALIDATION_FAILED`
+    //    ("resumeFrom is ahead of this session") — stranding the client in
+    //    `suspended` instead of the new session it asked for. This is the
+    //    single reason `disconnect()` + `connect()` is not already a
+    //    working "start over".
+    connectionController.forgetResumeAnchor();
+
+    // 3b. And SAY so. Forgetting the anchor only makes the next hello look
+    //     like a first connection; it does not make the server treat it as
+    //     one. chat-service resolves a customer to their active session
+    //     either way, so without this the reconnect landed straight back in
+    //     the conversation being left. `newSession: true` mints a fresh one
+    //     (and drops any `resumeFrom` server-side).
+    //
+    //     The caller's subject/topic rides along on the same call — see
+    //     `requestNewSession`'s own doc for why it has to be latched here
+    //     rather than sent as a later frame.
+    connectionController.requestNewSession(payload);
+
+    // 4. Every per-session projection, in one write so no subscriber ever
+    //    observes the new session's id against the old one's transcript.
+    //    Shared verbatim with `switchSession`; the extra `session: null`
+    //    belongs to this path alone, because here there is genuinely no
+    //    session until the server mints one.
+    store.setState({ session: null, ...perSessionReset() });
+
+    // 5. Any remembered selection must go BEFORE the connect, not after:
+    //    the `connected` handler reads it, and a leftover id would send
+    //    this client straight back into the conversation it was just told
+    //    to abandon. Also bumps the epoch, so an in-flight switch cannot
+    //    write its page into the brand-new session.
+    const epoch = (switchEpoch += 1);
+    // No switch is in flight any more, and this connection is joined to
+    // nothing until the next `connection.ack` says otherwise. Clearing the
+    // target is what lets the brand-new session's own `connection.ack`
+    // repaint the screen — an abandoned switch must not go on refusing it.
+    switchTarget = null;
+    joinedSessionId = null;
+    await forgetSelectedSession();
+    return epoch === switchEpoch;
   }
 
   /**
@@ -1683,6 +1759,13 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   // of which `store.on('connected')` call happens to appear first: the gate is
   // armed synchronously here, before anything can await it, and `flushQueue`
   // is the only way to reach `queue.flush()`.
+  // A page set between a hello being built and its ack was only latched (the
+  // hello could not carry it and no socket was up to send an update on), so
+  // it is delivered as soon as the connection is up.
+  store.on('connected', () => {
+    pageSync.flush();
+  });
+
   store.on('connected', () => {
     let sessionDecided!: () => void;
     selectionRestored = new Promise<void>((resolve) => {
@@ -1843,6 +1926,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     retryNow: () => connectionController.retryNow(),
     disconnect: () => {
       connectionController.disconnect();
+      pageSync.destroy();
       presenceCoordinator.reset();
       // The connection carrying the join is gone; the next `connection.ack`
       // establishes a new one.
@@ -1860,54 +1944,8 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
       //    deleted, so the binding can show them as dead and re-sendable.
       if (closing !== undefined) await queue.abandonSession(closing);
 
-      // 2. Close the socket before forgetting the anchor, so no in-flight
-      //    frame can advance it again between the reset and the reconnect.
-      connectionController.disconnect();
-      presenceCoordinator.reset();
-
-      // 3. The anchor. Without this the next `connection.hello` carries a
-      //    `resumeFrom` from a history this client no longer holds, and the
-      //    v2 endpoint answers it with a NON-RETRYABLE `VALIDATION_FAILED`
-      //    ("resumeFrom is ahead of this session") — stranding the client in
-      //    `suspended` instead of the new session it asked for. This is the
-      //    single reason `disconnect()` + `connect()` is not already a
-      //    working "start over".
-      connectionController.forgetResumeAnchor();
-
-      // 3b. And SAY so. Forgetting the anchor only makes the next hello look
-      //     like a first connection; it does not make the server treat it as
-      //     one. chat-service resolves a customer to their single active
-      //     session either way, so without this the reconnect below landed
-      //     straight back in the conversation this method exists to leave —
-      //     the customer pressed "Start a new conversation" and kept talking
-      //     in the old one. `newSession: true` closes that one (SWITCHED) and
-      //     mints a fresh one, which is the whole operation.
-      //
-      //     The caller's subject/topic rides along on the same call — see
-      //     `requestNewSession`'s own doc for why it has to be latched here
-      //     rather than sent as a later frame.
-      connectionController.requestNewSession(payload);
-
-      // 4. Every per-session projection, in one write so no subscriber ever
-      //    observes the new session's id against the old one's transcript.
-      //    Shared verbatim with `switchSession`; the extra `session: null`
-      //    belongs to this path alone, because here there is genuinely no
-      //    session until the server mints one.
-      store.setState({ session: null, ...perSessionReset() });
-
-      // 5. Any remembered selection must go BEFORE the connect, not after:
-      //    the `connected` handler reads it, and a leftover id would send
-      //    this client straight back into the conversation it was just told
-      //    to abandon. Also bumps the epoch, so an in-flight switch cannot
-      //    write its page into the brand-new session.
-      switchEpoch += 1;
-      // No switch is in flight any more, and this connection is joined to
-      // nothing until the next `connection.ack` says otherwise. Clearing the
-      // target is what lets the brand-new session's own `connection.ack`
-      // repaint the screen — an abandoned switch must not go on refusing it.
-      switchTarget = null;
-      joinedSessionId = null;
-      await forgetSelectedSession();
+      // 2-5. The teardown shared with `acceptInvite`.
+      await tearDownForNewSession(payload);
 
       // 6. A hello with no `resumeFrom` reads as a first connection, which is
       //    what makes the server mint a new session (WAITING_FOR_AGENT, seq
@@ -1938,6 +1976,75 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     // Pure delegation — `ConnectionController.setContactInfo` owns the
     // merge/latch semantics documented on the public method above.
     setContactInfo: (info) => connectionController.setContactInfo(info),
+    // Never throws: a page context is advisory, and a host page's bad value
+    // must not surface as an exception in its own render path.
+    setPageContext: (context) => {
+      try {
+        if (!pageSync.set(context)) {
+          config.logger?.('warn', 'setPageContext ignored a value that is not an object');
+        }
+      } catch (error) {
+        config.logger?.('warn', 'setPageContext failed', { error: String(error) });
+      }
+    },
+    // Never throws — a bad event is advisory, same contract as setPageContext.
+    sendVisitorEvent: (name, props) => {
+      try {
+        const event = normalizeVisitorEvent(name, props);
+        if (event === null) {
+          config.logger?.('warn', 'sendVisitorEvent ignored an unrecognised name or invalid props');
+          return;
+        }
+        realTransport.send('visitor.event', event);
+      } catch (error) {
+        config.logger?.('warn', 'sendVisitorEvent failed', { error: String(error) });
+      }
+    },
+    acceptInvite: (inviteId) => {
+      try {
+        if (typeof inviteId !== 'string' || inviteId === '') {
+          config.logger?.('warn', 'acceptInvite ignored a value that is not a non-empty string');
+          return;
+        }
+        // Optimistic and synchronous: the widget's bubble hides the instant
+        // the visitor taps accept, not once the reconnect round-trips.
+        store.emit('flowInviteCleared', { inviteId });
+        // Accepting starts a NEW conversation: the server offers invites only
+        // with no live chat, and mints the flow's session on a `newSession`
+        // hello (which also drops any stale `resumeFrom`). So it is
+        // `startNewSession`'s teardown, minus `abandonSession` (the old chat is
+        // already over), and it revives a closed or suspended client.
+        //
+        // The teardown's first step, `disconnect()`, runs synchronously in this
+        // call and kills any in-flight hello, so that hello's ack can never
+        // spend the invite latch; the latch is set only right before the
+        // `connect()` that builds the fresh hello carrying it.
+        void tearDownForNewSession()
+          .then((current) => {
+            // A newer switch/new conversation won; it owns the connection.
+            if (!current) return;
+            connectionController.carryInvite(inviteId);
+            return connectionController.connect();
+          })
+          .catch((error: unknown) => {
+            config.logger?.('warn', 'acceptInvite failed', { error: String(error) });
+          });
+      } catch (error) {
+        config.logger?.('warn', 'acceptInvite failed', { error: String(error) });
+      }
+    },
+    dismissInvite: (inviteId) => {
+      try {
+        if (typeof inviteId !== 'string' || inviteId === '') {
+          config.logger?.('warn', 'dismissInvite ignored a value that is not a non-empty string');
+          return;
+        }
+        store.emit('flowInviteCleared', { inviteId });
+        realTransport.send('flow.inviteDismissed', { inviteId });
+      } catch (error) {
+        config.logger?.('warn', 'dismissInvite failed', { error: String(error) });
+      }
+    },
     reopenSession: async (sessionId): Promise<ChatSession> => {
       if (config.sessionActions === undefined) {
         throw new ChatClientConfigError(

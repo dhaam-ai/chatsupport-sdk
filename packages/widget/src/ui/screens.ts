@@ -10,7 +10,9 @@
 //
 // The reference product is three screens with a nav between them — Home,
 // Messages, and one conversation — so the implicit rule becomes an explicit
-// one here rather than a fourth condition inside a fifth function.
+// one here rather than a fourth condition inside a fifth function. A fourth
+// tab screen, Tickets, joined later for a logged-in customer only — see
+// widget.ts's `isGuest` and `createNav`'s `includeTickets`.
 //
 // ── The back stack is a stack, not a guess ───────────────────────────────
 //
@@ -25,7 +27,7 @@
 // remembering something nobody asked it to.
 
 /** The screens the panel can show. */
-export type ScreenName = 'home' | 'messages' | 'conversation';
+export type ScreenName = 'home' | 'messages' | 'conversation' | 'tickets';
 
 export interface ScreensView {
   /** The screen showing right now. */

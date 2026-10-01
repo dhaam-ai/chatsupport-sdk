@@ -70,10 +70,21 @@ describe('createNewConversationScreen — topic chips', () => {
     expect(chips(screen)[0]!.getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('never renders an "attach my active order" control', () => {
-    const { screen } = build();
-    expect(screen.node.querySelector('input[type="checkbox"]')).toBeNull();
-    expect(screen.node.textContent?.toLowerCase()).not.toContain('order');
+  it('renders "attach my active order", checked by default, and it never reaches onStart', async () => {
+    const { screen, onStart } = build();
+    const checkbox = screen.node.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(checkbox).not.toBeNull();
+    expect(checkbox!.checked).toBe(true);
+
+    // Decorative — see new-conversation.ts's own header. Unchecking it must
+    // not appear anywhere in what Start sends: there is no field for it.
+    checkbox!.checked = false;
+    message(screen).value = 'Where is my order';
+    submit(screen).click();
+    await vi.waitFor(() => expect(onStart).toHaveBeenCalled());
+    const input = onStart.mock.calls[0]![0];
+    expect(input).not.toHaveProperty('attachOrder');
+    expect(Object.keys(input).sort()).toEqual(['message']);
   });
 });
 
@@ -122,7 +133,7 @@ describe('createNewConversationScreen — starting', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(submit(screen).disabled).toBe(false);
-    expect(submit(screen).textContent).toBe('Start a new conversation');
+    expect(submit(screen).textContent).toBe('Start conversation');
     expect(screen.node.querySelector('.dh-form-error')?.textContent).toBe(
       "We couldn't start that conversation. Please try again.",
     );
@@ -155,7 +166,7 @@ describe('createNewConversationScreen — pre-chat fields folded in', () => {
 
     // The heading is this screen's, not the gate's "Before we start": the
     // customer asked to start a conversation and that is still what this is.
-    expect(screen.node.querySelector('.dh-form-heading')?.textContent).toBe('Start a new conversation');
+    expect(screen.node.querySelector('.dh-form-heading')?.textContent).toBe('What can we help you with?');
     expect(subtitle(screen).hidden).toBe(false);
     expect(subtitle(screen).textContent).toBe('A few details so we can help you faster.');
 

@@ -125,6 +125,11 @@ export function createFakeChatClient(initial?: Partial<ChatState>): FakeChatClie
     // Recording contact info is inert by contract (no fetches, no frames), so
     // an inert spy IS the real behavior at test-double scale.
     setContactInfo: vi.fn((_info: Parameters<ChatClient['setContactInfo']>[0]) => {}),
+    // Advisory like contact info — inert spies.
+    setPageContext: vi.fn((_context: Parameters<ChatClient['setPageContext']>[0]) => {}),
+    sendVisitorEvent: vi.fn((_name: string, _props?: Record<string, unknown>) => {}),
+    acceptInvite: vi.fn((_inviteId: string) => {}),
+    dismissInvite: vi.fn((_inviteId: string) => {}),
     // Default: echoes the submission back, the ordinary "server recorded it"
     // outcome — mirroring the real contract's promise shape (comment omitted
     // comes back as null, never undefined). Override per test for rejections.

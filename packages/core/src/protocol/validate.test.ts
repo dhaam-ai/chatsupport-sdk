@@ -109,6 +109,42 @@ describe('validateFrame — valid frames of every type pass', () => {
     ],
     ['error without ref', { v: 1, t: 'error', id: ULID_A, ts: TS, d: { code: 'PROTOCOL_VERSION_UNSUPPORTED', message: 'too old', retryable: false } }],
     ['error with ref', { v: 1, t: 'error', id: ULID_B, ref: ULID_A, ts: TS, d: { code: 'AUTH_EXPIRED', message: 'expired', retryable: true } }],
+    [
+      'visitor.event',
+      { v: 1, t: 'visitor.event', id: ULID_A, ts: TS, d: { name: 'exit_intent' } },
+    ],
+    [
+      'visitor.event with props',
+      { v: 1, t: 'visitor.event', id: ULID_A, ts: TS, d: { name: 'cart_updated', props: { items: 2 } } },
+    ],
+    [
+      'flow.inviteDismissed',
+      { v: 1, t: 'flow.inviteDismissed', id: ULID_A, ts: TS, d: { inviteId: 'inv_1' } },
+    ],
+    [
+      'flow.invite',
+      { v: 1, t: 'flow.invite', id: ULID_A, ts: TS, d: { inviteId: 'inv_1', text: 'Need a hand?' } },
+    ],
+    [
+      'flow.invite with buttons and autoOpen',
+      {
+        v: 1,
+        t: 'flow.invite',
+        id: ULID_A,
+        ts: TS,
+        d: { inviteId: 'inv_1', text: 'Need a hand?', buttons: [{ id: 'b1', label: 'Yes' }], autoOpen: true },
+      },
+    ],
+    [
+      'connection.hello with inviteId',
+      {
+        v: 1,
+        t: 'connection.hello',
+        id: ULID_A,
+        ts: TS,
+        d: { token: 'tok', publishableKey: 'dhp_test_1', protocolVersion: 1, inviteId: 'inv_1' },
+      },
+    ],
   ];
 
   it.each(validFrames)('%s', (_label, input) => {
@@ -356,6 +392,48 @@ describe('validateFrame — malformed frames rejected with a useful reason', () 
       },
     });
     expect(result.ok).toBe(true);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// visitor.event / flow.invite / flow.inviteDismissed rejected with a useful reason
+// -----------------------------------------------------------------------------
+
+describe('validateFrame — visitor.event / flow.invite / flow.inviteDismissed rejected with a useful reason', () => {
+  it('rejects visitor.event with no name', () => {
+    const result = validateFrame({ v: 1, t: 'visitor.event', id: ULID_A, ts: TS, d: {} });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.name');
+  });
+
+  it('rejects flow.inviteDismissed with no inviteId', () => {
+    const result = validateFrame({ v: 1, t: 'flow.inviteDismissed', id: ULID_A, ts: TS, d: {} });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.inviteId');
+  });
+
+  it('rejects flow.invite with no text', () => {
+    const result = validateFrame({
+      v: 1,
+      t: 'flow.invite',
+      id: ULID_A,
+      ts: TS,
+      d: { inviteId: 'inv_1' },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.text');
+  });
+
+  it('rejects flow.invite whose button is missing a label', () => {
+    const result = validateFrame({
+      v: 1,
+      t: 'flow.invite',
+      id: ULID_A,
+      ts: TS,
+      d: { inviteId: 'inv_1', text: 'hi', buttons: [{ id: 'b1' }] },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe('d.buttons[0].label');
   });
 });
 

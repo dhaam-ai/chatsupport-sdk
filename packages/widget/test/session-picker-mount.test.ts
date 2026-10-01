@@ -253,7 +253,7 @@ describe('the gate is exactly sessions.length > 0 — now expressed as rows, not
 
     await goToMessages();
     expect(messagesRows()).toHaveLength(0);
-    expect(messagesPane().querySelector('.dh-messages-empty')?.textContent).toBe('No conversations yet.');
+    expect(messagesPane().querySelector('.dh-messages-empty-title')?.textContent).toBe('No conversations yet');
   });
 
   // `status: 'OPEN'` explicitly, overriding the fixture's `RESOLVED`: Home

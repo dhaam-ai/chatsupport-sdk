@@ -70,7 +70,7 @@ import { scrubCredentials } from '../auth/index.js';
 import { AuthBackoffPolicy, TransportBackoffPolicy } from '../backoff/index.js';
 import { systemTimers } from '../presence/time.js';
 import type { CancelTimer, ScheduleTimer } from '../presence/time.js';
-import type { ConnectionAckPayload, ConnectionHelloPayload, ServerFrame } from '../protocol/index.js';
+import type { ConnectionAckPayload, ConnectionHelloPayload, ServerFrame, VisitorContext } from '../protocol/index.js';
 import type { ChatError, ChatStore, ConnectionState } from '../state/index.js';
 import type { TransportCloseInfo } from '../transport/index.js';
 import { ResumeTracker, frameSeq } from './resume.js';
@@ -140,6 +140,7 @@ export class ConnectionController {
    */
   readonly #target: { readonly role: string; readonly id: string } | undefined;
   readonly #outletIds: readonly string[] | undefined;
+  readonly #pageContext: (() => VisitorContext | undefined) | undefined;
   readonly #clientId: string | undefined;
   readonly #onFrame: ((frame: ServerFrame) => void) | undefined;
   readonly #onResumeGap: ((gap: ResumeGap) => void) | undefined;
@@ -173,6 +174,9 @@ export class ConnectionController {
    */
   #pendingNewSessionSubject: string | undefined;
   #pendingNewSessionTopic: string | undefined;
+
+  /** See {@link carryInvite}. */
+  #pendingInviteId: string | undefined;
 
   /**
    * Contact-info enrichment (IP watermark / device / GPS location) for the
@@ -217,6 +221,7 @@ export class ConnectionController {
     this.#publishableKey = options.publishableKey;
     this.#target = options.target;
     this.#outletIds = options.outletIds;
+    this.#pageContext = options.pageContext;
     this.#clientId = options.clientId;
     this.#pendingNewSessionSubject = options.subject;
     this.#pendingNewSessionTopic = options.topic;
@@ -313,6 +318,20 @@ export class ConnectionController {
     this.#pendingNewSession = true;
     this.#pendingNewSessionSubject = payload?.subject;
     this.#pendingNewSessionTopic = payload?.topic;
+  }
+
+  /**
+   * Carries `inviteId` on the NEXT `connection.hello` this controller
+   * builds — `client.acceptInvite`'s latch (chatbot-workflows-commerce.md
+   * §6). Cleared once a `connection.ack` confirms a hello actually carried
+   * it, matching the server's "accept once" rule (flow-adapters.ts): a
+   * transport retry of the SAME attempt must still carry the same id, but a
+   * reconnect that happens AFTER acceptance must not resend it. Does not
+   * itself open a socket — the caller sequences the reconnect around it,
+   * exactly as `requestNewSession` documents for `newSession`.
+   */
+  carryInvite(inviteId: string): void {
+    this.#pendingInviteId = inviteId;
   }
 
   /**
@@ -486,11 +505,21 @@ export class ConnectionController {
     this.#openSocket(token.token);
   }
 
+  /** The host's page context, or `undefined`. A provider that throws is a host bug, never a reason to fail the hello. */
+  #readPageContext(): VisitorContext | undefined {
+    try {
+      return this.#pageContext?.();
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Opens the socket for `token`. A factory that throws is a transport failure, not a crash. */
   #openSocket(token: string): void {
     const resumeFrom = this.#resume.lastAppliedSeq;
     this.#connectionResumeFrom = resumeFrom;
 
+    const pageContext = this.#readPageContext();
     const hello: Omit<ConnectionHelloPayload, 'protocolVersion'> = {
       token,
       // Omitted entirely, not sent as `undefined`, on a staff connection. The
@@ -514,6 +543,8 @@ export class ConnectionController {
         ? {}
         : { outletIds: [...this.#outletIds] }),
       ...(this.#clientId === undefined ? {} : { clientId: this.#clientId }),
+      // Where the visitor is — see `ConnectionControllerOptions.pageContext`.
+      ...(pageContext === undefined ? {} : { context: pageContext }),
       // D2 §8.3: sent on *any* transition into `authenticating`, reconnect and
       // first connect alike. Omitted entirely on a first connection — under
       // `exactOptionalPropertyTypes` an explicit `undefined` is a different
@@ -530,6 +561,8 @@ export class ConnectionController {
       // different thing from an absent key under this compiler option.
       ...(this.#pendingNewSessionSubject === undefined ? {} : { subject: this.#pendingNewSessionSubject }),
       ...(this.#pendingNewSessionTopic === undefined ? {} : { topic: this.#pendingNewSessionTopic }),
+      // Accepts an invite — see `carryInvite`.
+      ...(this.#pendingInviteId === undefined ? {} : { inviteId: this.#pendingInviteId }),
       // Contact-info enrichment — see `setContactInfo`. Whatever is known AT
       // THE MOMENT this hello is built; a value the widget records later
       // simply misses this particular hello (harmless — see that method's
@@ -720,6 +753,7 @@ export class ConnectionController {
     this.#pendingNewSession = false;
     this.#pendingNewSessionSubject = undefined;
     this.#pendingNewSessionTopic = undefined;
+    this.#pendingInviteId = undefined;
 
     const payload = frame.d;
 

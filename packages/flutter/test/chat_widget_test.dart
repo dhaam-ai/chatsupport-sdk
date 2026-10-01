@@ -66,9 +66,9 @@ void main() {
     int closeCalls = 0;
     await tester.pumpWidget(_wrap(cubit, onClose: () => closeCalls += 1));
 
-    expect(find.byIcon(Icons.close), findsWidgets);
+    expect(find.byIcon(Icons.close), findsOneWidget);
     expect(find.byIcon(Icons.arrow_back), findsNothing);
-    await tester.tap(find.byTooltip('Close chat').last);
+    await tester.tap(find.byTooltip('Close chat'));
     await tester.pump();
 
     expect(closeCalls, 1);
@@ -110,7 +110,6 @@ void main() {
 
     expect(find.byType(ConversationScreen), findsOneWidget);
     expect(find.byType(AppBar), findsOneWidget);
-    expect(find.byType(ChatBottomNav), findsNothing);
     expect(find.text('New conversation'), findsOneWidget);
     expect(find.byType(BackButton), findsOneWidget);
   });

@@ -14,12 +14,8 @@
 /// whatever row T13 settles on.
 library;
 
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
-import '../../app_assets.dart';
-import '../svg_asset_icon.dart';
 import 'attachment_draft.dart';
 import 'attachment_draft_controller.dart';
 
@@ -69,104 +65,12 @@ class AttachmentAttachButton extends StatelessWidget {
         final bool usable = composerEnabled && !controller.isUploading;
         return IconButton(
           tooltip: 'Attach a file',
-          icon: const SvgAssetIcon(AppAssets.attachmentIcon),
+          icon: const Icon(Icons.attach_file),
           // Matches the web original's `aria-label`, which is the same
           // string. A paperclip glyph names nothing on its own.
-          onPressed: usable ? () => _showAttachmentMenu(context) : null,
+          onPressed: usable ? controller.pick : null,
         );
       },
-    );
-  }
-
-  Future<void> _showAttachmentMenu(BuildContext context) async {
-    final RenderBox button = context.findRenderObject()! as RenderBox;
-    final RenderBox overlay =
-        Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
-    final Offset topLeft = button.localToGlobal(Offset.zero, ancestor: overlay);
-    final Rect buttonRect = topLeft & button.size;
-
-    await showMenu<void>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        buttonRect.left,
-        buttonRect.top,
-        overlay.size.width - buttonRect.right,
-        overlay.size.height - buttonRect.bottom,
-      ),
-      items: <PopupMenuEntry<void>>[
-        PopupMenuItem<void>(
-          key: const Key('attachment.menu.file'),
-          onTap: () => unawaited(controller.pick()),
-          child: const _AttachmentMenuRow(
-            icon: Icons.insert_drive_file_outlined,
-            label: 'File',
-          ),
-        ),
-        PopupMenuItem<void>(
-          key: const Key('attachment.menu.camera'),
-          onTap: () => unawaited(controller.pickFromCamera()),
-          child: const _AttachmentMenuRow(
-            icon: Icons.photo_camera_outlined,
-            label: 'Camera',
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// The image button. Opens the platform gallery directly.
-class AttachmentImageButton extends StatelessWidget {
-  const AttachmentImageButton({
-    super.key,
-    required this.controller,
-    required this.enabled,
-    this.composerEnabled = true,
-  });
-
-  final AttachmentDraftController controller;
-
-  /// `RemoteConfig.fileUploads`. When false this widget renders nothing.
-  final bool enabled;
-
-  /// Whether the composer as a whole accepts input.
-  final bool composerEnabled;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!enabled) return const SizedBox.shrink();
-
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (BuildContext context, Widget? child) {
-        final bool usable = composerEnabled && !controller.isUploading;
-        return IconButton(
-          key: const Key('composer.image'),
-          tooltip: 'Attach an image',
-          icon: const Icon(Icons.image),
-          onPressed:
-              usable ? () => unawaited(controller.pickFromGallery()) : null,
-        );
-      },
-    );
-  }
-}
-
-class _AttachmentMenuRow extends StatelessWidget {
-  const _AttachmentMenuRow({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Icon(icon, size: 18),
-        const SizedBox(width: 12),
-        Text(label),
-      ],
     );
   }
 }

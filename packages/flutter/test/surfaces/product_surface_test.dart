@@ -7,7 +7,6 @@ const List<ProductSurface> kAllSurfaces = <ProductSurface>[
   PreChatSurface(),
   OfflineSurface(),
   CsatSurface(sessionId: 'sess_1', alreadyRated: false),
-  CsatLoadingSurface(sessionId: 'sess_1'),
   ComposingNewSurface(),
   ReportSurface(),
   ConfirmEndSurface(sessionId: 'sess_1'),
@@ -33,10 +32,6 @@ void main() {
       expect(
         const CsatSurface(sessionId: 'sess_1', alreadyRated: false)
             .isUserInitiated,
-        isFalse,
-      );
-      expect(
-        const CsatLoadingSurface(sessionId: 'sess_1').isUserInitiated,
         isFalse,
       );
     });
@@ -102,17 +97,6 @@ void main() {
       expect(
         const CsatSurface(sessionId: 'sess_1', alreadyRated: false),
         isNot(const CsatSurface(sessionId: 'sess_2', alreadyRated: false)),
-      );
-    });
-
-    test('the CSAT loading placeholder is keyed by session', () {
-      expect(
-        const CsatLoadingSurface(sessionId: 'sess_1'),
-        isNot(const CsatLoadingSurface(sessionId: 'sess_2')),
-      );
-      expect(
-        const CsatLoadingSurface(sessionId: 'sess_1'),
-        const CsatLoadingSurface(sessionId: 'sess_1'),
       );
     });
   });

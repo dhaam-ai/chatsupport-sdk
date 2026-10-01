@@ -6,13 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../state/fake_widget_chat_client.dart';
 
-Widget _wrap(ChatWidgetCubit cubit,
-    {VoidCallback? onBack, VoidCallback? onClose}) {
+Widget _wrap(ChatWidgetCubit cubit, {VoidCallback? onBack}) {
   return BlocProvider<ChatWidgetCubit>.value(
     value: cubit,
-    child: MaterialApp(
-      home: Scaffold(body: MessagesScreen(onBack: onBack, onClose: onClose)),
-    ),
+    child: MaterialApp(home: Scaffold(body: MessagesScreen(onBack: onBack))),
   );
 }
 
@@ -72,50 +69,11 @@ void main() {
     int backCalls = 0;
     await tester.pumpWidget(_wrap(cubit, onBack: () => backCalls += 1));
 
-    expect(find.text('Messages'), findsOneWidget);
     expect(find.byTooltip('Back'), findsOneWidget);
     await tester.tap(find.byTooltip('Back'));
     await tester.pump();
 
     expect(backCalls, 1);
-  });
-
-  testWidgets('calls close from the header close affordance', (tester) async {
-    int closeCalls = 0;
-    await tester.pumpWidget(_wrap(cubit, onClose: () => closeCalls += 1));
-
-    expect(find.byTooltip('Close chat'), findsOneWidget);
-    await tester.tap(find.byTooltip('Close chat'));
-    await tester.pump();
-
-    expect(closeCalls, 1);
-  });
-
-  testWidgets('search field has an outline border and primary focused border',
-      (tester) async {
-    await tester.pumpWidget(_wrap(cubit));
-
-    final ThemeData theme = Theme.of(tester.element(find.byType(TextField)));
-    InputDecoration decoration =
-        tester.widget<TextField>(find.byType(TextField)).decoration!;
-
-    expect(
-      (decoration.enabledBorder! as OutlineInputBorder).borderSide.color,
-      theme.colorScheme.outlineVariant,
-    );
-    expect(
-      (decoration.focusedBorder! as OutlineInputBorder).borderSide.color,
-      theme.colorScheme.primary,
-    );
-
-    await tester.tap(find.byType(TextField));
-    await tester.pump();
-
-    decoration = tester.widget<TextField>(find.byType(TextField)).decoration!;
-    expect(
-      (decoration.border! as OutlineInputBorder).borderSide.color,
-      theme.colorScheme.primary,
-    );
   });
 
   group(
@@ -177,7 +135,7 @@ void main() {
     ]);
     await tester.pumpWidget(_wrap(cubit));
 
-    expect(find.text('Waiting'), findsOneWidget);
+    expect(find.text('Waiting for an agent'), findsOneWidget);
     expect(find.text('I would like a refund please'), findsOneWidget);
     expect(find.text('with Priya'), findsOneWidget);
     expect(find.text('99+'), findsOneWidget);
