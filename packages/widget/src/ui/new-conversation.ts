@@ -30,12 +30,16 @@
 // where every other consumer (a ticket, a future subject line) expects the
 // words a merchant actually wrote in the console.
 //
-// ── No "attach my active order" ─────────────────────────────────────────
+// ── "Attach my active order" is decoration, not a real attachment ─────────
 //
-// Deliberately absent — see the plan's own Context note: order data is out of
-// scope for this pass, and chat-service's commerce routes are agent/admin
-// tier, unreachable with a customer token. A checkbox here would render
-// nothing.
+// The console design calls for the checkbox, checked by default, so it is
+// here — but order data is still out of scope for this pass: chat-service's
+// commerce routes are agent/admin tier, unreachable with a customer token.
+// `NewConversationInput` carries no field for it and `submit`'s click
+// handler never reads the checkbox's state; checking or unchecking it
+// changes nothing about what Start sends. Wiring it up for real is a later,
+// separate change (a customer-reachable "current order" read, plus a place
+// on the wire to carry it) — not a decision this file gets to make alone.
 //
 // ── "Ask for details before chatting", folded in ──────────────────────────
 //
@@ -101,7 +105,7 @@ export function createNewConversationScreen(
 ): NewConversationView {
   const heading = el('h3', {
     attrs: { class: 'dh-form-heading', id: 'dh-newconvo-heading' },
-    text: 'Start a new conversation',
+    text: 'What can we help you with?',
   });
   // Only when there is something to ask: a "few details" line over a form
   // with no detail fields would promise a question that never comes.
@@ -162,22 +166,36 @@ export function createNewConversationScreen(
       class: 'dh-field-input dh-newconvo-message',
       id: 'dh-newconvo-message',
       rows: '4',
-      placeholder: 'What can we help with?',
+      placeholder: "Tell us what's going on…",
     },
   });
   const messageField = el('div', {
     attrs: { class: 'dh-field' },
     children: [
-      el('label', { attrs: { class: 'dh-field-label', for: 'dh-newconvo-message' }, text: 'Your message' }),
+      // Visually hidden, not removed: the placeholder carries the question on
+      // screen (matching the console design), but the textarea still needs a
+      // real `<label>` for a screen reader — a placeholder alone disappears
+      // the moment there is text in the field.
+      el('label', {
+        attrs: { class: 'dh-field-label dh-sr', for: 'dh-newconvo-message' },
+        text: 'Your message',
+      }),
       message,
     ],
   });
 
+  // Decorative only — see the module header's "Attach my active order" note.
+  // Checked by default per the console design; nothing reads `.checked`.
+  const attachOrderCheckbox = el('input', {
+    attrs: { class: 'dh-newconvo-attach-order-input', type: 'checkbox', id: 'dh-newconvo-attach-order', checked: true },
+  });
+  const attachOrder = el('label', {
+    attrs: { class: 'dh-newconvo-attach-order', for: 'dh-newconvo-attach-order' },
+    children: [attachOrderCheckbox, el('span', { text: "Attach my active order so you don't have to ask" })],
+  });
+
   const status = createStatusLine();
-  // Same resting/busy copy `ui/session-picker.ts`'s own "start new" buttons
-  // use — this screen is what a tap on any of them now leads to, and the
-  // wording should not change with the route that got here.
-  const submit = createSubmitButton('Start a new conversation', 'Starting…');
+  const submit = createSubmitButton('Start conversation', 'Starting…');
   const cancel = el('button', {
     attrs: { class: 'dh-form-skip', type: 'button' },
     text: 'Cancel',
@@ -198,6 +216,7 @@ export function createNewConversationScreen(
           ...fieldViews.map((field) => field.view.node),
           chips,
           messageField,
+          attachOrder,
           status.node,
           el('div', { attrs: { class: 'dh-form-actions' }, children: [submit.node, cancel] }),
         ],

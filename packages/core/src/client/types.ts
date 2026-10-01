@@ -700,6 +700,48 @@ export interface ChatClient {
    * particular must never gate the chat opening, and an IP-watermark fetch
    * that is merely slow should not either.
    */
+  /**
+   * Tells the server where the visitor is, so chat flows that start "on a page"
+   * can run (chatbot-workflows.md §9.2-9.3, §11.1). Safe to call on every route
+   * change: the SDK sends an update only when the content actually changed,
+   * coalesces a burst, and stays under the server's rate limit. Before the
+   * connection exists the context rides on the hello; afterwards it goes as a
+   * `context.update`. Each field the server would reject is dropped on its own,
+   * and a value that is not an object is ignored — this never throws.
+   *
+   * Do not put personal data (email, phone, name) in `attributes`; identity
+   * goes through `/identify`.
+   */
+  setPageContext(context: unknown): void;
+
+  /**
+   * Reports a visitor fact the server's flow engine can trigger on
+   * (chatbot-workflows-commerce.md §4) — `search`, `cart_updated`,
+   * `exit_intent`, `product_viewed`. Not a message: never stored, never in
+   * the transcript. Validates locally and drops an unrecognised name or
+   * invalid props with a logger warning — same "never throws" contract as
+   * `setPageContext` — and, unlike page context, sends immediately: each
+   * event is a distinct fact rather than a single current value, so there is
+   * nothing to coalesce.
+   */
+  sendVisitorEvent(name: string, props?: Record<string, unknown>): void;
+
+  /**
+   * Accepts a server-pushed `flow.invite` (chatbot-workflows-commerce.md
+   * §6) by starting a NEW conversation: tears down like `startNewSession`
+   * (resume anchor forgotten, session cleared, any in-flight switch
+   * abandoned), then reconnects with `newSession` + `inviteId` so the server
+   * starts the invited flow in a fresh session. Works from any connection
+   * state, so it also revives a closed or suspended client. Never throws — a
+   * bad id is dropped with a logger warning.
+   */
+  acceptInvite(inviteId: string): void;
+
+  /**
+   * Declines a server-pushed `flow.invite`: sends `flow.inviteDismissed`
+   * immediately. Never throws.
+   */
+  dismissInvite(inviteId: string): void;
   setContactInfo(info: {
     readonly ip?: string;
     readonly ipWatermark?: string;

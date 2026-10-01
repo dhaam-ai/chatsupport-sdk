@@ -220,10 +220,15 @@ describe('tapping a Common Questions row', () => {
     query<HTMLButtonElement>('.dh-common-question-row').click();
     await settle();
 
-    // `subject`, no `topic` — a tapped question already IS the subject, the
-    // same "no topic collected here" contract `startNewConversation` follows
-    // when the new-conversation surface's chip chooser is skipped.
-    expect(startNew).toHaveBeenCalledWith(expect.objectContaining({ subject: QUESTION.prompt }));
+    // `subject` is the row's own LABEL, not the prompt sent as the opening
+    // message — `getCustomerConversationTitle` (ui/messages-screen.ts) shows
+    // `subject` back to the customer as this conversation's name, and "Track
+    // my order" is what they tapped, not the first-person line ghostwritten
+    // on their behalf ("Where is my order?"). No `topic` either — a tapped
+    // question already IS the subject, the same "no topic collected here"
+    // contract `startNewConversation` follows when the new-conversation
+    // surface's chip chooser is skipped.
+    expect(startNew).toHaveBeenCalledWith(expect.objectContaining({ subject: QUESTION.label }));
     expect(sendMessage).toHaveBeenCalledWith(QUESTION.prompt);
     // The mint has to land before the send: sending into a session besides
     // the one just minted would be `startNewConversation`'s already-guarded

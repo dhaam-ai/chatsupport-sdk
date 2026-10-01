@@ -142,26 +142,6 @@ renamed twice already, and a stale second copy fails open.
 No error raised anywhere in this package contains a key, a token, a prefix of
 one, or its length.
 
-## Guests and "Allow visitor chat"
-
-A visitor is a **guest** when the host passes no `identity.profile`. The console
-toggle **Allow visitor chat** (`behaviour.allowGuestChat`, default on) decides
-whether guests may chat:
-
-- **On** — guests chat as before (pre-chat form, greeting, flows).
-- **Off** — a guest sees a "Sign in to chat" prompt; the widget opens no socket,
-  mints no token and fetches no session list. Signed-in visitors are unaffected.
-  Pass `onSignInRequest` to show a **Sign in** button that runs your login:
-
-```ts
-mount({ /* … */, identity: { userId: guestId }, onSignInRequest: () => openLogin() });
-```
-
-After login, remount with the real `userId` + `profile`. chat-service also
-refuses a guest hello (`AUTH_INVALID`) and `POST /chat/sessions`
-(`403 GUEST_CHAT_DISABLED`) while the toggle is off. A guest is recognised by a
-token minted with no `name` and no `email`, so never mint `name: "Guest"`.
-
 ## Shadow DOM
 
 One element enters your page — `<dh-chat-widget>` — and everything else lives in

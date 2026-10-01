@@ -266,10 +266,17 @@ export function createHeroHeader(): HeroHeaderView {
     headerAvatars.replaceChildren(...(headerAvatarRow !== null ? [headerAvatarRow] : []));
 
     if (content.greeting !== '') {
-      fullChildren.push(el('p', { attrs: { class: 'dh-hero-greeting' }, text: content.greeting }));
+      // 'title' — the native hover tooltip, not a second component — reads
+      // the full string back on hover once styles.ts's 2-line clamp cuts it
+      // off; free on every browser, nothing to keep in sync by hand.
+      fullChildren.push(
+        el('p', { attrs: { class: 'dh-hero-greeting', title: content.greeting }, text: content.greeting }),
+      );
     }
     if (content.subGreeting !== '') {
-      fullChildren.push(el('p', { attrs: { class: 'dh-hero-sub' }, text: content.subGreeting }));
+      fullChildren.push(
+        el('p', { attrs: { class: 'dh-hero-sub', title: content.subGreeting }, text: content.subGreeting }),
+      );
     }
 
     // No CTA. `header.ctaEnabled`/`ctaTitle`/`ctaSubtitle` are not read here

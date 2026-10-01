@@ -57,14 +57,24 @@ export type {
   PresenceEntry,
 } from './domain.js';
 
+export { normalizeVisitorContext, visitorContextKey } from './visitor-context.js';
+export { normalizeVisitorEvent } from './visitor-event.js';
+
 export {
   CLIENT_TO_SERVER_FRAME_TYPES,
   SERVER_PUSH_FRAME_TYPES,
   SERVER_TO_CLIENT_FRAME_TYPES,
   ALL_FRAME_TYPES,
+  VISITOR_EVENT_NAMES,
 } from './frames.js';
 export type {
   EmptyPayload,
+  VisitorContext,
+  ContextUpdatePayload,
+  VisitorEventPayload,
+  VisitorEventName,
+  FlowInviteDismissedPayload,
+  FlowInvitePayload,
   ConnectionHelloPayload,
   ConnectionReauthPayload,
   SessionJoinPayload,

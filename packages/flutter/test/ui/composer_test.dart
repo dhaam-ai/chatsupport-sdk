@@ -4,48 +4,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 Widget _wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
-Finder _iconButton(String tooltip) => find.byWidgetPredicate(
-      (Widget widget) => widget is IconButton && widget.tooltip == tooltip,
-    );
-
 void main() {
-  testWidgets('uses a grey border until the message field is focused',
-      (tester) async {
-    final ThemeData theme = ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: theme,
-        home: Scaffold(body: Composer(onSend: (_) {})),
-      ),
-    );
-
-    BoxBorder border() {
-      final Iterable<Container> containers =
-          tester.widgetList<Container>(find.byType(Container));
-      final Container box = containers.singleWhere(
-        (Container container) =>
-            container.decoration is BoxDecoration &&
-            (container.decoration! as BoxDecoration).border is Border,
-      );
-      return (box.decoration! as BoxDecoration).border!;
-    }
-
-    expect((border() as Border).top.color, theme.colorScheme.outlineVariant);
-
-    await tester.tap(find.byKey(const Key('composer.message')));
-    await tester.pump();
-
-    expect((border() as Border).top.color, theme.colorScheme.primary);
-  });
-
   testWidgets('Send is disabled until there is non-blank content',
       (tester) async {
     await tester.pumpWidget(_wrap(Composer(onSend: (_) {})));
 
     IconButton sendButton() =>
-        tester.widget<IconButton>(_iconButton('Send message'));
+        tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send));
     expect(sendButton().onPressed, isNull);
 
     await tester.enterText(find.byType(TextField), '   ');
@@ -66,7 +31,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField), '  Hello there  ');
     await tester.pump();
-    await tester.tap(_iconButton('Send message'));
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
     await tester.pump();
 
     expect(sent, 'Hello there');
@@ -149,7 +114,10 @@ void main() {
                 find.widgetWithIcon(IconButton, Icons.emoji_emotions_outlined))
             .onPressed,
         isNull);
-    expect(tester.widget<IconButton>(_iconButton('Send message')).onPressed,
+    expect(
+        tester
+            .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send))
+            .onPressed,
         isNull);
   });
 
@@ -186,7 +154,9 @@ void main() {
 
       // The premise: Send is disabled right now.
       expect(
-        tester.widget<IconButton>(_iconButton('Send message')).onPressed,
+        tester
+            .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send))
+            .onPressed,
         isNull,
       );
 
@@ -357,7 +327,7 @@ void main() {
 
   // ── the link popover ───────────────────────────────────────────────────
   group('the link popover', () {
-    Finder linkButton() => _iconButton('Insert a link');
+    Finder linkButton() => find.widgetWithIcon(IconButton, Icons.link);
     const Key url = Key('composer.link.url');
     const Key insert = Key('composer.link.insert');
 
@@ -464,8 +434,8 @@ void main() {
       final List<String> sent = <String>[];
       await tester.pumpWidget(_wrap(Composer(onSend: sent.add)));
 
-      IconButton send() =>
-          tester.widget<IconButton>(_iconButton('Send message'));
+      IconButton send() => tester
+          .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send));
       expect(send().onPressed, isNull, reason: 'the premise: an empty box');
 
       await tester
@@ -476,7 +446,7 @@ void main() {
 
       // Without this effect the customer picks 👍 and Send stays dead.
       expect(send().onPressed, isNotNull);
-      await tester.tap(_iconButton('Send message'));
+      await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
       await tester.pump();
       expect(sent, <String>['👍']);
     });
@@ -505,7 +475,7 @@ void main() {
       await tester.pumpWidget(
           _wrap(Composer(onSend: (_) {}, onTyping: () => typing++)));
 
-      await tester.tap(_iconButton('Insert a link'));
+      await tester.tap(find.widgetWithIcon(IconButton, Icons.link));
       await tester.pumpAndSettle();
       await tester.enterText(
           find.byKey(const Key('composer.link.url')), 'https://x.test');
@@ -521,7 +491,7 @@ void main() {
       await tester.pumpWidget(
           _wrap(Composer(onSend: (_) {}, onTyping: () => typing++)));
 
-      await tester.tap(_iconButton('Insert a link'));
+      await tester.tap(find.widgetWithIcon(IconButton, Icons.link));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const Key('composer.link.url')), 'foo');
       await tester.tap(find.byKey(const Key('composer.link.insert')));

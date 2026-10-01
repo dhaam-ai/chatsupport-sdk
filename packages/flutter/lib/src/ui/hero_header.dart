@@ -27,11 +27,6 @@ import 'image_safety.dart';
 /// older console version's own validation would have.
 const int kMaxHeroAvatars = 3;
 
-const double kCollapsedHeroBarHeight = 84;
-const double kExpandedHeroHeaderHeight = 260;
-const double kHeroHeaderForegroundOverlap = 32;
-const double kHeroHeaderForegroundClearance = 25;
-
 /// The Home screen's hero. Renders nothing at all — not an empty coloured
 /// slab — when the merchant turned off every piece of it, matching
 /// `hero-header.ts`'s own `data-empty` rule: "an empty hero is not a short
@@ -59,16 +54,10 @@ const double kHeroHeaderForegroundClearance = 25;
 /// choice relies on does not hold here, and hiding it would remove real
 /// content from a screen-reader user instead of skipping a repeat.
 class HeroHeader extends StatelessWidget {
-  const HeroHeader({
-    super.key,
-    required this.config,
-    this.onClose,
-    this.bottomClearance = 0,
-  });
+  const HeroHeader({super.key, required this.config, this.onClose});
 
   final RemoteConfig config;
   final VoidCallback? onClose;
-  final double bottomClearance;
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +65,13 @@ class HeroHeader extends StatelessWidget {
     final String? logoUrl = safeImageUrl(header.logoUrl ?? config.logoUrl);
     final bool showLogo = (header.showLogo ?? false) && logoUrl != null;
 
-    final List<String> avatars = _safeHeroAvatars(header);
+    final List<String> avatars = (header.showAvatars ?? false)
+        ? (header.avatars ?? const <String>[])
+            .map(safeImageUrl)
+            .whereType<String>()
+            .take(kMaxHeroAvatars)
+            .toList(growable: false)
+        : const <String>[];
 
     final String greeting = header.greeting ?? '';
     final String subGreeting = header.subGreeting ?? '';
@@ -95,77 +90,65 @@ class HeroHeader extends StatelessWidget {
 
     return Container(
       width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
       decoration: BoxDecoration(color: backgroundColor),
       child: Stack(
         children: <Widget>[
           if (overlay is HeaderImageOverlay)
             _HeroBackgroundImage(overlay: overlay),
           if (overlay is HeaderGradientOverlay)
-            Positioned.fill(
-              child: DecoratedBox(
-                  decoration: BoxDecoration(gradient: overlay.gradient)),
-            ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12, top: 20),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      if (showLogo)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            logoUrl,
-                            height: 32,
-                            errorBuilder: (_, __, ___) =>
-                                const SizedBox.shrink(),
-                          ),
-                        )
-                      else
-                        SizedBox.shrink(),
-                      if (onClose != null)
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: IconButton(
-                            tooltip: 'Close chat',
-                            onPressed: onClose,
-                            color: foregroundColor,
-                            icon: const Icon(Icons.close),
-                          ),
-                        ),
-                    ],
+            DecoratedBox(decoration: BoxDecoration(gradient: overlay.gradient)),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (onClose != null)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton(
+                    tooltip: 'Close chat',
+                    onPressed: onClose,
+                    color: foregroundColor,
+                    icon: const Icon(Icons.close),
                   ),
                 ),
-                if (avatars.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _AvatarStack(
-                        avatars: avatars,
-                        showPresence: header.showPresence ?? false),
-                  ),
-                if (greeting.isNotEmpty)
-                  Text(
-                    greeting,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        color: foregroundColor, fontWeight: FontWeight.w600),
-                  ),
-                if (subGreeting.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      subGreeting,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: foregroundColor.withValues(alpha: 0.85)),
+              if (showLogo)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      logoUrl,
+                      height: 32,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                     ),
                   ),
-                if (bottomClearance > 0) SizedBox(height: bottomClearance),
-              ],
-            ),
+                ),
+              if (avatars.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _AvatarStack(
+                      avatars: avatars,
+                      showPresence: header.showPresence ?? false),
+                ),
+              if (greeting.isNotEmpty)
+                Text(
+                  greeting,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: foregroundColor, fontWeight: FontWeight.w600),
+                ),
+              if (subGreeting.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    subGreeting,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: foregroundColor.withOpacity(0.85)),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
@@ -250,223 +233,133 @@ HeroCollapseDecision heroCollapseDecision({
   return HeroCollapseDecision.collapse;
 }
 
-/// A [HeroHeader] as a pinned sliver above the Home screen content.
+/// A [HeroHeader] pinned above a scroll view, which gets out of the way once
+/// the visitor scrolls into the content below it.
 ///
-/// ── Collapsed means compact, not gone ────────────────────────────────────
+/// ── Why this owns the arrangement rather than just the header ────────────
 ///
-/// Scrolled away from the top the large greeting band collapses out of the
-/// layout, leaving only the compact app-bar layer: logo, configured avatar
-/// stack and the close affordance. Scrolled back, the full hero returns.
+/// It takes the scroll view as its [child] and builds the whole band-plus-
+/// content column itself. That is not convenience: the hero has to sit ABOVE
+/// the scroll view for a collapse to mean anything (a hero that were merely
+/// the scroll view's first child would already be gone by the time the
+/// visitor had scrolled past it), and a widget above a scroll view can reach
+/// neither `Scrollable.of` — which searches ancestors, and the scroll view is
+/// a sibling — nor that view's notifications, which bubble up past it. Owning
+/// both halves puts this widget where the notifications actually pass and
+/// spares every caller a [ScrollController] to thread through.
 ///
-/// Implemented as [SliverPersistentHeader], so the current scroll offset
-/// continuously drives the header extent the same way a native sliver app bar
-/// does. There is no threshold state to snap between.
-class CollapsingHeroHeader extends StatelessWidget {
+/// ── Collapsed means GONE, not a short bar ────────────────────────────────
+///
+/// There is no compact layer and no shrunken variant. Scrolled away from the
+/// top the hero occupies NO space at all; scrolled back, it returns whole.
+/// The reference is explicit that this is the behaviour, and the reason is
+/// that a panel this size has room for one branded band — the app bar — and a
+/// second, shorter one underneath it is two headers.
+///
+/// Spelled as [Align] with a zero `heightFactor` inside a [ClipRect], which is
+/// the framework's own way of saying the reference's `height: 0;
+/// overflow: hidden`. [Align] still lays its child out at full height and
+/// merely reports zero for ITSELF, so the hero can be measured while
+/// collapsed — which is what lets [heroCollapseDecision] read a real
+/// [heroHeight] at the moment it decides, rather than the zero a removed
+/// subtree would report.
+///
+/// ── A notification, not an observer, and why that is not a downgrade ─────
+///
+/// The reference picks an `IntersectionObserver` over a `scroll` listener
+/// specifically because the DOM's scroll event misses anything that moves the
+/// offset without a gesture — a programmatic `scrollTo`, a `scrollIntoView`
+/// from elsewhere in the tree. Flutter has no such gap: `jumpTo`,
+/// `animateTo` and `ensureVisible` all drive [ScrollPosition], and every one
+/// of them emits a [ScrollUpdateNotification]. So the concern that chose the
+/// observer there does not exist here, and the framework's own mechanism is
+/// the right one.
+///
+/// A hero given a [child] that does not scroll simply never collapses, which
+/// is correct rather than degraded — the same answer the reference gives an
+/// environment with no `IntersectionObserver` at all.
+class CollapsingHeroHeader extends StatefulWidget {
   const CollapsingHeroHeader({
     super.key,
     required this.config,
-    required this.slivers,
+    required this.child,
     this.onClose,
-    this.controller,
-    this.foreground,
   });
 
   final RemoteConfig config;
   final VoidCallback? onClose;
-  final ScrollController? controller;
-  final Widget? foreground;
 
-  final List<Widget> slivers;
+  /// The scrolling content the hero sits above. Given the remaining height.
+  final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    return CustomScrollView(
-      controller: controller,
-      slivers: <Widget>[
-        if (_hasHeroContent(config, onClose))
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _HeroSliverHeaderDelegate(
-              config: config,
-              onClose: onClose,
-              foreground: foreground,
-            ),
-          ),
-        ...slivers,
-      ],
-    );
-  }
+  State<CollapsingHeroHeader> createState() => _CollapsingHeroHeaderState();
 }
 
-class _HeroSliverHeaderDelegate extends SliverPersistentHeaderDelegate {
-  const _HeroSliverHeaderDelegate({
-    required this.config,
-    this.onClose,
-    this.foreground,
-  });
+class _CollapsingHeroHeaderState extends State<CollapsingHeroHeader> {
+  /// Measures the hero at its natural height, collapsed or not — see the
+  /// class doc on why [Align] is what makes that possible.
+  final GlobalKey _heroKey = GlobalKey();
 
-  final RemoteConfig config;
-  final VoidCallback? onClose;
-  final Widget? foreground;
+  bool _collapsed = false;
 
-  @override
-  double get minExtent => _collapsedHeroHeight(config, onClose);
+  bool _onScroll(ScrollNotification notification) {
+    // Only the view this widget is wrapped around, never one nested inside
+    // its content: a horizontally scrolling row of chips down in the page
+    // says nothing about how far Home itself has been scrolled.
+    if (notification.depth != 0) return false;
 
-  @override
-  double get maxExtent =>
-      _expandedHeroHeight(config, onClose) +
-      (foreground == null ? 0 : kHeroHeaderForegroundClearance);
+    final RenderBox? hero =
+        _heroKey.currentContext?.findRenderObject() as RenderBox?;
+    if (hero == null || !hero.hasSize) return false;
 
-  @override
-  Widget build(
-    BuildContext context,
-    double shrinkOffset,
-    bool overlapsContent,
-  ) {
-    final double range = (maxExtent - minExtent).clamp(1, double.infinity);
-    final double progress = (shrinkOffset / range).clamp(0.0, 1.0);
-
-    return SizedBox.expand(
-      key: const ValueKey<String>('hero.sliverHeader'),
-      child: Stack(
-        clipBehavior: Clip.none,
-        fit: StackFit.expand,
-        children: <Widget>[
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: maxExtent,
-            child: Opacity(
-              opacity: 1 - progress,
-              child: HeroHeader(
-                config: config,
-                onClose: onClose,
-                bottomClearance:
-                    foreground == null ? 0 : kHeroHeaderForegroundClearance,
-              ),
-            ),
-          ),
-          if (minExtent > 0)
-            Opacity(
-              opacity: progress,
-              child: _CollapsedHeroBar(
-                key: const ValueKey<String>('hero.collapsedBar'),
-                config: config,
-                onClose: onClose,
-              ),
-            ),
-          if (foreground != null)
-            Positioned(
-              left: 20,
-              right: 20,
-              bottom: -kHeroHeaderForegroundOverlap,
-              child: Opacity(
-                opacity: 1 - progress,
-                child: foreground!,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  bool shouldRebuild(_HeroSliverHeaderDelegate oldDelegate) =>
-      oldDelegate.config != config ||
-      oldDelegate.onClose != onClose ||
-      oldDelegate.foreground != foreground;
-}
-
-class _CollapsedHeroBar extends StatelessWidget {
-  const _CollapsedHeroBar({super.key, required this.config, this.onClose});
-
-  final RemoteConfig config;
-  final VoidCallback? onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final HeaderAppearance header = config.header;
-    final String? logoUrl = safeImageUrl(header.logoUrl ?? config.logoUrl);
-    final bool showLogo = (header.showLogo ?? false) && logoUrl != null;
-    final List<String> avatars = _safeHeroAvatars(header);
-
-    if (!showLogo && avatars.isEmpty && onClose == null) {
-      return const SizedBox.shrink();
+    switch (heroCollapseDecision(
+      scrollOffset: notification.metrics.pixels,
+      maxScrollExtent: notification.metrics.maxScrollExtent,
+      // Read HERE, at the moment of the decision, never cached at build.
+      heroHeight: hero.size.height,
+    )) {
+      case HeroCollapseDecision.expand:
+        _apply(false);
+      case HeroCollapseDecision.collapse:
+        _apply(true);
+      case HeroCollapseDecision.hold:
+        // Deliberately nothing. See `hold`'s own doc.
+        break;
     }
+    // Never swallowed: this only observes, and a pull-to-refresh or a scroll
+    // metric watcher further up has as much right to hear about the scroll as
+    // this does.
+    return false;
+  }
 
-    final Color accent = Theme.of(context).colorScheme.primary;
-    final Color backgroundColor = headerBackgroundColor(header, accent);
-    final Color foregroundColor = readableOn(backgroundColor);
+  void _apply(bool collapsed) {
+    if (_collapsed == collapsed || !mounted) return;
+    setState(() => _collapsed = collapsed);
+  }
 
-    return Container(
-      height: kCollapsedHeroBarHeight,
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 28, 20, 8),
-      decoration: BoxDecoration(color: backgroundColor),
-      child: Row(
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScroll,
+      child: Column(
         children: <Widget>[
-          if (showLogo) ...<Widget>[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.network(
-                logoUrl,
-                height: 32,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: _collapsed ? 0.0 : 1.0,
+              child: HeroHeader(
+                key: _heroKey,
+                config: widget.config,
+                onClose: widget.onClose,
               ),
             ),
-            const SizedBox(width: 12),
-          ],
-          if (avatars.isNotEmpty)
-            _AvatarStack(
-              avatars: avatars,
-              showPresence: header.showPresence ?? false,
-            ),
-          const Spacer(),
-          if (onClose != null)
-            IconButton(
-              tooltip: 'Close chat',
-              onPressed: onClose,
-              color: foregroundColor,
-              icon: const Icon(Icons.close),
-            ),
+          ),
+          Expanded(child: widget.child),
         ],
       ),
     );
   }
-}
-
-double _collapsedHeroHeight(RemoteConfig config, VoidCallback? onClose) {
-  final HeaderAppearance header = config.header;
-  final String? logoUrl = safeImageUrl(header.logoUrl ?? config.logoUrl);
-  final bool showLogo = (header.showLogo ?? false) && logoUrl != null;
-  final bool showAvatars = _safeHeroAvatars(header).isNotEmpty;
-  return showLogo || showAvatars || onClose != null
-      ? kCollapsedHeroBarHeight
-      : 0;
-}
-
-double _expandedHeroHeight(RemoteConfig config, VoidCallback? onClose) =>
-    _hasHeroContent(config, onClose) ? kExpandedHeroHeaderHeight : 0;
-
-bool _hasHeroContent(RemoteConfig config, VoidCallback? onClose) {
-  final HeaderAppearance header = config.header;
-  final String? logoUrl = safeImageUrl(header.logoUrl ?? config.logoUrl);
-  final bool showLogo = (header.showLogo ?? false) && logoUrl != null;
-  return onClose != null ||
-      showLogo ||
-      _safeHeroAvatars(header).isNotEmpty ||
-      (header.greeting ?? '').isNotEmpty ||
-      (header.subGreeting ?? '').isNotEmpty;
-}
-
-List<String> _safeHeroAvatars(HeaderAppearance header) {
-  if (!(header.showAvatars ?? false)) return const <String>[];
-  return (header.avatars ?? const <String>[])
-      .map(safeImageUrl)
-      .whereType<String>()
-      .take(kMaxHeroAvatars)
-      .toList(growable: false);
 }
 
 class _HeroBackgroundImage extends StatelessWidget {
@@ -489,7 +382,7 @@ class _HeroBackgroundImage extends StatelessWidget {
           ),
           DecoratedBox(
               decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: overlay.scrimAlpha))),
+                  color: Colors.black.withOpacity(overlay.scrimAlpha))),
         ],
       ),
     );

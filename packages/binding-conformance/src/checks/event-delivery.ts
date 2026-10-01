@@ -63,6 +63,8 @@ const SAMPLE_PAYLOADS: { [E in ChatEventName]: ChatEventMap[E] } = {
   presenceUpdate: { participantId: 'participant_agent', status: 'ONLINE' },
   ticketLinked: { ticketId: 'ticket_1', ticketUrl: 'https://example.test/tickets/1' },
   tokenRefreshed: {},
+  flowInvite: { inviteId: 'inv_1', text: 'Need help?' },
+  flowInviteCleared: { inviteId: 'inv_1' },
   error: { source: 'transport', code: null, message: 'synthetic', retryable: true },
 };
 

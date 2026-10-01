@@ -523,9 +523,35 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
  * through that same "not a generic placeholder" filter once, at mint time.
  * Read below `handledBy` deliberately: an agent who is actually on the
  * conversation right now outranks what it was originally about.
+ *
+ * `handledBy` is read for `kind: 'AGENT'` unconditionally, but for
+ * `kind: 'BOT'` only when `preferHandledBy` is set. A bot's `displayName` is
+ * still a real, per-tenant name — the backend resolves it from the
+ * merchant's own `Tenant.config.botDisplayName` (see `ui/message-list.ts`'s
+ * `senderLabel`), not a hardcoded "Assistant" — so it is exactly right for
+ * the conversation HEADER, where the question is "who am I talking to"
+ * (`selectSession`, widget.ts). It is wrong for the Home card and Messages
+ * ROW, where the same bot name on every session buries the one piece of
+ * per-session information the customer actually has — `subject`, set to the
+ * Common Question's own label when that is how the session started
+ * (`startCommonQuestion`, widget.ts). Both surfaces read this same function
+ * so the two can never independently drift; only which one wins here does.
  */
-export function getCustomerConversationTitle(summary: ChatSessionSummary, fallbackTitle = 'Support'): string {
+export function getCustomerConversationTitle(
+  summary: ChatSessionSummary,
+  fallbackTitle = 'Support',
+  preferHandledBy = false,
+): string {
   const s = summary as any;
+  const handledByName = (kinds: readonly string[]): string | null =>
+    s.handledBy?.kind &&
+    kinds.includes(s.handledBy.kind) &&
+    typeof s.handledBy.displayName === 'string' &&
+    s.handledBy.displayName.trim() &&
+    s.handledBy.displayName !== 'Support Bot'
+      ? s.handledBy.displayName.trim()
+      : null;
+
   if (s.storeName && typeof s.storeName === 'string' && s.storeName.trim() && s.storeName.trim() !== 'General Support') {
     return s.storeName.trim();
   }
@@ -535,8 +561,11 @@ export function getCustomerConversationTitle(summary: ChatSessionSummary, fallba
   if (s.targetName && typeof s.targetName === 'string' && s.targetName.trim() && s.targetName.trim() !== 'Merchant') {
     return s.targetName.trim();
   }
-  if (s.handledBy?.displayName && typeof s.handledBy.displayName === 'string' && s.handledBy.displayName.trim() && s.handledBy.displayName !== 'Support Bot') {
-    return s.handledBy.displayName.trim();
+  const agentName = handledByName(['AGENT']);
+  if (agentName !== null) return agentName;
+  if (preferHandledBy) {
+    const anyHandlerName = handledByName(['AGENT', 'BOT']);
+    if (anyHandlerName !== null) return anyHandlerName;
   }
   if (s.adminName && typeof s.adminName === 'string' && s.adminName.trim() && s.adminName.trim() !== 'Admin') {
     return s.adminName.trim();
@@ -544,6 +573,8 @@ export function getCustomerConversationTitle(summary: ChatSessionSummary, fallba
   if (s.subject && typeof s.subject === 'string' && s.subject.trim() && s.subject.trim().toLowerCase() !== 'admin') {
     return s.subject.trim();
   }
+  const botName = handledByName(['AGENT', 'BOT']);
+  if (botName !== null) return botName;
   // A chat an admin opened with this customer (PARTNER, conversationType 4):
   // nothing else names the other side to the customer.
   if (s.conversationType === 4) return 'Admin';
@@ -651,17 +682,65 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
       'aria-label': 'Search conversations',
       autocomplete: 'off',
     },
-    on: { input: () => applyFilter() },
+    on: {
+      input: () => {
+        searchClear.hidden = searchInput.value === '';
+        applyFilter();
+      },
+    },
+  });
+  // The one clear affordance ui/styles.ts's own comment on
+  // '.dh-messages-search-input::-webkit-search-cancel-button' already says
+  // this field should have — the native one is suppressed there because it
+  // would sit beside this and disagree about where "clear" lives, but
+  // nothing ever built the replacement. Hidden until there is something to
+  // clear, same rule the 'x' on every text input elsewhere in the panel uses.
+  const searchClear = el('button', {
+    attrs: { class: 'dh-messages-search-clear', type: 'button', 'aria-label': 'Clear search', hidden: true },
+    children: [icon(ICONS.close, 14)],
+    on: {
+      click: () => {
+        searchInput.value = '';
+        searchClear.hidden = true;
+        applyFilter();
+        searchInput.focus({ preventScroll: true });
+      },
+    },
   });
   const search = el('div', {
     attrs: { class: 'dh-messages-search' },
     children: [
       el('span', { attrs: { class: 'dh-messages-search-icon', 'aria-hidden': 'true' }, children: [icon(SEARCH_ICON, 16)] }),
       searchInput,
+      searchClear,
     ],
   });
 
-  const empty = el('li', { attrs: { class: 'dh-messages-empty' }, text: 'No conversations yet.' });
+  // The empty state carries its own icon/heading/body/action rather than a
+  // bare line of text — see chatsupport_react's `EmptyState` (the design
+  // this SDK is kept in sync with), whose customer conversation list draws
+  // exactly this for the same two cases. `emptyIcon` swaps art (search glass
+  // vs. speech bubble) in `applyFilter()`, not here: which one is right
+  // depends on whether a query is active, and that is not known yet at
+  // construction time.
+  const emptyIcon = el('span', { attrs: { class: 'dh-messages-empty-icon', 'aria-hidden': 'true' } });
+  const emptyTitle = el('p', { attrs: { class: 'dh-messages-empty-title' } });
+  const emptyBody = el('p', { attrs: { class: 'dh-messages-empty-body' } });
+  const emptyLabel = el('span', { text: 'New conversation' });
+  // A class of its own, not shared with 'dh-messages-new' — the footer's
+  // button below carries that class and `querySelector('.dh-messages-new')`
+  // has to resolve to it unambiguously (see
+  // 'createMessagesScreen — DOM shape the sticky-button fix depends on').
+  // ui/styles.ts gives this its own copy of the same look instead.
+  const emptyAction = el('button', {
+    attrs: { class: 'dh-messages-empty-action', type: 'button' },
+    children: [emptyLabel],
+    on: { click: () => callbacks.onStartNew?.() },
+  });
+  const empty = el('li', {
+    attrs: { class: 'dh-messages-empty' },
+    children: [emptyIcon, emptyTitle, emptyBody, emptyAction],
+  });
   const list = el('ul', {
     attrs: { class: 'dh-messages-list', role: 'list', 'aria-label': 'Your conversations' },
     children: [empty],
@@ -673,6 +752,8 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
     children: [icon(ICONS.squarePen, 18), newLabel],
     on: { click: () => callbacks.onStartNew?.() },
   });
+  // Hidden whenever the empty state is showing its OWN "New conversation"
+  // button — one affordance on screen at a time, matching the reference.
   const footer = el('div', { attrs: { class: 'dh-messages-footer' }, children: [newButton] });
 
   // Says out loud what the focus rescue just did, and NOTHING else.
@@ -725,18 +806,28 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
     }
 
     const nothingAtAll = allSessions.length === 0;
-    const emptyText = nothingAtAll
-      ? 'No conversations yet.'
-      : 'No conversations match your search.';
-    // Written only when it actually differs. Assigning an identical string
-    // still replaces the text node, and a live-region implementation reading
-    // this element would be entitled to treat that as a fresh change — so an
-    // unconditional write turns a 20-second poll into a 20-second
-    // announcement. Nothing announces this element today (the region above
-    // is the one that speaks), and this is what keeps giving it a role later
-    // a one-line change rather than a new defect.
-    if (empty.textContent !== emptyText) empty.textContent = emptyText;
-    empty.hidden = nothingAtAll ? false : anyVisible;
+    // Searching is the same test the reference reads (`query` truthy) —
+    // `nothingAtAll` only ever differs from it when there are sessions but
+    // none is being searched for, which cannot reach this branch (`anyVisible`
+    // is then true and `showEmpty` below is false).
+    const searching = query !== '';
+    const emptyTitleText = searching ? 'No matching conversations' : 'No conversations yet';
+    const emptyBodyText = searching
+      ? "Try a different word, or start a new conversation about it."
+      : 'When you message us, your conversations will show up here so you can pick them back up any time.';
+    // Written only when it actually differs — same reasoning `emptyText`
+    // used to carry here: an identical re-assignment still replaces the text
+    // node, and this runs on every poll, not just every real change.
+    if (emptyTitle.textContent !== emptyTitleText) emptyTitle.textContent = emptyTitleText;
+    if (emptyBody.textContent !== emptyBodyText) emptyBody.textContent = emptyBodyText;
+    emptyIcon.replaceChildren(icon(searching ? SEARCH_ICON : ICONS.chat, 19));
+
+    const showEmpty = nothingAtAll ? true : !anyVisible;
+    empty.hidden = !showEmpty;
+    // One "New conversation" affordance on screen at a time: the empty
+    // state's own action while it is showing, the sticky footer once the
+    // list actually has something in it.
+    footer.hidden = showEmpty;
   }
 
   /**
@@ -805,6 +896,8 @@ function createCustomerMessagesScreen(callbacks: MessagesScreenCallbacks): Messa
     setStartingNew(busy) {
       newButton.disabled = busy;
       newLabel.textContent = busy ? 'Starting…' : 'New conversation';
+      emptyAction.disabled = busy;
+      emptyLabel.textContent = busy ? 'Starting…' : 'New conversation';
     },
     focus() {
       searchInput.focus({ preventScroll: true });
@@ -865,13 +958,32 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
       'aria-label': 'Search conversations',
       autocomplete: 'off',
     },
-    on: { input: () => applyFilter() },
+    on: {
+      input: () => {
+        searchClear.hidden = searchInput.value === '';
+        applyFilter();
+      },
+    },
+  });
+  // See createCustomerMessagesScreen's own copy of this for why.
+  const searchClear = el('button', {
+    attrs: { class: 'dh-messages-search-clear', type: 'button', 'aria-label': 'Clear search', hidden: true },
+    children: [icon(ICONS.close, 14)],
+    on: {
+      click: () => {
+        searchInput.value = '';
+        searchClear.hidden = true;
+        applyFilter();
+        searchInput.focus({ preventScroll: true });
+      },
+    },
   });
   const search = el('div', {
     attrs: { class: 'dh-messages-search' },
     children: [
       el('span', { attrs: { class: 'dh-messages-search-icon', 'aria-hidden': 'true' }, children: [icon(SEARCH_ICON, 16)] }),
       searchInput,
+      searchClear,
     ],
   });
 

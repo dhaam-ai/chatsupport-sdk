@@ -50,7 +50,7 @@ ChatMessage _agentMessage({
 
 final Finder _chip = find.byKey(const Key('composer.replyChip'));
 final Finder _box = find.byKey(const Key('composer.message'));
-final Finder _send = find.byTooltip('Send message');
+final Finder _send = find.widgetWithIcon(IconButton, Icons.send);
 
 void main() {
   late FakeWidgetChatClient client;
@@ -66,16 +66,18 @@ void main() {
     await client.dispose();
   });
 
-  /// Puts one agent message in the transcript.
+  /// Puts one agent message in the transcript and opens its ⋯ menu.
   Future<void> openMenu(WidgetTester tester) async {
     client.emitMessage(_agentMessage());
     await flush(tester);
+    await tester.tap(find.byTooltip('Message actions'));
+    await tester.pumpAndSettle();
   }
 
   /// Presses Reply on that message.
   Future<void> startReply(WidgetTester tester) async {
     await openMenu(tester);
-    await tester.tap(find.byTooltip('Reply'));
+    await tester.tap(find.text('Reply'));
     await tester.pumpAndSettle();
   }
 
@@ -93,7 +95,10 @@ void main() {
     // The seam is filled, so the item renders. With `onReplyToMessage` null
     // this finds nothing — which was the state of the widget before this
     // node, and the reason the item is absent rather than disabled.
-    expect(find.byTooltip('Reply'), findsOneWidget);
+    expect(find.text('Reply'), findsOneWidget);
+    // Copy was never broken; asserted alongside so a regression that removed
+    // the whole menu could not pass this file.
+    expect(find.text('Copy'), findsOneWidget);
   });
 
   testWidgets('pressing Reply raises the chip naming the message',

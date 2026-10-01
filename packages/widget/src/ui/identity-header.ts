@@ -105,7 +105,14 @@ const PLATFORM_BRAND = 'Dhaam Support';
  */
 export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
   let fallbackTitle = initialTitle;
-  const node = el('h2', { attrs: { class: 'dh-title', id: 'dh-title' }, text: fallbackTitle });
+  const node = el('h2', { attrs: { class: 'dh-title', id: 'dh-title', title: fallbackTitle }, text: fallbackTitle });
+  // 'title' is the native hover tooltip — styles.ts truncates this node to
+  // one line. Every place that repaints the label goes through this so the
+  // tooltip can never drift from what's actually showing.
+  function setLabel(label: string): void {
+    node.textContent = label;
+    node.title = label;
+  }
 
   const liveRegion = el('div', {
     attrs: { class: 'dh-sr', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
@@ -152,7 +159,7 @@ export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
 
   function update(session: Pick<ChatSession, 'status' | 'handledBy'> | null): void {
     const label = labelFor(session);
-    node.textContent = label;
+    setLabel(label);
 
     const kind = session !== null && isHandledByCurrent(session) ? session.handledBy?.kind : undefined;
     node.setAttribute('data-handled-by', kind ?? '');
@@ -173,13 +180,13 @@ export function createIdentityHeader(initialTitle: string): IdentityHeaderView {
 
   function setFallbackTitle(title: string): void {
     fallbackTitle = title;
-    node.textContent = title;
+    setLabel(title);
     currentLabel = title;
   }
 
   function setTitle(title: string): void {
     fallbackTitle = title;
-    node.textContent = title;
+    setLabel(title);
     currentLabel = title;
   }
 

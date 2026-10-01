@@ -1,0 +1,95 @@
+{
+  "name": "Test - Product questions",
+  "description": "Page: product. Buttons whose typed exit goes to an AI answer; works without AI (handoff).",
+  "enabled": true,
+  "rules": {
+    "trigger": "page",
+    "labels": [
+      "product"
+    ],
+    "url": "",
+    "phrases": [],
+    "conditions": [],
+    "hours": "any",
+    "often": "chat"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "ask",
+    "steps": {
+      "ask": {
+        "id": "ask",
+        "kind": "buttons",
+        "name": "Ask what they need",
+        "text": "Questions about this item?",
+        "buttons": [
+          {
+            "id": "avail",
+            "label": "Is it in stock?"
+          },
+          {
+            "id": "time",
+            "label": "How fast is delivery?"
+          },
+          {
+            "id": "person",
+            "label": "Ask a person"
+          }
+        ],
+        "next": {
+          "avail": "availMsg",
+          "time": "timeMsg",
+          "person": "toTeam",
+          "typed": "aiHelp"
+        }
+      },
+      "availMsg": {
+        "id": "availMsg",
+        "kind": "message",
+        "name": "Explain stock",
+        "text": "Stock is shown on the item page. If it says out of stock, tap Notify me.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "timeMsg": {
+        "id": "timeMsg",
+        "kind": "message",
+        "name": "Explain delivery",
+        "text": "Most orders arrive in 30-45 minutes. The estimate is shown before you pay.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "aiHelp": {
+        "id": "aiHelp",
+        "kind": "ai",
+        "name": "Let AI answer",
+        "text": "What would you like to know about this item?",
+        "help": "Products, stock and delivery",
+        "turns": 3,
+        "next": {
+          "answered": "finish",
+          "person": "toTeam",
+          "off": "toTeam"
+        }
+      },
+      "finish": {
+        "id": "finish",
+        "kind": "end",
+        "name": "Finish",
+        "text": "Anything else? Just type it here.",
+        "next": {}
+      },
+      "toTeam": {
+        "id": "toTeam",
+        "kind": "handoff",
+        "name": "Hand to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "Connecting you with our team.",
+        "next": {}
+      }
+    }
+  }
+}

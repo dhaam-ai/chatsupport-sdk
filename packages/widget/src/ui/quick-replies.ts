@@ -80,10 +80,106 @@ export function readQuickReplies(
   return [...seen];
 }
 
+/**
+ * Which flow button a chip answers, when it came from a server-side flow
+ * (chatbot-workflows.md §9.4-9.5). The engine matches a `flow_reply` to its
+ * waiting step by `runId` + `stepId`, and to the button by `buttonId`.
+ */
+export interface FlowReplyRef {
+  readonly runId: string;
+  readonly stepId: string;
+  readonly buttonId: string;
+}
+
+/** One tappable suggestion: the words shown (and sent), and the flow button behind it if any. */
+export interface QuickReplyChip {
+  readonly label: string;
+  readonly reply?: FlowReplyRef;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** A non-empty string, or `undefined`. */
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+/**
+ * `metadata.buttons` → chips. Never throws.
+ *
+ * A flow's buttons are the MERCHANT'S words, so unlike `options` they are not
+ * filtered against the handoff keywords: "Talk to a person" is what they meant
+ * it to say, and what happens next is the flow engine's call, not the
+ * widget's. Everything is still untrusted shape-wise, exactly as `options` is —
+ * the metadata is an open bag two services away. A chip whose flow block is
+ * missing or malformed is kept (tapping it still sends its label, which the
+ * engine also accepts) but carries no `reply`.
+ */
+function readFlowButtons(metadata: unknown): readonly QuickReplyChip[] {
+  const bag = record(metadata);
+  const raw = bag?.['buttons'];
+  if (!Array.isArray(raw)) return [];
+
+  const flow = record(bag?.['flow']);
+  const runId = text(flow?.['runId']);
+  const stepId = text(flow?.['stepId']);
+
+  const seen = new Set<string>();
+  const chips: QuickReplyChip[] = [];
+  for (const entry of raw) {
+    const button = record(entry);
+    const id = text(button?.['id']);
+    const label = typeof button?.['label'] === 'string' ? button['label'].trim() : '';
+    if (id === undefined || label === '' || label.length > MAX_LABEL || seen.has(id)) continue;
+    seen.add(id);
+    chips.push(
+      runId !== undefined && stepId !== undefined
+        ? { label, reply: { runId, stepId, buttonId: id } }
+        : { label },
+    );
+    if (chips.length === MAX_OPTIONS) break;
+  }
+  return chips;
+}
+
+/**
+ * What to offer under the newest bot message: the flow's buttons when it sent
+ * usable ones, otherwise the LLM's follow-ups exactly as before.
+ */
+export function readSuggestions(
+  metadata: unknown,
+  handoffKeywords: readonly string[] = [],
+): readonly QuickReplyChip[] {
+  const buttons = readFlowButtons(metadata);
+  if (buttons.length > 0) return buttons;
+  return readQuickReplies(metadata, handoffKeywords).map((label) => ({ label }));
+}
+
+/**
+ * The message metadata a tap on `chip` sends (chatbot-workflows.md §9.5), or
+ * `undefined` for a chip with no flow behind it — an LLM follow-up is just
+ * words. `kind: 'flow_reply'` is what makes the engine treat the message as
+ * that button being pressed rather than as free text.
+ */
+export function flowReplyMetadata(chip: QuickReplyChip): Record<string, unknown> | undefined {
+  if (chip.reply === undefined) return undefined;
+  return { kind: 'flow_reply', runId: chip.reply.runId, stepId: chip.reply.stepId, buttonId: chip.reply.buttonId };
+}
+
+const sameChip = (a: QuickReplyChip, b: QuickReplyChip): boolean =>
+  a.label === b.label &&
+  a.reply?.runId === b.reply?.runId &&
+  a.reply?.stepId === b.reply?.stepId &&
+  a.reply?.buttonId === b.reply?.buttonId;
+
 export interface QuickRepliesView {
   readonly node: HTMLElement;
-  /** Draws `options`, or hides the row when there are none. */
-  update(options: readonly string[]): void;
+  /** Draws `chips`, or hides the row when there are none. */
+  update(chips: readonly QuickReplyChip[]): void;
 }
 
 /**
@@ -93,7 +189,7 @@ export interface QuickRepliesView {
  * bot message ever shows chips (see message-list.ts), so a per-message row
  * would be N-1 hidden elements accumulating in the transcript.
  */
-export function createQuickReplies(onSelect: (text: string) => void): QuickRepliesView {
+export function createQuickReplies(onSelect: (chip: QuickReplyChip) => void): QuickRepliesView {
   const node = el('div', {
     attrs: {
       class: 'dh-quick-replies',
@@ -106,28 +202,28 @@ export function createQuickReplies(onSelect: (text: string) => void): QuickRepli
     },
   });
 
-  let current: readonly string[] = [];
+  let current: readonly QuickReplyChip[] = [];
 
   return {
     node,
-    update(options) {
+    update(chips) {
       // Compared before rebuilding: `render` runs on every state change, and
       // replacing these nodes each time would drop focus mid-tab for a
       // keyboard user and restart the CSS transition on every delivery tick.
-      if (options.length === current.length && options.every((o, i) => o === current[i])) {
-        node.hidden = options.length === 0;
+      if (chips.length === current.length && chips.every((chip, i) => sameChip(chip, current[i]!))) {
+        node.hidden = chips.length === 0;
         return;
       }
-      current = options;
-      node.hidden = options.length === 0;
+      current = chips;
+      node.hidden = chips.length === 0;
       node.replaceChildren(
-        ...options.map((label) =>
+        ...chips.map((chip) =>
           el('button', {
             attrs: { class: 'dh-quick-reply', type: 'button' },
             // `text`, so it goes through `textContent`. The label came from a
-            // language model by way of two services.
-            text: label,
-            on: { click: () => onSelect(label) },
+            // language model or a merchant by way of two services.
+            text: chip.label,
+            on: { click: () => onSelect(chip) },
           }),
         ),
       );

@@ -148,6 +148,16 @@ describe('configFromAttributes', () => {
       expect('accent' in config).toBe(false);
     });
 
+    it('turns data-page-label and data-page-url into config.page', () => {
+      const config = configFromAttributes({ ...minimal(), pageLabel: 'checkout', pageUrl: '/checkout' });
+      expect(config.page).toEqual({ label: 'checkout', url: '/checkout' });
+    });
+
+    it('sets config.page from the label alone, and omits it when neither is given', () => {
+      expect(configFromAttributes({ ...minimal(), pageLabel: 'order' }).page).toEqual({ label: 'order' });
+      expect('page' in configFromAttributes(minimal())).toBe(false);
+    });
+
     it('rejects a non-numeric breakpoint', () => {
       expect(() => configFromAttributes({ ...minimal(), breakpoint: 'wide' })).toThrow(WidgetConfigError);
       expect(() => configFromAttributes({ ...minimal(), breakpoint: '-5' })).toThrow(WidgetConfigError);

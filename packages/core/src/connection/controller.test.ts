@@ -1059,3 +1059,41 @@ describe('connection.ack — the CUSTOMER guarantee, enforced at the call site',
     expect(h.store.getState().lastError).toBeNull();
   });
 });
+
+describe('ConnectionController — flow invite latch (chatbot-workflows-commerce.md §6)', () => {
+  it('carries inviteId on the next hello after carryInvite()', async () => {
+    const h = await connected();
+    h.controller.carryInvite('inv_1');
+    h.controller.disconnect();
+    const reconnecting = h.controller.connect();
+    await tick();
+    expect(h.transport.lastConnect.hello.inviteId).toBe('inv_1');
+    h.transport.open();
+    h.transport.emitFrame(ackFrame());
+    await reconnecting;
+  });
+
+  it('clears the pending inviteId once an ack confirms it, so a LATER reconnect does not resend it', async () => {
+    const h = await connected();
+    h.controller.carryInvite('inv_1');
+    h.controller.disconnect();
+    let reconnecting = h.controller.connect();
+    await tick();
+    h.transport.open();
+    h.transport.emitFrame(ackFrame());
+    await reconnecting;
+
+    h.controller.disconnect();
+    reconnecting = h.controller.connect();
+    await tick();
+    expect('inviteId' in h.transport.lastConnect.hello).toBe(false);
+    h.transport.open();
+    h.transport.emitFrame(ackFrame());
+    await reconnecting;
+  });
+
+  it('a plain hello with no carryInvite() call never carries inviteId', async () => {
+    const h = await connected();
+    expect('inviteId' in h.transport.lastConnect.hello).toBe(false);
+  });
+});

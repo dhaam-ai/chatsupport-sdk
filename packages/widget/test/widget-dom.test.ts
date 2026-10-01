@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createWidget, mount, unmount } from '../src/index.js';
+import { createWidget, getWidget, mount, unmount } from '../src/index.js';
 import type { WidgetConfig } from '../src/config.js';
 
 // Assembled at runtime, never a contiguous literal — a literal here blocks the
@@ -722,14 +722,91 @@ describe('opening itself', () => {
 
   // The listener is on `document`, which outlives the shadow root.
   it('releases the exit-intent listener on destroy', async () => {
-    await publish({ autoOpen: 'exit-intent' });
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    await publish({ autoOpen: 'never' });
+    const added = add.mock.calls.filter(([type]) => type === 'mouseout');
+    expect(added).toHaveLength(1);
     unmount();
+    expect(remove.mock.calls.some(([type, fn]) => type === 'mouseout' && fn === added[0]?.[1])).toBe(true);
     expect(() =>
       document.dispatchEvent(
         new MouseEvent('mouseout', { relatedTarget: null, clientY: 0, bubbles: true }),
       ),
     ).not.toThrow();
     expect(document.querySelector('dh-chat-widget')).toBeNull();
+    add.mockRestore();
+    remove.mockRestore();
+  });
+
+  const leave = () =>
+    document.dispatchEvent(new MouseEvent('mouseout', { relatedTarget: null, clientY: 0, bubbles: true }));
+
+  // The flow engine's "About to leave with a cart" needs the event whatever
+  // the merchant chose for auto-open (review F7).
+  it('sends exit_intent with autoOpen never, and does not open the panel', async () => {
+    await publish({ autoOpen: 'never' });
+    const widget = getWidget();
+    if (widget === null) throw new Error('widget not mounted');
+    const spy = vi.spyOn(widget.store.client, 'sendVisitorEvent');
+    leave();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('exit_intent', {});
+    expect(isOpen()).toBe(false);
+  });
+
+  it('with exit-intent auto-open, opens once: closed by the visitor, a later exit does not reopen it', async () => {
+    await publish({ autoOpen: 'exit-intent' });
+    leave();
+    expect(isOpen()).toBe(true);
+    query<HTMLButtonElement>('.dh-icon-button[aria-label="Close chat"]').click();
+    expect(isOpen()).toBe(false);
+    leave();
+    expect(isOpen()).toBe(false);
+  });
+
+  it('throttles exit_intent to one event per 10 s', async () => {
+    await publish({ autoOpen: 'never' });
+    const widget = getWidget();
+    if (widget === null) throw new Error('widget not mounted');
+    const spy = vi.spyOn(widget.store.client, 'sendVisitorEvent');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(1_000_000);
+      leave();
+      vi.setSystemTime(1_000_000 + 9_999);
+      leave();
+      expect(spy).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(1_000_000 + 10_000);
+      leave();
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fires exit_intent exactly once alongside the existing auto-open', async () => {
+    await publish({ autoOpen: 'exit-intent' });
+    const widget = getWidget();
+    if (widget === null) throw new Error('widget not mounted');
+    const spy = vi.spyOn(widget.store.client, 'sendVisitorEvent');
+    document.dispatchEvent(
+      new MouseEvent('mouseout', { relatedTarget: null, clientY: 0, bubbles: true }),
+    );
+    expect(isOpen()).toBe(true);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('exit_intent', {});
+  });
+
+  it('does not fire the event for a mouseout that stays inside the document', async () => {
+    await publish({ autoOpen: 'exit-intent' });
+    const widget = getWidget();
+    if (widget === null) throw new Error('widget not mounted');
+    const spy = vi.spyOn(widget.store.client, 'sendVisitorEvent');
+    document.dispatchEvent(
+      new MouseEvent('mouseout', { relatedTarget: document.body, clientY: 0, bubbles: true }),
+    );
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

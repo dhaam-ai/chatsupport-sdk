@@ -13,14 +13,13 @@ AttachmentMetadata _attachment({
   String url = _url,
   String mimeType = 'image/png',
   String fileName = 'receipt.png',
-  String mediaType = 'image',
 }) {
   return AttachmentMetadata(
     url: url,
     fileName: fileName,
     mimeType: mimeType,
     size: 10,
-    mediaType: mediaType,
+    mediaType: 'image',
   );
 }
 
@@ -82,7 +81,7 @@ void main() {
       );
     });
 
-    test('falls back to the attachment kind once the url is suppressed', () {
+    test('falls back to the mime family once the url is suppressed', () {
       // Same function underneath, so the bubble and the announcement can
       // never disagree about whether there were words to read.
       final ChatMessage image =
@@ -95,7 +94,6 @@ void main() {
         attachment: _attachment(
           url: 'https://cdn.example.com/vm.m4a',
           mimeType: 'audio/mp4',
-          mediaType: 'audio',
         ),
       );
       expect(describeContent(audio), 'sent a voice message');
@@ -105,38 +103,9 @@ void main() {
         attachment: _attachment(
           url: 'https://cdn.example.com/invoice.pdf',
           mimeType: 'application/pdf',
-          mediaType: 'documents',
         ),
       );
       expect(describeContent(file), 'sent a file');
-    });
-
-    test('names a video as a video, not as a file', () {
-      // The S3 folder name the agent console sends, unnormalized. The bubble
-      // draws a video glyph for it, so the announcement must agree.
-      final ChatMessage video = _message(
-        content: 'https://cdn.example.com/clip.mp4',
-        attachment: _attachment(
-          url: 'https://cdn.example.com/clip.mp4',
-          mimeType: 'video/mp4',
-          mediaType: 'videos',
-        ),
-      );
-      expect(describeContent(video), 'sent a video');
-    });
-
-    test('says what the bubble draws when mediaType and mimeType disagree', () {
-      // A recognized mediaType is the classifier for the announcement too, so
-      // the words cannot contradict the glyph next to them.
-      final ChatMessage scan = _message(
-        content: 'https://cdn.example.com/scan.png',
-        attachment: _attachment(
-          url: 'https://cdn.example.com/scan.png',
-          mimeType: 'image/png',
-          mediaType: 'DOCUMENT',
-        ),
-      );
-      expect(describeContent(scan), 'sent a file');
     });
 
     test('a whitespace-only message is described, not read out blank', () {

@@ -128,15 +128,6 @@ final class CsatSurface extends AutomaticSurface {
   List<Object?> get props => <Object?>[sessionId, alreadyRated];
 }
 
-final class CsatLoadingSurface extends AutomaticSurface {
-  const CsatLoadingSurface({required this.sessionId});
-
-  final String sessionId;
-
-  @override
-  List<Object?> get props => <Object?>[sessionId];
-}
-
 /// The new-conversation form — "Send us a message" on Home, "New
 /// conversation" on Messages.
 final class ComposingNewSurface extends UserInitiatedSurface {

@@ -33,7 +33,7 @@ import 'attachment_draft.dart';
 ///
 /// `withData: true` is the obvious call and it is the wrong one here: it
 /// loads the ENTIRE chosen file into memory before `pickFiles` even returns,
-/// so a customer who picks a 2 GB video is out of memory before the 50 MiB
+/// so a customer who picks a 2 GB video is out of memory before the 25 MiB
 /// cap gets to say anything. A cap that crashes instead of refusing is not a
 /// cap. The stream is requested instead, and [attachmentFromPlatformFile]
 /// reads from it only after the declared size has been looked at.
@@ -142,21 +142,6 @@ Future<Uint8List> _readBounded(PlatformFile file) async {
 /// nothing for it, and the customer's photo arrives as a generic file with no
 /// thumbnail.
 ///
-/// ── The one sniff the extension may overrule: WebM ───────────────────────
-///
-/// The WebM entry above is the exception to "no container formats". Its
-/// magic number is the EBML header (`1A 45 DF A3`) that every Matroska and
-/// WebM file starts with, whether it holds sound or moving pictures, and
-/// `mime` 2.x names it `audio/weba` regardless. So a customer's `.webm` screen
-/// recording was declared audio, and `/upload` refused it, because its
-/// allowlist has `video/webm` and has never had `audio/weba`.
-///
-/// The header cannot tell audio WebM from video WebM, so a header-only answer
-/// is not available. The file name can: when its extension maps to a
-/// `video/*` type, that type wins over the audio guess. Nothing else changes.
-/// An extensionless EBML file, or a `.weba`, keeps the sniffed audio type,
-/// and every other sniff still beats the extension as before.
-///
 /// ── An unrecognised file gets the EMPTY STRING, not a fallback ───────────
 ///
 /// Not `application/octet-stream`. T7 draws the line at absent-vs-wrong and
@@ -169,21 +154,9 @@ String _mimeTypeFor(String fileName, Uint8List bytes) {
   final int headerLength = bytes.length < defaultMagicNumbersMaxLength
       ? bytes.length
       : defaultMagicNumbersMaxLength;
-  final String? sniffed = lookupMimeType(
-    fileName,
-    headerBytes: bytes.sublist(0, headerLength),
-  );
-  if (_webmAudioGuesses.contains(sniffed)) {
-    // No `headerBytes`, so this is the extension's answer alone.
-    final String? byExtension = lookupMimeType(fileName);
-    if (byExtension != null && byExtension.startsWith('video/')) {
-      return byExtension;
-    }
-  }
-  return sniffed ?? '';
+  return lookupMimeType(
+        fileName,
+        headerBytes: bytes.sublist(0, headerLength),
+      ) ??
+      '';
 }
-
-/// What `mime` can call an EBML header. `audio/weba` is the name its 2.x
-/// table actually uses; `audio/webm` is the registered one, listed so a later
-/// `mime` that corrects the name does not quietly bring the bug back.
-const Set<String> _webmAudioGuesses = <String>{'audio/weba', 'audio/webm'};

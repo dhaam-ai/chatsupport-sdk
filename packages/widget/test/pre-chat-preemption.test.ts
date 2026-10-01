@@ -336,7 +336,7 @@ describe('the pre-chat gate does not preempt a surface the customer opened', () 
     await settle();
 
     expect(find('.dh-prechat-form')).toBeNull();
-    expect(query<HTMLElement>('.dh-newconvo-form .dh-form-heading').textContent).toBe('Start a new conversation');
+    expect(query<HTMLElement>('.dh-newconvo-form .dh-form-heading').textContent).toBe('What can we help you with?');
     const subtitle = query<HTMLElement>('.dh-newconvo-form .dh-form-subtitle');
     expect(subtitle.hidden).toBe(false);
     expect(subtitle.textContent).toBe('A few details so we can help you faster.');
@@ -511,7 +511,10 @@ describe('a surface the customer walked away from does not cover the next conver
     expect(query<HTMLElement>('.dh-surface-host').hidden).toBe(true);
     expect(query<HTMLElement>('.dh-composer').hidden).toBe(false);
     expect(startNewSession).toHaveBeenCalledTimes(1);
-    expect(startNewSession).toHaveBeenCalledWith({ subject: 'Where is my order?' });
+    // `subject` is the row's own label ("Track my order"), shown back to the
+    // customer as the conversation's name — not the prompt sent as its
+    // opening message, asserted separately below.
+    expect(startNewSession).toHaveBeenCalledWith({ subject: 'Track my order' });
     expect(sends.map((send) => send.content)).toEqual(['Where is my order?']);
     sends[0]?.release();
   });

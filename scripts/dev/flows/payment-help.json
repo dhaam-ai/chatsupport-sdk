@@ -1,0 +1,91 @@
+{
+  "name": "Test - Payment help",
+  "description": "Page: payment. Reassurance, three buttons, handoff.",
+  "enabled": true,
+  "rules": {
+    "trigger": "page",
+    "labels": [
+      "payment"
+    ],
+    "url": "",
+    "phrases": [],
+    "conditions": [],
+    "hours": "any",
+    "often": "chat"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "msg",
+    "steps": {
+      "msg": {
+        "id": "msg",
+        "kind": "message",
+        "name": "Reassure",
+        "text": "Payments sometimes fail when your bank double-checks. You haven't been charged.",
+        "next": {
+          "next": "pick"
+        }
+      },
+      "pick": {
+        "id": "pick",
+        "kind": "buttons",
+        "name": "What next",
+        "text": "What would you like to do?",
+        "buttons": [
+          {
+            "id": "retry",
+            "label": "Try again"
+          },
+          {
+            "id": "other",
+            "label": "Pay another way"
+          },
+          {
+            "id": "person",
+            "label": "Talk to someone"
+          }
+        ],
+        "next": {
+          "retry": "retryMsg",
+          "other": "otherMsg",
+          "person": "toTeam",
+          "typed": "toTeam"
+        }
+      },
+      "retryMsg": {
+        "id": "retryMsg",
+        "kind": "message",
+        "name": "Try again",
+        "text": "Tap Pay again on this page. If it keeps failing, pick another way to pay.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "otherMsg": {
+        "id": "otherMsg",
+        "kind": "message",
+        "name": "Other ways to pay",
+        "text": "You can pay by UPI, card or cash on delivery at checkout.",
+        "next": {
+          "next": "finish"
+        }
+      },
+      "finish": {
+        "id": "finish",
+        "kind": "end",
+        "name": "Finish",
+        "text": "Anything else? Just type it here.",
+        "next": {}
+      },
+      "toTeam": {
+        "id": "toTeam",
+        "kind": "handoff",
+        "name": "Hand to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "Connecting you with our team.",
+        "next": {}
+      }
+    }
+  }
+}

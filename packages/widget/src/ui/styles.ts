@@ -598,7 +598,7 @@ export const STYLES = `
 
    No host selector can reach '.dh-launcher' or '.dh-panel', so declarations
    here are final. */
-.dh-launcher, .dh-panel {
+.dh-launcher, .dh-panel, .dh-invite-bubble {
   font-family: var(--dh-font);
   font-size: 15px;
   font-weight: 400;
@@ -853,6 +853,97 @@ button {
 }
 .dh-badge[hidden] { display: none; }
 
+/* ── Flow invite bubble ───────────────────────────────────────────────────
+   Beside the launcher, just above it — same physical corner and offsets, for
+   the reason the launcher's own comment gives. Fixed, so it works both in the
+   top-layer container and in root.ts's z-index fallback, and clickable
+   because that container is 'pointer-events: none'. */
+.dh-invite-bubble {
+  position: fixed;
+  bottom: calc(var(--dh-offset-y) + 48px + var(--dh-space) * 3);
+  right: var(--dh-offset-x);
+  max-width: min(280px, calc(100vw - var(--dh-space) * 8));
+  padding: calc(var(--dh-space) * 3);
+  padding-inline-end: calc(var(--dh-space) * 8);
+  background: var(--dh-surface);
+  border: 1px solid var(--dh-border);
+  border-radius: var(--dh-radius);
+  box-shadow: var(--dh-shadow);
+  pointer-events: auto;
+}
+.dh-invite-bubble[hidden] { display: none; }
+:host([data-position="bottom-left"]) .dh-invite-bubble { right: auto; left: var(--dh-offset-x); }
+/* Who the bubble speaks for — absent from the DOM (widget.ts's 'setSender')
+   until a name is known, so there is never a blank row to lay out. Same disc
+   styling as the header's own '.dh-avatar' (brand accent, initials,
+   uppercase): it is the same "who is this" answer, just anchored outside the
+   panel instead of inside it. */
+.dh-invite-header { display: flex; align-items: center; gap: calc(var(--dh-space) * 1.5); margin-bottom: 0; }
+.dh-invite-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px; height: 28px;
+  border-radius: 999px;
+  background: var(--dh-accent);
+  color: var(--dh-on-accent, #fff);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  flex: none;
+}
+.dh-invite-name { font-size: 13px; font-weight: 600; color: var(--dh-text); }
+/* 'padding: 0' is load-bearing: this is a native <button> (invite-bubble.ts),
+   and the shared 'button{}' reset above zeroes its margin but not the UA
+   default padding — left in, that padding stacked with the header's own
+   margin-bottom and read as a much bigger gap than either rule states.
+   'line-height: 1.2' (tighter than the card's shared 1.45) removes the rest
+   of the visible gap: with the header's own margin-bottom at 0, what was
+   left was just the leading above this line's first glyph — invisible
+   whitespace a font's line-height reserves above and below its text, which
+   at 1.45 was wide enough to read as a second gap on its own. */
+/* Muted, like every other secondary line in this widget (message preview,
+   timestamp — see the '--dh-text-muted' uses above): the bold name is the
+   thing that draws the eye first, and the message reads as its caption.
+   12px, a step below the name beside it, rather than outsizing the title
+   it is a caption for. */
+.dh-invite-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: start;
+  font-size: 12px;
+  padding: 0;
+  line-height: 1.2;
+  color: var(--dh-text-muted);
+}
+/* Lines the message up under the NAME rather than the avatar — same 28px
+   avatar width plus the header's own gap, so this is the exact x the name
+   text starts at, not an eyeballed number. Only when 'setSender' put an
+   avatar there at all (see its own doc); with none, the name starts at the
+   card edge and the message belongs there too. */
+.dh-invite-bubble.dh-invite-has-avatar .dh-invite-text {
+  margin-inline-start: calc(28px + var(--dh-space) * 1.5);
+}
+.dh-invite-close {
+  position: absolute;
+  /* Same top as the bubble's own content padding, and the same 28px height
+     as '.dh-invite-avatar' — that is what puts this level with the sender
+     row (avatar + "X replied") instead of floating above it in its own
+     corner, which is what a smaller top offset than the content's
+     padding-top did. */
+  top: calc(var(--dh-space) * 3);
+  inset-inline-end: calc(var(--dh-space) * 1);
+  width: 28px; height: 28px;
+  border-radius: 999px;
+  color: var(--dh-text-muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.dh-invite-bubble button:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+
 /* ── Panel ────────────────────────────────────────────────────────────── */
 
 .dh-panel {
@@ -860,6 +951,12 @@ button {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Stops wheel/touch scroll from chaining through to the host page once a
+     screen has nothing left to scroll — or nothing to scroll at all, like
+     Home when its content is shorter than the panel. Set here rather than on
+     each inner scroll region so every current and future screen is covered
+     by one rule instead of needing its own copy. */
+  overscroll-behavior: contain;
   background: var(--dh-surface);
   color: var(--dh-text);
   border: 1px solid var(--dh-border);
@@ -992,7 +1089,28 @@ button {
   max-width: 100%;
   overflow: visible;
 }
-.dh-title { font-size: 15px; font-weight: 600; margin: 0; }
+/* The new-conversation compose surface (widget.ts's 'headerRow', toggled in
+   'syncScreens') is about starting a chat, not about who is already on one —
+   the avatar/status/presence/⋯ menu all describe an identity or a live
+   session that either does not exist yet or is not what this screen is
+   doing, so they are hidden in favour of the plain title alone (repainted to
+   "New conversation" by the same toggle). Back and Close are deliberately
+   NOT in this list — see headerRow's own doc in widget.ts for why both stay.
+   '.dh-header-hero-avatars' needs no entry here: every rule that ever shows
+   it is already scoped to ':host([data-screen="home"])', so it is invisible
+   on the conversation screen regardless of this attribute. */
+.dh-header[data-minimal="true"] .dh-avatar-host,
+.dh-header[data-minimal="true"] .dh-status,
+.dh-header[data-minimal="true"] .dh-presence-line,
+.dh-header[data-minimal="true"] .dh-reconnect,
+.dh-header[data-minimal="true"] .dh-hmenu-wrap {
+  display: none;
+}
+/* Base truncation for the merchant's own title (appearance.title) and
+   whatever it gets swapped for (an agent's name, a store name) — every
+   screen-specific override below re-declares the same trio, but the base
+   rule is the one every OTHER selector falls back to, and it had none. */
+.dh-title { font-size: 15px; font-weight: 600; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 /* The header's avatar — the merchant's brand face (logo or initials) until an
    agent is on the chat, then that agent's single letter, and nothing at all
    while the out-of-hours surface is up; widget.ts's 'syncHeaderAvatar' owns
@@ -1042,6 +1160,18 @@ button {
   border-radius: 999px;
   background: currentColor;
   flex: none;
+}
+/* Base truncation for the merchant's own subtitle (appearance.subtitle),
+   unbounded length — every screen-specific override re-declares the same
+   trio (see the conversation-screen and classic-home rules further down),
+   but there was no fallback for a screen that adds neither. 'min-width: 0'
+   is what lets this flex child of '.dh-status' actually shrink to ellipsize
+   instead of pushing the row wider. */
+.dh-status-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .dh-header-spacer { flex: 1; }
 
@@ -1389,6 +1519,16 @@ button {
   font-size: 24px;
   font-weight: 700;
   line-height: 1.2;
+  /* Merchant-typed text, unbounded length. Clamped to 2 lines rather than
+     left to grow the hero arbitrarily tall — and 'overflow-wrap' so one
+     long run with no spaces (a pasted string, not a sentence) breaks inside
+     itself instead of stretching the card past the panel's own width, the
+     failure mode a plain 'overflow: hidden' alone does not catch. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: break-word;
 }
 .dh-hero-sub {
   margin: 0;
@@ -1396,6 +1536,12 @@ button {
   font-weight: 500;
   line-height: 1.35;
   opacity: 0.92;
+  /* Same reasoning as '.dh-hero-greeting' above — merchant-typed, unbounded. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: break-word;
 }
 
 /* No '.dh-hero-cta' rules, and that is the point rather than an omission. The
@@ -1656,19 +1802,22 @@ button {
   text-decoration: underline;
   color: inherit;
 }
-.dh-attachment-image,
-.dh-attachment-video {
+.dh-attachment-image {
   display: block;
   max-width: 100%;
   max-height: 220px;
   border-radius: 8px;
   margin-top: calc(var(--dh-space) * 1);
 }
-/* Black, not the bubble colour: with preload="metadata" and no poster the
-   player can be an empty box until played, and black is what reads as
-   "video" rather than as a rendering fault. */
-.dh-attachment-video { max-height: 240px; background: #000; }
 .dh-audio { margin-top: calc(var(--dh-space) * 1); max-width: 100%; }
+.dh-attachment-video {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 8px;
+  margin-top: calc(var(--dh-space) * 1);
+  background: #000;
+}
 
 .dh-empty {
   margin: auto;
@@ -1929,7 +2078,8 @@ button {
 .dh-greeting {
   align-self: flex-start;
   max-width: 85%;
-  margin: 0 calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
+  /* Inside '.dh-log', whose own padding already insets it. */
+  margin: 0;
   padding: calc(var(--dh-space) * 2) calc(var(--dh-space) * 3);
   border-radius: var(--dh-radius);
   background: var(--dh-bubble-in);
@@ -2035,6 +2185,18 @@ button {
   text-decoration: none;
   cursor: pointer;
 }
+/* ui/attach-menu.ts: the composer sits at the BOTTOM of the panel, so its
+   menu opens upward from the toggle instead of downward like the header's. */
+/* Right-aligned (inset-inline-end: 0, inherited from .dh-hmenu) is correct
+   for the header's toggle, which sits at the panel's right edge — opening
+   LEFTWARD from there stays inside the panel. The attach button sits near
+   the LEFT of the composer row, so that same leftward-opening menu ran off
+   the panel's left edge entirely. Opening RIGHTWARD from the button instead
+   keeps it on screen. */
+/* Narrower than the header menu's 216px: "File" and "Video" are short, one
+   word each, and the header's min-width (sized for "Start new conversation")
+   left a lot of empty space beside them. */
+.dh-hmenu-up { top: auto; bottom: calc(100% + 6px); inset-inline-end: auto; inset-inline-start: 0; min-width: 130px; }
 .dh-hmenu-item:hover { background: var(--dh-surface-sunken); }
 .dh-hmenu-item:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
 .dh-hmenu-glyph { display: flex; }
@@ -2226,8 +2388,9 @@ button {
 .dh-quick-replies {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: calc(var(--dh-space) * 1.5);
-  align-self: flex-start;
+  align-self: center;
   max-width: 100%;
   padding: 0 calc(var(--dh-space) * 3) calc(var(--dh-space) * 2);
 }
@@ -2246,6 +2409,54 @@ button {
 }
 .dh-quick-reply:hover { background: color-mix(in srgb, var(--dh-accent) 10%, transparent); }
 .dh-quick-reply:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+
+/* Flow commerce cards (ui/flow-cards.ts), inside a bot message's bubble. */
+.dh-flow-card { margin-top: calc(var(--dh-space) * 2); font-size: 13px; }
+.dh-discount-card { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--dh-space) * 2); }
+.dh-discount-label, .dh-discount-terms { flex-basis: 100%; }
+.dh-discount-label { font-weight: 600; }
+.dh-discount-terms, .dh-order-eta { color: var(--dh-text-muted); font-size: 12px; }
+.dh-discount-code {
+  padding: calc(var(--dh-space) * 1) calc(var(--dh-space) * 2.5);
+  border: 1.5px dashed var(--dh-accent);
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+.dh-discount-copy {
+  padding: calc(var(--dh-space) * 1) calc(var(--dh-space) * 2.5);
+  border: 1px solid var(--dh-accent);
+  border-radius: 999px;
+  color: var(--dh-accent);
+  font-size: 12.5px;
+}
+.dh-products-card { display: flex; gap: calc(var(--dh-space) * 2); overflow-x: auto; max-width: 100%; }
+.dh-product-item {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--dh-space) * 1);
+  flex: 0 0 112px;
+  min-width: 0;
+  padding: calc(var(--dh-space) * 1.5);
+  background: var(--dh-surface);
+  border: 1px solid var(--dh-border);
+  border-radius: 8px;
+  color: var(--dh-text);
+}
+.dh-product-image { display: block; width: 100%; max-width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; }
+.dh-product-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-product-price, .dh-order-number { font-weight: 600; }
+.dh-order-card {
+  display: grid;
+  gap: calc(var(--dh-space) * 0.5);
+  padding: calc(var(--dh-space) * 2);
+  background: var(--dh-surface);
+  border: 1px solid var(--dh-border);
+  border-radius: 8px;
+  color: var(--dh-text);
+}
 
 /* 'behaviour.typingIndicator: false'. 'display: none' rather than
    'visibility: hidden' on purpose — it takes the screen-reader label out of
@@ -2412,7 +2623,12 @@ button {
      Safari zoom the whole page on focus. */
   font-size: 16px;
 }
-.dh-field-input:focus-visible { border-color: var(--dh-accent); }
+/* 'outline: none' here, not just the border-colour change: without it the
+   generic ':focus-visible' rule above still draws its own ring in the fixed
+   '--dh-focus' blue OUTSIDE this accent-coloured border, and a customer sees
+   two different colours competing on the one field. The border swapping to
+   the published accent already carries the focus signal on its own. */
+.dh-field-input:focus-visible { border-color: var(--dh-accent); outline: none; }
 .dh-offline-message { resize: none; }
 .dh-form-error { font-size: 12.5px; color: var(--dh-danger, #b91c1c); margin: 0; }
 .dh-form-error[hidden] { display: none; }
@@ -2423,6 +2639,7 @@ button {
   background: var(--dh-accent);
   color: var(--dh-on-accent, #fff);
   font: inherit;
+  font-size: 14px;
   font-weight: 600;
 }
 .dh-form-submit[disabled] { opacity: 0.6; cursor: not-allowed; }
@@ -2613,17 +2830,6 @@ button {
   object-fit: cover;
   flex: none;
 }
-/* Same 40px slot as the image thumb, so a video's row lines up with a photo's. */
-.dh-preview-glyph {
-  width: 40px; height: 40px;
-  border-radius: 6px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  background: var(--dh-surface);
-  border: 1px solid var(--dh-border);
-  color: var(--dh-text-muted);
-}
 .dh-preview-name {
   flex: 1;
   min-width: 0;
@@ -2774,8 +2980,12 @@ button {
   color: var(--dh-accent-text);
 }
 .dh-home-cta-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.dh-home-cta-title { font-size: 14px; font-weight: 600; }
-.dh-home-cta-sub { font-size: 12px; color: var(--dh-text-muted); }
+/* Merchant-typed labels (header.ctaTitle/ctaSubtitle), unbounded length —
+   this row is one line by design, so truncate rather than wrap and grow
+   the card. '.dh-home-cta-text''s own 'min-width: 0' above is what lets a
+   flex child ellipsize below its content width in the first place. */
+.dh-home-cta-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.dh-home-cta-sub { font-size: 12px; color: var(--dh-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .dh-home-cta-sub[hidden] { display: none; }
 .dh-home-chevron { flex: none; font-size: 20px; line-height: 1; color: var(--dh-text-muted); }
 
@@ -2906,6 +3116,19 @@ button {
   background: var(--dh-surface-sunken);
 }
 .dh-messages-search-icon { flex: none; display: flex; color: var(--dh-text-muted); }
+.dh-messages-search-clear {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--dh-text-muted);
+}
+.dh-messages-search-clear:hover { background: var(--dh-surface); color: var(--dh-text); }
+.dh-messages-search-clear[hidden] { display: none; }
 .dh-messages-search-input {
   flex: 1;
   min-width: 0;
@@ -2949,13 +3172,69 @@ button {
   flex-direction: column;
   gap: calc(var(--dh-space) * 2);
 }
+/* Icon + heading + body + action, matching chatsupport_react's own
+   'EmptyState' (see messages-screen.ts's own comment) rather than a bare
+   line of text. */
 .dh-messages-empty {
+  /* 'display: flex' arranges THIS element's own children (icon, heading,
+     body, action) in a centered column — it does not depend on '.dh-messages-list'
+     (the '<ul>' this is an '<li>' inside) being a flex container itself, so
+     it holds even where that list is 'display: block' (the "Dhaam UI"
+     override below). Generous padding does the vertical centering work a
+     'flex: 1' parent would otherwise have done. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
-  color: var(--dh-text-muted);
-  font-size: 13px;
-  padding: calc(var(--dh-space) * 6) 0;
+  padding: calc(var(--dh-space) * 8) calc(var(--dh-space) * 4);
 }
 .dh-messages-empty[hidden] { display: none; }
+.dh-messages-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: calc(var(--dh-space) * 1.5);
+  border-radius: 999px;
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text-muted);
+}
+.dh-messages-empty-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dh-text);
+}
+.dh-messages-empty-body {
+  margin: calc(var(--dh-space)) 0 0;
+  max-width: 260px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dh-text-muted);
+}
+/* '.dh-messages-new''s own look, copied rather than shared — see this
+   button's own construction comment in messages-screen.ts for why. */
+.dh-messages-empty-action {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--dh-space) * 2);
+  margin-top: calc(var(--dh-space) * 4);
+  padding: calc(var(--dh-space) * 3) calc(var(--dh-space) * 4);
+  border-radius: var(--dh-radius);
+  border: 0;
+  background: var(--dh-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+.dh-messages-empty-action:hover { opacity: 0.92; }
+.dh-messages-empty-action:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .dh-messages-row {
   width: 100%;
@@ -3059,6 +3338,29 @@ button {
   font-weight: 600;
 }
 .dh-newconvo-message { min-height: 84px; resize: vertical; font: inherit; }
+/* Decorative only — see new-conversation.ts's own header for why nothing
+   reads this checkbox's state. Boxed like a field rather than a bare
+   checkbox+label pair, matching the console design. */
+.dh-newconvo-attach-order {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 1.5);
+  padding: calc(var(--dh-space) * 1.5) calc(var(--dh-space) * 2.5);
+  border: 1px solid var(--dh-border);
+  border-radius: 10px;
+  /* Small enough that the console's default copy — "Attach my active order
+     so you don't have to ask" — sits on one line at the panel's normal
+     width instead of wrapping under the checkbox. */
+  font-size: 11.5px;
+  color: var(--dh-text);
+  cursor: pointer;
+}
+.dh-newconvo-attach-order-input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--dh-accent);
+}
 /* ── New conversation, pre-chat fields folded in (ui/new-conversation.ts) ──
 
    The console's pre-chat fields render on this screen through the shared
@@ -3073,6 +3375,16 @@ button {
   gap: calc(var(--dh-space) * 2);
 }
 .dh-form-actions .dh-form-submit { flex: 1; }
+/* Hidden, not deleted from the DOM — see 'data-back-available''s own doc in
+   widget.ts (syncScreens) for why it stays for the one path that reaches
+   this form with no Back button to fall back on. */
+:host([data-back-available="true"]) .dh-newconvo-form .dh-form-skip {
+  display: none;
+}
+:host([data-back-available="true"]) .dh-newconvo-form .dh-form-actions .dh-form-submit {
+  flex: unset;
+  width: 100%;
+}
 
 /* ── End-conversation confirm (ui/end-conversation.ts) ──────────────────────
 
@@ -3686,6 +3998,39 @@ button {
      taller box that includes room for the status line too — that room is
      reserved on '.dh-header' itself instead, below. */
   position: relative !important;
+  /* The base rule (above, unscoped) sets 'overflow: hidden' to truncate a
+     long merchant name elsewhere — right there, wrong here. This box's OWN
+     height stays pinned to the title's alone (the comment above), and
+     '.dh-status'/'.dh-presence-line' escape below it via 'position: absolute;
+     top: 100%' precisely so they do not add to that height. 'overflow: hidden'
+     inherited from the base rule clips exactly that: a positioned descendant
+     is still clipped by an ancestor that establishes its containing block
+     (this one, via 'position: relative' above) and hides overflow, so the
+     whole status/presence line rendered fully off-screen — invisible while
+     computing as 'display: flex' and non-empty, which is what made this so
+     hard to spot without measuring boxes directly. */
+  overflow: visible !important;
+  /* The base rule's 'flex: 0 1 auto' (unscoped, above) leaves this box
+     exactly the TITLE's own width — fine for the title alone, but
+     '.dh-status'/'.dh-presence-line' below inherit that same width via their
+     own 'width: 100%', so a short title ("Assistant") squeezed a much longer
+     line ("Typically replies in a few minutes") down to its own few
+     characters and ellipsised most of it away. Growing this box lets both
+     use the header's real remaining width; '.dh-header-spacer''s own rule
+     (below) stops competing with it for that space on this screen, since a
+     grown identity wrap already pushes the icon buttons to the far edge on
+     its own. */
+  flex: 1 1 auto !important;
+}
+/* See '.dh-header-identity-wrap''s own rule above: once IT grows to fill the
+   header's remaining width on this screen, the spacer's job (pushing the
+   icon buttons to the far right) is already done, and letting it ALSO grow
+   would split that space between the two — right back to a narrow identity
+   wrap. A fixed gap, not zero, so a short title/status pair does not run
+   flush against the menu button. */
+:host([data-screen="conversation"]) .dh-header-spacer {
+  flex: 0 0 auto !important;
+  width: 8px !important;
 }
 :host([data-screen="conversation"]) .dh-title {
   color: #ffffff !important;
@@ -3767,6 +4112,45 @@ button {
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
   min-width: 0 !important;
+}
+/* '.dh-status'/'.dh-presence-line' above force themselves visible with
+   '!important' on every conversation, which is exactly right for a real one
+   and exactly wrong for the new-conversation compose surface (see
+   '.dh-header[data-minimal="true"]''s own rule) — this is the one place that
+   composing surface needs to win the specificity/'!important' fight those
+   rules set up, not merely be a later plain rule. */
+:host([data-screen="conversation"]) .dh-header[data-minimal="true"] .dh-status,
+:host([data-screen="conversation"]) .dh-header[data-minimal="true"] .dh-presence-line {
+  display: none !important;
+}
+/* The rest of this section paints every real conversation's header in the
+   merchant's brand colour, white text and all — right for a live chat, wrong
+   for "start a new conversation", which has no session and no brand
+   identity to show yet. The console design puts this screen back to a plain
+   bar, the same treatment ':host([data-screen="messages"])' already gets
+   above, so this reuses those exact values rather than inventing a third
+   palette. The extra selector segment on each rule (over the plain
+   ':host([data-screen="conversation"]) .dh-header'/'.dh-title' rules above)
+   is what wins the specificity fight without relying on source order. */
+:host([data-screen="conversation"]) .dh-header[data-minimal="true"] {
+  background: #ffffff !important;
+  background-image: none !important;
+  border-bottom: 1px solid #e5e7eb !important;
+  padding: 10px 14px !important;
+}
+:host([data-screen="conversation"]) .dh-header[data-minimal="true"] .dh-title {
+  color: #111827 !important;
+}
+/* Covers both Back and Close — Back carries '.dh-icon-button' too (see
+   'headerRow' in widget.ts), and the reference design draws both the same
+   flat way here, not the filled circle the Messages screen's own Back gets. */
+:host([data-screen="conversation"]) .dh-header[data-minimal="true"] .dh-icon-button {
+  color: #374151 !important;
+  background: transparent !important;
+}
+:host([data-screen="conversation"]) .dh-header[data-minimal="true"] .dh-icon-button:hover {
+  background: #f3f4f6 !important;
+  color: #111827 !important;
 }
 :host([data-screen="conversation"]) .dh-avatar {
   border: 2px solid rgba(255, 255, 255, 0.6) !important;
@@ -4146,7 +4530,10 @@ button {
    avatar row's own margin-bottom adds the bit of extra room Figma gives
    above the headline. */
 :host([data-screen="home"]) .dh-hero-full {
-  padding: 0 18px 18px 18px !important;
+  /* Top padding was 0 — the greeting sat flush against the identity header
+     right above it, with no breathing room between "who you're talking to"
+     and "Hello there". */
+  padding: 14px 18px 18px 18px !important;
   gap: 8px !important;
 }
 
@@ -4174,7 +4561,10 @@ button {
   background: #ffffff !important;
   border: 1px solid color-mix(in srgb, var(--dh-accent) 18%, #ffffff) !important;
   box-shadow: 0 8px 24px color-mix(in srgb, var(--dh-accent) 12%, transparent), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
-  border-radius: var(--dh-radius) !important;
+  /* Fixed, not 'var(--dh-radius)': every other card on this screen follows
+     the merchant's configured corner radius, but the console design draws
+     this one card at a flatter 8px regardless of that setting. */
+  border-radius: 8px !important;
   padding: 14px 16px !important;
   display: flex !important;
   align-items: center !important;
@@ -4338,14 +4728,44 @@ button {
   height: 16px !important;
   stroke: #9ca3af !important;
 }
+/* Mirrors the search icon above on the trailing edge, and takes over its
+   'pointer-events'/'z-index' concerns: unlike the icon, this one IS
+   clickable, so 'pointer-events' stays at its default (auto) rather than
+   copying the icon's 'none'. */
+:host([data-screen="messages"]) .dh-messages-search-clear {
+  position: absolute !important;
+  right: 24px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  z-index: 2 !important;
+  width: 20px !important;
+  height: 20px !important;
+  color: #9ca3af !important;
+}
+:host([data-screen="messages"]) .dh-messages-search-clear:hover {
+  background: #f3f4f6 !important;
+  color: #6b7280 !important;
+}
+:host([data-screen="messages"]) .dh-messages-search-clear svg {
+  width: 14px !important;
+  height: 14px !important;
+  stroke: currentColor !important;
+}
 :host([data-screen="messages"]) .dh-messages-search-input {
   height: 38px !important;
   width: 100% !important;
   box-sizing: border-box !important;
   border: 1px solid #e5e7eb !important;
-  border-radius: min(var(--dh-radius), 14px) !important;
+  /* Fixed 8px, not 'var(--dh-radius)': same reasoning as the home screen's
+     CTA card — this field's corners don't follow the merchant's configured
+     corner radius. */
+  border-radius: 8px !important;
   background: #ffffff !important;
-  padding: 8px 12px 8px 36px !important;
+  /* Right padding room for '.dh-messages-search-clear' above, reserved
+     whether or not it's currently shown — text stopping short of the edge
+     even with an empty field beats the field's own usable width jumping by
+     20px the moment the clear button appears. */
+  padding: 8px 32px 8px 36px !important;
   font-size: 13.5px !important;
   color: #111827 !important;
   transition: border-color 0.15s ease !important;
@@ -4371,10 +4791,46 @@ button {
   background: #ffffff !important;
 }
 :host([data-screen="messages"]) .dh-messages-empty {
-  padding: 32px 16px !important;
-  text-align: center !important;
+  padding: 56px 24px !important;
+}
+:host([data-screen="messages"]) .dh-messages-empty-icon {
+  background: #f3f4f6 !important;
   color: #9ca3af !important;
-  font-size: 13.5px !important;
+}
+:host([data-screen="messages"]) .dh-messages-empty-title {
+  color: #111827 !important;
+}
+:host([data-screen="messages"]) .dh-messages-empty-body {
+  color: #6b7280 !important;
+}
+:host([data-screen="messages"]) .dh-messages-empty-action {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  height: 40px !important;
+  padding: 0 20px !important;
+  border-radius: min(var(--dh-radius), 14px) !important;
+  border: 0 !important;
+  background: var(--dh-accent) !important;
+  color: #ffffff !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+  transition: opacity 0.15s ease !important;
+}
+:host([data-screen="messages"]) .dh-messages-empty-action:hover:not(:disabled) {
+  opacity: 0.92 !important;
+}
+:host([data-screen="messages"]) .dh-messages-empty-action:disabled {
+  opacity: 0.55 !important;
+  cursor: not-allowed !important;
+}
+:host([data-screen="messages"]) .dh-messages-empty-action svg {
+  stroke: #ffffff !important;
+  width: 16px !important;
+  height: 16px !important;
 }
 :host([data-screen="messages"]) .dh-messages-item {
   list-style: none !important;
@@ -4405,9 +4861,13 @@ button {
   border-color: transparent !important;
   box-shadow: none !important;
 }
+/* No persistent tint for the row the customer is already on — the reference
+   (chatsupport_react's own ConversationItem) draws every row identically and
+   only ever reacts to :hover; 'aria-current' stays SET (screen readers still
+   get it), it just paints no differently from any other row here. */
 :host([data-screen="messages"]) .dh-messages-row[aria-current="true"],
 :host([data-screen="messages"]) .dh-mrow-btn[aria-current="true"] {
-  background: color-mix(in srgb, var(--dh-accent) 5%, #ffffff) !important;
+  background: #ffffff !important;
 }
 
 /* Hide avatar circle in customer conversation rows to match reference preview */
@@ -4753,8 +5213,32 @@ ${STAFF_CONV} .dh-msg[data-mine="true"] .dh-tick svg { stroke: currentColor !imp
 :host([data-design="classic"][data-screen="home"]) .dh-header-hero-avatars { display: none !important; }
 .dh-home-greeting { display: none; }
 :host([data-design="classic"][data-screen="home"]) .dh-home-greeting { display: block; margin: 4px 2px 2px; }
-.dh-home-greeting-title { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.2; color: var(--dh-text); }
-.dh-home-greeting-sub { margin: 4px 0 0; font-size: 14px; line-height: 1.4; color: var(--dh-text-muted); }
+/* Same merchant-typed-text truncation as the hero design's '.dh-hero-greeting'/
+   '.dh-hero-sub' (this file, above) — classic design shows the same two
+   config fields through a different pair of elements. */
+.dh-home-greeting-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--dh-text);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: break-word;
+}
+.dh-home-greeting-sub {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--dh-text-muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: break-word;
+}
 
 /* 20. Scrollbars — thin and quiet, as in the console's preview, instead of the
    platform's wide arrowed bar. Applies to every scroll container in the panel

@@ -42,7 +42,6 @@ class ChatWidgetState extends Equatable {
     this.startedTopicLabel,
     this.localParticipantId,
     this.csatBySession = const <String, CsatLookup>{},
-    this.messagesLoading = false,
     this.muted = false,
     this.replyingTo,
     this.consentAgreed = false,
@@ -251,9 +250,6 @@ class ChatWidgetState extends Equatable {
   /// Empty when the host wired up no `ChatSessionActions` — the feature is
   /// off, not broken.
   final Map<String, CsatLookup> csatBySession;
-
-  /// Whether the selected conversation's first history page is in flight.
-  final bool messagesLoading;
 
   /// Whether THIS VISITOR has silenced the local chime.
   ///
@@ -531,7 +527,6 @@ class ChatWidgetState extends Equatable {
     String? startedTopicLabel,
     String? localParticipantId,
     Map<String, CsatLookup>? csatBySession,
-    bool? messagesLoading,
     bool? muted,
     ReplyTarget? replyingTo,
     // A third sentinel, for the same reason as the two above and a more
@@ -580,7 +575,6 @@ class ChatWidgetState extends Equatable {
       // No "clear" sentinel: the machine's verdicts only ever accumulate
       // within one widget lifetime, so `??` says everything it needs to.
       csatBySession: csatBySession ?? this.csatBySession,
-      messagesLoading: messagesLoading ?? this.messagesLoading,
       muted: muted ?? this.muted,
       replyingTo: clearReplyingTo ? null : (replyingTo ?? this.replyingTo),
       consentAgreed: consentAgreed ?? this.consentAgreed,
@@ -615,7 +609,6 @@ class ChatWidgetState extends Equatable {
         startedTopicLabel,
         localParticipantId,
         csatBySession,
-        messagesLoading,
         muted,
         replyingTo,
         consentAgreed,

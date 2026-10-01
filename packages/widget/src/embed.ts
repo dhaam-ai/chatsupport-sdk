@@ -26,7 +26,7 @@
 import { configFromAttributes } from './attributes.js';
 import { getWidget, mount } from './index.js';
 import type { ChatWidget } from './widget.js';
-import type { WidgetConfig } from './config.js';
+import type { PageContext, WidgetConfig } from './config.js';
 import type { ChatEventHandler, ChatEventName, Unsubscribe } from '@dhaam-ccrm/js';
 
 /** The API a `<script>`-tag integrator gets, on `window.DhaamChat`. */
@@ -36,6 +36,15 @@ export interface DhaamChatGlobal {
   close(): void;
   toggle(): void;
   destroy(): void;
+
+  /**
+   * Tells the server where the visitor is, so flows that start on a page can
+   * run — `DhaamChat.setPage({ label: 'checkout' })`. Call it on every route
+   * change of a single-page app. Order-independent like `on`: called before
+   * the widget exists, the latest value is held and sent on the first hello.
+   * Never throws.
+   */
+  setPage(page: PageContext): void;
 
   /**
    * Subscribes to core's §6.5 event catalog. Returns an unsubscribe.
@@ -57,6 +66,21 @@ export interface DhaamChatGlobal {
    * registered once stays live for whatever widget is on the page.
    */
   on<E extends ChatEventName>(event: E, handler: ChatEventHandler<E>): Unsubscribe;
+
+  /**
+   * Reports a visitor fact the server's flow engine can trigger on — the
+   * script-tag form of `widget.sendEvent`. A no-op with nothing mounted,
+   * same as `open`/`close`/`toggle`: an event fired before the widget
+   * exists has no connection to carry it on, so there is nothing to buffer
+   * the way `setPage` buffers a pending page.
+   */
+  sendEvent(name: string, props?: Record<string, unknown>): void;
+
+  /** The script-tag form of `widget.dismissInvite`. A no-op with nothing mounted. */
+  dismissInvite(): void;
+
+  /** The script-tag form of `widget.openSession`. A no-op with nothing mounted. */
+  openSession(sessionId: string): void;
 
   /** The mounted widget, or `null` — the escape hatch to `store.client`. */
   widget(): ChatWidget | null;
@@ -159,8 +183,15 @@ function locateScript(): HTMLElement | null {
 function mountAndAttach(config: WidgetConfig): ChatWidget {
   const widget = mount(config);
   attachAll(widget);
+  // A page named before the widget existed. Applied before the first hello is
+  // built (the token fetch that precedes it is asynchronous), and over the
+  // config's own `page`: a runtime call is the more current of the two.
+  if (pendingPage !== undefined) widget.setPage(pendingPage);
   return widget;
 }
+
+/** The latest `DhaamChat.setPage` made while no widget was mounted. */
+let pendingPage: PageContext | undefined;
 
 function install(): void {
   const api: DhaamChatGlobal = {
@@ -168,6 +199,14 @@ function install(): void {
     open: () => getWidget()?.open(),
     close: () => getWidget()?.close(),
     toggle: () => getWidget()?.toggle(),
+    setPage: (page) => {
+      const widget = getWidget();
+      if (widget !== null) widget.setPage(page);
+      else pendingPage = page;
+    },
+    sendEvent: (name, props) => getWidget()?.sendEvent(name, props),
+    dismissInvite: () => getWidget()?.dismissInvite(),
+    openSession: (sessionId) => getWidget()?.openSession(sessionId),
     destroy: () => {
       // Released BEFORE the teardown that would invalidate them, but the
       // registrations themselves are kept: a host that subscribed once and

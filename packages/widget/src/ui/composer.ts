@@ -10,48 +10,18 @@
 // without a `.catch` in front of it.
 
 import { ICONS, el, icon, safeLinkUrl } from './dom.js';
+import { createAttachMenu } from './attach-menu.js';
 import { createEmojiPicker, insertAtCaret } from './emoji.js';
 import type { EmojiPickerView } from './emoji.js';
+import type { InputHint } from './input-hint.js';
 import { createVoiceRecorder } from './voice.js';
 import type { VoiceRecorder } from './voice.js';
 
-/**
- * The upload endpoint's own cap (chat-service-node computes it as
- * `50 * 1024 * 1024`). Above this the server refuses, so it is refused here
- * first, with words, not silence.
- */
-const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
-
-/**
- * The types `POST /chat-services/api/v1/upload` accepts — chat-service-node's
- * `ALLOWED_MIME_TYPES` in s3-client.ts, which judges the BASE type with any
- * `;params` stripped — minus one.
- *
- * Mirrored rather than left to the server because a refused upload is
- * invisible: core's `sendAttachment` records the failure in `lastError`
- * instead of rejecting, and nothing in the widget shows that. So the composer
- * refuses at pick time whatever the server would refuse, or the customer
- * watches a file "send" and silently vanish.
- *
- * `image/svg+xml` is the one deliberate omission. The server accepts it, but
- * an SVG served back from the attachment CDN is a document that can carry
- * script — a stored-XSS vector against anyone who opens the link. Refusing it
- * here only narrows what the server allows; nothing the server would refuse
- * gets through.
- *
- * If the server's list changes, change this one with it.
- */
-const ACCEPTED_ATTACHMENT_TYPES: readonly string[] = [
-  'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-  'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo',
-  'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4',
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'text/plain', 'text/csv',
-];
+/** Above this, the browser will reject or the server will 413. Refused with words, not silence. */
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+/** Video clips run bigger than a photo for the same "worth attaching" bar — matches the server's S3_MAX_FILE_SIZE_MB default. */
+const MAX_VIDEO_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const maxBytesFor = (file: File): number => (file.type.startsWith('video/') ? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES);
 
 /**
  * Heroicons' `link` outline, lifted verbatim from the installed package —
@@ -67,16 +37,6 @@ const LINK_ICON = [
 ];
 
 /**
- * Heroicons' `video-camera` outline, verbatim from
- * `node_modules/@heroicons/react/24/outline/VideoCameraIcon.js` (v2.2.0) in
- * `chatsupport_react` — same sourcing, and same reason for living here rather
- * than in `ICONS`, as {@link LINK_ICON}: the attachment preview is its only user.
- */
-const VIDEO_ICON = [
-  'm15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z',
-];
-
-/**
  * What the reply chip shows about the message being replied to.
  *
  * Name and excerpt only — never the message id. See `setReplyTo`'s own doc
@@ -89,8 +49,17 @@ export interface ReplyTarget {
   readonly excerpt: string;
 }
 
+/**
+ * Extra data that travels with ONE send. Today: the `flow_reply` metadata of a
+ * tapped flow button. Deliberately per-call, never remembered: it must not
+ * leak onto whatever the customer types next.
+ */
+export interface SendExtra {
+  readonly metadata?: Record<string, unknown>;
+}
+
 export interface ComposerCallbacks {
-  readonly onSend: (text: string) => Promise<void>;
+  readonly onSend: (text: string, extra?: SendExtra) => Promise<void>;
   readonly onSendAttachment: (file: File) => Promise<void>;
   readonly onTyping: () => void;
   readonly onError: (error: unknown) => void;
@@ -119,7 +88,7 @@ export interface ComposerView {
    * EMPTY box is the normal case, not a refusal — a chip is tapped instead of
    * typing, so the box is empty precisely when a suggestion should send.
    */
-  submit(text: string): Promise<void>;
+  submit(text: string, extra?: SendExtra): Promise<void>;
 
   /**
    * Shows the message being replied to, or `null` to clear it.
@@ -132,6 +101,20 @@ export interface ComposerView {
   setReplyTo(target: ReplyTarget | null): void;
   setEnabled(enabled: boolean): void;
   setUploading(uploading: boolean): void;
+  /**
+   * `behaviour.fileUploads` — shows or hides the image and file buttons.
+   * Hidden, not disabled: a greyed-out paperclip promises a feature the
+   * merchant switched off.
+   */
+  setAttachmentsEnabled(enabled: boolean): void;
+  /**
+   * The keyboard a flow's question wants (email, phone, number, order), or
+   * `null` to hand back the ordinary one. Only the on-screen keyboard and
+   * autofill change: the box keeps accepting any text, because the server
+   * validates and re-asks. The prompt text is the widget's to set (it already
+   * owns the placeholder for the offline-queue state), from `hint.placeholder`.
+   */
+  setInputHint(hint: InputHint | null): void;
   destroy(): void;
 }
 
@@ -141,18 +124,14 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   let previewUrl: string | null = null;
   let enabled = true;
   let uploading = false;
+  // Set by the public `submit(text, extra)` for exactly the one send it starts,
+  // and consumed (cleared) at the top of the internal `submit()`.
+  let pendingExtra: SendExtra | undefined;
 
   const errorLine = el('p', { attrs: { class: 'dh-error', role: 'alert', hidden: true } });
 
   // ── attachment preview ────────────────────────────────────────────────
   const previewThumb = el('img', { attrs: { class: 'dh-preview-thumb', alt: '' } });
-  // A glyph, not a decoded first frame: getting a frame means loading up to
-  // 50 MB into a <video> on a phone just to draw 40px of it. Decorative, like
-  // the thumb's empty alt — the file name beside it says what it is.
-  const previewGlyph = el('span', {
-    attrs: { class: 'dh-preview-glyph', hidden: true },
-    children: [icon(VIDEO_ICON, 20)],
-  });
   const previewName = el('span', { attrs: { class: 'dh-preview-name' } });
   const previewSize = el('span', { attrs: { class: 'dh-preview-size' } });
   const previewClear = el('button', {
@@ -162,7 +141,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
   });
   const preview = el('div', {
     attrs: { class: 'dh-preview', hidden: true },
-    children: [previewThumb, previewGlyph, previewName, previewSize, previewClear],
+    children: [previewThumb, previewName, previewSize, previewClear],
   });
 
   // ── recording strip ───────────────────────────────────────────────────
@@ -187,35 +166,50 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
 
   // ── controls ──────────────────────────────────────────────────────────
   const fileInput = el('input', {
-    attrs: {
-      class: 'dh-file',
-      type: 'file',
-      tabindex: '-1',
-      'aria-hidden': 'true',
-      // A hint that steers the OS picker, not a gate — the picker lets the
-      // customer switch to "all files" — so `acceptFile` checks again
-      // (https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/accept).
-      accept: ACCEPTED_ATTACHMENT_TYPES.join(','),
-    },
-    on: { change: () => acceptFile(fileInput) },
+    attrs: { class: 'dh-file', type: 'file', tabindex: '-1', 'aria-hidden': 'true' },
+    on: { change: () => acceptFile() },
   });
 
-  // The image button's picker. Same gate as the file input, through the same
-  // `acceptFile`, so a photo is refused in the same words, under the same 50 MB
-  // cap, and replaces a pending attachment (revoking its preview) exactly as a
-  // picked file does. `accept` is the image half of the server's list rather
-  // than `image/*`, which would offer SVG and HEIC: one the composer refuses,
-  // the other the server does.
   const imageInput = el('input', {
-    attrs: {
-      class: 'dh-file',
-      type: 'file',
-      accept: ACCEPTED_ATTACHMENT_TYPES.filter((type) => type.startsWith('image/')).join(','),
-      tabindex: '-1',
-      'aria-hidden': 'true',
-      hidden: true,
+    attrs: { class: 'dh-file', type: 'file', accept: 'image/*', tabindex: '-1', 'aria-hidden': 'true', hidden: true },
+    on: {
+      change: () => {
+        const file = (imageInput as HTMLInputElement).files?.[0];
+        if (file) {
+          if (file.size > MAX_ATTACHMENT_BYTES) {
+            report(new Error('File too large'), 'Files must be under 25 MB.');
+            (imageInput as HTMLInputElement).value = '';
+            return;
+          }
+          pendingFile = file;
+          previewName.textContent = file.name;
+          previewSize.textContent = formatBytes(file.size);
+          previewUrl = URL.createObjectURL(file);
+          previewThumb.src = previewUrl;
+          previewThumb.hidden = false;
+          preview.hidden = false;
+          showError(null);
+          syncSendState();
+        }
+        (imageInput as HTMLInputElement).value = '';
+      },
     },
-    on: { change: () => acceptFile(imageInput) },
+  });
+
+  const videoInput = el('input', {
+    attrs: { class: 'dh-file', type: 'file', accept: 'video/*', tabindex: '-1', 'aria-hidden': 'true', hidden: true },
+    on: {
+      change: () => {
+        const file = (videoInput as HTMLInputElement).files?.[0] ?? null;
+        (videoInput as HTMLInputElement).value = '';
+        if (file === null) return;
+        if (file.size > MAX_VIDEO_ATTACHMENT_BYTES) {
+          showError(`That file is too large. The limit is ${formatBytes(MAX_VIDEO_ATTACHMENT_BYTES)}.`);
+          return;
+        }
+        setAttachment(file);
+      },
+    },
   });
 
   const imageButton = el('button', {
@@ -224,10 +218,12 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     on: { click: () => (imageInput as HTMLInputElement).click() },
   });
 
-  const attachButton = el('button', {
-    attrs: { class: 'dh-icon-button dh-composer-tool-btn', type: 'button', 'aria-label': 'Attach a file' },
-    children: [icon(ICONS.paperclip, 18)],
-    on: { click: () => fileInput.click() },
+  // "File" opens the unrestricted picker (fileInput, any type — including
+  // video); "Video" opens one pre-filtered to video/*, so a phone's picker
+  // lands on its video tab instead of every photo and document too.
+  const attachMenu = createAttachMenu({
+    onFile: () => fileInput.click(),
+    onVideo: () => (videoInput as HTMLInputElement).click(),
   });
 
   const micButton = el('button', {
@@ -344,6 +340,12 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     },
   });
 
+  // What the box was built with, kept so `setInputHint(null)` can hand exactly
+  // that back (see the method's doc) rather than a guess at the defaults.
+  const ordinaryKeyboard: Record<string, string | null> = Object.fromEntries(
+    ['inputmode', 'autocomplete', 'autocapitalize', 'enterkeyhint'].map((name) => [name, input.getAttribute(name)]),
+  );
+
   const sendButton = el('button', {
     attrs: { class: 'dh-send', type: 'button', 'aria-label': 'Send message', disabled: true },
     children: [icon(ICONS.send, 18)],
@@ -388,7 +390,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
           input,
           el('div', {
             attrs: { class: 'dh-composer-row' },
-            children: [imageButton, emojiPicker.node, attachButton, linkButton, sendButton, fileInput, imageInput],
+            children: [imageButton, emojiPicker.node, attachMenu.node, linkButton, sendButton, fileInput, imageInput, videoInput],
           }),
           // A child of the box, not of the row beside its trigger the way the
           // emoji popover is: it anchors to the box's full width (see
@@ -422,7 +424,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     const hasContent = input.value.trim() !== '' || pendingFile !== null;
     sendButton.disabled = !enabled || uploading || !hasContent;
     imageButton.disabled = !enabled || uploading;
-    attachButton.disabled = !enabled || uploading;
+    attachMenu.toggle.disabled = !enabled || uploading;
     emojiPicker.setEnabled(enabled && !uploading);
     micButton.disabled = !enabled || uploading;
     linkButton.disabled = !enabled || uploading;
@@ -544,26 +546,16 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
     callbacks.onTyping();
   }
 
-  function acceptFile(source: HTMLInputElement): void {
-    const file = source.files?.[0] ?? null;
+  function acceptFile(): void {
+    const file = fileInput.files?.[0] ?? null;
     // Reset immediately so re-picking the SAME file fires `change` again —
     // the input keeps its value otherwise and the second attempt is silent.
-    source.value = '';
+    fileInput.value = '';
     if (file === null) return;
 
-    // Type before size: shrinking a file of a type that can never be sent is
-    // wasted effort, so that is the answer worth giving first. An empty type
-    // (the browser could not tell) is refused too — nothing untyped is on the
-    // server's list either.
-    if (!ACCEPTED_ATTACHMENT_TYPES.includes(baseMimeType(file.type))) {
-      showError(
-        'That type of file cannot be sent. Try a photo, a video (MP4, WebM or MOV), an audio clip, a PDF or an Office document.',
-      );
-      return;
-    }
-
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      showError(`That file is too large. The limit is ${formatBytes(MAX_ATTACHMENT_BYTES)}.`);
+    const maxBytes = maxBytesFor(file);
+    if (file.size > maxBytes) {
+      showError(`That file is too large. The limit is ${formatBytes(maxBytes)}.`);
       return;
     }
 
@@ -584,7 +576,6 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       previewThumb.hidden = true;
       previewThumb.removeAttribute('src');
     }
-    previewGlyph.hidden = !file.type.startsWith('video/');
 
     preview.hidden = false;
     showError(null);
@@ -602,11 +593,12 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       previewUrl = null;
     }
     previewThumb.removeAttribute('src');
-    previewGlyph.hidden = true;
     syncSendState();
   }
 
   async function submit(): Promise<void> {
+    const extra = pendingExtra;
+    pendingExtra = undefined;
     if (sendButton.disabled) return;
 
     const text = input.value.trim();
@@ -628,7 +620,10 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
         syncSendState();
         await callbacks.onSendAttachment(file);
       }
-      if (text !== '') await callbacks.onSend(text);
+      // The one-argument call for an ordinary send, so a plain typed message is
+      // byte-for-byte what it always was; the second argument exists only for a
+      // tapped flow button.
+      if (text !== '') await (extra === undefined ? callbacks.onSend(text) : callbacks.onSend(text, extra));
     } catch (error) {
       report(error, 'That message could not be sent. Please try again.');
     } finally {
@@ -689,7 +684,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       replyName.textContent = target?.senderName ?? '';
       replyExcerpt.textContent = target?.excerpt ?? '';
     },
-    async submit(text) {
+    async submit(text, extra) {
       // Both guards are refusals, not races. `enabled` is the consent gate and
       // the closed-session rule, `uploading` the in-flight send; a non-empty
       // box is the customer's own draft, which a suggestion must not
@@ -701,6 +696,7 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       const suggestion = text.trim();
       if (suggestion === '') return;
       input.value = suggestion;
+      pendingExtra = extra;
       // Send is enabled by content, and the content just changed.
       syncSendState();
       await submit();
@@ -713,6 +709,29 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       uploading = next;
       syncSendState();
     },
+    setInputHint(hint) {
+      if (hint === null) {
+        // Back to what `createComposer` built, not to a guess at it.
+        for (const [name, value] of Object.entries(ordinaryKeyboard)) {
+          if (value === null) input.removeAttribute(name);
+          else input.setAttribute(name, value);
+        }
+        return;
+      }
+      input.setAttribute('inputmode', hint.inputMode);
+      input.setAttribute('autocomplete', hint.autocomplete);
+      // An email, a phone and a number are never sentences, and iOS would
+      // capitalise the first letter of an address; an order number is typed in
+      // capitals by convention.
+      input.setAttribute('autocapitalize', hint.type === 'order' ? 'characters' : 'none');
+      input.setAttribute('enterkeyhint', 'send');
+    },
+    setAttachmentsEnabled(next) {
+      imageButton.hidden = !next;
+      attachMenu.toggle.hidden = !next;
+      // A file picked before the merchant turned uploads off must not still send.
+      if (!next) clearAttachment();
+    },
     destroy() {
       // Order matters: the recorder holds the microphone, so it is released
       // before anything else can throw.
@@ -722,15 +741,11 @@ export function createComposer(callbacks: ComposerCallbacks): ComposerView {
       // is what keeps a destroyed widget from leaving them on the host's
       // document.
       emojiPicker.destroy();
+      attachMenu.destroy();
       closeLinkPopover();
       clearAttachment();
     },
   };
-}
-
-/** `"Video/MP4; codecs=avc1"` → `"video/mp4"` — the form the server judges. */
-function baseMimeType(type: string): string {
-  return (type.split(';')[0] ?? '').trim().toLowerCase();
 }
 
 function formatBytes(bytes: number): string {

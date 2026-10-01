@@ -291,42 +291,6 @@ void main() {
     expect(find.text('on its way'), findsOneWidget);
   });
 
-  testWidgets('places actions left of outgoing and right of incoming bubbles',
-      (WidgetTester tester) async {
-    await _pump(
-      tester,
-      MessageListInputs(
-        messages: <ChatMessage>[
-          _msg(
-            id: 'out',
-            senderType: SenderType.customer,
-            content: 'outgoing bubble',
-          ),
-          _msg(
-            id: 'in',
-            senderType: SenderType.agent,
-            content: 'incoming bubble',
-          ),
-        ],
-        localParticipantId: _me,
-      ),
-    );
-
-    final Finder replies = find.byWidgetPredicate(
-      (Widget widget) => widget is IconButton && widget.tooltip == 'Reply',
-    );
-    expect(replies, findsNWidgets(2));
-
-    expect(
-      tester.getTopRight(replies.at(0)).dx,
-      lessThan(tester.getTopLeft(find.text('outgoing bubble')).dx),
-    );
-    expect(
-      tester.getTopLeft(replies.at(1)).dx,
-      greaterThan(tester.getTopRight(find.text('incoming bubble')).dx),
-    );
-  });
-
   testWidgets('renders the handoff-filtered chip row under the newest bot row',
       (WidgetTester tester) async {
     final _Recorder recorder = await _pump(
@@ -485,7 +449,9 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('Reply'));
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reply'));
     await tester.pumpAndSettle();
 
     // The name rides along because only the transcript can resolve it — a

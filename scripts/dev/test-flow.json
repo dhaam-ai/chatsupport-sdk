@@ -1,0 +1,87 @@
+{
+  "name": "SDK test flow",
+  "description": "Exercises buttons, an email question (input hint), a tag and a handoff. Starts when a visitor is on the home page.",
+  "enabled": true,
+  "rules": {
+    "trigger": "page",
+    "labels": ["home"],
+    "url": "",
+    "phrases": [],
+    "conditions": [],
+    "hours": "any",
+    "often": "every"
+  },
+  "graph": {
+    "schemaVersion": 2,
+    "startId": "welcome",
+    "steps": {
+      "welcome": {
+        "id": "welcome",
+        "kind": "message",
+        "name": "Say hello",
+        "text": "Hi! This is a test flow from the Dhaam chat SDK.",
+        "next": { "next": "pick" }
+      },
+      "pick": {
+        "id": "pick",
+        "kind": "buttons",
+        "name": "What to try",
+        "text": "What would you like to try?",
+        "buttons": [
+          { "id": "order", "label": "Track my order" },
+          { "id": "pay", "label": "Payment help" },
+          { "id": "person", "label": "Talk to a person" }
+        ],
+        "next": { "order": "askEmail", "pay": "payTips", "person": "human", "typed": "human" }
+      },
+      "askEmail": {
+        "id": "askEmail",
+        "kind": "question",
+        "name": "Ask for email",
+        "text": "Sure. What email did you order with?",
+        "answer": "email",
+        "saveAs": "Email",
+        "tries": 2,
+        "retry": "That doesn't look like an email. Try again, like name@example.com.",
+        "next": { "ok": "thanks", "bad": "human" }
+      },
+      "thanks": {
+        "id": "thanks",
+        "kind": "message",
+        "name": "Thank them",
+        "text": "Thanks {Email}! Our team will check your order and email you.",
+        "next": { "next": "tagIt" }
+      },
+      "tagIt": {
+        "id": "tagIt",
+        "kind": "tag",
+        "name": "Tag the chat",
+        "tags": ["sdk-flow-test"],
+        "next": { "next": "done" }
+      },
+      "payTips": {
+        "id": "payTips",
+        "kind": "message",
+        "name": "Payment tip",
+        "text": "Payments sometimes fail when a bank double-checks. You haven't been charged.",
+        "next": { "next": "done" }
+      },
+      "done": {
+        "id": "done",
+        "kind": "end",
+        "name": "Finish",
+        "text": "That's it. Type any question and we'll help.",
+        "next": {}
+      },
+      "human": {
+        "id": "human",
+        "kind": "handoff",
+        "name": "Hand to the team",
+        "teamId": null,
+        "teamName": "",
+        "text": "Connecting you with our team.",
+        "next": {}
+      }
+    }
+  }
+}

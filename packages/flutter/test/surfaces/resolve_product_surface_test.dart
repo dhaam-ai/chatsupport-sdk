@@ -155,19 +155,6 @@ void main() {
       );
     });
 
-    test('the CSAT loading placeholder holds the slot before the card', () {
-      expect(
-        resolve(
-          const SurfaceSyncInputs(
-            hasSession: true,
-            csatLoadingSessionId: 'sess_1',
-            csatCard: CsatSurface(sessionId: 'sess_1', alreadyRated: false),
-          ),
-        ),
-        const CsatLoadingSurface(sessionId: 'sess_1'),
-      );
-    });
-
     test('an automatic surface no longer due is cleared', () {
       expect(
         resolve(const SurfaceSyncInputs(), current: const PreChatSurface()),

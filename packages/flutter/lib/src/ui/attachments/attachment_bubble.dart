@@ -6,14 +6,11 @@
 /// mistake in another shape." This is that node.
 library;
 
-import 'package:dhaam_chat/dhaam_chat.dart'
-    show AttachmentMetadata, safeLinkUrl;
+import 'package:dhaam_chat/dhaam_chat.dart' show AttachmentMetadata;
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../image_safety.dart';
 import 'attachment_draft.dart' show formatAttachmentBytes;
-import 'attachment_kind.dart';
 
 /// Draws [attachment] for a message bubble.
 ///
@@ -53,33 +50,12 @@ Widget buildAttachmentBubble(
 ///
 /// ── mediaType is the classifier, not the mimeType ────────────────────────
 ///
-/// [attachmentKind] reads `mediaType` in every spelling the transcript can
-/// receive: `IMAGE` from the customer's own upload (normalized by
-/// `dhaam_chat_rest` on the way in), and the raw S3 folder name `images` from
-/// anything the agent console sent, which neither the history read nor the
-/// socket normalizes. Re-deriving "is this a picture" from
-/// `mimeType.startsWith('image/')` would be a second classifier that can
-/// disagree with the first, and the first is the one the server used when
-/// it decided where to put the bytes. The MIME family is consulted only when
-/// `mediaType` names nothing [attachmentKind] recognizes.
-///
-/// ── A file row opens the file; only an http(s) one ───────────────────────
-///
-/// There is no inline player, so before this a received video, or a PDF,
-/// could be seen in the transcript and not opened at all. A file row now
-/// hands its URL to the platform, which gives a video to its player or
-/// browser and a document to whatever reads it.
-///
-/// The gate is `safeLinkUrl`, not `safeImageUrl`, because this is a
-/// navigation, not a picture: `data:image/svg+xml` is safe to DRAW and not
-/// safe to OPEN (`url_safety.dart` explains the difference). A URL it refuses
-/// leaves the row exactly as it was: named, sized, and not a button. A
-/// control that does nothing when pressed would be worse than no control.
-///
-/// The thumbnail is unchanged and is not a button. Opening an image
-/// full-size is a separate design question, so its fallback row (an image
-/// that would not load) stays inert too, keeping the visible row and the
-/// accessible one in agreement.
+/// `normalizeMediaType` in `dhaam_chat_rest` already turned the route's S3
+/// folder name (`images`) into `IMAGE` on the way in, and the socket carries
+/// the same vocabulary. Re-deriving "is this a picture" from
+/// `mimeType.startsWith('image/')` here would be a second classifier that can
+/// disagree with the first — and it is the first one the server used when it
+/// decided where to put the bytes.
 class AttachmentBubble extends StatelessWidget {
   const AttachmentBubble({super.key, required this.attachment});
 
@@ -109,13 +85,8 @@ class AttachmentBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String kind = attachmentKind(attachment);
     final String? imageUrl =
-        kind == 'IMAGE' ? safeImageUrl(attachment.url) : null;
-    final Uri? openUri = imageUrl == null ? _openableUri(attachment.url) : null;
-    final VoidCallback? open =
-        openUri == null ? null : () => _openExternally(openUri);
-    final String size = formatAttachmentBytes(attachment.size);
+        attachment.mediaType == 'IMAGE' ? safeImageUrl(attachment.url) : null;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
@@ -123,51 +94,20 @@ class AttachmentBubble extends StatelessWidget {
         // Composed from the fields, never from the rendered strings — the
         // same rule the draft chip and T11's session rows follow. A
         // thumbnail has no text at all, so without this the row is silent.
-        // An openable row leads with the verb, as a button's name should,
-        // and keeps the size: it is how a customer on mobile data decides
-        // whether to open a 40 MB video now.
-        label: open == null
-            ? 'Attachment ${attachment.fileName}, $size'
-            : '${kind == 'VIDEO' ? 'Open video' : 'Open'} '
-                '${attachment.fileName}, $size',
-        button: open != null,
-        // The screen reader's activation. `excludeSemantics` below drops the
-        // InkWell's own tap action along with the Texts, so the action has
-        // to be declared on the node that survives.
-        onTap: open,
+        label: 'Attachment ${attachment.fileName}, '
+            '${formatAttachmentBytes(attachment.size)}',
         container: true,
         // Replaces the rendered strings rather than merging with them —
         // without this the file row is announced twice, once as this label
-        // and again as its own two Texts.
+        // and again as its own two Texts. Nothing inside carries an action,
+        // so there is nothing to lose by excluding it.
         excludeSemantics: true,
         child: imageUrl == null
-            ? _FileRow(attachment: attachment, onOpen: open)
+            ? _FileRow(attachment: attachment)
             : _Thumbnail(url: imageUrl, attachment: attachment),
       ),
     );
   }
-}
-
-/// The URL a file row may open, or `null` when it may not be opened.
-///
-/// `null` both for anything `safeLinkUrl` refuses and for an http(s) string
-/// `Uri` cannot parse, so a row is only ever a button when pressing it will
-/// actually reach `launchUrl`.
-Uri? _openableUri(String url) {
-  final String? safe = safeLinkUrl(url);
-  return safe == null ? null : Uri.tryParse(safe);
-}
-
-/// Hands [uri] to the platform.
-///
-/// `externalApplication`, the mode `openPrivacyUrl` uses and for the same
-/// reason: the file lives on the merchant's storage, not in the widget, and
-/// an in-app web view has no address bar to show whose server it came from.
-/// It also lets the OS give a video to a real player.
-/// https://pub.dev/documentation/url_launcher/latest/url_launcher/launchUrl.html
-/// https://pub.dev/documentation/url_launcher/latest/url_launcher/LaunchMode.html
-Future<void> _openExternally(Uri uri) async {
-  await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
 class _Thumbnail extends StatelessWidget {
@@ -223,75 +163,41 @@ class _Thumbnail extends StatelessWidget {
 
 /// A named file with its size — what a non-image, or an image that would not
 /// load, comes down to.
-///
-/// With [onOpen] it is also a control, and looks like one: the name is
-/// underlined, which is how `LinkifiedText` marks a link in this package, an
-/// `open_in_new` glyph says that pressing it leaves the chat, and the row is
-/// at least 44 high, the height of this package's own buttons, so it is a
-/// target a thumb can hit.
 class _FileRow extends StatelessWidget {
-  const _FileRow({required this.attachment, this.onOpen});
+  const _FileRow({required this.attachment});
 
   final AttachmentMetadata attachment;
-  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
     final TextStyle? style = Theme.of(context).textTheme.bodySmall;
-    final bool openable = onOpen != null;
 
-    final Widget row = Row(
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        Icon(_iconFor(attachmentKind(attachment)), size: 18),
+        Icon(_iconFor(attachment.mediaType), size: 18),
         const SizedBox(width: 6),
         Flexible(
           child: Text(
             attachment.fileName,
             overflow: TextOverflow.ellipsis,
-            style: openable
-                ? (style ?? const TextStyle())
-                    .copyWith(decoration: TextDecoration.underline)
-                : style,
+            style: style,
           ),
         ),
         const SizedBox(width: 6),
         Text(formatAttachmentBytes(attachment.size), style: style),
-        if (openable) ...<Widget>[
-          const SizedBox(width: 6),
-          const Icon(Icons.open_in_new, size: 16),
-        ],
       ],
-    );
-    if (!openable) return row;
-
-    // Transparent Material so the ink lands on top of the bubble's own
-    // colour; without one the splash paints on the Scaffold underneath the
-    // bubble, where nobody can see it.
-    return Material(
-      type: MaterialType.transparency,
-      child: InkWell(
-        onTap: onOpen,
-        borderRadius: BorderRadius.circular(8),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 44),
-          // Both factors 1: size to the row, then let minHeight lift it.
-          // Without heightFactor an Align fills any bounded height it is
-          // given, and the row would stretch to its parent.
-          child: Align(widthFactor: 1, heightFactor: 1, child: row),
-        ),
-      ),
     );
   }
 }
 
-/// The four names [attachmentKind] can produce, and nothing else.
+/// The four names `normalizeMediaType` can produce, and nothing else.
 ///
-/// A `switch` with a `default` rather than an exhaustive one because the
-/// kind is a `String`, like `mediaType` on both the REST and the socket side
-/// — see `media_type.dart` for why it was not made an enum. `DOCUMENT` is
-/// also [attachmentKind]'s answer for anything it cannot place, so an unknown
-/// kind and a document draw the same glyph, which is right for both.
+/// A `switch` with a `default` rather than an exhaustive one because
+/// `mediaType` is a `String` on both the REST and the socket side — see
+/// `media_type.dart` for why it was not made an enum. `DOCUMENT` is also the
+/// documented fallback for anything unrecognized, so an unknown kind and a
+/// document draw the same glyph, which is the right answer for both.
 IconData _iconFor(String mediaType) {
   switch (mediaType) {
     case 'IMAGE':

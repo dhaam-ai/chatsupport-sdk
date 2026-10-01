@@ -1,8 +1,9 @@
-// The two-tab footer: Home and Messages.
+// The footer tab bar: Home, Messages, and — for a logged-in customer only —
+// Ticket.
 //
-// Mirrors the reference product's `ChatNavigation`. Two tabs, the active one
-// solid and accented, the inactive one muted — and the unread count riding on
-// the Messages tab, because that is where a customer goes to find the
+// Mirrors the reference product's `ChatNavigation`. The active tab is solid
+// and accented, the inactive ones muted — and the unread count rides on the
+// Messages tab, because that is where a customer goes to find the
 // conversation it belongs to.
 //
 // ── Why a real tablist ───────────────────────────────────────────────────
@@ -17,12 +18,20 @@ import { el, icon, solidIcon } from './dom.js';
 import type { ScreenName } from './screens.js';
 
 /** The tabs this bar offers. `conversation` is not one — it has no tab. */
-export type NavTab = Extract<ScreenName, 'home' | 'messages'>;
+export type NavTab = Extract<ScreenName, 'home' | 'messages' | 'tickets'>;
+
+/** The ticket glyph, shared with `ui/tickets-screen.ts` so its placeholder
+ *  matches the tab that opens it rather than duplicating the path data. */
+export const TICKET_ICON_PATHS: readonly string[] = ['M2.5 9.5A2.5 2.5 0 0 0 2.5 14.5V16.5A2 2 0 0 0 4.5 18.5H19.5A2 2 0 0 0 21.5 16.5V14.5A2.5 2.5 0 0 0 21.5 9.5V7.5A2 2 0 0 0 19.5 5.5H4.5A2 2 0 0 0 2.5 7.5Z', 'M9 5.5V7', 'M9 17V18.5', 'M9 11V13'];
 
 const NAV_ICONS: Record<NavTab, readonly string[]> = {
   // Filled house, matching the reference's own choice of a solid glyph for
   // Home and an outlined one for Messages.
   home: ['M11.47 3.84a.75.75 0 0 1 1.06 0l8.69 8.69a.75.75 0 1 0 1.06-1.06l-8.689-8.69a2.25 2.25 0 0 0-3.182 0l-8.69 8.69a.75.75 0 0 0 1.061 1.06l8.69-8.69Z', 'M12 5.432l8.159 8.159c.03.03.06.058.091.086v6.198c0 1.035-.84 1.875-1.875 1.875H15a.75.75 0 0 1-.75-.75v-4.5a.75.75 0 0 0-.75-.75h-3a.75.75 0 0 0-.75.75V21a.75.75 0 0 1-.75.75H5.625a1.875 1.875 0 0 1-1.875-1.875v-6.198a2.29 2.29 0 0 0 .091-.086L12 5.432Z'],
+  // Outlined, matching Messages rather than Home — a perforated-edge ticket
+  // shape (the notch cut into each long side is the two short strokes at
+  // x=9/x=15, reading as the tear line a real ticket stub has).
+  tickets: TICKET_ICON_PATHS,
   messages: ['M8 10.5h8', 'M8 14h5', 'M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v9a2.5 2.5 0 0 1-2.5 2.5H9l-5 4V5.5Z'],
 };
 
@@ -41,8 +50,14 @@ export interface NavView {
  * straight on their queue — so the tab that would open it is never built,
  * rather than built and hidden. Defaults to `true`: the customer widget
  * keeps both tabs exactly as before.
+ *
+ * `includeTickets` adds a third tab, between Home and Messages, matching
+ * the reference design's ordering. Built only when true, the same "never
+ * built, not built-and-hidden" reasoning `includeHome` already uses —
+ * widget.ts passes it for a logged-in customer only (`!isGuest`), never
+ * for a guest or a staff/admin mount.
  */
-export function createNav(onSelect: (tab: NavTab) => void, includeHome = true): NavView {
+export function createNav(onSelect: (tab: NavTab) => void, includeHome = true, includeTickets = false): NavView {
   const tabs: Array<{ id: NavTab; label: string; node: HTMLButtonElement; badge: HTMLElement }> = [];
 
   const build = (id: NavTab, label: string) => {
@@ -71,7 +86,11 @@ export function createNav(onSelect: (tab: NavTab) => void, includeHome = true): 
 
   const node = el('nav', {
     attrs: { class: 'dh-nav', role: 'tablist', 'aria-label': 'Chat sections' },
-    children: includeHome ? [build('home', 'Home'), build('messages', 'Messages')] : [build('messages', 'Messages')],
+    children: [
+      ...(includeHome ? [build('home', 'Home')] : []),
+      ...(includeTickets ? [build('tickets', 'Ticket')] : []),
+      build('messages', 'Messages'),
+    ],
     on: {
       keydown: (event) => {
         const key = (event as KeyboardEvent).key;

@@ -30,7 +30,9 @@ import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-
 import { ICONS, el, icon } from './dom.js';
 import { createMessageActions } from './message-actions.js';
 import { renderLinkified } from './linkify.js';
-import { createQuickReplies, readQuickReplies } from './quick-replies.js';
+import { createQuickReplies, readSuggestions } from './quick-replies.js';
+import type { QuickReplyChip } from './quick-replies.js';
+import { readFlowCard, renderFlowCard } from './flow-cards.js';
 
 /** Glyph plus the phrase a screen reader gets. The phrase is not optional. */
 const TICK_PRESENTATION: Record<MessageTickState, { glyph: string; label: string }> = {
@@ -136,7 +138,7 @@ export interface MessageListCallbacks {
   /** Emails the conversation to the address already on file. Rejects on failure. */
   readonly onEmailTranscript: () => Promise<void>;
   /** Sends one of the bot's suggested follow-ups as the customer's next message. */
-  readonly onQuickReply: (text: string) => void;
+  readonly onQuickReply: (chip: QuickReplyChip) => void;
   /**
    * Starts a reply addressed to this message.
    *
@@ -332,7 +334,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
 
   // The bot's own suggestions. One row reused across renders — see the
   // module's note on why it is not per-message.
-  const quickReplies = createQuickReplies((text) => callbacks.onQuickReply(text));
+  const quickReplies = createQuickReplies((chip) => callbacks.onQuickReply(chip));
   log.appendChild(quickReplies.node);
 
   const typing = createTypingIndicator();
@@ -504,7 +506,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       closedReason === null &&
       newestMessage !== undefined &&
       !isOutgoing(newestMessage, localParticipantId, callbacks.staffViewer)
-        ? readQuickReplies(newestMessage.metadata, callbacks.handoffKeywords?.() ?? [])
+        ? readSuggestions(newestMessage.metadata, callbacks.handoffKeywords?.() ?? [])
         : [];
     quickReplies.update(suggestions);
     log.appendChild(quickReplies.node);
@@ -828,6 +830,7 @@ function createRow(
   retry.addEventListener('click', () => callbacks.onRetry(current));
 
   let attachmentNode: HTMLElement | null = null;
+  let cardNode: HTMLElement | null = null;
 
   return {
     node,
@@ -951,6 +954,17 @@ function createRow(
         bubble.appendChild(attachmentNode);
       }
 
+      // Bot messages only: a visitor's `message.send` metadata is stored
+      // opaquely, so reading cards off any sender would let a customer forge
+      // an order or discount card — in the staff view too.
+      if (cardNode === null && isBot) {
+        const card = readFlowCard(message.metadata);
+        if (card !== null) {
+          cardNode = renderFlowCard(card);
+          bubble.appendChild(cardNode);
+        }
+      }
+
       const presentation = tick === null ? null : TICK_PRESENTATION[tick];
       if (outgoing) {
         if (tick === null) {
@@ -996,10 +1010,10 @@ function createRow(
 /**
  * Renders one attachment.
  *
- * Images and videos are shown inline, audio as a player; everything else is a
- * link. `rel="noreferrer"` is not decoration — an attachment URL is served by
- * the customer's own storage and the referrer would otherwise leak the host
- * page's URL (which on a food-ordering site contains an order id) to it.
+ * Images are shown inline; everything else is a link. `rel="noreferrer"` is
+ * not decoration — an attachment URL is served by the customer's own storage
+ * and the referrer would otherwise leak the host page's URL (which on a
+ * food-ordering site contains an order id) to it.
  */
 function renderAttachment(attachment: AttachmentMetadata): HTMLElement {
   // Typed as core's shape but read defensively: this record arrives over the
@@ -1030,61 +1044,15 @@ function renderAttachment(attachment: AttachmentMetadata): HTMLElement {
     });
   }
 
-  if (safe !== '' && mime.startsWith('video/')) return renderVideo(safe, name);
+  if (safe !== '' && mime.startsWith('video/')) {
+    const video = el('video', {
+      attrs: { class: 'dh-attachment-video', controls: true, src: safe, preload: 'metadata' },
+    });
+    return el('div', { children: [video] });
+  }
 
   if (safe === '') return el('div', { attrs: { class: 'dh-attachment' }, text: name });
 
-  return renderDownloadLink(safe, name);
-}
-
-/**
- * An inline player, falling back to the download link if the browser cannot
- * play it.
- *
- * No `type` attribute, deliberately. An iPhone `.mov` arrives as
- * `video/quicktime`, which Chrome's `canPlayType` reports as unplayable while
- * usually decoding the H.264 inside it fine — so a type hint would refuse the
- * single most common video a customer sends. The browser sniffs instead, and
- * the `error` listener catches what it genuinely cannot decode (AVI, HEVC
- * where there is no decoder) and swaps in the link, so the file is still
- * reachable rather than a dead black box.
- *
- * The listener sits on the media element itself because the URL is its `src`
- * attribute, not a `<source>` child — `error` fires at the `<video>` and does
- * not bubble (https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/error_event).
- * The swap happens INSIDE a stable wrapper so the row's `attachmentNode`
- * reference (see `update`) still points at what is in the bubble.
- *
- * `el()` sets `src` before it attaches `on` listeners, which cannot miss the
- * event: a media element's `error` is queued as a task, never dispatched
- * synchronously from the attribute write.
- *
- * `preload="metadata"` asks for the duration and dimensions, not the whole
- * file — a 50 MB clip in the scrollback is otherwise 50 MB on a customer's
- * mobile data before they ask to watch it (a hint the browser may ignore).
- * `playsinline` keeps iOS from hijacking the page into fullscreen on play.
- */
-function renderVideo(safe: string, name: string): HTMLElement {
-  const wrapper = el('div');
-  const video = el('video', {
-    attrs: {
-      class: 'dh-attachment-video',
-      controls: true,
-      preload: 'metadata',
-      playsinline: true,
-      src: safe,
-      // `<video>` has no implicit role and is not in ARIA-in-HTML's
-      // naming-prohibited list, so `aria-label` is a conforming name here
-      // (https://w3c.github.io/html-aria/#el-video).
-      'aria-label': `Video: ${name}`,
-    },
-    on: { error: () => video.replaceWith(renderDownloadLink(safe, name)) },
-  });
-  wrapper.append(video);
-  return wrapper;
-}
-
-function renderDownloadLink(safe: string, name: string): HTMLElement {
   return el('a', {
     attrs: { class: 'dh-attachment', href: safe, target: '_blank', rel: 'noopener noreferrer', download: name },
     children: [icon(ICONS.paperclip, 14), el('span', { text: name })],

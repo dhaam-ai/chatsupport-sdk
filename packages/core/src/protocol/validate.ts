@@ -432,7 +432,10 @@ function validateConnectionHello(d: unknown, path: string, frameType: string): F
       `a string of at most ${MAX_USER_AGENT_LENGTH} characters`,
       frameType,
     ) ??
-    optionalField(d, 'geo', isGeoCoordinates, path, 'an object with numeric lat/lng in range', frameType)
+    optionalField(d, 'geo', isGeoCoordinates, path, 'an object with numeric lat/lng in range', frameType) ??
+    // Accepts an invite (chatbot-workflows-commerce.md §6) — see
+    // ConnectionHelloPayload.inviteId's doc.
+    optionalField(d, 'inviteId', isNonEmptyString, path, 'a non-empty string', frameType)
   );
 }
 
@@ -465,6 +468,44 @@ function validateSessionJoin(d: unknown, path: string, frameType: string): Frame
 function validateSessionLeave(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
   if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
   return optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType);
+}
+
+function validateContextUpdate(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+  // The fields themselves are normalised by `normalizeVisitorContext` before a
+  // frame is built; only the envelope-level `sessionId` is checked here.
+  return optionalField(d, 'sessionId', isNonEmptyString, path, 'a non-empty string', frameType);
+}
+
+function validateVisitorEvent(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+  return (
+    requireField(d, 'name', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    optionalField(d, 'props', isPlainObject, path, 'an object', frameType)
+  );
+}
+
+function validateFlowInviteDismissed(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+  return requireField(d, 'inviteId', isNonEmptyString, path, 'a non-empty string', frameType);
+}
+
+function validateFlowInviteButton(value: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(value)) return fail(path, 'must be an object', frameType);
+  return (
+    requireField(value, 'id', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    requireField(value, 'label', isNonEmptyString, path, 'a non-empty string', frameType)
+  );
+}
+
+function validateFlowInvite(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
+  if (!isPlainObject(d)) return fail(path, 'must be an object', frameType);
+  return (
+    requireField(d, 'inviteId', isNonEmptyString, path, 'a non-empty string', frameType) ??
+    requireField(d, 'text', isString, path, 'a string', frameType) ??
+    optionalArray(d, 'buttons', path, validateFlowInviteButton, frameType) ??
+    optionalField(d, 'autoOpen', isBoolean, path, 'a boolean', frameType)
+  );
 }
 
 function validateEmptyPayload(d: unknown, path: string, frameType: string): FrameValidationFailure | null {
@@ -677,6 +718,9 @@ const PAYLOAD_VALIDATORS: Record<PlainFrameType, PayloadValidator> = {
   'presence.set': validatePresenceSet,
   'presence.query': validatePresenceQuery,
   'system.heartbeat': validateEmptyPayload,
+  'context.update': validateContextUpdate,
+  'visitor.event': validateVisitorEvent,
+  'flow.inviteDismissed': validateFlowInviteDismissed,
   'connection.ack': validateConnectionAck,
   'session.updated': validateSessionUpdated,
   'session.closed': validateSessionClosed,
@@ -689,6 +733,7 @@ const PAYLOAD_VALIDATORS: Record<PlainFrameType, PayloadValidator> = {
   'message.delivered': validateMessageDelivered,
   'presence.update': validatePresenceUpdate,
   'ticket.linked': validateTicketLinked,
+  'flow.invite': validateFlowInvite,
   'system.pong': validateEmptyPayload,
 };
 

@@ -26,18 +26,13 @@ import 'package:dhaam_chat_rest/dhaam_chat_rest.dart' show MediaApi, RestClient;
 
 /// The largest file this widget will hand to `POST /upload`.
 ///
-/// 50 MiB, the server's own `/upload` limit (chat-service-node's
-/// `VALIDATION.MAX_FILE_SIZE_MB` and `S3_MAX_FILE_SIZE_MB` default, both 50),
-/// and `composer.ts`'s `MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024`. It was 25
-/// MiB, copied from the web widget when that was 25, which refused videos
-/// between 25 and 50 MiB that the server would have taken.
-///
-/// The cap is the CLIENT's, not the adapter's: T7's
+/// 25 MiB, matching `composer.ts`'s `MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024`
+/// exactly. The cap is the CLIENT's, not the adapter's: T7's
 /// `uploadAttachment` has no size limit of its own and will happily stream
 /// whatever it is given, so refusing here is the only refusal there is. A
 /// cap enforced only by the server is a cap the customer discovers after
 /// waiting out the upload of a file that was never going to be accepted.
-const int kMaxAttachmentBytes = 50 * 1024 * 1024;
+const int kMaxAttachmentBytes = 25 * 1024 * 1024;
 
 /// What the customer is told when their file is over [kMaxAttachmentBytes].
 ///
@@ -147,7 +142,7 @@ class PickedAttachment {
   ///
   /// A picker that loaded every chosen file into memory before anyone could
   /// look at its size would run out of memory on a 2 GB video — and it would
-  /// do so BEFORE the 50 MiB refusal could say a word, which is a cap that
+  /// do so BEFORE the 25 MiB refusal could say a word, which is a cap that
   /// crashes instead of refusing.
   ///
   /// So the real picker reads the platform's declared size first and, for a

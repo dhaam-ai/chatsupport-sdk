@@ -127,7 +127,6 @@ enum HeaderColorSource implements WireEnum {
 /// How the conversation's backdrop is painted.
 enum ThreadBackground implements WireEnum {
   mesh('mesh'),
-  gradient('gradient'),
   solid('solid'),
   image('image'),
   pattern('pattern');

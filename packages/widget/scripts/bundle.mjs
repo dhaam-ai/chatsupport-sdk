@@ -110,7 +110,16 @@ console.log('');
 // Increased to 124 KiB (126,976 B) for the staff (admin/outlet) Messages-list
 // redesign, WhatsApp-style bubbles and the history loading spinner — ~600 B
 // over the previous ceiling, almost all of it stylesheet.
-const WIDGET_GZIP_BUDGET = 126_976;
+// Increased to 128 KiB (131,072 B) for server-driven chat flows, part 2:
+// the proactive flow-invite bubble, the discount/product/order cards, their
+// stylesheet and the always-on exit-intent detector. Measured at 129,281 B
+// gzip once all of that landed: 2,305 B over the previous ceiling, leaving
+// 1,791 B of headroom here.
+// Increased to 129 KiB (132,096 B) for the Tickets nav tab (logged-in
+// customers only) and its placeholder screen — reuses `.dh-unavail-*`
+// rather than paying for a new ruleset. Measured at 131,116 B gzip once
+// landed: 44 B over the previous ceiling, leaving 980 B of headroom here.
+const WIDGET_GZIP_BUDGET = 132_096;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,

@@ -35,5 +35,4 @@ export 'attachment_composer_controls.dart';
 export 'attachment_draft.dart';
 export 'attachment_draft_controller.dart';
 export 'attachment_message.dart';
-export 'camera_image_attachment_picker.dart';
 export 'file_picker_attachment_picker.dart';
