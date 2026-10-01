@@ -253,6 +253,11 @@ export interface RemoteConfig {
    * form, which files a ticket without a conversation.
    */
   readonly reportIssue: boolean;
+  /**
+   * `behaviour.allowGuestChat` — console "Allow visitor chat". `false` shows a
+   * guest (no `identity.profile`) a sign-in prompt instead of the chat.
+   */
+  readonly allowGuestChat: boolean;
   readonly preChatEnabled: boolean;
   readonly preChatFields: readonly PreChatField[];
   /** `behaviour.commonQuestions[]`. `[]` for a merchant who has configured
@@ -348,6 +353,8 @@ export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   // landed must look exactly as it did before, and a form that files tickets
   // is not something to start offering because a fetch failed.
   reportIssue: false,
+  // On: a config that never landed must not lock guests out.
+  allowGuestChat: true,
   preChatEnabled: false,
   preChatFields: [],
   commonQuestions: [],
@@ -870,6 +877,7 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     supportEmail: str(behaviour, 'supportEmail'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
     reportIssue: bool(behaviour, 'reportIssue', DEFAULT_REMOTE_CONFIG.reportIssue),
+    allowGuestChat: bool(behaviour, 'allowGuestChat', DEFAULT_REMOTE_CONFIG.allowGuestChat),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),

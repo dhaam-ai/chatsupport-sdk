@@ -608,6 +608,12 @@ export interface WidgetConfig {
 
   /** Where widget-internal failures go. Defaults to a namespaced `console.warn`. */
   readonly onError?: (error: unknown) => void;
+
+  /**
+   * Called from the "Sign in" button shown to a guest when the console's
+   * "Allow visitor chat" is off. Omit it and the prompt shows no button.
+   */
+  readonly onSignInRequest?: () => void;
 }
 
 /** Everything resolved — no optionals left for the UI layer to re-default. */

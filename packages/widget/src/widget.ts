@@ -45,6 +45,7 @@ import { createChime } from './ui/chime.js';
 import { createConsentGate } from './ui/consent.js';
 import { createHeaderMenu } from './ui/header-menu.js';
 import { createUnavailable } from './ui/unavailable.js';
+import { createSignInRequired } from './ui/sign-in-required.js';
 import { createReportIssueForm } from './ui/report-issue.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
@@ -294,6 +295,9 @@ const CONNECTION_COLOR: Record<ConnectionState, string> = {
  * which is the one action every customer needs to be able to reach.
  */
 const SESSION_PICKER_LIMIT = 10;
+
+/** The `userRole`s that mount the widget as portal staff rather than as a customer. */
+const PORTAL_STAFF_ROLES: ReadonlySet<unknown> = new Set(['admin', 'merchant', 'manager']);
 
 /** Everything the connection's state implies for the UI, decided in one place. */
 interface ConnectionStatus {
@@ -1055,6 +1059,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     onRetry: () => reconnect('manual'),
   });
 
+  // Console "Allow visitor chat" off → a guest gets a sign-in prompt, never a socket.
+  const signInRequired = createSignInRequired(config.onSignInRequest);
+  // Portal staff (admin, merchant, manager) are never guests, whatever profile
+  // they mount with (see `isPortalStaff`, declared later — read inline here so
+  // this works before that line runs). Without the merchant/manager roles a
+  // merchant mounted with no profile would be disconnected and shown "sign in"
+  // whenever the tenant turns visitor chat off.
+  const guestBlocked = (): boolean =>
+    isGuest && !PORTAL_STAFF_ROLES.has((config as any).userRole) && !remote.allowGuestChat;
+  /** True while a blocked guest's connect() is being withheld. */
+  let guestConnectHeld = false;
+
   const headerMenu = createHeaderMenu({
     onStartNew: () => openNewConversationFlow(),
     onEndConversation: () => endConversation(),
@@ -1164,6 +1180,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // `syncScreens`'s `greetingBubble.textContent !== ''` check keeps
     // failing closed, the same as a merchant who genuinely wrote nothing.
     armGreeting((config as any).hideGreeting === true ? '' : next.greeting ?? '', next.greetingDelaySec);
+    syncGuestGate();
     consent.update(next.consentRequired, next.consentText ?? '');
     messageList.setTranscriptEmail(next.transcriptEmail);
     reportButton.hidden = !next.reportIssue;
@@ -1545,7 +1562,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     window.addEventListener('load', sample, { once: true });
   }
 
-  void fetchRemoteConfig({
+  const remoteBoot: Promise<void> = fetchRemoteConfig({
     apiUrl: config.apiUrl,
     publishableKey: config.auth.publishableKey,
     signal: remoteConfigAbort.signal,
@@ -2187,7 +2204,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // rendering; customer flow is used when userRole is 'customer' or undefined.
   const portalUserRole = (config as any).userRole;
   const isPortalStaff =
-    (portalUserRole === 'admin' || portalUserRole === 'merchant' || portalUserRole === 'manager') &&
+    PORTAL_STAFF_ROLES.has(portalUserRole) &&
     config.auth.getToken !== undefined &&
     (config as any).target === undefined;
   const isMerchantPortal = portalUserRole === 'merchant' || portalUserRole === 'manager';
@@ -2623,6 +2640,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // cannot be reached there is no conversation, no list and no form worth
       // showing behind it.
       unavailable.node,
+      signInRequired.node,
       surfaceHost,
       // Mounted only for `userRole: 'admin'` — every other widget instance
       // (every existing customer-facing embed included) never puts this
@@ -3856,7 +3874,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * so the lists have one input rather than two that could disagree.
    */
   function refreshSessions(): void {
-    if (destroyed) return;
+    // A blocked guest has no conversations to list, and asking would mint a token.
+    if (destroyed || guestBlocked()) return;
     // Portal (admin/merchant/manager) mode never reads `pastSessions` — see
     // `syncSessionSurfaces`'s comment on why the customer-flow store's own
     // list is unused there. Skips the `GET /chat/sessions/customer` round
@@ -4260,6 +4279,18 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     );
   }
 
+  /** Follows "Allow visitor chat" as config lands: hold/drop or release the socket. */
+  function syncGuestGate(): void {
+    if (guestBlocked()) {
+      if (!guestConnectHeld && store.getState().connectionState !== 'idle') store.client.disconnect();
+      guestConnectHeld = true;
+    } else if (guestConnectHeld) {
+      guestConnectHeld = false;
+      store.client.connect().catch(report);
+    }
+    syncScreens();
+  }
+
   /** How long before an *automatic* recovery attempt may fire again. */
   const AUTO_RECONNECT_MIN_INTERVAL_MS = 5_000;
 
@@ -4296,7 +4327,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // through, which would tell the customer the service is down while it is
     // coming back. See ui/unavailable.ts for why this is a screen and not
     // just the status line it sits above.
-    const givenUp = TERMINAL_CONNECTION_STATES.has(connectionState);
+    const givenUp = TERMINAL_CONNECTION_STATES.has(connectionState) && !guestBlocked();
     unavailable.update(remote.supportEmail ?? '', reconnecting);
     const wasUnreachable = !unavailable.node.hidden;
     setPaneVisible(unavailable.node, givenUp);
@@ -4366,7 +4397,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * alt-tab, which is frequent enough to be a poll rather than an intent.
    */
   function reconnect(trigger: 'manual' | 'auto'): void {
-    if (destroyed || reconnecting) return;
+    if (destroyed || reconnecting || guestBlocked()) return;
     if (!TERMINAL_CONNECTION_STATES.has(store.getState().connectionState)) return;
 
     if (trigger === 'auto') {
@@ -4495,7 +4526,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // couldn't reach the support service" notice invites the customer to type
     // a message that has nowhere to go, which is the exact failure the whole
     // screen exists to prevent.
-    const unreachable = !unavailable.node.hidden;
+    const blocked = guestBlocked();
+    setPaneVisible(signInRequired.node, blocked && unavailable.node.hidden);
+    const unreachable = !unavailable.node.hidden || blocked;
 
     const onHome = current === 'home' && !unreachable;
     const onMessages = current === 'messages' && !unreachable;
@@ -5255,7 +5288,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // host's own "surface an incoming partner message" flow) is what actually
   // needs a live `store.client` to switch.
   const skipCustomerFlowConnect = isPortalStaff && portalUserRole === 'admin' && (config as any).target === undefined;
-  const connecting = skipCustomerFlowConnect ? Promise.resolve() : store.client.connect();
+  //
+  // A guest waits for published config: "Allow visitor chat" may be off, and a
+  // refused hello would only burn token mints. Signed-in visitors connect at once.
+  const connecting = skipCustomerFlowConnect
+    ? Promise.resolve()
+    : isGuest
+      ? remoteBoot.then(() => (guestConnectHeld ? undefined : store.client.connect()))
+      : store.client.connect();
 
   // One query, not a poll: `PresenceEntry`'s own doc says a change after this
   // arrives on its own via `presence.update`, which the subscription above
@@ -5304,7 +5344,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // its instruction silently discarded on every page load. And even landed,
     // `joinSession` changes no client state: it neither clears the transcript
     // that is on screen nor fetches the named session's history.
-    connecting.then(() => openNamedSession(namedSession)).catch(report);
+    connecting.then(() => (guestConnectHeld ? undefined : openNamedSession(namedSession))).catch(report);
   }
   if (config.openOnLoad) openPanel();
 

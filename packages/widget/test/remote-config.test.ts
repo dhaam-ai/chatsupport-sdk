@@ -106,6 +106,14 @@ afterEach(() => {
 });
 
 describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
+  it('reads allowGuestChat, defaulting to true when absent', () => {
+    expect(parseRemoteConfig(body())?.allowGuestChat).toBe(true);
+    const off = body() as { data: { behaviour: Record<string, unknown> } };
+    off.data.behaviour['allowGuestChat'] = false;
+    expect(parseRemoteConfig(off)?.allowGuestChat).toBe(false);
+    expect(DEFAULT_REMOTE_CONFIG.allowGuestChat).toBe(true);
+  });
+
   it('reads every field off a full body', () => {
     const config = parseRemoteConfig(body());
     expect(config).not.toBeNull();
