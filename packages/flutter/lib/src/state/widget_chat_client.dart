@@ -88,7 +88,7 @@ abstract interface class WidgetChatClient {
   ///
   /// `ChatClient.sendMessage` has accepted both since D26 and this interface
   /// exposed neither, which meant the whole attachment path — the paperclip,
-  /// the 25 MiB refusal, the draft bar, `POST /upload`, all of it tested —
+  /// the 50 MiB refusal, the draft bar, `POST /upload`, all of it tested —
   /// ended at a callback holding metadata with nowhere to put it. A customer
   /// could pick a file, watch it upload, and send a message that mentioned
   /// no file at all.

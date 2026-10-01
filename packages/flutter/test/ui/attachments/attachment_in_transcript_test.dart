@@ -107,4 +107,19 @@ void main() {
     expect(find.byType(AttachmentBubble), findsOneWidget);
     expect(find.text(_receipt.url), findsNothing);
   });
+
+  testWidgets('inside the real transcript the file is still a button',
+      (WidgetTester tester) async {
+    // The bubble's own tests mount it alone. This one mounts it where it
+    // lives, so an ancestor that merged or excluded semantics would show up
+    // here as a file a screen reader can see but cannot open.
+    final SemanticsHandle handle = tester.ensureSemantics();
+    await _pump(tester, _withAttachment(content: _receipt.url));
+
+    expect(
+      tester.getSemantics(find.bySemanticsLabel('Open receipt.pdf, 2 KB')),
+      containsSemantics(isButton: true, hasTapAction: true),
+    );
+    handle.dispose();
+  });
 }

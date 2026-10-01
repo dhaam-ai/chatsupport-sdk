@@ -366,7 +366,7 @@ class _ComposerState extends State<Composer> {
   /// from the recorded blob and hands it to the very `setAttachment` its
   /// file input calls. Routing a note through the draft rather than straight
   /// to a send is what subjects it to every rule a picked file is subject to
-  /// — the 25 MiB cap, the upload-on-send order, the draft surviving a
+  /// — the 50 MiB cap, the upload-on-send order, the draft surviving a
   /// failed upload, the send button's in-flight guard — instead of giving
   /// the microphone a private path where each of those has to be remembered
   /// again.

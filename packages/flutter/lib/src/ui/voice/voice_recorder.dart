@@ -420,7 +420,7 @@ class VoiceRecorder {
 /// A voice note becomes a message by becoming a draft — the same draft a
 /// picked photo becomes — and this is the only place the two vocabularies
 /// meet. `AttachmentDraftController.setDraft` then applies exactly the
-/// refusals a picked file faces, so a note that is nameless or over 25 MiB
+/// refusals a picked file faces, so a note that is nameless or over 50 MiB
 /// is refused in the same words, by the same code, as a photo.
 ///
 /// [VoiceRecording.fileName] is never blank, so the name check cannot fire

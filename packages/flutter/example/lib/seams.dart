@@ -99,7 +99,7 @@ const GeolocationProbe kExampleGeolocationProbe = exampleGeolocationProbe;
 /// The real platform file chooser, as an [AttachmentPicker].
 ///
 /// `filePickerAttachmentPicker` is the package's own one-line wrapper over
-/// `FilePicker.pickFiles`; everything that can go wrong (the 25 MiB cap, the
+/// `FilePicker.pickFiles`; everything that can go wrong (the 50 MiB cap, the
 /// bounded byte read, the media-type sniff, what a cancel looks like) lives
 /// behind it in ordinary testable Dart. A host passes this tear-off; a test
 /// passes a closure.

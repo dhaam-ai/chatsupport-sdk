@@ -206,7 +206,7 @@ class AttachmentDraftController extends ChangeNotifier {
   /// [pick] and this method both funnel through one private `_accept`, so
   /// there is one derivation of "may this file be the draft" rather than
   /// two. That is not tidiness. A four-minute voice note on a lossless
-  /// codec really does clear 25 MiB, and a second copy of the cap here — or
+  /// codec really can clear 50 MiB, and a second copy of the cap here — or
   /// worse, no cap at all on this path — would let it past a limit the
   /// picked-file path enforces, to be refused by the server after the
   /// customer watched it upload. The name check travels for the same reason

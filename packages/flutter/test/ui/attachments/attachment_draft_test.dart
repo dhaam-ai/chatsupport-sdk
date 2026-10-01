@@ -30,8 +30,8 @@ PickedAttachment _file({
 
 void main() {
   group('kMaxAttachmentBytes', () {
-    test('is 25 MiB, matching composer.ts', () {
-      expect(kMaxAttachmentBytes, 25 * 1024 * 1024);
+    test('is 50 MiB, the server\'s /upload limit', () {
+      expect(kMaxAttachmentBytes, 50 * 1024 * 1024);
     });
   });
 
@@ -50,7 +50,7 @@ void main() {
     test('renders mebibytes to one decimal place', () {
       expect(formatAttachmentBytes(1024 * 1024), '1.0 MB');
       expect(formatAttachmentBytes((1.44 * 1024 * 1024).round()), '1.4 MB');
-      expect(formatAttachmentBytes(kMaxAttachmentBytes), '25.0 MB');
+      expect(formatAttachmentBytes(kMaxAttachmentBytes), '50.0 MB');
     });
 
     test('divides by 1024, not 1000 — the web client does', () {
@@ -63,7 +63,7 @@ void main() {
   group('kAttachmentTooLargeMessage', () {
     test('names the limit, so the refusal is not just a "no"', () {
       expect(kAttachmentTooLargeMessage,
-          'That file is too large. The limit is 25.0 MB.');
+          'That file is too large. The limit is 50.0 MB.');
     });
 
     test('interpolates the cap rather than hardcoding a second copy of it', () {
@@ -78,8 +78,8 @@ void main() {
 
   group('PickedAttachment.isTooLarge', () {
     test('accepts a file exactly at the cap', () {
-      // `>` not `>=` in composer.ts. A file of exactly 25 MiB is within a
-      // 25 MiB limit, and an off-by-one here refuses a file the sentence
+      // `>` not `>=` in composer.ts. A file of exactly 50 MiB is within a
+      // 50 MiB limit, and an off-by-one here refuses a file the sentence
       // just told the customer was allowed.
       expect(_file(size: kMaxAttachmentBytes).isTooLarge, isFalse);
     });

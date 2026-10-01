@@ -18,6 +18,18 @@ final Uint8List _pngHeader = Uint8List.fromList(
   <int>[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
 );
 
+/// The EBML magic number every Matroska and WebM file starts with, padded
+/// past `mime`'s magic-number window. `mime` 2.x maps it to `audio/weba`
+/// whatever the file actually holds.
+final Uint8List _ebmlHeader = Uint8List.fromList(
+  <int>[0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x86, 0x81, 0x01, 0x42, 0xF7, 0x81],
+);
+
+/// An ISO base-media `ftyp` box with the `isom` brand, i.e. an ordinary MP4.
+final Uint8List _mp4Header = Uint8List.fromList(
+  <int>[0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D],
+);
+
 Stream<List<int>> _streamOf(List<int> bytes, {int chunk = 4}) async* {
   for (int i = 0; i < bytes.length; i += chunk) {
     yield bytes.sublist(i, i + chunk > bytes.length ? bytes.length : i + chunk);
@@ -59,7 +71,7 @@ void main() {
       // straight past `isTooLarge`, and upload nothing at all.
       expect(picked.size, kMaxAttachmentBytes + 1);
       expect(picked.isTooLarge, isTrue);
-      expect(picked.displaySize, '25.0 MB');
+      expect(picked.displaySize, '50.0 MB');
     });
 
     test('is refused with words once it reaches the controller', () async {
@@ -209,6 +221,57 @@ void main() {
       );
 
       expect((await attachmentFromPlatformFile(file)).mimeType, 'video/mp4');
+    });
+
+    test('a .webm video is video/webm, not the audio type its header sniffs as',
+        () async {
+      // The EBML header is shared by WebM audio and WebM video, and `mime`
+      // guesses audio. `/upload` refuses `audio/weba`, so without the
+      // extension's word on it every customer's .webm video failed to send.
+      final PlatformFile file = PlatformFile(
+        name: 'screen-recording.webm',
+        size: _ebmlHeader.length,
+        bytes: _ebmlHeader,
+      );
+
+      expect((await attachmentFromPlatformFile(file)).mimeType, 'video/webm');
+    });
+
+    test('an .mp4 is still video/mp4', () async {
+      final PlatformFile file = PlatformFile(
+        name: 'clip.mp4',
+        size: _mp4Header.length,
+        bytes: _mp4Header,
+      );
+
+      expect((await attachmentFromPlatformFile(file)).mimeType, 'video/mp4');
+    });
+
+    test('a real .weba audio file stays audio', () async {
+      // Same header bytes as the .webm above. Only an extension that names a
+      // VIDEO type overrides the sniff, so audio is left as audio.
+      final PlatformFile file = PlatformFile(
+        name: 'voice-note.weba',
+        size: _ebmlHeader.length,
+        bytes: _ebmlHeader,
+      );
+
+      expect(
+        (await attachmentFromPlatformFile(file)).mimeType,
+        startsWith('audio/'),
+      );
+    });
+
+    test('an EBML file with no extension keeps the sniffed type', () async {
+      // Sniff-first still decides when nothing else has a say — the
+      // extensionless-camera-roll case the sniffing exists for.
+      final PlatformFile file = PlatformFile(
+        name: 'VID_0001',
+        size: _ebmlHeader.length,
+        bytes: _ebmlHeader,
+      );
+
+      expect((await attachmentFromPlatformFile(file)).mimeType, 'audio/weba');
     });
   });
 

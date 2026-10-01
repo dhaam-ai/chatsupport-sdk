@@ -23,7 +23,10 @@
 /// exactly how that bug gets back in.
 library;
 
-import 'package:dhaam_chat/dhaam_chat.dart' show ChatMessage;
+import 'package:dhaam_chat/dhaam_chat.dart'
+    show AttachmentMetadata, ChatMessage;
+
+import '../attachments/attachment_kind.dart';
 
 /// The text to render in the bubble, with the §12.10 placeholder removed.
 ///
@@ -43,15 +46,28 @@ String visibleContent(ChatMessage message) {
 /// What the live region says about one message.
 ///
 /// Once [visibleContent] has suppressed the attachment-url placeholder there
-/// are no words left in `content` for a screen reader to read, so the mime
-/// family supplies them.
+/// are no words left in `content` for a screen reader to read, so the
+/// attachment's kind supplies them.
+///
+/// The kind comes from [attachmentKind], the classifier the bubble draws
+/// with, so the announcement says "video" exactly when the bubble shows the
+/// video glyph. Reading the MIME type here instead was a second classifier:
+/// it agreed with the bubble only by luck, and it had no word for video at
+/// all.
 String describeContent(ChatMessage message) {
   final String shown = visibleContent(message);
   if (shown.trim().isNotEmpty) return shown;
 
-  final String? mime = message.attachment?.mimeType;
-  if (mime == null) return 'sent a message';
-  if (mime.startsWith('image/')) return 'sent an image';
-  if (mime.startsWith('audio/')) return 'sent a voice message';
-  return 'sent a file';
+  final AttachmentMetadata? attachment = message.attachment;
+  if (attachment == null) return 'sent a message';
+  switch (attachmentKind(attachment)) {
+    case 'IMAGE':
+      return 'sent an image';
+    case 'VIDEO':
+      return 'sent a video';
+    case 'AUDIO':
+      return 'sent a voice message';
+    default:
+      return 'sent a file';
+  }
 }

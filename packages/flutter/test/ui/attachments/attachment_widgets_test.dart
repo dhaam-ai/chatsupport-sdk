@@ -12,6 +12,8 @@ import 'package:dhaam_chat/dhaam_chat.dart' show AttachmentMetadata;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:url_launcher_platform_interface/link.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 
 PickedAttachment _file({
   String fileName = 'receipt.pdf',
@@ -47,6 +49,40 @@ void _ignore(Object error, StackTrace stackTrace) {}
 Widget _host(Widget child) {
   return MaterialApp(home: Scaffold(body: Center(child: child)));
 }
+
+/// Records launches instead of reaching a platform channel — the same
+/// `UrlLauncherPlatform.instance` seam `unavailable_view_test.dart` uses,
+/// which is the plugin's own documented way to swap the platform out.
+class _FakeUrlLauncher extends UrlLauncherPlatform {
+  final List<String> launched = <String>[];
+  final List<PreferredLaunchMode> modes = <PreferredLaunchMode>[];
+
+  @override
+  LinkDelegate? get linkDelegate => null;
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    launched.add(url);
+    modes.add(options.mode);
+    return true;
+  }
+}
+
+_FakeUrlLauncher _installFakeLauncher() {
+  final _FakeUrlLauncher fake = _FakeUrlLauncher();
+  final UrlLauncherPlatform original = UrlLauncherPlatform.instance;
+  UrlLauncherPlatform.instance = fake;
+  addTearDown(() => UrlLauncherPlatform.instance = original);
+  return fake;
+}
+
+const AttachmentMetadata _clip = AttachmentMetadata(
+  url: 'https://cdn.example.com/clip.mp4',
+  fileName: 'clip.mp4',
+  mimeType: 'video/mp4',
+  size: 1024 * 1024,
+  mediaType: 'videos',
+);
 
 void main() {
   late List<PickedAttachment?> picks;
@@ -239,7 +275,7 @@ void main() {
       expect(find.text('receipt.pdf'), findsNothing);
     });
 
-    testWidgets('the 25 MiB refusal is on screen, in words',
+    testWidgets('the 50 MiB refusal is on screen, in words',
         (WidgetTester tester) async {
       picks = <PickedAttachment?>[_file(size: kMaxAttachmentBytes + 1)];
       controller.dispose();
@@ -253,7 +289,7 @@ void main() {
       // Refused with words, not silence — and the sentence names the limit
       // so the customer knows what would have worked.
       expect(find.text(kAttachmentTooLargeMessage), findsOneWidget);
-      expect(find.textContaining('25.0 MB'), findsOneWidget);
+      expect(find.textContaining('50.0 MB'), findsOneWidget);
     });
 
     testWidgets('the refusal is a live region, so it is spoken too',
@@ -394,6 +430,40 @@ void main() {
       expect(find.text('1.0 MB'), findsOneWidget);
     });
 
+    testWidgets('an agent image filed under "images" still gets its thumbnail',
+        (WidgetTester tester) async {
+      // What the agent console sends: the S3 folder name, verbatim, on both
+      // the history read and the socket frame. Only the customer's OWN
+      // uploads pass through `normalizeMediaType` on the way in.
+      await tester.pumpWidget(_host(const AttachmentBubble(
+        attachment: AttachmentMetadata(
+          url: 'https://cdn.example.com/photo.png',
+          fileName: 'photo.png',
+          mimeType: 'image/png',
+          size: 2048,
+          mediaType: 'images',
+        ),
+      )));
+
+      expect(find.byType(Image), findsOneWidget);
+    });
+
+    testWidgets('an agent video filed under "videos" gets the video glyph',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(_host(const AttachmentBubble(
+        attachment: AttachmentMetadata(
+          url: 'https://cdn.example.com/clip.mp4',
+          fileName: 'clip.mp4',
+          mimeType: 'video/mp4',
+          size: 1024 * 1024,
+          mediaType: 'videos',
+        ),
+      )));
+
+      expect(find.byIcon(Icons.videocam_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.insert_drive_file_outlined), findsNothing);
+    });
+
     testWidgets('a thumbnail is not silent to a screen reader',
         (WidgetTester tester) async {
       await tester.pumpWidget(_host(const AttachmentBubble(
@@ -417,6 +487,125 @@ void main() {
         find.bySemanticsLabel('Attachment photo.png, 2 KB'),
         findsOneWidget,
       );
+    });
+  });
+
+  group('AttachmentBubble — opening a file row', () {
+    testWidgets('tapping a video opens it outside the app',
+        (WidgetTester tester) async {
+      final _FakeUrlLauncher fake = _installFakeLauncher();
+      await tester.pumpWidget(_host(const AttachmentBubble(attachment: _clip)));
+
+      await tester.tap(find.text('clip.mp4'));
+
+      // Inline playback is out of scope, so a received video is only
+      // watchable if the platform's own player or browser gets the URL.
+      // External, as the Privacy link does: an in-app web view has no
+      // address bar to show whose server the file came from.
+      expect(fake.launched, <String>['https://cdn.example.com/clip.mp4']);
+      expect(fake.modes,
+          <PreferredLaunchMode>[PreferredLaunchMode.externalApplication]);
+    });
+
+    testWidgets('a video row is a button named for what it opens',
+        (WidgetTester tester) async {
+      final SemanticsHandle handle = tester.ensureSemantics();
+      final _FakeUrlLauncher fake = _installFakeLauncher();
+      await tester.pumpWidget(_host(const AttachmentBubble(attachment: _clip)));
+
+      final Finder row = find.bySemanticsLabel('Open video clip.mp4, 1.0 MB');
+      expect(row, findsOneWidget);
+      final SemanticsNode node = tester.getSemantics(row);
+      expect(node, containsSemantics(isButton: true, hasTapAction: true));
+
+      // The screen-reader activation, not only the finger, reaches the URL.
+      node.owner!.performAction(node.id, SemanticsAction.tap);
+      await tester.pump();
+      expect(fake.launched, <String>['https://cdn.example.com/clip.mp4']);
+      handle.dispose();
+    });
+
+    testWidgets('the row is thumb-sized without stretching the bubble',
+        (WidgetTester tester) async {
+      _installFakeLauncher();
+      await tester.pumpWidget(_host(const AttachmentBubble(attachment: _clip)));
+
+      // `_host` centres the bubble in a bounded 600-high screen, which is
+      // the parent that would expose a row that grows to fill its height.
+      final double height = tester.getSize(find.byType(InkWell)).height;
+      expect(height, greaterThanOrEqualTo(44));
+      expect(height, lessThan(60));
+    });
+
+    testWidgets('a document row opens too, and says plainly what it is',
+        (WidgetTester tester) async {
+      final SemanticsHandle handle = tester.ensureSemantics();
+      final _FakeUrlLauncher fake = _installFakeLauncher();
+      await tester.pumpWidget(_host(const AttachmentBubble(attachment: _meta)));
+
+      expect(
+        find.bySemanticsLabel('Open receipt.pdf, 2 KB'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('receipt.pdf'));
+      expect(fake.launched, <String>['https://cdn.example.com/receipt.pdf']);
+      handle.dispose();
+    });
+
+    testWidgets('an unsafe URL is not offered as something to open',
+        (WidgetTester tester) async {
+      final SemanticsHandle handle = tester.ensureSemantics();
+      final _FakeUrlLauncher fake = _installFakeLauncher();
+
+      // `javascript:` is the obvious one. `data:` is the one that matters:
+      // `safeImageUrl` accepts `data:image/…` as a PICTURE, but navigated to
+      // it is a document, so opening goes through `safeLinkUrl` instead.
+      for (final String url in <String>[
+        'javascript:alert(1)',
+        'data:text/html;base64,PHNjcmlwdD4=',
+      ]) {
+        await tester.pumpWidget(_host(AttachmentBubble(
+          attachment: AttachmentMetadata(
+            url: url,
+            fileName: 'clip.mp4',
+            mimeType: 'video/mp4',
+            size: 1024 * 1024,
+            mediaType: 'VIDEO',
+          ),
+        )));
+
+        // Still named, still sized — the customer learns what was attached.
+        expect(find.text('clip.mp4'), findsOneWidget);
+        expect(find.byType(InkWell), findsNothing);
+        expect(find.bySemanticsLabel(RegExp('^Open')), findsNothing);
+        expect(
+          tester.getSemantics(
+              find.bySemanticsLabel('Attachment clip.mp4, 1.0 MB')),
+          isNot(containsSemantics(hasTapAction: true)),
+        );
+
+        await tester.tap(find.text('clip.mp4'), warnIfMissed: false);
+        expect(fake.launched, isEmpty);
+      }
+      handle.dispose();
+    });
+
+    testWidgets('an image thumbnail is not turned into a button',
+        (WidgetTester tester) async {
+      _installFakeLauncher();
+      await tester.pumpWidget(_host(const AttachmentBubble(
+        attachment: AttachmentMetadata(
+          url: 'https://cdn.example.com/photo.png',
+          fileName: 'photo.png',
+          mimeType: 'image/png',
+          size: 2048,
+          mediaType: 'IMAGE',
+        ),
+      )));
+
+      // Opening an image full-size is its own design question; this change
+      // makes file rows openable and leaves the thumbnail as it was.
+      expect(find.byType(InkWell), findsNothing);
     });
   });
 }

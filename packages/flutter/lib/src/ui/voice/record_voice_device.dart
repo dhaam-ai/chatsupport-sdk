@@ -29,9 +29,9 @@
 /// ── Why 16 kHz mono ─────────────────────────────────────────────────────
 ///
 /// `RecordConfig`'s defaults are 44100 Hz stereo, which for uncompressed PCM
-/// is 176 KB per second — a four-minute note would be 42 MB and would be
-/// refused by the 25 MiB cap after the customer had recorded it. 16 kHz mono
-/// is 32 KB/s, so the cap is roughly thirteen minutes, and 16 kHz is the
+/// is 176 KB per second — a five-minute note would be 53 MB and would be
+/// refused by the 50 MiB cap after the customer had recorded it. 16 kHz mono
+/// is 32 KB/s, so the cap is roughly twenty-seven minutes, and 16 kHz is the
 /// rate speech codecs target because it covers the whole intelligible band.
 /// A voice note is speech; the stereo image of one microphone is nothing.
 ///
