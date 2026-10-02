@@ -439,6 +439,14 @@ const DARK_TOKENS = `
   --dh-alarm-bg: #3d201a;
   --dh-alarm-fg: #f9c8bd;
   --dh-alarm-border: #5a2f26;
+  /* Rich-card status chips (see '.dh-card-badge'). */
+  --dh-tone-success: #4ade80;
+  --dh-tone-warning: #fbbf24;
+  --dh-tone-info: #93c5fd;
+  /* The accent lifted toward white for card links on a dark card, as the
+     console's own dark palette does ('--dh-primary-text'). A raw accent on
+     #171717 is about 3:1; lifted, a typical brand colour clears 5.5:1. */
+  --dh-card-link: color-mix(in srgb, var(--dh-accent) 60%, #fff);
   /* A pastel wash that works on white is mud on near-black, so the mesh gets
      its own dark artwork rather than an opacity applied to the light one. */
   --dh-mesh-bg: #1c1a24;
@@ -561,6 +569,13 @@ export const STYLES = `
   --dh-alarm-bg: #fdece9;
   --dh-alarm-fg: #8a2c1c;
   --dh-alarm-border: #f6cfc7;
+
+  /* Rich-card status chips (see '.dh-card-badge'). Danger and neutral reuse
+     '--dh-danger' and '--dh-text-muted'. Each, light and dark, measures at
+     least 4.79:1 against its own 14% tint over '--dh-surface'. */
+  --dh-tone-success: #0b6b47;
+  --dh-tone-warning: #8a4b00;
+  --dh-tone-info: #1d4ed8;
 
   /* The console's 'thread.background: mesh' — a four-corner pastel wash.
      CSS has no mesh gradient, so this is one radial per corner over a lilac
@@ -2457,6 +2472,110 @@ button {
   border-radius: 8px;
   color: var(--dh-text);
 }
+
+/* The bot's rich cards (metadata.richCards, ui/message-card.ts), under the
+   bot's bubble. Drawn as the console preview draws its order and product
+   cards: a bordered surface, a 44px image tile, name and sub-line, the price
+   or status on the right, and a footer row of links at least 44px tall.
+   Every colour is a palette token, so dark mode and the merchant's accent
+   reach the cards with no rule of their own. No motion at all, so there is
+   nothing for prefers-reduced-motion to switch off. */
+.dh-cards {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 260px;
+  max-width: 100%;
+}
+.dh-card {
+  overflow: hidden;
+  border: 1px solid var(--dh-border);
+  border-radius: min(var(--dh-radius), 14px);
+  background: var(--dh-surface);
+  color: var(--dh-text);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.dh-card-body { padding: 12px; }
+/* The head wraps: an order or info card's status chip sits top-right when it
+   fits beside the title and drops under it when it does not, rather than
+   being squeezed into a capped column (a pill broken over two lines). A
+   product or item card ('.dh-card-priced') does not wrap: its price stays
+   beside the name and the name wraps instead. */
+.dh-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 12px;
+}
+.dh-card-priced { flex-wrap: nowrap; }
+.dh-card-img {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--dh-surface-sunken);
+}
+.dh-card-text { flex: 1 1 auto; min-width: 0; }
+.dh-card-side {
+  flex: none;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  text-align: end;
+}
+.dh-card-title { margin: 0; font-size: 14px; font-weight: 600; }
+.dh-card-sub { margin: 0; font-size: 12px; color: var(--dh-text-muted); }
+.dh-card-priced .dh-card-side { max-width: 45%; }
+.dh-card-side .dh-card-sub { font-size: 14px; font-weight: 600; color: var(--dh-text); }
+.dh-card-badge {
+  --dh-card-tone: var(--dh-text-muted);
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dh-card-tone);
+  background: color-mix(in srgb, var(--dh-card-tone) 14%, var(--dh-surface));
+}
+.dh-card-text .dh-card-badge { margin-top: 4px; }
+.dh-card-badge[data-tone="success"] { --dh-card-tone: var(--dh-tone-success); }
+.dh-card-badge[data-tone="warning"] { --dh-card-tone: var(--dh-tone-warning); }
+.dh-card-badge[data-tone="danger"] { --dh-card-tone: var(--dh-danger); }
+.dh-card-badge[data-tone="info"] { --dh-card-tone: var(--dh-tone-info); }
+.dh-card-rows { margin: 10px 0 0; display: grid; gap: 4px; }
+.dh-card-row { display: flex; gap: 12px; }
+.dh-card-row dt { flex: 0 0 36%; color: var(--dh-text-muted); }
+.dh-card-row dd { flex: 1; min-width: 0; margin: 0; }
+.dh-card-footer { margin: 10px 0 0; font-size: 12px; color: var(--dh-text-muted); }
+.dh-card-actions { display: flex; border-top: 1px solid var(--dh-border); }
+/* Links, not buttons — each one navigates. The focus ring is drawn INSIDE
+   because the card clips its own overflow for the rounded corners, which
+   would cut an outside ring off at the edges. */
+.dh-card-btn {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 6px 12px;
+  /* '--dh-card-link' exists only in the dark palette; light uses the accent. */
+  color: var(--dh-card-link, var(--dh-accent));
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+.dh-card-btn + .dh-card-btn { border-inline-start: 1px solid var(--dh-border); }
+.dh-card-btn:hover { background: color-mix(in srgb, var(--dh-accent) 8%, transparent); text-decoration: underline; }
+.dh-card-btn:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
 
 /* 'behaviour.typingIndicator: false'. 'display: none' rather than
    'visibility: hidden' on purpose — it takes the screen-reader label out of

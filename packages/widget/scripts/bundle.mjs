@@ -119,7 +119,15 @@ console.log('');
 // customers only) and its placeholder screen — reuses `.dh-unavail-*`
 // rather than paying for a new ruleset. Measured at 131,116 B gzip once
 // landed: 44 B over the previous ceiling, leaving 980 B of headroom here.
-const WIDGET_GZIP_BUDGET = 132_096;
+// Increased to 131 KiB (134,144 B) for the bot's rich cards
+// (metadata.richCards, ui/message-card.ts): about 1.7 KB gzip, most of it the
+// card stylesheet plus the text checks a security review asked for (bidi
+// stripping, visible-character rule, metadata.richIntro). Trimmed before
+// raising (literal px in the card rules, one class instead of per-kind
+// selectors). Measured at 133,167 B gzip once landed on top of the flow and
+// Tickets work: 1,071 B over the previous ceiling, leaving 977 B of headroom
+// here.
+const WIDGET_GZIP_BUDGET = 134_144;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,
