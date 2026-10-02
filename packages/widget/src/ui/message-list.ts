@@ -188,7 +188,7 @@ export interface MessageListView {
    * lands (or after {@link LOADING_GIVE_UP_MS}, so a failed fetch never spins
    * forever). Set by widget.ts when the customer/staff picks a conversation.
    */
-  setLoading(loading: boolean): void;
+  setLoading(loading: boolean, switchingTo?: string): void;
 
   /**
    * The client-only "bot is thinking" cue — see widget.ts's `state.messages`
@@ -363,6 +363,8 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   /** See {@link MessageListView.setLoading}. */
   let loadingRequested = false;
   let loadingGaveUp = false;
+  /** Session a switch is heading to: until core lands its first page, the PREVIOUS conversation's rows stay hidden. */
+  let switchTarget: string | null = null;
   let loadingTimer: ReturnType<typeof setTimeout> | undefined;
   let lastRender: { state: ChatState; localId: string | null } | null = null;
 
@@ -371,6 +373,9 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // post-append value and would make "was the user at the bottom" always
     // true for a growing list.
     const wasAtBottom = isNearBottom(log);
+    if (switchTarget !== null && state.session?.id === switchTarget && state.pagination.initialLoaded) {
+      switchTarget = null;
+    }
 
     // `initialLoaded`, not `messages.length` alone: an empty list before the
     // first page has come back means "not asked yet", and "No messages yet.
@@ -383,12 +388,22 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     // A real conversation whose first page has not come back yet (or one the
     // host just asked to open) shows a spinner instead of a blank transcript.
     if (state.pagination.initialLoaded) loadingRequested = false;
+    const switching = switchTarget !== null && !loadingGaveUp;
     const showLoading =
-      state.messages.length === 0 &&
-      !state.pagination.initialLoaded &&
-      !loadingGaveUp &&
-      (loadingRequested || state.session !== null);
+      switching ||
+      (state.messages.length === 0 &&
+        !state.pagination.initialLoaded &&
+        !loadingGaveUp &&
+        (loadingRequested || state.session !== null));
     loadingEl.hidden = !showLoading;
+    // Hide the old conversation's rows (re-applied every render, so rows
+    // appended mid-switch are covered too); the spinner is the only child left.
+    const hideRows = switching;
+    queueMicrotask(() => {
+      for (const child of Array.from(log.children) as HTMLElement[]) {
+        if (child !== loadingEl) child.style.display = hideRows ? 'none' : '';
+      }
+    });
     if (showLoading && loadingTimer === undefined) {
       loadingTimer = setTimeout(() => {
         loadingTimer = undefined;
@@ -607,8 +622,9 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     botThinking = thinking;
   }
 
-  function setLoading(loading: boolean): void {
+  function setLoading(loading: boolean, switchingTo?: string): void {
     loadingRequested = loading;
+    switchTarget = loading && switchingTo ? switchingTo : null;
     loadingGaveUp = false;
     if (lastRender) render(lastRender.state, lastRender.localId);
   }

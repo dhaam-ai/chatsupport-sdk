@@ -974,12 +974,8 @@ describe('the merchant’s greeting', () => {
   // said TO the customer — not as the heading of a form, which is where it
   // used to end up.
   it('appears as its own line, not as the pre-chat form’s heading', async () => {
-    stubFetch(published({ behaviour: { greeting: 'Hi from Acme!' } }));
-    // The greeting is conversation furniture, shown only while that screen
-    // is up — see "does not gate when the merchant left pre-chat off" above
-    // for why `sessionId` is what gets a test there directly.
-    mount(config({ sessionId: 'sess_1' }));
-    await settle();
+    // Conversation furniture, shown only on that screen and only once connected.
+    await mountConnected(published({ behaviour: { greeting: 'Hi from Acme!' } }));
 
     expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(false);
     expect(find('.dh-greeting')?.textContent).toBe('Hi from Acme!');
@@ -996,12 +992,10 @@ describe('the merchant’s greeting', () => {
   });
 
   it('waits out the configured delay before showing', async () => {
-    stubFetch(published({ behaviour: { greeting: 'Hi!', greetingDelaySec: 0.08 } }));
-    mount(config({ sessionId: 'sess_1' }));
-    await settle();
+    await mountConnected(published({ behaviour: { greeting: 'Hi!', greetingDelaySec: 0.5 } }));
 
     expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(true);
-    await new Promise((resolve) => setTimeout(resolve, 140));
+    await new Promise((resolve) => setTimeout(resolve, 600));
     expect(find<HTMLElement>('.dh-greeting')?.hidden).toBe(false);
   });
 });

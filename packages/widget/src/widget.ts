@@ -2205,6 +2205,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    * the same yank off Home in a different coat.
    */
   let conversationOpened = initialScreenName === 'conversation';
+  /** The conversation `selectSession` is switching to, until its transcript has been seeded. */
+  let pendingSwitchId: string | null = null;
 
   /**
    * The screen stack — home / messages / conversation. See `ui/screens.ts`'s
@@ -3171,6 +3173,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         // A completed handshake is the only proof the run of failures is over.
         if (connectionState === 'connected') failedAttempts = 0;
         syncConnection();
+        // The greeting waits for `connected` (see syncScreens), so repaint when it arrives.
+        syncScreens();
       },
       { immediate: true },
     ),
@@ -4318,7 +4322,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // Spinner until the picked conversation's first page lands — the store
     // still holds the previous conversation (or nothing) until switchSession
     // clears it, and a blank transcript reads as "broken", not "loading".
-    messageList.setLoading(true);
+    messageList.setLoading(true, sessionId);
+    pendingSwitchId = sessionId;
     showConversation();
     if (open) composer.input.focus({ preventScroll: true });
 
@@ -4335,6 +4340,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       await store.client.switchSession(sessionId);
     } catch (error) {
       report(error);
+    } finally {
+      // A newer click owns the flag now; only the latest switch clears it.
+      if (pendingSwitchId === sessionId) {
+        pendingSwitchId = null;
+        if (!destroyed) syncScreens();
+      }
     }
   }
 
@@ -4938,7 +4949,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // instantly and the merchant's configured wait would be invisible.
     const beforeFirstMessage = showingLog && state.messages.length === 0;
     const greetingShowing =
-      !isStaffOrAdmin && beforeFirstMessage && greetingDue && greetingBubble.textContent !== '';
+      !isStaffOrAdmin &&
+      beforeFirstMessage &&
+      greetingDue &&
+      greetingBubble.textContent !== '' &&
+      // Not while connecting: a bot flow's first message is about to land, and the generic
+      // greeting flashing first reads as another conversation.
+      state.connectionState === 'connected' &&
+      // Nor while a picked conversation is still loading: its transcript is empty for a moment.
+      pendingSwitchId === null;
     setPaneVisible(greetingBubble, greetingShowing);
     // The greeting bubble and the transcript's own "No messages yet." both
     // answer "there's nothing here yet" — see MessageListView.setGreetingShown
