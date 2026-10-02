@@ -29,6 +29,7 @@ import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-
 
 import { ICONS, el, icon } from './dom.js';
 import { createMessageActions } from './message-actions.js';
+import { buildCardList, readRichCards, readRichIntro } from './message-card.js';
 import { renderLinkified } from './linkify.js';
 import { createQuickReplies, readSuggestions } from './quick-replies.js';
 import type { QuickReplyChip } from './quick-replies.js';
@@ -832,6 +833,18 @@ function createRow(
   let attachmentNode: HTMLElement | null = null;
   let cardNode: HTMLElement | null = null;
 
+  // The bot's rich cards (`metadata.richCards`, ui/message-card.ts), drawn
+  // under the bubble. Rebuilt only when the bag they come from changes:
+  // `update` runs for every row on every render, and rebuilding each time
+  // would reload the card images on every typing flap. Comparing references
+  // is enough because core deep-freezes every state it publishes
+  // (state/store.ts `deepFreeze`), so a bag cannot change in place.
+  let cards: HTMLElement | null = null;
+  /** `metadata.richIntro`, shown in the bubble instead of `content` while cards are drawn. */
+  let cardsIntro: string | null = null;
+  /** The bag `cards` was built from, or `undefined` for a non-bot message. */
+  let cardsFrom: unknown;
+
   return {
     node,
     destroy() {
@@ -894,6 +907,20 @@ function createRow(
       node.setAttribute('data-mine', String(outgoing));
       node.setAttribute('data-failed', String(message.delivery?.state === 'failed'));
 
+      // BOT only. The flow engine is the one producer; a customer's or an
+      // agent's client writes its own metadata (the reply quote is one), and
+      // a bag from either must not be able to draw a card with links. The
+      // sender decision is part of the cache key, so the same bag seen first
+      // as a bot's and then as anyone else's is re-decided, not reused.
+      const cardSource = isBot ? message.metadata : undefined;
+      if (cardSource !== cardsFrom) {
+        cardsFrom = cardSource;
+        const parsed = readRichCards(cardSource);
+        cards = parsed.length > 0 ? buildCardList(parsed) : null;
+        const intro = cards === null ? '' : readRichIntro(cardSource);
+        cardsIntro = intro === '' ? null : intro;
+      }
+
       if (outgoing) {
         avatar.hidden = true;
         author.hidden = true;
@@ -927,6 +954,10 @@ function createRow(
 
         bubbleWrap.replaceChildren(bubble, actions.node);
         contentWrap.replaceChildren(author, bubbleWrap, meta);
+        // Under the bubble, above the time. The bubble keeps `content` — the
+        // cards' text version (contract rule 1) — so nothing is lost where
+        // the cards cannot be read.
+        if (cards !== null) contentWrap.insertBefore(cards, meta);
         node.replaceChildren(avatar, contentWrap);
       }
 
@@ -937,7 +968,13 @@ function createRow(
       //
       // Compared before rewriting so an unrelated re-render does not destroy a
       // text selection the customer is in the middle of making.
-      const shown = visibleContent(message);
+      //
+      // While cards are drawn, the bubble shows their short intro instead of
+      // `content`, which restates the cards (contract §2 rule 1, the
+      // duplicate-text rule). `cardsIntro` is null in every other case, so
+      // every other message shows `content` exactly as before. The live
+      // region still reads `content` (`describeContent`).
+      const shown = cardsIntro ?? visibleContent(message);
       if (body.textContent !== shown) renderLinkified(body, shown);
 
       const created = new Date(message.createdAt);

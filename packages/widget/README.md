@@ -208,6 +208,75 @@ Rendered from core's `deriveTickState` and nothing else. This package computes
 no delivery state of its own — v1 drew the double tick from *presence*, and
 connectivity is not delivery: a participant can be online and not caught up.
 
+## Rich cards from the bot
+
+A bot flow's `lookup` and `card` steps post order, product and custom cards. They
+arrive on an ordinary bot message (`senderType: 'BOT'`, `type: 'TEXT'`) as
+`metadata.richCards`. There is no new message type. The wire contract is §2 of
+chat-service-node's `docs/specs/chatbot-workflows-lookup.md`:
+
+```ts
+metadata.richCards: Array<{        // at most 5 drawn
+  v: 1;                            // any other version: that card is skipped
+  kind: 'product' | 'item' | 'order' | 'info';   // anything else draws as 'info'
+  title: string;                   // ≤ 80, required
+  subtitle?: string;               // ≤ 120 (a product's price, an order's store)
+  imageUrl?: string;               // https only, ≤ 500
+  badge?: { label: string;         // ≤ 24
+            tone: 'neutral' | 'success' | 'warning' | 'danger' | 'info' };
+  rows?: { label: string; value: string }[];     // ≤ 8; label ≤ 30, value ≤ 120
+  buttons?: { label: string; url: string }[];    // ≤ 3; label ≤ 20, url https ≤ 500
+  footer?: string;                 // ≤ 60
+}>
+metadata.richIntro?: string;       // ≤ 300, the intro line only (no card text)
+```
+
+**The text is always there.** `content` is a plain-text version of the cards
+(contract rule 1). A widget older than this release, the transcript email,
+WhatsApp and notifications all read that text, so no visitor gets an empty
+message. Only the bot's own messages draw cards. A card bag on a customer or
+agent message is ignored, because those clients write their own metadata.
+
+**The duplicate-text rule.** When the widget draws at least one valid card and
+the message carries a usable `metadata.richIntro`, the bubble above the cards
+shows that intro instead of `content`, so the card text is not shown twice.
+With no valid card, or no usable intro, the bubble shows `content` exactly as
+before. The screen-reader announcement always reads the full `content`.
+
+**The bag is untrusted, and the widget re-checks it** (`ui/message-card.ts`):
+
+- Only `v: 1` cards with a non-empty `title` are drawn. Other cards in the same
+  message still are.
+- Text is trimmed and clipped to the limits above with an ellipsis. Lists are
+  capped by reading only their first 5 cards, 8 rows and 3 buttons. Only the
+  first 4 × limit characters of a string are read, so a huge value costs no
+  more than a short one.
+- Bidi embeddings, overrides and isolates (U+202A–U+202E, U+2066–U+2069) and
+  control characters other than tab and newline are removed from every string,
+  `richIntro` included. Zero-width joiners (U+200C, U+200D) are kept. A string
+  with no visible character (letter, number, punctuation or symbol) counts as
+  absent. A card whose title is only zero-width spaces is dropped, and so is a
+  button, row or badge with an invisible label.
+- Every URL must parse as absolute `https:` with no `user:password@`. A
+  failing button or image is dropped alone and the card still draws. Images
+  load lazily with `referrerpolicy="no-referrer"` and an empty `alt`, and are
+  hidden if they fail to load. Buttons are real links with `target="_blank"`
+  and `rel="noopener noreferrer"`.
+- Unknown fields are ignored, only own properties are read (a polluted
+  `Object.prototype` cannot add cards), and a malformed bag draws nothing and
+  never throws.
+- Every string goes in through `textContent`. Markup in a title prints as
+  text.
+
+Cards follow the theme: dark mode, the tenant's accent on the links, and status
+chips that carry the status in words, with colour as a second cue. Link rows are
+at least 44px tall, and nothing on a card animates.
+
+The Flutter and Dart packages do not draw cards yet. They show the text
+version.
+
+To look at them without a chat-service, run `pnpm preview:cards` (below).
+
 ## Embedding the web form
 
 The **web form** is the chat widget's offline path on its own: no launcher, no
@@ -419,7 +488,18 @@ pnpm size             # gzipped weight and what dominates it
 pnpm typecheck        # src AND test — tsup does not typecheck tests
 pnpm dev:harness      # a deliberately hostile host page on :4599
 pnpm verify:browser   # 25 real-Chrome checks against that harness
+pnpm preview:cards    # writes a static page of bot rich cards; prints its path
 ```
+
+`preview:cards` needs no backend. It draws fixture bot messages carrying
+`metadata.richCards` (in `scripts/preview-cards.entry.ts`) with the real
+transcript renderer and stylesheet. Each run writes one HTML file into a new
+private directory under the OS temp directory (`mkdtemp`, file mode 0600), and
+nothing into the package. Open it with `open "$(pnpm --silent preview:cards)"`,
+and add
+`?theme=dark` or `?accent=%23be123c` to the URL to check the dark palette and a
+tenant accent. Build the workspace once first, since `@dhaam-ccrm/core` resolves to
+its `dist`.
 
 `verify:browser` is not decoration. It caught two defects the 70 jsdom tests
 could not: the `!important` font leak above, and every presentation rendering

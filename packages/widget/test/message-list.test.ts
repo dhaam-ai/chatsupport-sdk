@@ -1513,3 +1513,275 @@ describe('sides in an admin\'s chat with a customer (staffViewer)', () => {
     expect(mine(view, 'Hello Bikash')).toBe('false');
   });
 });
+
+describe('the bot’s rich cards (metadata.richCards)', () => {
+  const BOT = { senderId: 'bot_1', senderType: 'BOT' as const };
+  const card = (title: string) => ({
+    v: 1,
+    kind: 'order',
+    title,
+    badge: { label: 'Delivered', tone: 'success' },
+    buttons: [{ label: 'Track order', url: 'https://track.example.com/o/1' }],
+  });
+  const botWithCards = (cards: unknown, overrides: Partial<ChatMessage> = {}) =>
+    message({
+      id: 'b1',
+      ...BOT,
+      content: 'Order #10482 — Delivered',
+      metadata: { richCards: cards },
+      ...overrides,
+    });
+  const row = (view: ReturnType<typeof build>['view'], id = 'b1') =>
+    view.log.querySelector<HTMLElement>(`.dh-msg[data-message-id="${id}"]`)!;
+
+  it('keeps the text fallback in the bubble and draws the cards under it', () => {
+    const { view } = build();
+    view.render(state({ messages: [botWithCards([card('Order #10482')])] }), ME);
+
+    const r = row(view);
+    // Contract rule 1: `content` is the readable version, and it stays.
+    expect(r.querySelector('.dh-msg-body')?.textContent).toBe('Order #10482 — Delivered');
+    const content = r.querySelector('.dh-msg-content-wrap')!;
+    expect([...content.children].map((c) => c.className)).toEqual([
+      'dh-msg-author',
+      'dh-msg-bubble-wrap',
+      'dh-cards',
+      'dh-msg-meta',
+    ]);
+    expect(r.querySelector('.dh-cards .dh-card-title')?.textContent).toBe('Order #10482');
+    // Not inside the bubble: the bubble's pre-wrap and colours are not the card's.
+    expect(r.querySelector('.dh-msg-bubble .dh-cards')).toBeNull();
+  });
+
+  it.each([
+    [0, 0],
+    [1, 1],
+    [5, 5],
+    [6, 5],
+  ])('draws %i card(s) as %i', (sent, drawn) => {
+    const { view } = build();
+    view.render(
+      state({ messages: [botWithCards(Array.from({ length: sent }, (_, i) => card(`Card ${i}`)))] }),
+      ME,
+    );
+    expect(row(view).querySelectorAll('.dh-card')).toHaveLength(drawn);
+    // Zero cards draws no empty list either.
+    expect(row(view).querySelector('.dh-cards') === null).toBe(drawn === 0);
+  });
+
+  it.each([
+    ['no metadata', undefined],
+    ['no richCards key', { options: ['Refund'] }],
+    ['a future card version', { richCards: [{ ...card('x'), v: 2 }] }],
+    ['garbage', { richCards: 'Order #1' }],
+  ])('leaves a bot message with %s exactly as it was', (_label, metadata) => {
+    const { view } = build();
+    view.render(
+      state({ messages: [message({ id: 'b1', ...BOT, ...(metadata === undefined ? {} : { metadata }) })] }),
+      ME,
+    );
+    expect(row(view).querySelector('.dh-cards')).toBeNull();
+    expect([...row(view).querySelector('.dh-msg-content-wrap')!.children].map((c) => c.className)).toEqual([
+      'dh-msg-author',
+      'dh-msg-bubble-wrap',
+      'dh-msg-meta',
+    ]);
+  });
+
+  // The flow engine is the only producer. A customer's or an agent's client
+  // writes its own metadata (the reply quote is one), so a bag from either
+  // must not be able to draw a card with links in it.
+  it.each([
+    ['the customer', { senderId: ME, senderType: 'CUSTOMER' as const }],
+    ['an agent', { senderId: AGENT, senderType: 'AGENT' as const }],
+    ['the system', { senderId: 'sys', senderType: 'SYSTEM' as const }],
+  ])('draws no cards on a message from %s', (_label, sender) => {
+    const { view } = build();
+    view.render(state({ messages: [botWithCards([card('Phish')], sender)] }), ME);
+    expect(view.log.querySelector('.dh-cards')).toBeNull();
+  });
+
+  // The case where the guard is load-bearing for a customer's bag: a staff
+  // viewer sees the customer's messages as INCOMING rows.
+  it('draws no cards on a customer’s message seen by staff', () => {
+    const view = createMessageList({
+      staffViewer: true,
+      onRetry: vi.fn(),
+      onLoadOlder: vi.fn(),
+      onStartNewConversation: vi.fn(),
+      onEmailTranscript: vi.fn(async () => undefined),
+      onQuickReply: vi.fn(),
+      onReplyToMessage: vi.fn(),
+    });
+    document.body.append(view.log, view.liveRegion);
+    view.render(
+      state({ messages: [botWithCards([card('Phish')], { senderId: '14735', senderType: 'CUSTOMER' })] }),
+      'admin-uuid',
+    );
+    expect(row(view).getAttribute('data-mine')).toBe('false');
+    expect(view.log.querySelector('.dh-cards')).toBeNull();
+  });
+
+  it('keeps the same card elements across re-renders, so images do not reload', () => {
+    const { view } = build();
+    const bot = botWithCards([card('Order #1')]);
+    view.render(state({ messages: [bot] }), ME);
+    const first = row(view).querySelector('.dh-cards');
+
+    view.setBotThinking(true);
+    view.render(state({ messages: [bot] }), ME);
+    view.render(state({ messages: [bot, message({ id: 'c1' })] }), ME);
+    expect(row(view).querySelector('.dh-cards')).toBe(first);
+  });
+
+  it('keeps an older message’s cards when newer messages arrive', () => {
+    // Unlike the suggested-reply chips, a card is content: it belongs to its
+    // message for as long as the message is in the transcript.
+    const { view } = build();
+    const bot = botWithCards([card('Order #1')]);
+    view.render(state({ messages: [bot, message({ id: 'c1' }), message({ id: 'b2', ...BOT, content: 'Anything else?' })] }), ME);
+    expect(row(view).querySelectorAll('.dh-card')).toHaveLength(1);
+    expect(row(view, 'b2').querySelector('.dh-cards')).toBeNull();
+  });
+
+  it('still shows the suggested replies, after the newest bot message', () => {
+    const { view, onQuickReply } = build();
+    view.render(
+      state({
+        messages: [
+          message({
+            id: 'b1',
+            ...BOT,
+            content: 'Here is what I found.',
+            metadata: { richCards: [card('Order #1')], options: ['Track another order'] },
+          }),
+        ],
+      }),
+      ME,
+    );
+    const chips = view.log.querySelector<HTMLElement>('.dh-quick-replies')!;
+    expect(chips.hidden).toBe(false);
+    expect(row(view).compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    view.log.querySelector<HTMLButtonElement>('.dh-quick-reply')!.click();
+    expect(onQuickReply).toHaveBeenCalledWith({ label: 'Track another order' });
+  });
+
+  it('announces the text fallback, not the card markup', () => {
+    const { view } = build();
+    view.render(state({ messages: [] }), ME);
+    view.render(state({ messages: [botWithCards([card('Order #1')])] }), ME);
+    expect(view.liveRegion.textContent).toBe('Dhaam Assistant: Order #10482 — Delivered');
+  });
+
+  it('opens a card button as a new-tab link with no opener or referrer', () => {
+    const { view } = build();
+    view.render(state({ messages: [botWithCards([card('Order #1')])] }), ME);
+    const link = row(view).querySelector<HTMLAnchorElement>('.dh-card-btn')!;
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe('https://track.example.com/o/1');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('renders markup in a card as text inside the transcript', () => {
+    const { view } = build();
+    view.render(state({ messages: [botWithCards([{ ...card('<img src=x onerror=alert(1)>') }])] }), ME);
+    expect(row(view).querySelector('.dh-card-title')?.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(row(view).querySelector('.dh-cards img')).toBeNull();
+  });
+});
+
+describe('the cards’ intro line (metadata.richIntro, the duplicate-text rule)', () => {
+  const BOT = { senderId: 'bot_1', senderType: 'BOT' as const };
+  const CONTENT = 'Here are the details for order 10482.\nOrder #10482 — Out for delivery\nTotal: ₹549.00';
+  const INTRO = 'Here are the details for order 10482.';
+  const card = { v: 1, kind: 'order', title: 'Order #10482', badge: { label: 'Out for delivery', tone: 'warning' } };
+  const bot = (metadata: Record<string, unknown>, overrides: Partial<ChatMessage> = {}) =>
+    message({ id: 'b1', ...BOT, content: CONTENT, metadata, ...overrides });
+  const bubbleText = (view: ReturnType<typeof build>['view']) =>
+    view.log.querySelector('.dh-msg[data-message-id="b1"] .dh-msg-body')?.textContent;
+
+  it('shows the intro instead of content when cards are drawn', () => {
+    const { view } = build();
+    view.render(state({ messages: [bot({ richCards: [card], richIntro: INTRO })] }), ME);
+    expect(bubbleText(view)).toBe(INTRO);
+    expect(view.log.querySelectorAll('.dh-card')).toHaveLength(1);
+  });
+
+  it('still announces the FULL content to a screen reader', () => {
+    const { view } = build();
+    view.render(state({ messages: [] }), ME);
+    view.render(state({ messages: [bot({ richCards: [card], richIntro: INTRO })] }), ME);
+    expect(view.liveRegion.textContent).toBe(`Dhaam Assistant: ${CONTENT}`);
+  });
+
+  it.each([
+    ['no richIntro', { richCards: [card] }],
+    ['an intro but no cards', { richIntro: INTRO }],
+    ['an intro and only invalid cards', { richIntro: INTRO, richCards: [{ ...card, v: 2 }] }],
+    ['an intro and garbage cards', { richIntro: INTRO, richCards: 'Order #10482' }],
+    ['a non-string intro', { richCards: [card], richIntro: 42 }],
+    ['an object intro', { richCards: [card], richIntro: { text: INTRO } }],
+    ['an array intro', { richCards: [card], richIntro: [INTRO] }],
+    ['an invisible intro', { richCards: [card], richIntro: '​ ‮' }],
+  ])('shows content exactly as before with %s', (_label, metadata) => {
+    const { view } = build();
+    view.render(state({ messages: [bot(metadata)] }), ME);
+    expect(bubbleText(view)).toBe(CONTENT);
+  });
+
+  it.each([
+    ['an agent', { senderId: AGENT, senderType: 'AGENT' as const }],
+    ['the system', { senderId: 'sys', senderType: 'SYSTEM' as const }],
+  ])('ignores an intro on a message from %s', (_label, sender) => {
+    const { view } = build();
+    view.render(state({ messages: [bot({ richCards: [card], richIntro: INTRO }, sender)] }), ME);
+    expect(bubbleText(view)).toBe(CONTENT);
+  });
+
+  it('clamps a 5 MB intro to 300 characters', () => {
+    const { view } = build();
+    view.render(state({ messages: [bot({ richCards: [card], richIntro: 'a'.repeat(5 * 1024 * 1024) })] }), ME);
+    expect(bubbleText(view)).toHaveLength(300);
+  });
+
+  it('prints markup in the intro as text', () => {
+    const { view } = build();
+    view.render(state({ messages: [bot({ richCards: [card], richIntro: '<img src=x onerror=alert(1)><b>hi</b>' })] }), ME);
+    const body = view.log.querySelector('.dh-msg[data-message-id="b1"] .dh-msg-body')!;
+    expect(body.textContent).toBe('<img src=x onerror=alert(1)><b>hi</b>');
+    expect(body.querySelectorAll('img, b')).toHaveLength(0);
+  });
+
+  it('strips a bidi override from the intro', () => {
+    const { view } = build();
+    view.render(state({ messages: [bot({ richCards: [card], richIntro: '‮dnuof I tahw si ereH' })] }), ME);
+    expect(bubbleText(view)).toBe('dnuof I tahw si ereH');
+  });
+
+  // Review finding 3: the cache was keyed on the bag alone, so the same bag
+  // seen first as a bot's and then as an agent's kept the bot's cards.
+  it('re-decides when the same metadata object moves from a BOT to an AGENT message', () => {
+    const { view } = build();
+    const metadata = { richCards: [card], richIntro: INTRO };
+    view.render(state({ messages: [bot(metadata)] }), ME);
+    expect(view.log.querySelectorAll('.dh-card')).toHaveLength(1);
+    expect(bubbleText(view)).toBe(INTRO);
+
+    view.render(state({ messages: [bot(metadata, { senderId: AGENT, senderType: 'AGENT' })] }), ME);
+    expect(view.log.querySelector('.dh-cards')).toBeNull();
+    expect(bubbleText(view)).toBe(CONTENT);
+  });
+
+  it('re-decides when the same metadata object moves from an AGENT to a BOT message', () => {
+    const { view } = build();
+    const metadata = { richCards: [card], richIntro: INTRO };
+    view.render(state({ messages: [bot(metadata, { senderId: AGENT, senderType: 'AGENT' })] }), ME);
+    expect(view.log.querySelector('.dh-cards')).toBeNull();
+    expect(bubbleText(view)).toBe(CONTENT);
+
+    view.render(state({ messages: [bot(metadata)] }), ME);
+    expect(view.log.querySelectorAll('.dh-card')).toHaveLength(1);
+    expect(bubbleText(view)).toBe(INTRO);
+  });
+});
