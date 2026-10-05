@@ -120,6 +120,7 @@ import type { PreChatAnswers } from './ui/pre-chat-form.js';
 import { createCommonQuestions } from './ui/common-questions.js';
 import type { CommonQuestion } from './ui/common-questions.js';
 import {
+  DEFAULT_PRIVACY_URL,
   DEFAULT_REMOTE_CONFIG,
   entryFor,
   fetchRemoteConfig,
@@ -4703,7 +4704,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       session !== null && session.status !== 'CLOSED' && session.status !== 'RESOLVED';
     headerMenu.update({
       canEnd: live,
-      privacyUrl: remote.privacyUrl ?? '',
+      // The merchant's own policy when it is a usable http(s) URL; otherwise the default.
+      // That covers a config that never landed and a value typed without "https://".
+      privacyUrl: safeLinkUrl(remote.privacyUrl ?? '') !== null ? remote.privacyUrl! : DEFAULT_PRIVACY_URL,
       // Always in the menu; `remote.reportIssue` only governs the home-screen button.
       reportIssue: true,
       muted,

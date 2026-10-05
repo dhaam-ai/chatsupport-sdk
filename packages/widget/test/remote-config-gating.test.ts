@@ -1273,7 +1273,20 @@ describe('the conversation menu', () => {
     mount(config());
     await settle();
     openMenu();
-    expect(labels()).not.toContain('Privacy');
+    const link = [...shadow().querySelectorAll<HTMLAnchorElement>('.dh-header a.dh-hmenu-item')][0]!;
+    expect(link.getAttribute('href')).toBe(DEFAULT_PRIVACY_URL);
+  });
+
+  // The console takes free text, so "dhaam.com/privacy" is a realistic entry; the
+  // allowlist rejects it (no scheme) and the default link stands in.
+  it('falls back to the default when the merchant URL has no http(s) scheme', async () => {
+    stubFetch(published({ behaviour: { privacyUrl: 'acme.test/privacy' } }));
+    mount(config());
+    await settle();
+    openMenu();
+    const link = [...shadow().querySelectorAll<HTMLAnchorElement>('.dh-header a.dh-hmenu-item')][0]!;
+    expect(link.hidden).toBe(false);
+    expect(link.getAttribute('href')).toBe(DEFAULT_PRIVACY_URL);
   });
 
   // The label names the ACTION and flips with the state — see header-menu.ts's
