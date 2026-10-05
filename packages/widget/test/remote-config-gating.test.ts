@@ -1081,19 +1081,23 @@ describe('the consent gate', () => {
 });
 
 describe('report an issue', () => {
-  const openButton = () => find<HTMLButtonElement>('.dh-report-open');
+  // The header menu's item is the only way in; opening the form needs the menu button first.
+  const openButton = () =>
+    [...shadow().querySelectorAll<HTMLButtonElement>('.dh-header .dh-hmenu-item')].find(
+      (n) => n.textContent?.trim() === 'Report an issue',
+    ) ?? null;
 
-  // The HOME-SCREEN button: off unless the merchant turned it on. (The header
-  // menu's item is separate and always offered.)
-  it('puts no button on the home screen until the merchant turns it on', async () => {
-    stubFetch(published());
+  // Only the header menu offers it — no standing button on Home or above the composer,
+  // whatever the merchant's `reportIssue` says.
+  it('puts no standing button on the screen, even when the merchant turned it on', async () => {
+    stubFetch(published({ behaviour: { reportIssue: true } }));
     mount(config());
     await settle();
-    expect(openButton()?.hidden).toBe(true);
+    expect(find('.dh-report-open')).toBeNull();
   });
 
-  it('offers the form when the merchant turned it on', async () => {
-    stubFetch(published({ behaviour: { reportIssue: true } }));
+  it('offers the form from the header menu by default', async () => {
+    stubFetch(published());
     mount(config());
     await settle();
     expect(openButton()?.hidden).toBe(false);

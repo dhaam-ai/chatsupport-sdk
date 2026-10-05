@@ -1276,7 +1276,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     consent.update(next.consentRequired, next.consentText ?? '');
     messageList.setTranscriptEmail(next.transcriptEmail);
     composer.setAttachmentsEnabled(next.fileUploads);
-    reportButton.hidden = !next.reportIssue;
     syncHeaderMenu();
     // The gate may have just opened or closed under the composer.
     syncComposer();
@@ -1843,19 +1842,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // persistent button invited every conversation to skip the bot, which is
   // the opposite of what the bot is for.
 
-  /**
-   * The way to a ticket without a conversation.
-   *
-   * Hidden until published config turns it on — see `reportIssue` in
-   * remote-config.ts. Lives on the seam between the transcript and the
-   * composer: it is the customer deciding the bot is not the route to their
-   * answer, so it sits where they are about to type.
-   */
-  const reportButton = el('button', {
-    attrs: { class: 'dh-report-open', type: 'button', hidden: true },
-    text: 'Report an issue',
-    on: { click: () => openReportIssue() },
-  });
+  // The way to a ticket without a conversation is the header menu's "Report an
+  // issue" item only. A standing button on the Home screen / above the composer
+  // was removed: it read as part of every conversation.
 
   /**
    * Slot for the "Common Questions" chip row (`ui/common-questions.ts`).
@@ -2878,10 +2867,6 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // `querySelector('.dh-input')` during development of this feature.
       ...(isPortalStaff ? [portalThread.node] : []),
       messageList.log,
-      // Sits right where the transcript is still empty — it reads most
-      // naturally right above where the customer is about to type, not
-      // competing with the header or buried inside the (empty) log.
-      reportButton,
       // Directly above the composer it gates, so the notice and the control it
       // disables are read as one thing rather than as an unrelated banner.
       consent.node,
