@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   CONFIG_TIMEOUT_MS,
+  DEFAULT_PRIVACY_URL,
   DEFAULT_REMOTE_CONFIG,
   OFFLINE_MODE,
   fetchRemoteConfig,
@@ -258,6 +259,9 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       ...DEFAULT_REMOTE_CONFIG,
       // `enabled` defaults true and there is no publishedVersion to read.
       publishedVersion: 0,
+      // A PUBLISHED config silent about these still offers them.
+      reportIssue: true,
+      privacyUrl: DEFAULT_PRIVACY_URL,
     });
   });
 

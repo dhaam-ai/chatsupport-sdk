@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mount, unmount } from '../src/index.js';
-import { OFFLINE_MODE } from '../src/remote-config.js';
+import { DEFAULT_PRIVACY_URL, OFFLINE_MODE } from '../src/remote-config.js';
 import type { WidgetConfig } from '../src/config.js';
 
 const PUBLISHABLE = 'dhp_' + 'test_' + '0123456789abcdefghijklmn';
@@ -1083,10 +1083,17 @@ describe('the consent gate', () => {
 describe('report an issue', () => {
   const openButton = () => find<HTMLButtonElement>('.dh-report-open');
 
-  // Off unless the merchant turned it on — the rule every surface this pass
-  // added follows, so a widget whose config never landed is unchanged.
-  it('offers nothing until the merchant turns it on', async () => {
+  // On for a published config that is silent about it; the merchant can switch it
+  // off. (A config that never landed stays off — see DEFAULT_REMOTE_CONFIG.)
+  it('is offered unless the merchant turns it off', async () => {
     stubFetch(published());
+    mount(config());
+    await settle();
+    expect(openButton()?.hidden).toBe(false);
+  });
+
+  it('is hidden when the merchant turns it off', async () => {
+    stubFetch(published({ behaviour: { reportIssue: false } }));
     mount(config());
     await settle();
     expect(openButton()?.hidden).toBe(true);
@@ -1221,15 +1228,15 @@ describe('the conversation menu', () => {
     expect(find('.dh-header .dh-hmenu-toggle')?.getAttribute('aria-expanded')).toBe('false');
   });
 
-  // The menu's whole contract: nothing in it is decorative. Privacy and Report
-  // are absent here because this config offers neither, and End is absent
-  // because there is no live session in this environment.
+  // The menu's whole contract: nothing in it is decorative. Report and Privacy
+  // are on by default (a published config that says nothing about them), and End
+  // is absent because there is no live session in this environment.
   it('offers only what is actually backed', async () => {
     stubFetch(published());
     mount(config());
     await settle();
     expect(openMenu().hidden).toBe(false);
-    expect(labels()).toEqual(['Mute notifications', 'Start new conversation']);
+    expect(labels()).toEqual(['Mute notifications', 'Start new conversation', 'Report an issue', 'Privacy']);
   });
 
   it('adds Report an issue when the merchant offers it', async () => {
@@ -1240,13 +1247,15 @@ describe('the conversation menu', () => {
     expect(labels()).toContain('Report an issue');
   });
 
-  // Linking nowhere is worse than not offering it.
-  it('hides Privacy until the merchant sets a URL', async () => {
+  // A merchant who set no URL still gets a working link, to Dhaam's own policy.
+  it('falls back to the default privacy policy until the merchant sets a URL', async () => {
     stubFetch(published());
     mount(config());
     await settle();
     openMenu();
-    expect(labels()).not.toContain('Privacy');
+    expect(labels()).toContain('Privacy');
+    const link = [...shadow().querySelectorAll<HTMLAnchorElement>('.dh-header a.dh-hmenu-item')][0]!;
+    expect(link.getAttribute('href')).toBe(DEFAULT_PRIVACY_URL);
   });
 
   it('links Privacy to the merchant’s own policy', async () => {

@@ -300,6 +300,9 @@ export interface RemoteConfig {
   readonly support: SupportEntry | null;
 }
 
+/** Shown in the header menu when the merchant has not set their own `behaviour.privacyUrl`. */
+export const DEFAULT_PRIVACY_URL = 'https://dhaam.com/privacy';
+
 /** What a widget renders when the config could not be read at all. */
 export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
   enabled: true,
@@ -866,10 +869,14 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     transcriptEmail: bool(behaviour, 'transcriptEmail', DEFAULT_REMOTE_CONFIG.transcriptEmail),
     consentRequired: bool(behaviour, 'consentRequired', DEFAULT_REMOTE_CONFIG.consentRequired),
     consentText: str(behaviour, 'consentText'),
-    privacyUrl: str(behaviour, 'privacyUrl'),
+    // A merchant who set none still gets a Privacy item, pointing at Dhaam's policy.
+    privacyUrl: str(behaviour, 'privacyUrl') ?? DEFAULT_PRIVACY_URL,
     supportEmail: str(behaviour, 'supportEmail'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
-    reportIssue: bool(behaviour, 'reportIssue', DEFAULT_REMOTE_CONFIG.reportIssue),
+    // ON unless the merchant switched it off. Only a PUBLISHED config reaches here:
+    // `DEFAULT_REMOTE_CONFIG` (fetch failed) stays off, so a widget whose config never
+    // landed still looks as it did.
+    reportIssue: bool(behaviour, 'reportIssue', true),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),
