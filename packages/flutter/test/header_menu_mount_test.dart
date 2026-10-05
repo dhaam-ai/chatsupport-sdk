@@ -75,11 +75,11 @@ void main() {
     return cubit;
   }
 
-  /// The ⋯ toggle inside the panel's own header, and nowhere else — scoped so
-  /// an unrelated `more_horiz` elsewhere on screen cannot satisfy it.
+  /// The ⋮ toggle inside the panel's own header, and nowhere else — scoped so
+  /// an unrelated overflow menu elsewhere on screen cannot satisfy it.
   final Finder menuToggle = find.descendant(
     of: find.byType(AppBar),
-    matching: find.byIcon(Icons.more_horiz),
+    matching: find.byIcon(Icons.more_vert),
   );
 
   Future<void> openMenu(WidgetTester tester) async {

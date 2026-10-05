@@ -1,4 +1,5 @@
-import 'package:dhaam_chat/dhaam_chat.dart' show ConnectionState;
+import 'package:dhaam_chat/dhaam_chat.dart'
+    show ChatMode, ChatStatus, ConnectionState;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 // Flutter's own async.dart (re-exported through material.dart) declares a
 // SECOND, unrelated ConnectionState (AsyncSnapshot's none/waiting/active/
@@ -13,6 +14,16 @@ import 'support/remote_config_fixtures.dart';
 
 Widget _wrap(ChatWidgetCubit cubit, {VoidCallback? onClose}) =>
     MaterialApp(home: ChatWidget(cubit: cubit, onClose: onClose));
+
+ChatSessionSummary _summary({required String id, required String subject}) =>
+    ChatSessionSummary(
+      id: id,
+      status: ChatStatus.open,
+      mode: ChatMode.human,
+      createdAt: DateTime.utc(2026, 1, 1),
+      lastMessageAt: DateTime.utc(2026, 1, 2),
+      subject: subject,
+    );
 
 /// Lets a queued connection-state event actually reach [ChatWidgetCubit]
 /// before the next pump captures a frame. Same helper, same reasoning, as
@@ -99,6 +110,44 @@ void main() {
 
     expect(find.byType(MessagesScreen), findsOneWidget);
     expect(find.byType(AppBar), findsNothing);
+  });
+
+  testWidgets('Messages tab still switches sessions and starts a new one',
+      (tester) async {
+    cubit.updateSessionSummaries(<ChatSessionSummary>[
+      _summary(id: 'first', subject: 'First order'),
+      _summary(id: 'second', subject: 'Second order'),
+    ]);
+    await tester.pumpWidget(_wrap(cubit));
+
+    await tester.tap(find.text('Messages'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MessagesScreen), findsOneWidget);
+    expect(find.text('First order'), findsOneWidget);
+    expect(find.text('Second order'), findsOneWidget);
+
+    await tester.tap(find.text('First order'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ConversationScreen), findsOneWidget);
+    expect(client.joinedSessionIds, <String>['first']);
+
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.byType(MessagesScreen), findsOneWidget);
+
+    await tester.tap(find.text('Second order'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ConversationScreen), findsOneWidget);
+    expect(client.joinedSessionIds, <String>['first', 'second']);
+
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'New conversation'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConversationScreen), findsOneWidget);
+    expect(find.text('New conversation'), findsOneWidget);
+    expect(cubit.state.composingNew, isTrue);
   });
 
   testWidgets(

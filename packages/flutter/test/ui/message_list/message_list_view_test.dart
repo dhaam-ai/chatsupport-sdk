@@ -48,10 +48,15 @@ class _Recorder {
   final List<String> opened = <String>[];
   final List<(String, String)> replies = <(String, String)>[];
   final List<ChatMessage> copied = <ChatMessage>[];
+  Object? copyFailure;
 
   MessageListCallbacks get callbacks => MessageListCallbacks(
         onRetry: retried.add,
-        onCopyMessage: (ChatMessage message) async => copied.add(message),
+        onCopyMessage: (ChatMessage message) async {
+          final Object? failure = copyFailure;
+          if (failure != null) throw failure;
+          copied.add(message);
+        },
         onReplyToMessage: (ChatMessage message, String senderName) =>
             replies.add((message.id, senderName)),
         onQuickReply: quickReplies.add,
@@ -108,6 +113,43 @@ void main() {
       ),
     );
     expect(find.text(hostile), findsOneWidget);
+  });
+
+  testWidgets('long-pressing a message copies with feedback',
+      (WidgetTester tester) async {
+    final ChatMessage message = _msg(id: 'copy-me', content: 'order #1234');
+    final _Recorder recorder = await _pump(
+      tester,
+      MessageListInputs(
+        messages: <ChatMessage>[message],
+        localParticipantId: _me,
+      ),
+    );
+
+    await tester.longPress(find.text('order #1234'));
+    await tester.pumpAndSettle();
+
+    expect(recorder.copied, <ChatMessage>[message]);
+    expect(find.text(kCopiedLabel), findsOneWidget);
+    expect(find.byTooltip('Message actions'), findsNothing);
+    expect(find.byIcon(Icons.more_vert), findsNothing);
+  });
+
+  testWidgets('copy failure is caught and shown', (WidgetTester tester) async {
+    final _Recorder recorder = await _pump(
+      tester,
+      MessageListInputs(
+        messages: <ChatMessage>[_msg(id: 'copy-me', content: 'order #1234')],
+        localParticipantId: _me,
+      ),
+    );
+    recorder.copyFailure = StateError('clipboard refused');
+
+    await tester.longPress(find.text('order #1234'));
+    await tester.pumpAndSettle();
+
+    expect(recorder.copied, isEmpty);
+    expect(find.text(kCopyFailedLabel), findsOneWidget);
   });
 
   testWidgets('links are tappable and carry the matched text verbatim',
@@ -466,14 +508,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.more_horiz));
-    await tester.pumpAndSettle();
-    // Copy always works — the clipboard is this package's to reach.
-    expect(find.text('Copy'), findsOneWidget);
+    expect(find.byTooltip('Message actions'), findsNothing);
+    expect(find.byIcon(Icons.more_vert), findsNothing);
     expect(find.text('Reply'), findsNothing);
   });
 
-  testWidgets('every row offers Copy and Reply, and Reply carries the name',
+  testWidgets('every row can offer Reply, and Reply carries the name',
       (WidgetTester tester) async {
     final _Recorder recorder = await _pump(
       tester,

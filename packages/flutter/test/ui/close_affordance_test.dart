@@ -111,8 +111,8 @@ void main() {
     //
     // The name arrives as the semantics node's `tooltip` and NOT as its
     // `label` — that is where `IconButton` puts it, and it is the convention
-    // `HeaderMenu` ('Conversation options'), `SessionSwitcher` and the
-    // composer's Send button already follow. Asserted in the field it
+    // `HeaderMenu` ('Conversation options') and the composer's Send button
+    // already follow. Asserted in the field it
     // actually lands in rather than wrapped in a second `Semantics(label:)`,
     // which would give this one control two names and have a reader say both.
     expect(
