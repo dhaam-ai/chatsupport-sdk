@@ -757,6 +757,7 @@ describe('"End conversation" when the conversation moved on under the question',
     expect(tryQuery('.dh-confirm-end')).toBeNull();
     const form = query<HTMLElement>('.dh-newconvo-form');
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'Half typed while the close was in flight';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
 
     releaseClose?.();
     await settle();

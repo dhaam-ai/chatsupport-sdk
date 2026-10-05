@@ -355,6 +355,7 @@ describe('the pre-chat gate does not preempt a surface the customer opened', () 
     if (name === undefined) throw new Error('no name field');
     name.value = 'Ada';
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'Half typed';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
 
     // A session status flip with the transcript still empty: exactly the
     // reading of state the gate used to take as its cue.
@@ -381,6 +382,7 @@ describe('the pre-chat gate does not preempt a surface the customer opened', () 
     email.value = 'ada@example.com';
     query<HTMLButtonElement>('.dh-topic-chip').click();
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'It never arrived';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
     query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit').click();
     await settle();
 
@@ -489,6 +491,7 @@ describe('a surface the customer walked away from does not cover the next conver
     openStartNew();
     await settle();
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'half typed';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
 
     query<HTMLButtonElement>('.dh-back').click();
     await settle();
@@ -525,6 +528,7 @@ describe('a surface the customer walked away from does not cover the next conver
     await settle();
     const stale = query<HTMLElement>('.dh-newconvo-form');
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'half typed';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
     query<HTMLButtonElement>('.dh-back').click();
     await settle();
 
@@ -711,6 +715,7 @@ describe('an all-optional set of details left blank', () => {
     await settle();
     expect(fieldInputs()).toHaveLength(1);
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'It never arrived';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
     query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit').click();
     await settle();
     const next = newestSocket();
@@ -766,6 +771,7 @@ describe('an opening exchange whose form the customer walked away from', () => {
     name.value = 'Jane Doe';
     email.value = 'jane@example.com';
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = "Where's my refund?";
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
     query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit').click();
     await settle();
     expect(mints).toHaveLength(1);

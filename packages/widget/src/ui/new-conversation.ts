@@ -196,6 +196,14 @@ export function createNewConversationScreen(
 
   const status = createStatusLine();
   const submit = createSubmitButton('Start conversation', 'Starting…');
+  // Start stays disabled until there is a message to start with. The click handler
+  // below still validates, so this is the visible half of the same rule.
+  const syncStart = (): void => {
+    submit.node.disabled = message.value.trim() === '';
+  };
+  message.addEventListener('input', syncStart);
+  syncStart();
+
   const cancel = el('button', {
     attrs: { class: 'dh-form-skip', type: 'button' },
     text: 'Cancel',

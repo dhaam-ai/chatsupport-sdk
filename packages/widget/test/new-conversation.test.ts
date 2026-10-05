@@ -27,6 +27,11 @@ function build(topics: readonly ConversationTopic[] = TOPICS, preChatFields: rea
 
 const chips = (screen: { node: HTMLElement }) => [...screen.node.querySelectorAll<HTMLButtonElement>('.dh-topic-chip')];
 const message = (screen: { node: HTMLElement }) => screen.node.querySelector<HTMLTextAreaElement>('.dh-newconvo-message')!;
+// Typing, not assigning: Start is enabled from the textarea's `input` event.
+const typeMessage = (screen: { node: HTMLElement }, text: string): void => {
+  message(screen).value = text;
+  message(screen).dispatchEvent(new Event('input', { bubbles: true }));
+};
 const submit = (screen: { node: HTMLElement }) => screen.node.querySelector<HTMLButtonElement>('.dh-form-submit')!;
 /** The pre-chat inputs only — the message textarea shares `.dh-field-input` but is not an `<input>`. */
 const fieldInputs = (screen: { node: HTMLElement }) => [...screen.node.querySelectorAll<HTMLInputElement>('input.dh-field-input')];
@@ -79,7 +84,7 @@ describe('createNewConversationScreen — topic chips', () => {
     // Decorative — see new-conversation.ts's own header. Unchecking it must
     // not appear anywhere in what Start sends: there is no field for it.
     checkbox!.checked = false;
-    message(screen).value = 'Where is my order';
+    typeMessage(screen, 'Where is my order');
     submit(screen).click();
     await vi.waitFor(() => expect(onStart).toHaveBeenCalled());
     const input = onStart.mock.calls[0]![0];
@@ -89,18 +94,22 @@ describe('createNewConversationScreen — topic chips', () => {
 });
 
 describe('createNewConversationScreen — starting', () => {
-  it('refuses to start with an empty message, and focuses it', () => {
+  it('keeps Start disabled until there is a message, and re-disables it when the message is cleared', () => {
     const { screen, onStart } = build();
+    expect(submit(screen).disabled).toBe(true);
     submit(screen).click();
-
     expect(onStart).not.toHaveBeenCalled();
-    expect(screen.node.querySelector('.dh-form-error')?.textContent).toBe('Tell us what you need help with.');
-    expect(document.activeElement).toBe(message(screen));
+
+    typeMessage(screen, 'Where is my order');
+    expect(submit(screen).disabled).toBe(false);
+
+    typeMessage(screen, '   ');
+    expect(submit(screen).disabled).toBe(true);
   });
 
   it('starts with just a message when no topic was picked — topic key absent, not empty', async () => {
     const { screen, onStart } = build();
-    message(screen).value = 'Where is my order?';
+    typeMessage(screen, 'Where is my order?');
     submit(screen).click();
     await Promise.resolve();
 
@@ -111,7 +120,7 @@ describe('createNewConversationScreen — starting', () => {
   it('sends the chip LABEL as topic, not its id', async () => {
     const { screen, onStart } = build();
     chips(screen)[0]!.click(); // Delivery issue
-    message(screen).value = 'It never arrived';
+    typeMessage(screen, 'It never arrived');
     submit(screen).click();
     await Promise.resolve();
 
@@ -125,7 +134,7 @@ describe('createNewConversationScreen — starting', () => {
     const screen = createNewConversationScreen(TOPICS, { onStart, onCancel: vi.fn(), onError: vi.fn() });
     document.body.appendChild(screen.node);
 
-    message(screen).value = 'Hello';
+    typeMessage(screen, 'Hello');
     submit(screen).click();
     expect(submit(screen).disabled).toBe(true);
     expect(submit(screen).textContent).toBe('Starting…');
@@ -151,7 +160,7 @@ describe('createNewConversationScreen — starting', () => {
     const screen = createNewConversationScreen(TOPICS, { onStart, onCancel: vi.fn(), onError });
     document.body.appendChild(screen.node);
 
-    message(screen).value = 'Hello';
+    typeMessage(screen, 'Hello');
     submit(screen).click();
     await Promise.resolve();
     await Promise.resolve();
@@ -199,7 +208,7 @@ describe('createNewConversationScreen — pre-chat fields folded in', () => {
   it('blocks Start on a missing required field, naming it and focusing it', () => {
     const { screen, onStart } = build(TOPICS, [NAME, EMAIL]);
     fieldInputs(screen)[0]!.value = 'Ada';
-    message(screen).value = 'Hello';
+    typeMessage(screen, 'Hello');
     submit(screen).click();
 
     expect(onStart).not.toHaveBeenCalled();
@@ -207,8 +216,9 @@ describe('createNewConversationScreen — pre-chat fields folded in', () => {
     expect(document.activeElement).toBe(fieldInputs(screen)[1]);
   });
 
-  it('checks the details before the message — top to bottom, the order the customer reads', () => {
+  it('checks the required details once there is a message to start with', () => {
     const { screen, onStart } = build(TOPICS, [NAME]);
+    typeMessage(screen, 'Hello');
     submit(screen).click();
 
     expect(onStart).not.toHaveBeenCalled();
@@ -220,7 +230,7 @@ describe('createNewConversationScreen — pre-chat fields folded in', () => {
     fieldInputs(screen)[0]!.value = '  Ada  ';
     fieldInputs(screen)[1]!.value = 'ada@example.com';
     chips(screen)[0]!.click(); // Delivery issue
-    message(screen).value = 'It never arrived';
+    typeMessage(screen, 'It never arrived');
     submit(screen).click();
     await Promise.resolve();
 
@@ -233,7 +243,7 @@ describe('createNewConversationScreen — pre-chat fields folded in', () => {
 
   it('hands back an EMPTY record — not absence — when every optional field was left blank', async () => {
     const { screen, onStart } = build(TOPICS, [ORDER]);
-    message(screen).value = 'Hello';
+    typeMessage(screen, 'Hello');
     submit(screen).click();
     await Promise.resolve();
 
@@ -242,7 +252,7 @@ describe('createNewConversationScreen — pre-chat fields folded in', () => {
 
   it('leaves preChatAnswers absent when no fields were rendered', async () => {
     const { screen, onStart } = build(TOPICS, []);
-    message(screen).value = 'Hello';
+    typeMessage(screen, 'Hello');
     submit(screen).click();
     await Promise.resolve();
 

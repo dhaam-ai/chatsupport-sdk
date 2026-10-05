@@ -213,6 +213,7 @@ describe('an agent closing the conversation', () => {
     query<HTMLButtonElement>('.dh-system-action').click();
     await settle();
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'Actually, one more thing';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
     query<HTMLButtonElement>('.dh-newconvo-form .dh-form-submit').click();
     await settle();
 
@@ -257,6 +258,7 @@ describe('an agent closing the conversation', () => {
     query<HTMLButtonElement>('.dh-system-action').click();
     await settle();
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'Actually, one more thing';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
 
     // The double-submit guard now lives on the new-conversation surface's
     // own Start button (ui/forms.ts's submitOnce) rather than on

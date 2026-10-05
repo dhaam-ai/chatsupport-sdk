@@ -384,6 +384,7 @@ describe('starting a new conversation', () => {
     query<HTMLButtonElement>('.dh-messages-new').click();
     await settle();
     query<HTMLTextAreaElement>('.dh-newconvo-message').value = 'Hello';
+    query<HTMLTextAreaElement>('.dh-newconvo-message').dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   it('mints a session rather than joining one', async () => {
