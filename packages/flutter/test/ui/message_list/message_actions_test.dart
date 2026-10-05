@@ -100,32 +100,7 @@ void main() {
   });
 
   group('MessageActions', () {
-    testWidgets('offers exactly Copy and Reply — no edit, no delete',
-        (WidgetTester tester) async {
-      await tester.pumpWidget(
-        _wrap(
-          MessageActions(onCopy: () async {}, onReply: () {}),
-        ),
-      );
-      await tester.tap(find.byIcon(Icons.more_horiz));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Copy'), findsOneWidget);
-      expect(find.text('Reply'), findsOneWidget);
-      // There is no `message.edit` or `message.delete` frame; a menu item
-      // that cannot work is worse than an absent one.
-      expect(find.text('Edit'), findsNothing);
-      expect(find.text('Delete'), findsNothing);
-      // Exactly two items, not two plus something inert.
-      expect(
-        find.byWidgetPredicate((Widget widget) => widget is TextButton),
-        findsNWidgets(2),
-      );
-      expect(find.byIcon(Icons.copy_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.reply_rounded), findsOneWidget);
-    });
-
-    testWidgets('a press on a menu item does NOT close it, so its tap lands',
+    testWidgets('offers Reply directly and keeps Copy in the menu',
         (WidgetTester tester) async {
       int replies = 0;
       await tester.pumpWidget(
@@ -133,26 +108,41 @@ void main() {
           MessageActions(onCopy: () async {}, onReply: () => replies += 1),
         ),
       );
+
+      expect(find.byTooltip('Reply'), findsOneWidget);
+      expect(find.byIcon(Icons.more_horiz), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Reply'));
+      await tester.pump();
+      expect(replies, 1);
+
+      await tester.tap(find.byIcon(Icons.more_horiz));
+      await tester.pumpAndSettle();
+      expect(find.text('Copy'), findsOneWidget);
+    });
+
+    testWidgets('a copy-only row keeps the Copy menu',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          MessageActions(onCopy: () async {}, onReply: null),
+        ),
+      );
       await tester.tap(find.byIcon(Icons.more_horiz));
       await tester.pumpAndSettle();
 
-      // Reply, not Copy: its handler is synchronous, so the tap landing is
-      // observable without waiting out the copy-outcome timer.
-      final TestGesture gesture =
-          await tester.startGesture(tester.getCenter(find.text('Reply')));
-      await tester.pump();
-      // Still open at "release" time — the tap this press produces can land.
-      expect(find.text('Reply'), findsOneWidget);
-
-      await gesture.up();
-      await tester.pumpAndSettle();
-      expect(replies, 1);
       expect(find.text('Reply'), findsNothing);
+      expect(find.text('Copy'), findsOneWidget);
+      expect(find.text('Edit'), findsNothing);
+      expect(find.text('Delete'), findsNothing);
+      expect(find.byWidgetPredicate((Widget widget) => widget is TextButton),
+          findsOneWidget);
+      expect(find.byIcon(Icons.copy_rounded), findsOneWidget);
     });
 
     testWidgets('a press outside closes it', (WidgetTester tester) async {
       await tester.pumpWidget(
-        _wrap(MessageActions(onCopy: () async {}, onReply: () {})),
+        _wrap(MessageActions(onCopy: () async {}, onReply: null)),
       );
       await tester.tap(find.byIcon(Icons.more_horiz));
       await tester.pumpAndSettle();
@@ -166,7 +156,7 @@ void main() {
     testWidgets('Copy swaps its label then closes itself after 1200 ms',
         (WidgetTester tester) async {
       await tester.pumpWidget(
-        _wrap(MessageActions(onCopy: () async {}, onReply: () {})),
+        _wrap(MessageActions(onCopy: () async {}, onReply: null)),
       );
       await tester.tap(find.byIcon(Icons.more_horiz));
       await tester.pumpAndSettle();
@@ -185,7 +175,7 @@ void main() {
     testWidgets('Escape closes the menu and returns focus to the toggle',
         (WidgetTester tester) async {
       await tester.pumpWidget(
-        _wrap(MessageActions(onCopy: () async {}, onReply: () {})),
+        _wrap(MessageActions(onCopy: () async {}, onReply: null)),
       );
       await tester.tap(find.byIcon(Icons.more_horiz));
       await tester.pumpAndSettle();

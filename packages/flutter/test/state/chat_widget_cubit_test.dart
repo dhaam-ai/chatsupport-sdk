@@ -334,7 +334,7 @@ void main() {
       await flush();
 
       expect(fakeClient.joinedSessionIds, <String>['past-session-1']);
-      expect(calls.single.queryParameters['limit'], '30');
+      expect(calls.single.queryParameters['limit'], '$kMessageHistoryPageSize');
       expect(
         custom.state.messages.single.content,
         'history for tapped session',

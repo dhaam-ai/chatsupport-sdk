@@ -56,15 +56,16 @@ void main() {
     }
   }
 
-  testWidgets(
-      'an unrated ended session renders the survey in place of the '
-      'conversation', (tester) async {
+  testWidgets('an unrated ended session renders the survey in the transcript',
+      (tester) async {
     await tester.pumpWidget(_wrap(cubit));
     await endedWithATranscript(tester);
 
     expect(find.text('How was your support experience?'), findsOneWidget);
     expect(find.byKey(csatOptionKey(5)), findsOneWidget);
-    // In place of, never alongside.
+    expect(find.byType(MessageListView), findsOneWidget);
+    // A terminal conversation is still read-only while the feedback card is
+    // inline with the transcript.
     expect(find.byType(Composer), findsNothing);
   });
 

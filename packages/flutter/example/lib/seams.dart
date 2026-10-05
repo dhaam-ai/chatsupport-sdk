@@ -37,9 +37,16 @@ library;
 
 import 'package:dhaam_chat/dhaam_chat.dart' show TokenProvider;
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart'
-    show AttachmentPicker, Chime, filePickerAttachmentPicker;
+    show
+        AttachmentDraftController,
+        AttachmentPicker,
+        AttachmentUploader,
+        Chime,
+        FormErrorReporter,
+        filePickerAttachmentPicker,
+        restAttachmentUploader;
 import 'package:dhaam_chat_rest/dhaam_chat_rest.dart'
-    show GeolocationProbe, RestGeoPosition;
+    show GeolocationProbe, RestClient, RestGeoPosition;
 import 'package:flutter/foundation.dart';
 
 /// The `getToken` callback both clients take.
@@ -104,6 +111,23 @@ const GeolocationProbe kExampleGeolocationProbe = exampleGeolocationProbe;
 /// behind it in ordinary testable Dart. A host passes this tear-off; a test
 /// passes a closure.
 const AttachmentPicker kExampleAttachmentPicker = filePickerAttachmentPicker;
+
+AttachmentUploader exampleAttachmentUploader(
+  RestClient rest,
+  String? Function() sessionId,
+) =>
+    restAttachmentUploader(client: rest, sessionId: sessionId);
+
+AttachmentDraftController exampleAttachmentDraft({
+  required RestClient rest,
+  required String? Function() sessionId,
+  required FormErrorReporter onError,
+}) =>
+    AttachmentDraftController(
+      picker: kExampleAttachmentPicker,
+      uploader: exampleAttachmentUploader(rest, sessionId),
+      onError: onError,
+    );
 
 /// The message-arrival chime, with the package's own default player.
 ///

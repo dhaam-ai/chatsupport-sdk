@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 // Reproduces `session-picker.test.ts`'s `createPreChatScreen` block:
 //
 //   * "labels itself and its list for a screen reader"

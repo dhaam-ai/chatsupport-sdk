@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 /// The per-message menu: Copy, and Reply. Ports `ui/message-actions.ts`.
 ///
 /// ── Why only two ─────────────────────────────────────────────────────────
@@ -38,6 +40,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
+
+import '../../app_assets.dart';
+import '../svg_asset_icon.dart';
 
 /// How long the Copy item shows its outcome before the menu closes itself.
 ///
@@ -263,30 +268,45 @@ class _MessageActionsState extends State<MessageActions> {
 
   @override
   Widget build(BuildContext context) {
+    final VoidCallback? onReply = widget.onReply;
+
     return Focus(
       onKeyEvent: _onKey,
       skipTraversal: true,
       canRequestFocus: false,
-      child: CompositedTransformTarget(
-        link: _link,
-        child: OverlayPortal(
-          controller: _portal,
-          overlayChildBuilder: _buildMenu,
-          child: TapRegion(
-            groupId: _tapGroup,
-            child: IconButton(
-              focusNode: _toggleFocus,
-              // Named, because the glyph is three dots and a screen reader
-              // would otherwise announce an unlabelled button on every
-              // single message.
-              tooltip: 'Message actions',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (onReply != null)
+            IconButton(
+              tooltip: 'Reply',
               iconSize: 18,
               visualDensity: VisualDensity.compact,
-              onPressed: _controller.toggle,
-              icon: const Icon(Icons.more_horiz),
+              onPressed: onReply,
+              icon: const SvgAssetIcon(AppAssets.replyToIcon, size: 18),
+            ),
+          CompositedTransformTarget(
+            link: _link,
+            child: OverlayPortal(
+              controller: _portal,
+              overlayChildBuilder: _buildMenu,
+              child: TapRegion(
+                groupId: _tapGroup,
+                child: IconButton(
+                  focusNode: _toggleFocus,
+                  // Named, because the glyph is three dots and a screen reader
+                  // would otherwise announce an unlabelled button on every
+                  // single message.
+                  tooltip: 'Message actions',
+                  iconSize: 18,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _controller.toggle,
+                  icon: const Icon(Icons.more_horiz),
+                ),
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -330,15 +350,6 @@ class _MessageActionsState extends State<MessageActions> {
                           ? null
                           : () => unawaited(_controller.copy(widget.onCopy)),
                     ),
-                    if (widget.onReply != null)
-                      _MenuItem(
-                        icon: Icons.reply_rounded,
-                        label: 'Reply',
-                        onPressed: () {
-                          _controller.close();
-                          widget.onReply!();
-                        },
-                      ),
                   ],
                 ),
               ),

@@ -66,9 +66,9 @@ void main() {
     int closeCalls = 0;
     await tester.pumpWidget(_wrap(cubit, onClose: () => closeCalls += 1));
 
-    expect(find.byIcon(Icons.close), findsOneWidget);
+    expect(find.byIcon(Icons.close), findsWidgets);
     expect(find.byIcon(Icons.arrow_back), findsNothing);
-    await tester.tap(find.byTooltip('Close chat'));
+    await tester.tap(find.byTooltip('Close chat').hitTestable().last);
     await tester.pump();
 
     expect(closeCalls, 1);
@@ -110,8 +110,24 @@ void main() {
 
     expect(find.byType(ConversationScreen), findsOneWidget);
     expect(find.byType(AppBar), findsOneWidget);
+    expect(find.byType(ChatBottomNav), findsNothing);
     expect(find.text('New conversation'), findsOneWidget);
     expect(find.byType(BackButton), findsOneWidget);
+  });
+
+  testWidgets('conversation app bar follows the primary colour scheme',
+      (tester) async {
+    await tester.pumpWidget(_wrap(cubit));
+    await tester.tap(find.text('Send us a message'));
+    await tester.pump();
+
+    final ThemeData theme = Theme.of(tester.element(find.byType(AppBar)));
+    final AppBar appBar = tester.widget<AppBar>(find.byType(AppBar));
+
+    expect(appBar.backgroundColor, theme.colorScheme.primary);
+    expect(appBar.foregroundColor, theme.colorScheme.onPrimary);
+    expect(appBar.iconTheme?.color, theme.colorScheme.onPrimary);
+    expect(appBar.actionsIconTheme?.color, theme.colorScheme.onPrimary);
   });
 
   testWidgets('tapping the back button returns to Home and drops the back bar',

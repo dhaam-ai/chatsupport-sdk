@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 // Reproduces `session-picker.test.ts`'s `createSessionSwitcher` block:
 //
 //   * "starts closed: panel hidden, toggle unexpanded"

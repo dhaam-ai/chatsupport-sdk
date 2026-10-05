@@ -20,12 +20,7 @@ import 'dart:async';
 
 import 'package:dhaam_chat/dhaam_chat.dart';
 import 'package:dhaam_chat_rest/dhaam_chat_rest.dart'
-    show
-        MediaApi,
-        RestChatSessionSummary,
-        RestClient,
-        SessionApi,
-        kSessionSummaryLimitMax;
+    show RestClient, SessionApi;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -35,6 +30,10 @@ import '../config/remote_config.dart';
 import '../config/remote_config_client.dart';
 import '../nav/chat_screens.dart';
 import '../session/chat_session_summary.dart';
+import '../session/contact_identity.dart';
+import '../session/message_history_source.dart';
+import '../session/rest_message_history.dart';
+import '../session/rest_session_source.dart';
 import '../surfaces/product_surface_slot.dart';
 import '../ui/attachments/attachments.dart';
 import '../ui/voice/voice.dart';
@@ -47,6 +46,7 @@ import '../ui/csat/session_actions.dart';
 // import above: a function type declared where its widget lives, consumed
 // here, so this class still constructs no network client of its own.
 import '../ui/header/transcript_email.dart';
+import '../ui/header/chime.dart';
 import '../forms/forms.dart' show FormErrorReporter;
 import '../ui/pre_chat/pre_chat.dart';
 import '../ui/session_picker/session_list_refresher.dart';
@@ -92,26 +92,42 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     String? sessionId,
     RestClient? rest,
     ChatTarget? target,
-    int initialHistoryLimit = 30,
+    int initialHistoryLimit = kMessageHistoryPageSize,
     ChatIdentity identity = ChatIdentity.guest,
     Scheduler scheduler = const SystemScheduler(),
     Duration reconnectInterval = kReconnectInterval,
     ChatSessionActions? sessionActions,
     ConsentGate? consent,
+    MuteMemory? mute,
     IssueReporter? issueReporter,
+    SessionListFetch? sessionSource,
+    MessageHistoryFetch? messageHistory,
+    RestIdentityProfile? contactProfile,
+    ContactIdentifier? contactIdentifier,
     AttachmentUploader? attachmentUploader,
     AttachmentPicker attachmentPicker = filePickerAttachmentPicker,
+    AttachmentPicker? cameraAttachmentPicker,
+    AttachmentPicker galleryAttachmentPicker = galleryImageAttachmentPicker,
     VoiceDeviceFactory createVoiceDevice = RecordVoiceDevice.new,
   })  : _client = client,
         _createVoiceDevice = createVoiceDevice,
         _consent = consent ?? ConsentGate.unremembered(),
+        _mute = mute ?? MuteMemory.unremembered(),
         _rest = rest,
         _target = target,
-        _initialHistoryLimit = initialHistoryLimit,
+        _messageHistory = messageHistory ??
+            (rest == null || initialHistoryLimit <= 0
+                ? null
+                : restMessageHistory(rest: rest, limit: initialHistoryLimit)),
+        _contactProfile = contactProfile,
+        _contactIdentifier = contactIdentifier ??
+            (rest == null ? null : restContactIdentifier(rest: rest)),
         _sessionActions = sessionActions,
         _issueReporter = issueReporter,
         _attachmentUploader = attachmentUploader,
         _attachmentPicker = attachmentPicker,
+        _cameraAttachmentPicker = cameraAttachmentPicker,
+        _galleryAttachmentPicker = galleryAttachmentPicker,
         _initialSessionId = sessionId,
         _screens = ChatScreens(
           initial: initialScreen ??
@@ -165,10 +181,13 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     // construction awaited I/O would be untestable by construction (the same
     // reason [connect] is not called from here either).
     unawaited(_restoreConsent());
+    unawaited(_restoreMute());
     final RestClient? restClient = rest;
-    if (restClient != null) {
+    final SessionListFetch? fetch = sessionSource ??
+        (restClient == null ? null : restSessionSource(rest: restClient));
+    if (fetch != null) {
       _sessionList = SessionListRefresher(
-        fetch: () => _fetchRestSessionSummaries(restClient),
+        fetch: fetch,
         onSessions: updateSessionSummaries,
         onError: (Object error, StackTrace stackTrace) {
           FlutterError.reportError(
@@ -182,7 +201,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   final WidgetChatClient _client;
   final RestClient? _rest;
   final ChatTarget? _target;
-  final int _initialHistoryLimit;
+  final MessageHistoryFetch? _messageHistory;
   String? _resolvedInitialSessionId;
   final String? _initialSessionId;
   final ChatScreens _screens;
@@ -192,12 +211,21 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// footer and no way to end a conversation from here. Off, not broken; a
   /// card whose submit silently discarded the answer would be worse.
   final ChatSessionActions? _sessionActions;
+  final MuteMemory _mute;
+  final RestIdentityProfile? _contactProfile;
+  final ContactIdentifier? _contactIdentifier;
+  bool _contactIdentified = false;
+  bool _contactIdentifying = false;
 
   /// REST-backed source for the Messages/Home conversation list.
   SessionListRefresher? _sessionList;
 
   /// Monotonic guard for in-flight transcript history loads.
   int _historyEpoch = 0;
+  String? _historyTargetSessionId;
+  String? _historyInFlightSessionId;
+  String? _historyLoadedSessionId;
+  final Set<String> _historySeededMessageIds = <String>{};
 
   /// The raw `POST /chat/sessions/{id}/report-issue` route the host supplied,
   /// or null when the SDK should derive the REST-backed one from [_rest].
@@ -274,6 +302,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// touches no `MethodChannel` — without obliging every host to supply
   /// something the package already has.
   final AttachmentPicker _attachmentPicker;
+  final AttachmentPicker? _cameraAttachmentPicker;
+  final AttachmentPicker _galleryAttachmentPicker;
 
   /// Builds the microphone. Defaults to the real one, on `record`.
   ///
@@ -483,6 +513,11 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         conversationOpened: state.conversationOpened,
         hasSession: state.session != null,
         hasMessages: state.messages.isNotEmpty,
+        csatLoadingSessionId: state.messagesLoading &&
+                endedSessionId != null &&
+                state.messages.isEmpty
+            ? endedSessionId
+            : null,
         // A DECISION, not the inputs to one — see the field's own doc. It is
         // reached through [dueCsatCard] so that this and the ended footer ask
         // one question of one answerer, which is what stops the two of them
@@ -525,9 +560,11 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// is the natural, single place to call this once, from `initState`.
   Future<void> connect() async {
     _refreshSessionList();
+    _identifyContact();
     final String? sessionId = await _resolveInitialSessionId();
     await _client.connect();
     if (sessionId != null) {
+      _historyTargetSessionId = sessionId;
       _client.joinSession(sessionId);
       unawaited(_loadInitialMessageHistory(sessionId));
     }
@@ -562,47 +599,65 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   }
 
   Future<void> _loadInitialMessageHistory(String sessionId) async {
-    final RestClient? rest = _rest;
-    if (rest == null || _initialHistoryLimit <= 0) return;
+    final MessageHistoryFetch? fetch = _messageHistory;
+    if (fetch == null) return;
+    if (_historyLoadedSessionId == sessionId) return;
+    if (_historyInFlightSessionId == sessionId) return;
+    _historyInFlightSessionId = sessionId;
     final int epoch = ++_historyEpoch;
+    emit(state.copyWith(messagesLoading: true));
 
     try {
-      final page = await rest.listMessages(
-          sessionId: sessionId, limit: _initialHistoryLimit);
-      if (isClosed || epoch != _historyEpoch) return;
-      loadMessageHistory(page.messages);
+      final List<ChatMessage> page = await fetch(sessionId);
+      if (isClosed ||
+          epoch != _historyEpoch ||
+          _historyTargetSessionId != sessionId) {
+        return;
+      }
+      _historyLoadedSessionId = sessionId;
+      loadMessageHistory(page);
     } catch (error, stackTrace) {
       if (isClosed || epoch != _historyEpoch) return;
+      emit(state.copyWith(messagesLoading: false));
+      _syncSurfaces();
       FlutterError.reportError(FlutterErrorDetails(
         exception: error,
         stack: stackTrace,
         context: ErrorDescription('loading chat history'),
       ));
+    } finally {
+      if (_historyInFlightSessionId == sessionId) {
+        _historyInFlightSessionId = null;
+      }
     }
   }
 
-  Future<List<ChatSessionSummary>> _fetchRestSessionSummaries(
-    RestClient rest,
-  ) async {
-    final List<RestChatSessionSummary> rows =
-        await rest.listSessions(limit: kSessionSummaryLimitMax);
-    return rows.map(_toChatSessionSummary).toList(growable: false);
+  void _identifyContact() {
+    if (_contactIdentified || _contactIdentifying) return;
+    final RestIdentityProfile? profile = _contactProfile;
+    final ContactIdentifier? identify = _contactIdentifier;
+    if (profile == null || identify == null) return;
+
+    _contactIdentifying = true;
+    unawaited(() async {
+      try {
+        await identify(profile);
+        _contactIdentified = true;
+      } catch (error, stackTrace) {
+        FlutterError.reportError(
+          FlutterErrorDetails(exception: error, stack: stackTrace),
+        );
+      } finally {
+        _contactIdentifying = false;
+      }
+    }());
   }
 
-  ChatSessionSummary _toChatSessionSummary(RestChatSessionSummary row) =>
-      ChatSessionSummary(
-        id: row.id,
-        status: row.status,
-        mode: row.mode,
-        createdAt: row.createdAt,
-        closedAt: row.closedAt,
-        lastMessageAt: row.lastMessageAt,
-        lastMessagePreview: row.lastMessagePreview,
-        unreadCount: row.unreadCount,
-        handledBy: row.handledBy,
-        subject: row.subject,
-        topic: row.topic,
-      );
+  Future<void> _restoreMute() async {
+    if (await _mute.readMuted()) {
+      if (!isClosed && !state.muted) emit(state.copyWith(muted: true));
+    }
+  }
 
   void _refreshSessionList() {
     final SessionListRefresher? sessions = _sessionList;
@@ -681,10 +736,14 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// with no `seq` stay after confirmed history until their ack replaces them.
   void loadMessageHistory(Iterable<ChatMessage> messages) {
     for (final ChatMessage message in messages) {
-      _byId[message.id] = message;
+      if (!_byId.containsKey(message.id) ||
+          _historySeededMessageIds.contains(message.id)) {
+        _byId[message.id] = message;
+        _historySeededMessageIds.add(message.id);
+      }
     }
     final List<ChatMessage> ordered = _orderedMessages();
-    emit(state.copyWith(messages: ordered));
+    emit(state.copyWith(messages: ordered, messagesLoading: false));
     _syncSurfaces();
   }
 
@@ -775,14 +834,22 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   /// Clears [ChatWidgetState.selectedTopic] — a topic chip belongs to a
   /// prospective NEW conversation and has nothing to do with re-opening one.
   void openConversation(String sessionId) {
+    final bool hadSession = state.session != null;
     final bool switchingSessions =
         state.session?.sessionId != sessionId && state.messages.isNotEmpty;
+    final bool switchingHistoryTarget = _historyTargetSessionId != sessionId;
+    if (switchingHistoryTarget) {
+      _historyTargetSessionId = sessionId;
+      _historyEpoch++;
+    }
     _client.joinSession(sessionId);
     _surfaces.discardUserSurface();
     _composingTicket = null;
     _screens.go(ScreenName.conversation);
     if (switchingSessions) {
       _byId.clear();
+      _historySeededMessageIds.clear();
+      _historyLoadedSessionId = null;
     }
     emit(
       state.copyWith(
@@ -791,9 +858,29 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
         conversationOpened: true,
         clearSelectedTopic: true,
         messages: switchingSessions ? const <ChatMessage>[] : null,
+        messagesLoading: hadSession &&
+            _messageHistory != null &&
+            _historyLoadedSessionId != sessionId,
       ),
     );
-    unawaited(_loadInitialMessageHistory(sessionId));
+    if (_messageHistory != null && _historyLoadedSessionId != sessionId) {
+      if (hadSession) {
+        unawaited(_loadInitialMessageHistory(sessionId));
+      } else {
+        final int targetEpoch = _historyEpoch;
+        scheduleMicrotask(() {
+          scheduleMicrotask(() {
+            if (isClosed ||
+                targetEpoch != _historyEpoch ||
+                _historyTargetSessionId != sessionId ||
+                state.session?.sessionId == sessionId) {
+              return;
+            }
+            unawaited(_loadInitialMessageHistory(sessionId));
+          });
+        });
+      }
+    }
     _syncSurfaces();
   }
 
@@ -986,6 +1073,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     if (uploader == null) return null;
     return AttachmentDraftController(
       picker: _attachmentPicker,
+      cameraPicker: _cameraAttachmentPicker,
+      galleryPicker: _galleryAttachmentPicker,
       uploader: uploader,
       onError: onError,
     );
@@ -1175,6 +1264,8 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     try {
       if (state.session != null) {
         _byId.clear();
+        _historySeededMessageIds.clear();
+        _historyLoadedSessionId = null;
         emit(
           state.copyWith(
             messages: const <ChatMessage>[],
@@ -1581,6 +1672,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   void setMuted(bool muted) {
     if (state.muted == muted) return;
     emit(state.copyWith(muted: muted));
+    unawaited(_mute.recordMuted(muted));
   }
 
   /// Whether there is a live conversation for the header menu to offer to end.
@@ -1696,6 +1788,7 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
   }
 
   void _onMessage(ChatMessage message) {
+    _historySeededMessageIds.remove(message.id);
     _byId[message.id] = message;
     emit(
       state.copyWith(
@@ -1743,19 +1836,45 @@ class ChatWidgetCubit extends Cubit<ChatWidgetState> {
     // nobody ended.
     if (session.sessionId != _parkedSessionId) _parkedSessionId = null;
     final String? currentSessionId = state.session?.sessionId;
-    if (currentSessionId != null && currentSessionId != session.sessionId) {
-      _byId.clear();
+    final SessionSnapshot? previous = state.session;
+    final bool replacingSession =
+        currentSessionId != null && currentSessionId != session.sessionId;
+    if (replacingSession) {
+      if (_historyTargetSessionId != session.sessionId) {
+        _historyTargetSessionId = session.sessionId;
+        _historyEpoch++;
+      }
+      final bool historyAlreadyLoaded =
+          _historyLoadedSessionId == session.sessionId;
+      if (!historyAlreadyLoaded) {
+        _byId.clear();
+        _historySeededMessageIds.clear();
+        _historyLoadedSessionId = null;
+      }
       emit(
         state.copyWith(
           session: session,
-          messages: const <ChatMessage>[],
+          messages: historyAlreadyLoaded ? null : const <ChatMessage>[],
+          messagesLoading: !historyAlreadyLoaded && _messageHistory != null,
           clearReplyingTo: true,
         ),
       );
+      if (!historyAlreadyLoaded) {
+        unawaited(_loadInitialMessageHistory(session.sessionId));
+      }
     } else {
       emit(state.copyWith(session: session));
     }
-    _refreshSessionList();
+    if (previous == null ||
+        replacingSession ||
+        previous.status != session.status ||
+        previous.mode != session.mode ||
+        previous.handledBy != session.handledBy ||
+        session.status == ChatStatus.closed ||
+        session.status == ChatStatus.resolved ||
+        (_sessionList?.needsRetry ?? false)) {
+      _refreshSessionList();
+    }
     _syncSurfaces();
   }
 

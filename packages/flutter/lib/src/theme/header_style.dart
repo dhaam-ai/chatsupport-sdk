@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 /// Resolving [HeaderAppearance] into paintable Flutter values — the hero
 /// header's background colour, a readable foreground, and its gradient or
 /// image overlay.

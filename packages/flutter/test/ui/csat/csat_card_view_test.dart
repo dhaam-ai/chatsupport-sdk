@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 // The rating card in isolation — the Dart counterpart of
 // `product-surfaces.test.ts:304-460`'s `describe('CSAT survey')` block, plus
 // the locked/already-rated assertions from `csat-submit.test.ts:344-430`.
@@ -51,15 +53,36 @@ Text _glyph(WidgetTester tester, int score) => tester.widget<Text>(
       ),
     );
 
+Icon _star(WidgetTester tester, int score) => tester.widget<Icon>(
+      find.descendant(
+        of: find.byKey(csatOptionKey(score)),
+        matching: find.byType(Icon),
+      ),
+    );
+
 List<String> _glyphs(WidgetTester tester) => <String>[
       for (int score = 1; score <= kCsatMaxScore; score += 1)
         _glyph(tester, score).data!,
     ];
 
+List<IconData?> _stars(WidgetTester tester) => <IconData?>[
+      for (int score = 1; score <= kCsatMaxScore; score += 1)
+        _star(tester, score).icon,
+    ];
+
 List<bool> _isLit(WidgetTester tester) => <bool>[
       for (int score = 1; score <= kCsatMaxScore; score += 1)
-        _glyph(tester, score).style?.color == _lit,
+        _isOptionLit(tester, score),
     ];
+
+bool _isOptionLit(WidgetTester tester, int score) {
+  final Finder option = find.byKey(csatOptionKey(score));
+  final Finder icon = find.descendant(of: option, matching: find.byType(Icon));
+  if (icon.evaluate().isNotEmpty) {
+    return tester.widget<Icon>(icon).color == _lit;
+  }
+  return _glyph(tester, score).style?.color == _lit;
+}
 
 List<bool> _isChecked(WidgetTester tester) => <bool>[
       for (int score = 1; score <= kCsatMaxScore; score += 1)
@@ -113,7 +136,13 @@ void main() {
       await tester.tap(find.byKey(csatOptionKey(4)));
       await tester.pump();
 
-      expect(_glyphs(tester), <String>['★', '★', '★', '★', '☆']);
+      expect(_stars(tester), <IconData?>[
+        Icons.star_rounded,
+        Icons.star_rounded,
+        Icons.star_rounded,
+        Icons.star_rounded,
+        Icons.star_border_rounded,
+      ]);
       expect(_isLit(tester), <bool>[true, true, true, true, false]);
     });
 
@@ -326,7 +355,13 @@ void main() {
       expect(find.text('Your rating'), findsWidgets);
       expect(find.text('How was your support experience?'), findsNothing);
       expect(_isChecked(tester), <bool>[false, false, false, true, false]);
-      expect(_glyphs(tester), <String>['★', '★', '★', '★', '☆']);
+      expect(_stars(tester), <IconData?>[
+        Icons.star_rounded,
+        Icons.star_rounded,
+        Icons.star_rounded,
+        Icons.star_rounded,
+        Icons.star_border_rounded,
+      ]);
 
       // Not a DISABLED submit — no submit at all, which is the difference
       // between "you cannot press this" and never inviting the press.

@@ -70,6 +70,8 @@ import 'package:flutter/material.dart';
 
 import 'attachments/attachments.dart';
 import 'composer_affordances/composer_affordances.dart';
+import '../app_assets.dart';
+import 'svg_asset_icon.dart';
 import 'voice/voice.dart';
 
 class Composer extends StatefulWidget {
@@ -208,6 +210,7 @@ class _ComposerState extends State<Composer> {
     // same reasoning composer.ts's syncSendState gives for re-checking on
     // every input event.
     _controller.addListener(() => setState(() {}));
+    _focusNode.addListener(_onFocusChanged);
     widget.controller?.attach(_submitSuggestion);
     // The send button, the affordance gate and the popover rule all read the
     // draft controller, so this widget has to rebuild when it changes — the
@@ -217,6 +220,10 @@ class _ComposerState extends State<Composer> {
   }
 
   void _onAttachmentsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onFocusChanged() {
     if (mounted) setState(() {});
   }
 
@@ -261,6 +268,7 @@ class _ComposerState extends State<Composer> {
     // belongs to whoever built it.
     widget.attachments?.removeListener(_onAttachmentsChanged);
     _controller.dispose();
+    _focusNode.removeListener(_onFocusChanged);
     _focusNode.dispose();
     _emojiButtonFocus.dispose();
     _linkButtonFocus.dispose();
@@ -406,6 +414,9 @@ class _ComposerState extends State<Composer> {
         _controller.text.trim().isNotEmpty || (attachments?.hasDraft ?? false);
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final bool affordances = _affordancesEnabled;
+    final bool canSend = widget.enabled && !_uploading && hasContent;
+    final Color borderColor =
+        _focusNode.hasFocus ? scheme.primary : scheme.outlineVariant;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -442,83 +453,145 @@ class _ComposerState extends State<Composer> {
             target: widget.replyTo!,
             onCancel: widget.onCancelReply,
           ),
-        TextField(
-          // Named because the link popover above brings a second field into
-          // the same subtree while it is open, and "the message box" must
-          // stay unambiguous for anything reaching in from outside.
-          key: const Key('composer.message'),
-          controller: _controller,
-          focusNode: _focusNode,
-          enabled: widget.enabled,
-          minLines: 1,
-          maxLines: 5,
-          textInputAction: TextInputAction.send,
-          onChanged: (_) => widget.onTyping?.call(),
-          onSubmitted: (_) => _submit(),
-          decoration: InputDecoration(
-            hintText: 'Type a message…',
-            isDense: true,
-            filled: true,
-            fillColor: scheme.surfaceContainerHighest,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(widget.radius),
-              borderSide: BorderSide.none,
-            ),
-            // The reference's own order — attach, emoji, mic, link, send —
-            // split across the two slots Flutter's decoration offers.
-            prefixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (attachments != null)
-                  AttachmentAttachButton(
-                    controller: attachments,
-                    enabled: widget.fileUploads,
-                    composerEnabled: widget.enabled,
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: borderColor),
+            borderRadius: BorderRadius.circular(widget.radius),
+          ),
+          child: Column(
+            children: [
+              TextField(
+                // Named because the link popover above brings a second field into
+                // the same subtree while it is open, and "the message box" must
+                // stay unambiguous for anything reaching in from outside.
+                key: const Key('composer.message'),
+                controller: _controller,
+                focusNode: _focusNode,
+                enabled: widget.enabled,
+                minLines: 1,
+                maxLines: 5,
+                textInputAction: TextInputAction.send,
+                onChanged: (_) => widget.onTyping?.call(),
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(
+                  hintText: 'Type your message…',
+                  isDense: true,
+                  // filled: true,
+                  // fillColor: scheme.surfaceContainerHighest,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(widget.radius),
+                    borderSide: BorderSide.none,
                   ),
-                IconButton(
-                  focusNode: _emojiButtonFocus,
-                  tooltip: 'Insert an emoji',
-                  icon: const Icon(Icons.emoji_emotions_outlined),
-                  onPressed:
-                      affordances ? () => _togglePopover(_Popover.emoji) : null,
                 ),
-              ],
-            ),
-            suffixIcon: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                VoiceRecordButton(
-                  // Null when there is no draft controller, which draws no
-                  // mic at all — the same "off, not broken" rule the
-                  // paperclip follows. A voice note can only become a
-                  // message by becoming a draft (see [_onVoiceRecorded]), so
-                  // a microphone offered without one is a control that
-                  // records into nothing.
-                  controller: attachments == null ? null : widget.voice,
-                  enabled: affordances,
-                  onRecorded: _onVoiceRecorded,
-                ),
-                IconButton(
-                  focusNode: _linkButtonFocus,
-                  tooltip: 'Insert a link',
-                  icon: const Icon(Icons.link),
-                  onPressed:
-                      affordances ? () => _togglePopover(_Popover.link) : null,
-                ),
-                IconButton(
-                  tooltip: 'Send message',
-                  icon: const Icon(Icons.send),
-                  // `_uploading`, not `widget.uploading`: the send button and
-                  // the chip guard read one flag.
-                  onPressed: widget.enabled && !_uploading && hasContent
-                      ? _submit
-                      : null,
-                ),
-              ],
-            ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        if (attachments != null)
+                          AttachmentImageButton(
+                            controller: attachments,
+                            enabled: widget.fileUploads,
+                            composerEnabled: widget.enabled,
+                          ),
+                        IconButton(
+                          constraints: const BoxConstraints.tightFor(
+                            width: 36,
+                            height: 36,
+                          ),
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          focusNode: _emojiButtonFocus,
+                          tooltip: 'Insert an emoji',
+                          icon: const Icon(Icons.emoji_emotions_rounded),
+                          onPressed: affordances
+                              ? () => _togglePopover(_Popover.emoji)
+                              : null,
+                        ),
+                        if (attachments != null)
+                          AttachmentAttachButton(
+                            controller: attachments,
+                            enabled: widget.fileUploads,
+                            composerEnabled: widget.enabled,
+                          ),
+                        IconButton(
+                          constraints: const BoxConstraints.tightFor(
+                            width: 20,
+                            height: 20,
+                          ),
+                          padding: EdgeInsets.zero,
+                          visualDensity: VisualDensity.compact,
+                          focusNode: _linkButtonFocus,
+                          tooltip: 'Insert a link',
+                          icon: const SvgAssetIcon(AppAssets.linkIcon),
+                          onPressed: affordances
+                              ? () => _togglePopover(_Popover.link)
+                              : null,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      VoiceRecordButton(
+                        // Null when there is no draft controller, which draws no
+                        // mic at all — the same "off, not broken" rule the
+                        // paperclip follows. A voice note can only become a
+                        // message by becoming a draft (see [_onVoiceRecorded]), so
+                        // a microphone offered without one is a control that
+                        // records into nothing.
+                        controller: attachments == null ? null : widget.voice,
+                        enabled: affordances,
+                        onRecorded: _onVoiceRecorded,
+                      ),
+                      IconButton(
+                        tooltip: 'Send message',
+                        icon: _SendIcon(enabled: canSend),
+                        // `_uploading`, not `widget.uploading`: the send button and
+                        // the chip guard read one flag.
+                        onPressed: canSend ? _submit : null,
+                      ),
+                    ],
+                  )
+                ],
+              )
+            ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SendIcon extends StatelessWidget {
+  const _SendIcon({required this.enabled});
+
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color background =
+        enabled ? scheme.primary : scheme.onSurface.withAlpha(31);
+    final Color foreground =
+        enabled ? scheme.onPrimary : scheme.onSurface.withAlpha(97);
+
+    return DecoratedBox(
+      key: const Key('composer.sendIcon'),
+      decoration: BoxDecoration(
+        color: background,
+        shape: BoxShape.circle,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: IconTheme(
+          data: IconThemeData(color: foreground, size: 18),
+          child: const SvgAssetIcon(AppAssets.sendIcon, size: 18),
+        ),
+      ),
     );
   }
 }

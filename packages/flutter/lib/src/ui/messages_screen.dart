@@ -25,16 +25,20 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../app_assets.dart';
 import '../session/chat_session_summary.dart';
 import '../session/session_display.dart';
 import '../state/chat_widget_cubit.dart';
 import '../state/chat_widget_state.dart';
 import '../theme/chat_theme.dart';
+import 'session_status_pill.dart';
+import 'svg_asset_icon.dart';
 
 class MessagesScreen extends StatefulWidget {
-  const MessagesScreen({super.key, this.onBack});
+  const MessagesScreen({super.key, this.onBack, this.onClose});
 
   final VoidCallback? onBack;
+  final VoidCallback? onClose;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -90,61 +94,79 @@ class _MessagesScreenState extends State<MessagesScreen> {
     return BlocBuilder<ChatWidgetCubit, ChatWidgetState>(
       builder: (BuildContext context, ChatWidgetState state) {
         final ChatWidgetCubit cubit = context.read<ChatWidgetCubit>();
+        final List<ChatSessionSummary> openSummaries =
+            state.customerVisibleSessions;
+        final bool hasOnlyClosedSummaries =
+            state.sessionSummaries.isNotEmpty && openSummaries.isEmpty;
         final List<ChatSessionSummary> visible =
-            state.sessionSummaries.where(_matches).toList(growable: false);
+            openSummaries.where(_matches).toList(growable: false);
         final double radius = chatCornerRadius(state.config);
 
         return SafeArea(
           child: Column(
             children: <Widget>[
+              _MessagesHeader(
+                onBack: widget.onBack,
+                onClose: widget.onClose,
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: Row(
-                  children: <Widget>[
-                    if (widget.onBack != null) ...<Widget>[
-                      IconButton(
-                        tooltip: 'Back',
-                        icon: const Icon(Icons.arrow_back),
-                        onPressed: widget.onBack,
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    Expanded(
-                      child: _SearchField(controller: _search, radius: radius),
-                    ),
-                  ],
-                ),
+                child: _SearchField(controller: _search, radius: radius),
+              ),
+              const Divider(
+                height: 8,
+                thickness: 0.5,
               ),
               Expanded(
                 child: visible.isEmpty
-                    ? _EmptyState(hasQuery: _query.isNotEmpty)
+                    ? _EmptyState(
+                        hasQuery: _query.isNotEmpty,
+                        hasOnlyClosedSummaries: hasOnlyClosedSummaries,
+                        radius: radius,
+                        onNewConversation: cubit.startNewConversation,
+                      )
                     : ListView.separated(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        padding: EdgeInsets.zero,
                         itemCount: visible.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        separatorBuilder: (_, __) => const Divider(
+                          height: 8,
+                          thickness: 0.5,
+                        ),
                         itemBuilder: (BuildContext context, int index) {
                           final ChatSessionSummary summary = visible[index];
-                          return _ConversationRow(
-                            summary: summary,
-                            radius: radius,
-                            onTap: () => cubit.openConversation(summary.id),
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: _ConversationRow(
+                              summary: summary,
+                              radius: radius,
+                              onTap: () => cubit.openConversation(summary.id),
+                            ),
                           );
                         },
                       ),
               ),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: FilledButton.icon(
-                  onPressed: cubit.startNewConversation,
-                  icon: const Icon(Icons.add),
-                  label: const Text('New conversation'),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(44),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(radius)),
+              if (visible.isNotEmpty) ...<Widget>[
+                const Divider(
+                  height: 8,
+                  thickness: 0.5,
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: FilledButton.icon(
+                    onPressed: cubit.startNewConversation,
+                    icon: const SvgAssetIcon(
+                      AppAssets.editIcon,
+                      size: 18,
+                    ),
+                    label: const Text('New conversation'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(44),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(radius)),
+                    ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         );
@@ -153,50 +175,210 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 }
 
-class _SearchField extends StatelessWidget {
+class _MessagesHeader extends StatelessWidget {
+  const _MessagesHeader({this.onBack, this.onClose});
+
+  final VoidCallback? onBack;
+  final VoidCallback? onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: SizedBox(
+        height: 64,
+        child: NavigationToolbar(
+          centerMiddle: false,
+          leading: onBack == null
+              ? null
+              : IconButton(
+                  tooltip: 'Back',
+                  icon: const Icon(Icons.arrow_back_ios),
+                  onPressed: onBack,
+                ),
+          middle: Text(
+            'Messages',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          trailing: onClose == null
+              ? null
+              : IconButton(
+                  tooltip: 'Close chat',
+                  icon: const Icon(Icons.close),
+                  onPressed: onClose,
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchField extends StatefulWidget {
   const _SearchField({required this.controller, required this.radius});
 
   final TextEditingController controller;
   final double radius;
 
   @override
+  State<_SearchField> createState() => _SearchFieldState();
+}
+
+class _SearchFieldState extends State<_SearchField> {
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_onFocusChanged);
+    widget.controller.addListener(_onSearchChanged);
+  }
+
+  @override
+  void didUpdateWidget(_SearchField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller)) {
+      oldWidget.controller.removeListener(_onSearchChanged);
+      widget.controller.addListener(_onSearchChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onSearchChanged);
+    _focusNode.removeListener(_onFocusChanged);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChanged() => setState(() {});
+
+  void _onSearchChanged() => setState(() {});
+
+  @override
   Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final Color borderColor =
+        _focusNode.hasFocus ? scheme.primary : scheme.outlineVariant;
+
     return TextField(
-      controller: controller,
+      controller: widget.controller,
+      focusNode: _focusNode,
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: 'Search conversations',
-        prefixIcon: const Icon(Icons.search),
+        prefixIcon: const Padding(
+          padding: EdgeInsets.only(left: 12, right: 2),
+          child: Icon(Icons.search, size: 20),
+        ),
+        prefixIconConstraints:
+            const BoxConstraints.tightFor(width: 34, height: 36),
+        suffixIcon: widget.controller.text.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: widget.controller.clear,
+              ),
+        suffixIconConstraints:
+            const BoxConstraints.tightFor(width: 40, height: 36),
         isDense: true,
-        filled: true,
-        fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
         border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(radius),
-            borderSide: BorderSide.none),
+          borderRadius: BorderRadius.circular(widget.radius),
+          borderSide: BorderSide(color: borderColor),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(widget.radius),
+          borderSide: BorderSide(color: scheme.outlineVariant),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(widget.radius),
+          borderSide: BorderSide(color: scheme.primary),
+        ),
       ),
     );
   }
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.hasQuery});
+  const _EmptyState({
+    required this.hasQuery,
+    required this.hasOnlyClosedSummaries,
+    required this.radius,
+    required this.onNewConversation,
+  });
 
   final bool hasQuery;
+  final bool hasOnlyClosedSummaries;
+  final double radius;
+  final VoidCallback onNewConversation;
 
   @override
   Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+    final String title = hasQuery
+        ? 'No conversations match your search.'
+        : hasOnlyClosedSummaries
+            ? 'Your previous conversations have been closed.'
+            : 'No previous conversations yet.';
+    final String subtitle = hasQuery
+        ? 'Try a different word, or start a new conversation about it.'
+        : hasOnlyClosedSummaries
+            ? 'Start a new conversation when you need more help.'
+            : 'Start a new conversation when you need help.';
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(
-          hasQuery
-              ? 'No conversations match your search.'
-              : 'No previous conversations yet.',
-          textAlign: TextAlign.center,
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest,
+                shape: BoxShape.circle,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Icon(
+                  Icons.search,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 22),
+            FilledButton(
+              onPressed: onNewConversation,
+              style: FilledButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(radius)),
+              ),
+              child: const Text('New conversation'),
+            ),
+          ],
         ),
       ),
     );
@@ -220,15 +402,16 @@ class _ConversationRow extends StatelessWidget {
         'Conversation';
     final String preview = summary.lastMessagePreview ?? '';
     final String handled = handledByText(summary.handledBy);
+    final String pill = homeStatusPill(summary.status);
     final String time =
         relativeTimeLabel(summary.lastMessageAt ?? summary.createdAt);
 
     return Material(
       color: scheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(radius),
-        side: BorderSide(color: scheme.outlineVariant),
-      ),
+      // shape: RoundedRectangleBorder(
+      //   borderRadius: BorderRadius.circular(radius),
+      //   side: BorderSide(color: scheme.outlineVariant),
+      // ),
       child: InkWell(
         borderRadius: BorderRadius.circular(radius),
         onTap: onTap,
@@ -238,32 +421,55 @@ class _ConversationRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      heading,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall,
+                  Flexible(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            heading,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SessionStatusPill(
+                          status: summary.status,
+                          label: pill,
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    time,
-                    style: Theme.of(context)
-                        .textTheme
-                        .labelSmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  Row(
+                    children: [
+                      if (summary.unreadCount > 0)
+                        Container(
+                          margin: EdgeInsets.only(right: 5),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 1),
+                          decoration: BoxDecoration(
+                              color: scheme.primary,
+                              borderRadius: BorderRadius.circular(999)),
+                          child: Text(
+                            summary.unreadCount > 99
+                                ? '99+'
+                                : '${summary.unreadCount}',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(color: scheme.onPrimary),
+                          ),
+                        ),
+                      Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        size: 15,
+                      ),
+                    ],
                   ),
                 ],
-              ),
-              const SizedBox(height: 2),
-              Text(
-                chatStatusLabel(summary.status),
-                style: Theme.of(context)
-                    .textTheme
-                    .labelSmall
-                    ?.copyWith(color: scheme.primary),
               ),
               if (preview.isNotEmpty)
                 Padding(
@@ -278,43 +484,27 @@ class _ConversationRow extends StatelessWidget {
                         ?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ),
-              if (handled.isNotEmpty || summary.unreadCount > 0)
+              if (handled.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Row(
-                    children: <Widget>[
-                      if (handled.isNotEmpty)
-                        Expanded(
-                          child: Text(
-                            handled,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
-                                ?.copyWith(color: scheme.onSurfaceVariant),
-                          ),
-                        ),
-                      if (summary.unreadCount > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 1),
-                          decoration: BoxDecoration(
-                              color: scheme.error,
-                              borderRadius: BorderRadius.circular(999)),
-                          child: Text(
-                            summary.unreadCount > 99
-                                ? '99+'
-                                : '${summary.unreadCount}',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
-                                ?.copyWith(color: scheme.onError),
-                          ),
-                        ),
-                    ],
+                  child: Text(
+                    handled,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 ),
+              Text(
+                time,
+                textAlign: TextAlign.right,
+                style: Theme.of(context)
+                    .textTheme
+                    .labelSmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
             ],
           ),
         ),

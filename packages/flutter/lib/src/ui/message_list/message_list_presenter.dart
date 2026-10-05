@@ -102,7 +102,7 @@ class MessageListRender {
   /// The bot's suggested follow-ups, already handoff-filtered.
   final List<String> quickReplies;
 
-  /// "<who> is typing" — the only channel that can say WHO.
+  /// "&lt;who&gt; is typing" — the only channel that can say WHO.
   final String typingLabel;
 
   /// The initial for the typing row's avatar disc.

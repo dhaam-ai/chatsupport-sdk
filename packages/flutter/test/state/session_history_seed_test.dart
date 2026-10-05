@@ -197,8 +197,7 @@ void main() {
       );
     });
 
-    test('leaves an unsent message at the live end where it belongs',
-        () async {
+    test('leaves an unsent message at the live end where it belongs', () async {
       await joinLeavingPageInFlight();
 
       // An optimistic echo: the customer typed into the conversation they
@@ -287,6 +286,138 @@ void main() {
       );
     });
 
+    test('does not draw a late page under a loaded conversation reopened',
+        () async {
+      await openWithTranscript();
+      cubit.openConversation('s2');
+      client.emitSession(testSession(id: 's2'));
+      await pumpEventQueue();
+      expect(history.asked, <String>['s2']);
+
+      history.resolve(<ChatMessage>[
+        testMessage(id: 'h2a', content: 'belongs to s2', seq: 2),
+      ]);
+      await pumpEventQueue();
+      expect(
+        cubit.state.messages.map((ChatMessage m) => m.content),
+        <String>['belongs to s2'],
+      );
+
+      cubit.openConversation('s3');
+      client.emitSession(testSession(id: 's3'));
+      await pumpEventQueue();
+      expect(history.asked, <String>['s2', 's3']);
+
+      cubit.openConversation('s2');
+      client.emitSession(testSession(id: 's2'));
+      await pumpEventQueue();
+      expect(history.asked, <String>['s2', 's3', 's2']);
+
+      history.resolve(<ChatMessage>[
+        testMessage(id: 'h3a', content: 'belongs to s3', seq: 3),
+      ], index: 1);
+      await pumpEventQueue();
+      expect(cubit.state.session?.sessionId, 's2');
+      expect(
+        cubit.state.messages.map((ChatMessage m) => m.content),
+        isNot(contains('belongs to s3')),
+        reason: 'a late page for s3 was painted under the reopened s2',
+      );
+
+      history.resolve(<ChatMessage>[
+        testMessage(id: 'h2b', content: 'belongs to s2 again', seq: 4),
+      ], index: 2);
+      await pumpEventQueue();
+      expect(
+        cubit.state.messages.map((ChatMessage m) => m.content),
+        <String>['belongs to s2 again'],
+      );
+    });
+
+    test('refetches a loaded conversation after socket-only replacement',
+        () async {
+      cubit.openConversation('A');
+      await pumpEventQueue();
+      expect(history.asked, <String>['A']);
+      client.emitSession(testSession(id: 'A'));
+      await pumpEventQueue();
+      history.resolve(<ChatMessage>[
+        testMessage(id: 'a1', content: 'from A', seq: 1),
+      ]);
+      await pumpEventQueue();
+
+      client.emitSession(testSession(id: 'B'));
+      await pumpEventQueue();
+      expect(history.asked, <String>['A', 'B']);
+
+      cubit.openConversation('A');
+      client.emitSession(testSession(id: 'A'));
+      await pumpEventQueue();
+      expect(history.asked, <String>['A', 'B', 'A']);
+
+      history.resolve(<ChatMessage>[
+        testMessage(id: 'b1', content: 'from B', seq: 1),
+      ], index: 1);
+      await pumpEventQueue();
+      expect(cubit.state.session?.sessionId, 'A');
+      expect(
+        cubit.state.messages.map((ChatMessage m) => m.content),
+        isNot(contains('from B')),
+        reason: 'B history was painted under A after a socket replacement',
+      );
+
+      history.resolve(<ChatMessage>[
+        testMessage(id: 'a2', content: 'from A again', seq: 2),
+      ], index: 2);
+      await pumpEventQueue();
+      expect(
+        cubit.state.messages.map((ChatMessage m) => m.content),
+        <String>['from A again'],
+        reason: 'A was not refetched after the socket replacement cleared it',
+      );
+    });
+
+    test('refetches a loaded conversation after replacement history fails',
+        () async {
+      final List<Object> reported = <Object>[];
+      final FlutterExceptionHandler? previous = FlutterError.onError;
+      FlutterError.onError =
+          (FlutterErrorDetails details) => reported.add(details.exception);
+      addTearDown(() => FlutterError.onError = previous);
+
+      cubit.openConversation('A');
+      await pumpEventQueue();
+      expect(history.asked, <String>['A']);
+      client.emitSession(testSession(id: 'A'));
+      await pumpEventQueue();
+      history.resolve(<ChatMessage>[
+        testMessage(id: 'a1', content: 'from A', seq: 1),
+      ]);
+      await pumpEventQueue();
+
+      client.emitSession(testSession(id: 'B'));
+      await pumpEventQueue();
+      expect(history.asked, <String>['A', 'B']);
+      history.fail(StateError('B history failed'), index: 1);
+      await pumpEventQueue();
+      expect(reported, hasLength(1));
+
+      cubit.openConversation('A');
+      client.emitSession(testSession(id: 'A'));
+      await pumpEventQueue();
+      expect(history.asked, <String>['A', 'B', 'A']);
+
+      history.resolve(<ChatMessage>[
+        testMessage(id: 'a2', content: 'from A after failure', seq: 2),
+      ], index: 2);
+      await pumpEventQueue();
+      expect(cubit.state.session?.sessionId, 'A');
+      expect(
+        cubit.state.messages.map((ChatMessage m) => m.content),
+        <String>['from A after failure'],
+      );
+    });
+
     test('lands on a closed widget without emitting', () async {
       await openWithTranscript();
       cubit.openConversation('s2');
@@ -356,7 +487,8 @@ void main() {
   // Pinned here so a change to D1 fails as a test rather than as a bug
   // report about a duplicated first message.
   group('a conversation the customer has just started', () {
-    test('is seeded like any other replacement, and shows its opening line '
+    test(
+        'is seeded like any other replacement, and shows its opening line '
         'once', () async {
       await openWithTranscript();
 
@@ -410,8 +542,7 @@ void main() {
   });
 
   group('a history fetch that fails', () {
-    test('reaches the host, never the customer, and empties nothing',
-        () async {
+    test('reaches the host, never the customer, and empties nothing', () async {
       final List<Object> reported = <Object>[];
       final FlutterExceptionHandler? previous = FlutterError.onError;
       FlutterError.onError =
@@ -425,7 +556,8 @@ void main() {
 
       // A live message got through before the history read fell over, so
       // there is something on screen for a mishandled failure to destroy.
-      client.emitMessage(testMessage(id: 'live', content: 'still here', seq: 9));
+      client
+          .emitMessage(testMessage(id: 'live', content: 'still here', seq: 9));
       await pumpEventQueue();
 
       history.fail(StateError('history route is down'));
@@ -508,8 +640,12 @@ void main() {
   group('a resolved conversation the customer opens', () {
     /// A Cubit with a `CsatMachine` behind it, on a client and a history fake
     /// of its own — see the note above the previous group.
-    (ChatWidgetCubit, FakeWidgetChatClient, FakeMessageHistory, FakeSessionActions)
-        ratedCubit() {
+    (
+      ChatWidgetCubit,
+      FakeWidgetChatClient,
+      FakeMessageHistory,
+      FakeSessionActions
+    ) ratedCubit() {
       final FakeWidgetChatClient own = FakeWidgetChatClient();
       addTearDown(own.dispose);
       final FakeMessageHistory ownHistory = FakeMessageHistory();
