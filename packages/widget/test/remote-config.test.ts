@@ -259,8 +259,7 @@ describe('parseRemoteConfig — the wire body becomes one typed shape', () => {
       ...DEFAULT_REMOTE_CONFIG,
       // `enabled` defaults true and there is no publishedVersion to read.
       publishedVersion: 0,
-      // A PUBLISHED config silent about these still offers them.
-      reportIssue: true,
+      // A PUBLISHED config silent about it still offers a Privacy link.
       privacyUrl: DEFAULT_PRIVACY_URL,
     });
   });

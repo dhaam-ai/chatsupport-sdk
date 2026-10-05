@@ -1083,17 +1083,10 @@ describe('the consent gate', () => {
 describe('report an issue', () => {
   const openButton = () => find<HTMLButtonElement>('.dh-report-open');
 
-  // On for a published config that is silent about it; the merchant can switch it
-  // off. (A config that never landed stays off — see DEFAULT_REMOTE_CONFIG.)
-  it('is offered unless the merchant turns it off', async () => {
+  // The HOME-SCREEN button: off unless the merchant turned it on. (The header
+  // menu's item is separate and always offered.)
+  it('puts no button on the home screen until the merchant turns it on', async () => {
     stubFetch(published());
-    mount(config());
-    await settle();
-    expect(openButton()?.hidden).toBe(false);
-  });
-
-  it('is hidden when the merchant turns it off', async () => {
-    stubFetch(published({ behaviour: { reportIssue: false } }));
     mount(config());
     await settle();
     expect(openButton()?.hidden).toBe(true);

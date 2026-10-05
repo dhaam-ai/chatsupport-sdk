@@ -873,10 +873,9 @@ export function parseRemoteConfig(body: unknown): RemoteConfig | null {
     privacyUrl: str(behaviour, 'privacyUrl') ?? DEFAULT_PRIVACY_URL,
     supportEmail: str(behaviour, 'supportEmail'),
     handoffKeywords: parseHandoffKeywords(behaviour['handoffKeywords']),
-    // ON unless the merchant switched it off. Only a PUBLISHED config reaches here:
-    // `DEFAULT_REMOTE_CONFIG` (fetch failed) stays off, so a widget whose config never
-    // landed still looks as it did.
-    reportIssue: bool(behaviour, 'reportIssue', true),
+    // Off unless the merchant turned it on: this drives the HOME-SCREEN button. The header
+    // menu's "Report an issue" item is always offered (widget.ts, `syncHeaderMenu`).
+    reportIssue: bool(behaviour, 'reportIssue', DEFAULT_REMOTE_CONFIG.reportIssue),
     preChatEnabled: bool(behaviour, 'preChatEnabled', false),
     preChatFields: parsePreChatFields(behaviour['preChatFields']),
     commonQuestions: parseCommonQuestions(behaviour['commonQuestions']),

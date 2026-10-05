@@ -4719,7 +4719,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     headerMenu.update({
       canEnd: live,
       privacyUrl: remote.privacyUrl ?? '',
-      reportIssue: remote.reportIssue,
+      // Always in the menu; `remote.reportIssue` only governs the home-screen button.
+      reportIssue: true,
       muted,
     });
   }
