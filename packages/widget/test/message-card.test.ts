@@ -854,6 +854,47 @@ describe('action buttons: "Track order" that the widget handles itself', () => {
     expect(onAction).toHaveBeenCalledWith(card, { label: 'Track order', action: 'track_order', ref: '3742' });
   });
 
+  describe('the widget’s own "Track order" on an order card that has none', () => {
+    const tapOf = (card: Record<string, unknown>) => {
+      const onAction = vi.fn();
+      const list = buildCardList([one(card)!], onAction);
+      return { list, onAction, buttons: [...list.querySelectorAll<HTMLElement>('.dh-card-btn')] };
+    };
+
+    it('adds a Track order button from the order number in the title, with no URL', () => {
+      const { buttons, onAction } = tapOf(orderCard({ buttons: [] }));
+      expect(buttons.map((b) => b.tagName + ':' + b.textContent)).toEqual(['BUTTON:Track order']);
+      buttons[0]!.click();
+      expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ title: 'Order #10482' }), {
+        label: 'Track order', action: 'track_order', ref: '10482',
+      });
+    });
+
+    it('leaves a card that already tracks alone: its own link, or its own action', () => {
+      const link = tapOf(orderCard()).buttons; // the fixture carries a Track order LINK
+      expect(link.map((b) => b.tagName)).toEqual(['A']);
+      const own = tapOf(orderCard({ buttons: [action] })).buttons;
+      expect(own.map((b) => b.tagName)).toEqual(['BUTTON']);
+    });
+
+    it('keeps other buttons and adds Track order beside them', () => {
+      const { buttons } = tapOf(orderCard({ buttons: [{ label: 'Help', url: 'https://help.example.com/' }] }));
+      expect(buttons.map((b) => b.textContent?.replace(' (opens in a new tab)', ''))).toEqual(['Help', 'Track order']);
+    });
+
+    it.each([
+      ['a card that is not an order', { kind: 'product', title: 'Pizza #12', buttons: [] }],
+      ['an order title with no number', { title: 'Your order', buttons: [] }],
+      ['an order number that cannot be a ref', { title: 'Order # ', buttons: [] }],
+    ])('adds nothing for %s', (_name, overrides) => {
+      expect(tapOf(orderCard(overrides)).buttons).toEqual([]);
+    });
+
+    it('adds nothing when nothing can handle the tap', () => {
+      expect(buildCardList([one(orderCard({ buttons: [] }))!]).querySelector('.dh-card-btn')).toBeNull();
+    });
+  });
+
   it('draws no action button when nothing can handle it, and no empty actions row', () => {
     const list = buildCardList([one(orderCard({ buttons: [action] }))!]);
     expect(list.querySelector('.dh-card-btn')).toBeNull();

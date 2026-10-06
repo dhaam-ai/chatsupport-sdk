@@ -78,6 +78,7 @@ A button is a link (`{ label, url }`, https, opens a new tab) **or** an action t
   label shows no timeline.
 - chat-service puts the action on an order card **when nexusai sent no https `tracking_url`**; with a
   tracking URL the card keeps the merchant's link. A list card (`orders`) carries neither.
+- **The widget adds this button itself** to an `order` card that has no tracking link or action of its own, when the title is `Order #<ref>` and the list has room (`withTrackAction` in `ui/message-card.ts`). The panel needs only the card, so it works against a chat-service that predates the action. A card that already tracks is left as sent.
 - Renderers that do not know an action drop that one button and keep the card: older widgets, WhatsApp,
   and the plain-text `content` (an action has no address to print).
 - `message-list` draws an action button only when it is given `onCardAction`; without a handler a card
