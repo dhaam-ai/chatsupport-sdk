@@ -268,6 +268,7 @@ class _SearchFieldState extends State<_SearchField> {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final Color borderColor =
         _focusNode.hasFocus ? scheme.primary : scheme.outlineVariant;
+    final double searchRadius = widget.radius.clamp(0, 8).toDouble();
 
     return TextField(
       controller: widget.controller,
@@ -292,15 +293,15 @@ class _SearchFieldState extends State<_SearchField> {
             const BoxConstraints.tightFor(width: 40, height: 36),
         isDense: true,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(widget.radius),
+          borderRadius: BorderRadius.circular(searchRadius),
           borderSide: BorderSide(color: borderColor),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(widget.radius),
+          borderRadius: BorderRadius.circular(searchRadius),
           borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(widget.radius),
+          borderRadius: BorderRadius.circular(searchRadius),
           borderSide: BorderSide(color: scheme.primary),
         ),
       ),

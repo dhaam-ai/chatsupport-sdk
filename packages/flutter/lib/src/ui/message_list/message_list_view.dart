@@ -8,6 +8,8 @@
 /// out list, and read BEFORE it grows (see [isNearBottom]).
 library;
 
+import 'dart:async';
+
 import 'package:dhaam_chat/dhaam_chat.dart'
     show AttachmentMetadata, ChatMessage;
 import 'package:flutter/material.dart';
@@ -316,7 +318,6 @@ class MessageBubbleRow extends StatelessWidget {
         row.outgoing ? scheme.primary : scheme.surfaceContainerHighest;
     final Color textColor = row.outgoing ? scheme.onPrimary : scheme.onSurface;
     final Widget actions = MessageActions(
-      onCopy: () => callbacks.onCopyMessage(row.message),
       onReply: callbacks.onReplyToMessage == null
           ? null
           : () => callbacks.onReplyToMessage!(
@@ -351,6 +352,18 @@ class MessageBubbleRow extends StatelessWidget {
         ],
       ),
     );
+    final Widget copyableBubble = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: () => _copyMessage(context),
+      child: Semantics(
+        onLongPress: () => _copyMessage(context),
+        customSemanticsActions: <CustomSemanticsAction, VoidCallback>{
+          const CustomSemanticsAction(label: 'Copy message'): () =>
+              _copyMessage(context),
+        },
+        child: bubbleContent,
+      ),
+    );
     final Widget bubbleAndActions = Column(
       crossAxisAlignment:
           row.outgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -361,7 +374,7 @@ class MessageBubbleRow extends StatelessWidget {
               row.outgoing ? MainAxisAlignment.end : MainAxisAlignment.start,
           children: <Widget>[
             if (row.outgoing) actions,
-            Flexible(child: bubbleContent),
+            Flexible(child: copyableBubble),
             if (!row.outgoing) actions,
           ],
         ),
@@ -401,6 +414,27 @@ class MessageBubbleRow extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  void _copyMessage(BuildContext context) {
+    unawaited(_copyMessageWithFeedback(context));
+  }
+
+  Future<void> _copyMessageWithFeedback(BuildContext context) async {
+    final ScaffoldMessengerState? messenger =
+        ScaffoldMessenger.maybeOf(context);
+    final TextDirection direction = Directionality.of(context);
+    String outcome;
+    try {
+      await callbacks.onCopyMessage(row.message);
+      outcome = kCopiedLabel;
+    } catch (_) {
+      outcome = kCopyFailedLabel;
+    }
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(outcome)));
+    SemanticsService.announce(outcome, direction);
   }
 }
 

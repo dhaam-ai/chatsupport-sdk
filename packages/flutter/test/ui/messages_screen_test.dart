@@ -119,6 +119,10 @@ void main() {
       theme.colorScheme.outlineVariant,
     );
     expect(
+      (decoration.enabledBorder! as OutlineInputBorder).borderRadius,
+      BorderRadius.circular(8),
+    );
+    expect(
       (decoration.focusedBorder! as OutlineInputBorder).borderSide.color,
       theme.colorScheme.primary,
     );

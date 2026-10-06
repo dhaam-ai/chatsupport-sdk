@@ -50,7 +50,6 @@ import 'ui/header/header.dart';
 import 'ui/home_screen.dart';
 import 'ui/messages_screen.dart';
 import 'ui/offline_banner.dart';
-import 'ui/session_picker/session_picker.dart';
 import 'ui/unavailable_view.dart';
 
 /// The [ConnectionState]s that mean the client has stopped on purpose rather
@@ -356,15 +355,6 @@ class _ConversationAppBar extends StatelessWidget
             tooltip: 'Close chat',
             icon: const Icon(Icons.close),
             onPressed: onClose,
-          ),
-        if (state.customerVisibleSessions.isNotEmpty)
-          SessionSwitcher(
-            sessions: state.customerVisibleSessions,
-            currentSessionId: state.session?.sessionId,
-            onSelect: cubit.selectSession,
-            onStartNew: cubit.startNewConversation,
-            isStartingNew: state.composingNew,
-            cornerRadius: chatCornerRadius(state.config),
           ),
         HeaderMenu(
           canEnd: cubit.canEndConversation,

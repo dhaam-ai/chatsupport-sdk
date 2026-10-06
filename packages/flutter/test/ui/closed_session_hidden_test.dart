@@ -159,7 +159,9 @@ void main() {
         _summary(id: 'a', status: ChatStatus.open, subject: 'Open one'),
         _summary(id: 'b', status: ChatStatus.resolved, subject: 'Resolved one'),
         _summary(
-            id: 'c', status: ChatStatus.waitingForAgent, subject: 'Waiting one'),
+            id: 'c',
+            status: ChatStatus.waitingForAgent,
+            subject: 'Waiting one'),
         _summary(id: 'd', status: ChatStatus.onHold, subject: 'On-hold one'),
         _summary(id: 'e', status: ChatStatus.assigned, subject: 'Assigned one'),
         _summary(id: 'f', status: ChatStatus.closed, subject: 'Closed one'),
@@ -256,60 +258,6 @@ void main() {
     });
   });
 
-  group('the in-chat session switcher, mounted', () {
-    // A phone, and the real widget — the arrangement
-    // `session_switcher_mount_test.dart` establishes for this surface,
-    // because the switcher only exists inside `ChatWidget`'s own app bar and
-    // its popover only behaves at a real width.
-    const Size phone = Size(400, 800);
-    Finder toggle() => find.byIcon(Icons.list_rounded);
-
-    Future<void> pumpConversation(WidgetTester tester) async {
-      tester.view.physicalSize = phone;
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(MaterialApp(home: ChatWidget(cubit: cubit)));
-      // The app bar exists only on a drill-down, so arrive the way a
-      // customer does.
-      cubit.openConversation('live_one');
-      await tester.pumpAndSettle();
-    }
-
-    testWidgets('is not offered at all when the only other one is closed',
-        (WidgetTester tester) async {
-      // The caller's gate is `sessions.length > 0` over the list the
-      // customer can actually see. Asked over the raw page it puts a toggle
-      // in the header that opens onto "No other conversations yet." — a
-      // control offering a choice that is not there.
-      await pumpConversation(tester);
-      cubit.updateSessionSummaries(<ChatSessionSummary>[
-        _summary(id: 'closed_one', status: ChatStatus.closed),
-      ]);
-      await tester.pumpAndSettle();
-
-      expect(find.byType(SessionSwitcher), findsNothing);
-      expect(toggle(), findsNothing);
-    });
-
-    testWidgets('lists the resolved one and not the closed one',
-        (WidgetTester tester) async {
-      await pumpConversation(tester);
-      cubit.updateSessionSummaries(<ChatSessionSummary>[
-        _summary(id: 'closed_one', status: ChatStatus.closed),
-        _summary(id: 'resolved_one', status: ChatStatus.resolved),
-      ]);
-      await tester.pumpAndSettle();
-
-      await tester.tap(toggle());
-      await tester.pumpAndSettle();
-
-      expect(find.byType(SessionRow), findsOneWidget);
-      expect(
-          find.byKey(const ValueKey<String>('resolved_one')), findsOneWidget);
-      expect(find.byKey(const ValueKey<String>('closed_one')), findsNothing);
-    });
-  });
-
   group('the Messages tab badge', () {
     testWidgets('counts only what the customer can go and read',
         (WidgetTester tester) async {
@@ -376,7 +324,8 @@ void main() {
             id: 'being_read',
             status: ChatStatus.closed,
             subject: 'The one on screen'),
-        _summary(id: 'elsewhere', status: ChatStatus.open, subject: 'Elsewhere'),
+        _summary(
+            id: 'elsewhere', status: ChatStatus.open, subject: 'Elsewhere'),
       ]);
       client.emitSession(
           testSession(id: 'being_read', status: ChatStatus.closed));

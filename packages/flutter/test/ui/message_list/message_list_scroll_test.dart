@@ -37,14 +37,6 @@ MessageListCallbacks _callbacks() {
   );
 }
 
-MessageListCallbacks _copyOnlyCallbacks() {
-  return MessageListCallbacks(
-    onRetry: (ChatMessage _) {},
-    onCopyMessage: (ChatMessage _) async {},
-    onQuickReply: (String _) {},
-  );
-}
-
 /// A rebuild that changes the theme but NOT the inputs — the thing a DOM
 /// `render()` never had to survive.
 class _Harness extends StatefulWidget {
@@ -363,34 +355,5 @@ void main() {
         same(dots),
       );
     });
-  });
-
-  testWidgets('an open action menu does not ride an insertion to another row',
-      (WidgetTester tester) async {
-    // A ListView recycles elements by INDEX. Without a key on the message id
-    // the menu a customer opened on one message would reappear over a
-    // different one the moment something landed above it.
-    final _HarnessState harness = await pump(
-      tester,
-      MessageListInputs(
-        messages: <ChatMessage>[_msg(1)],
-      ),
-      callbacks: _copyOnlyCallbacks(),
-    );
-
-    await tester.tap(find.byIcon(Icons.more_horiz));
-    await tester.pumpAndSettle();
-    expect(find.text('Copy'), findsOneWidget);
-
-    // A message arrives BEFORE the one whose menu is open, shifting indices.
-    harness.supply(
-      MessageListInputs(messages: <ChatMessage>[_msg(0), _msg(1)]),
-    );
-    await tester.pumpAndSettle();
-
-    // Still exactly one open menu, and it is still the one the customer
-    // opened — not a second one inherited by the recycled index.
-    expect(find.text('Copy'), findsOneWidget);
-    expect(find.byIcon(Icons.more_horiz), findsNWidgets(2));
   });
 }
