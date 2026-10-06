@@ -2578,8 +2578,6 @@ button {
 .dh-card-btn:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
 /* An action is a real <button>: strip the native look so it matches the links beside it. */
 button.dh-card-btn { border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-button.dh-card-btn:disabled { opacity: 0.6; cursor: default; }
-button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
 
 /* ── Order-tracking panel (a card's "Track order" action; ui/order-tracking.ts) ── */
 .dh-track { flex: 1 1 auto; min-height: 0; overflow-y: auto; background: var(--dh-surface); color: var(--dh-text); }
@@ -2624,15 +2622,15 @@ button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
 .dh-track-box-head + .dh-track-item { border-top: 0; }
 .dh-track-total { font-weight: 600; }
 
-/* Three or more cards, laid out as the merchant set it: swiping sideways ("row", the
-   default) with arrows, or a list that scrolls up and down in its own box ("column").
-   There is no reader-side switch. The scrolling box takes keyboard focus, so its focus
-   ring is drawn too. Nothing glides: snapping is not motion, and no scroll is animated. */
+/* Three or more cards: a bar to switch between swiping sideways ("row", the
+   default) and a list that scrolls up and down in its own box ("column"). The
+   scrolling box takes keyboard focus, so its focus ring is drawn too. Nothing
+   glides: snapping is not motion, and no scroll is animated. */
 .dh-cards-view { margin: 6px 0 0; width: 300px; max-width: 100%; }
 .dh-cards-view > .dh-cards { margin: 4px 0 0; width: 100%; }
 .dh-cards-view > .dh-cards:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
 .dh-cards-bar { display: flex; align-items: center; gap: 6px; }
-.dh-cards-nav {
+.dh-cards-mode, .dh-cards-nav {
   min-height: 36px;
   padding: 4px 12px;
   border: 1px solid var(--dh-border);
@@ -2644,9 +2642,14 @@ button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
   font-weight: 600;
   cursor: pointer;
 }
-.dh-cards-nav:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
-.dh-cards-bar[hidden] { display: none; }
+.dh-cards-mode[aria-pressed="true"] {
+  border-color: var(--dh-accent);
+  color: var(--dh-accent);
+  background: color-mix(in srgb, var(--dh-accent) 10%, var(--dh-surface));
+}
+.dh-cards-mode:focus-visible, .dh-cards-nav:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
 .dh-cards-steps { display: flex; gap: 6px; margin-inline-start: auto; }
+.dh-cards-steps[hidden] { display: none; }
 .dh-cards-nav { min-width: 36px; padding: 4px 0; font-size: 16px; line-height: 1; }
 .dh-cards-view[data-view="row"] > .dh-cards {
   flex-direction: row;

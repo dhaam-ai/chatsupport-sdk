@@ -376,51 +376,56 @@ describe('readRichCards — untrusted input', () => {
   });
 });
 
-describe('buildCardView: laid out as the merchant set it, with no Swipe/List switch', () => {
-  const view = (n: number, initial: 'row' | 'column' | null = null) =>
-    buildCardView(read(Array.from({ length: n }, (_, i) => orderCard({ title: `Card ${i}` }))), initial);
-  const arrows = (root: HTMLElement) => root.querySelector<HTMLElement>('.dh-cards-bar');
+describe('buildCardView — swipe sideways or scroll a list', () => {
+  const view = (n: number) =>
+    buildCardView(read(Array.from({ length: n }, (_, i) => orderCard({ title: `Card ${i}` }))));
+  const pressed = (root: HTMLElement) =>
+    [...root.querySelectorAll('.dh-cards-mode')].map((b) => [b.getAttribute('data-mode'), b.getAttribute('aria-pressed')]);
 
-  it('leaves one or two cards as the plain list, with nothing around it', () => {
+  it('leaves one or two cards as the plain list, with nothing to switch', () => {
     for (const n of [1, 2]) {
       const root = view(n);
       expect(root.tagName).toBe('UL');
       expect(root.classList.contains('dh-cards')).toBe(true);
-      expect(root.querySelector('.dh-cards-bar')).toBeNull();
+      expect(root.querySelector('.dh-cards-mode')).toBeNull();
     }
   });
 
-  it('wraps three or more in a view that opens swiping sideways when nothing was set, with arrows', () => {
+  it('wraps three or more in a view that opens swiping sideways, with every card in one list', () => {
     const root = view(10);
     expect(root.classList.contains('dh-cards-view')).toBe(true);
     expect(root.getAttribute('data-view')).toBe('row');
+    expect(pressed(root)).toEqual([['row', 'true'], ['column', 'false']]);
     const list = root.querySelector('ul.dh-cards') as HTMLElement;
     expect(list.getAttribute('role')).toBe('list');
     expect(list.querySelectorAll(':scope > li.dh-card')).toHaveLength(10);
     // The scrolling box can be reached and scrolled from the keyboard, and says what it holds.
     expect(list.getAttribute('tabindex')).toBe('0');
     expect(list.getAttribute('aria-label')).toBe('10 cards');
-    expect(arrows(root)!.hidden).toBe(false);
+    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(false);
   });
 
-  it('draws no Swipe or List switch, in either layout', () => {
-    for (const initial of [null, 'row', 'column'] as const) {
-      const root = view(5, initial);
-      expect(root.querySelector('.dh-cards-mode')).toBeNull();
-      expect(root.textContent).not.toContain('Swipe');
-      expect(root.textContent).not.toMatch(/List/);
-    }
+  it('switches to a stacked list and back; the arrows only belong to the swipe', () => {
+    const root = view(5);
+    const [swipe, stack] = [...root.querySelectorAll<HTMLButtonElement>('.dh-cards-mode')];
+    stack!.click();
+    expect(root.getAttribute('data-view')).toBe('column');
+    expect(pressed(root)).toEqual([['row', 'false'], ['column', 'true']]);
+    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(true);
+    swipe!.click();
+    expect(root.getAttribute('data-view')).toBe('row');
+    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(false);
   });
 
-  it('opens in the layout the merchant chose: a list for "column", sideways with arrows for "row"', () => {
-    const list = view(4, 'column');
-    expect(list.getAttribute('data-view')).toBe('column');
-    expect(arrows(list)!.hidden).toBe(true); // a list scrolls by itself: no arrows
-    const swipe = view(4, 'row');
-    expect(swipe.getAttribute('data-view')).toBe('row');
-    expect(arrows(swipe)!.hidden).toBe(false);
+  it('opens in the view the flow asked for, and the reader can still switch', () => {
+    const cards = read(Array.from({ length: 4 }, (_, i) => orderCard({ title: `Card ${i}` })));
+    const root = buildCardView(cards, 'column');
+    expect(root.getAttribute('data-view')).toBe('column');
+    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(true);
+    (root.querySelector('.dh-cards-mode[data-mode="row"]') as HTMLButtonElement).click();
+    expect(root.getAttribute('data-view')).toBe('row');
     // Fewer than three cards have no view to open in.
-    expect(buildCardView(read([orderCard(), orderCard()]), 'column').tagName).toBe('UL');
+    expect(buildCardView(cards.slice(0, 2), 'column').tagName).toBe('UL');
   });
 
   it('readRichLayout: horizontal and vertical only; anything else leaves the default, and it never throws', () => {
@@ -894,73 +899,5 @@ describe('action buttons: "Track order" that the widget handles itself', () => {
     const list = buildCardList([one(orderCard({ buttons: [action] }))!]);
     expect(list.querySelector('.dh-card-btn')).toBeNull();
     expect(list.querySelector('.dh-card-actions')).toBeNull();
-  });
-});
-
-describe('add_to_cart: product cards hand the product to the host app', () => {
-  const product = (buttons: unknown[] = []) => ({
-    v: 1,
-    kind: 'product',
-    title: 'Cheese Burst Pizza',
-    subtitle: '₹380.00',
-    imageUrl: 'https://cdn.example.com/p.avif',
-    buttons,
-  });
-  const add = { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' };
-  const tap = (card: Record<string, unknown>, onAction: (c: RichCard, b: never) => void | Promise<void>, supports?: (a: string) => boolean) => {
-    const list = buildCardList([one(card)!], onAction as never, supports as never);
-    return list.querySelector<HTMLButtonElement>('button.dh-card-btn');
-  };
-
-  it('reads the product id, and the variant when there is one', () => {
-    expect(one(product([add]))?.buttons).toEqual([{ label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' }]);
-    expect(one(product([{ ...add, variantId: 'v_7' }]))?.buttons).toEqual([
-      { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42', variantId: 'v_7' },
-    ]);
-  });
-
-  it('drops a button without a usable product id, and a variant that is not an id', () => {
-    expect(one(product([{ label: 'A', action: 'add_to_cart' }, { label: 'B', action: 'add_to_cart', ref: 'a b' }]))?.buttons).toEqual([]);
-    expect(one(product([{ ...add, variantId: 'has space' }]))?.buttons).toEqual([
-      { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' },
-    ]);
-  });
-
-  it('draws nothing when the host cannot add to a cart, and keeps a track action it can carry out', () => {
-    const onAction = vi.fn();
-    expect(tap(product([add]), onAction, (a) => a !== 'add_to_cart')).toBeNull();
-    expect(tap(product([add]), onAction)).not.toBeNull();
-  });
-
-  it('waits on the host: Adding…, then Added, then the label again', async () => {
-    vi.useFakeTimers();
-    let done!: () => void;
-    const onAction = vi.fn(() => new Promise<void>((resolve) => { done = resolve; }));
-    const button = tap(product([add]), onAction)!;
-    button.click();
-    expect(button.textContent).toBe('Adding…');
-    expect(button.disabled).toBe(true);
-    button.click(); // a double tap while busy adds nothing more
-    expect(onAction).toHaveBeenCalledTimes(1);
-    done();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(button.textContent).toBe('Added');
-    expect(button.getAttribute('data-state')).toBe('added');
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(button.textContent).toBe('Add to cart');
-    expect(button.disabled).toBe(false);
-    vi.useRealTimers();
-  });
-
-  it('says Try again, and can be tapped again, when the host refuses or throws', async () => {
-    for (const onAction of [vi.fn(() => Promise.reject(new Error('no store'))), vi.fn(() => { throw new Error('boom'); })]) {
-      const button = tap(product([add]), onAction)!;
-      button.click();
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(button.textContent).toBe('Try again');
-      expect(button.getAttribute('data-state')).toBe('error');
-      expect(button.disabled).toBe(false);
-    }
   });
 });

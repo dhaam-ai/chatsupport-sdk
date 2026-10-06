@@ -50,30 +50,15 @@ export interface RichCardLinkButton {
  */
 export interface RichCardActionButton {
   readonly label: string;
-  /**
-   * `track_order` opens the widget's own order panel; `add_to_cart` hands the product to the
-   * HOST app's cart (`onAddToCart`), because only the host has a cart.
-   */
-  readonly action: RichCardActionName;
-  /** The order number (`track_order`) or the product id (`add_to_cart`): printable ASCII, no spaces, at most 64. */
+  readonly action: 'track_order';
+  /** The order number: printable ASCII, no spaces, at most 64. */
   readonly ref: string;
-  /** `add_to_cart` only: the variant to add, when the product has one. */
-  readonly variantId?: string;
 }
-
-export type RichCardActionName = 'track_order' | 'add_to_cart';
-const ACTION_NAMES: ReadonlySet<string> = new Set(['track_order', 'add_to_cart']);
 
 export type RichCardButton = RichCardLinkButton | RichCardActionButton;
 
-/**
- * Called with the card the tapped button sits on. May return a promise: an `add_to_cart` button
- * shows "Adding…" until it settles, then "Added", or "Try again" if it rejects.
- */
-export type RichCardActionHandler = (card: RichCard, button: RichCardActionButton) => void | Promise<void>;
-
-/** Whether the host can carry out `action`. A button for one it cannot is not drawn, so there is never a dead button. */
-export type RichCardActionSupport = (action: RichCardActionName) => boolean;
+/** Called with the card the tapped button sits on. */
+export type RichCardActionHandler = (card: RichCard, button: RichCardActionButton) => void;
 
 /** An order number as an action's `ref` (the same rule as chat-service's). */
 const ACTION_REF = /^[!-~]{1,64}$/;
@@ -187,11 +172,8 @@ function withTrackAction(card: RichCard): RichCard {
   return { ...card, buttons: [...card.buttons, { label: 'Track order', action: 'track_order', ref }] };
 }
 
-export function buildCardList(cards: readonly RichCard[], onAction?: RichCardActionHandler, supports?: RichCardActionSupport): HTMLElement {
-  return el('ul', {
-    attrs: { class: 'dh-cards', role: 'list' },
-    children: cards.map((card) => buildCard(onAction === undefined ? card : withTrackAction(card), onAction, supports)),
-  });
+export function buildCardList(cards: readonly RichCard[], onAction?: RichCardActionHandler): HTMLElement {
+  return el('ul', { attrs: { class: 'dh-cards', role: 'list' }, children: cards.map((card) => buildCard(onAction === undefined ? card : withTrackAction(card), onAction)) });
 }
 
 /** From this many cards the list can be switched between swiping sideways and a stacked, scrolling list. */
@@ -199,27 +181,31 @@ const VIEW_SWITCH_MIN = 3;
 export type CardsView = 'row' | 'column';
 
 /**
- * The cards as the bubble shows them: one or two are the plain list; three or more are
- * laid out the way the merchant set it in the console (`initial`, from
- * `metadata.richLayout`): `row`, a sideways swipe (the default when nothing was set: it keeps
- * a long list compact, and the next card peeks in as the cue), or `column`, a stacked list
- * that scrolls up and down inside its own box. There is NO Swipe/List switch for the
- * reader: the layout is the merchant's choice, not a per-visitor toggle. Both scroll by
- * touch, wheel and keyboard (the list takes focus); in the swipe, arrows move one card for a
- * mouse. Nothing animates: the arrows jump, they do not glide.
+ * The cards as the bubble shows them: one or two are the plain list; three or more
+ * come with a switch between a sideways swipe (the default: it keeps a long list
+ * compact, and the next card peeks in as the cue) and a stacked list that scrolls
+ * up and down inside its own box. Both scroll by touch, wheel and keyboard (the
+ * list takes focus); the arrows in the bar move the swipe one card for a mouse.
+ * The flow may say which one it opens in (`initial`, from `metadata.richLayout`); the
+ * reader can still switch. The choice lives on the element, which the transcript keeps
+ * across renders.
+ * Nothing animates: the arrows jump, they do not glide.
  */
-export function buildCardView(
-  cards: readonly RichCard[],
-  initial: CardsView | null = null,
-  onAction?: RichCardActionHandler,
-  supports?: RichCardActionSupport,
-): HTMLElement {
-  const list = buildCardList(cards, onAction, supports);
+export function buildCardView(cards: readonly RichCard[], initial: CardsView | null = null, onAction?: RichCardActionHandler): HTMLElement {
+  const list = buildCardList(cards, onAction);
   if (cards.length < VIEW_SWITCH_MIN) return list;
 
   list.setAttribute('tabindex', '0');
   list.setAttribute('aria-label', `${cards.length} cards`);
 
+  const mode = (view: CardsView, text: string, label: string): HTMLButtonElement =>
+    el('button', {
+      attrs: { type: 'button', class: 'dh-cards-mode', 'data-mode': view, 'aria-label': label },
+      text,
+      on: { click: () => choose(view) },
+    });
+  const swipe = mode('row', 'Swipe', 'Show the cards side by side');
+  const stack = mode('column', 'List', 'Show the cards in a list');
   const step = (direction: -1 | 1): HTMLButtonElement =>
     el('button', {
       attrs: { type: 'button', class: 'dh-cards-nav', 'aria-label': direction < 0 ? 'Previous card' : 'Next card' },
@@ -233,61 +219,20 @@ export function buildCardView(
       },
     });
   const nav = el('div', { attrs: { class: 'dh-cards-steps' }, children: [step(-1), step(1)] });
-  // The arrows are the whole bar, and only a swipe needs them: a list scrolls by itself.
-  const bar = el('div', { attrs: { class: 'dh-cards-bar' }, children: [nav] });
+  const bar = el('div', { attrs: { class: 'dh-cards-bar' }, children: [swipe, stack, nav] });
   const root = el('div', { attrs: { class: 'dh-cards-view' }, children: [bar, list] });
-  const view = initial ?? 'row';
-  root.setAttribute('data-view', view);
-  bar.hidden = view !== 'row';
+
+  function choose(view: CardsView): void {
+    root.setAttribute('data-view', view);
+    swipe.setAttribute('aria-pressed', String(view === 'row'));
+    stack.setAttribute('aria-pressed', String(view === 'column'));
+    nav.hidden = view !== 'row';
+  }
+  choose(initial ?? 'row');
   return root;
 }
 
-/** How long "Added" stays before the button can add the product again. */
-const ADDED_MS = 2000;
-
-/**
- * A card's action button. A tap that returns a promise (the host adding to its cart) puts the
- * button in a busy state so a double tap cannot add twice, then says what happened in words:
- * "Added" (back to the label after a moment), or "Try again" when the host refused or threw.
- */
-function actionButton(card: RichCard, button: RichCardActionButton, onAction: RichCardActionHandler): HTMLElement {
-  const node = el('button', { attrs: { class: 'dh-card-btn', type: 'button' }, text: button.label });
-  const rest = (): void => {
-    node.disabled = false;
-    node.textContent = button.label;
-    node.removeAttribute('data-state');
-    node.removeAttribute('aria-busy');
-  };
-  node.addEventListener('click', () => {
-    if (node.disabled) return;
-    let result: void | Promise<void>;
-    try {
-      result = onAction(card, button);
-    } catch {
-      result = Promise.reject(new Error('action failed'));
-    }
-    if (!(result instanceof Promise)) return; // a plain handler (track order) has nothing to wait for
-    node.disabled = true;
-    node.textContent = 'Adding…';
-    node.setAttribute('aria-busy', 'true');
-    result.then(
-      () => {
-        node.textContent = 'Added';
-        node.setAttribute('data-state', 'added');
-        node.removeAttribute('aria-busy');
-        setTimeout(rest, ADDED_MS);
-      },
-      () => {
-        rest();
-        node.textContent = 'Try again';
-        node.setAttribute('data-state', 'error');
-      },
-    );
-  });
-  return node;
-}
-
-function buildCard(card: RichCard, onAction?: RichCardActionHandler, supports?: RichCardActionSupport): HTMLElement {
+function buildCard(card: RichCard, onAction?: RichCardActionHandler): HTMLElement {
   const textColumn = el('div', {
     attrs: { class: 'dh-card-text' },
     children: [el('p', { attrs: { class: 'dh-card-title' }, text: card.title })],
@@ -348,10 +293,15 @@ function buildCard(card: RichCard, onAction?: RichCardActionHandler, supports?: 
   const item = el('li', { attrs: { class: 'dh-card', 'data-kind': card.kind }, children: [body] });
   const buttons = card.buttons.flatMap((button): HTMLElement[] => {
     if ('action' in button) {
-      // An action is a button, not a link: it does something in this widget or in the host.
-      // Not drawn when nothing can carry it out.
-      if (onAction === undefined || (supports !== undefined && !supports(button.action))) return [];
-      return [actionButton(card, button, onAction)];
+      // An action is a button, not a link: it does something in this widget.
+      if (onAction === undefined) return [];
+      return [
+        el('button', {
+          attrs: { class: 'dh-card-btn', type: 'button' },
+          text: button.label,
+          on: { click: () => onAction(card, button) },
+        }),
+      ];
     }
     // A real link: it navigates, so it is announced and behaves as one.
     // `noopener` so the opened page cannot script this one through
@@ -398,18 +348,9 @@ function readCard(card: Record<string, unknown>): RichCard | null {
     buttons: list(own(card, 'buttons'), MAX_BUTTONS, (button): RichCardButton | null => {
       const label = text(own(button, 'label'), 20);
       if (label === '') return null;
-      const action = own(button, 'action');
-      if (typeof action === 'string' && ACTION_NAMES.has(action)) {
+      if (own(button, 'action') === 'track_order') {
         const ref = own(button, 'ref');
-        if (typeof ref !== 'string' || !ACTION_REF.test(ref.trim())) return null;
-        const variant = own(button, 'variantId');
-        const variantId = typeof variant === 'string' && ACTION_REF.test(variant.trim()) ? variant.trim() : undefined;
-        return {
-          label,
-          action: action as RichCardActionName,
-          ref: ref.trim(),
-          ...(action === 'add_to_cart' && variantId !== undefined ? { variantId } : {}),
-        };
+        return typeof ref === 'string' && ACTION_REF.test(ref.trim()) ? { label, action: 'track_order', ref: ref.trim() } : null;
       }
       const url = httpsUrl(own(button, 'url'));
       return url !== null ? { label, url } : null;

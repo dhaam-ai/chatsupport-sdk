@@ -133,12 +133,7 @@ console.log('');
 // action-button branch in message-card.ts. About 1.0 KB gzip over the
 // previous ceiling's headroom. Measured at 134,770 B gzip once landed: 626 B
 // over the previous ceiling, leaving 398 B of headroom here.
-// Increased to 134 KiB (137,216 B) for the product card's "Add to cart" action: the
-// action-button states (Adding…, Added, Try again), the `onAddToCart` host hook and the
-// `variantId` read. The Swipe/List switch was removed in the same change (the layout is the
-// merchant's `richLayout`, not a per-visitor toggle), which gave back part of it. Measured at
-// 136,226 B gzip once landed: 1,058 B over the previous ceiling, leaving 990 B of headroom here.
-const WIDGET_GZIP_BUDGET = 137_216;
+const WIDGET_GZIP_BUDGET = 135_168;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,
