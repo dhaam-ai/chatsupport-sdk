@@ -2612,7 +2612,7 @@ button.dh-card-btn { border: 0; background: none; font: inherit; font-size: 13px
 .dh-track-step[data-state="current"] .dh-track-dot { border-color: var(--dh-tone-success); background: var(--dh-tone-success); color: #fff; }
 .dh-track-step[data-state="todo"] { color: var(--dh-text-muted); }
 .dh-track-step[data-state="current"] .dh-track-step-label { font-weight: 600; }
-.dh-track-info { margin: 0; }
+.dh-track-info { margin: 0; font-size: 13px; line-height: 1.4; }
 .dh-track-box { overflow: hidden; border: 1px solid var(--dh-border); border-radius: 12px; font-size: 13px; }
 .dh-track-box-head {
   padding: 8px 12px; background: var(--dh-surface-sunken); color: var(--dh-text-muted);

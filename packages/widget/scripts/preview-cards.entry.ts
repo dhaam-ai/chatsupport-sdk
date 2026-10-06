@@ -3,13 +3,14 @@
 // (ui/message-list.ts) with the real stylesheet and theme tokens, in a shadow
 // root shaped like the open widget panel. No chat-service, no network.
 //
-// Query string: `?theme=dark`, `?accent=%23be123c`.
+// Query string: `?theme=dark`, `?accent=%23be123c`, `?view=track` (opens the order-tracking panel).
 
 import { createInitialChatState } from '@dhaam-ccrm/core';
 import type { ChatMessage } from '@dhaam-ccrm/core';
 
 import { resolveConfig } from '../src/config.js';
 import { createMessageList } from '../src/ui/message-list.js';
+import { createOrderTracking } from '../src/ui/order-tracking.js';
 import { STYLES, themeCss } from '../src/ui/styles.js';
 
 const params = new URLSearchParams(location.search);
@@ -65,7 +66,8 @@ const messages: ChatMessage[] = [
         { label: 'Payment', value: 'Paid' },
         { label: 'Total', value: '₹549.00' },
       ],
-      buttons: [{ label: 'Track order', url: 'https://track.example.com/o/10482' }],
+      // The in-widget action: tap it and the page swaps to the order-tracking panel.
+      buttons: [{ label: 'Track order', action: 'track_order', ref: '10482' }],
     }],
   }),
   customer('c2', 'Do you have paneer tikka?', 3),
@@ -102,6 +104,12 @@ const list = createMessageList({
   onEmailTranscript: async () => undefined,
   onQuickReply: (text) => console.log('quick reply:', text),
   onReplyToMessage: () => undefined,
+  // Tapping "Track order" swaps the transcript for the panel; its X swaps back, as in the widget.
+  onCardAction: (card) => {
+    const tracking = createOrderTracking(card, { onClose: () => panel.replaceChildren(list.log) });
+    panel.replaceChildren(tracking.node);
+    tracking.focus();
+  },
 });
 panel.append(list.log);
 const initial = createInitialChatState();
@@ -116,4 +124,9 @@ const tile = 'data:image/svg+xml,' + encodeURIComponent(
 for (const img of panel.querySelectorAll<HTMLImageElement>('.dh-card-img')) {
   img.hidden = false;
   img.src = tile;
+}
+
+// `?view=track`: open the tracking panel at once, as if "Track order" had been tapped.
+if (params.get('view') === 'track') {
+  panel.querySelector<HTMLButtonElement>('button.dh-card-btn')?.click();
 }
