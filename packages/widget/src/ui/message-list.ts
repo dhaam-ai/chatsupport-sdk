@@ -388,9 +388,15 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   function render(realState: ChatState, localParticipantId: string | null): void {
     if (switchingTo !== null && realState.session?.id === switchingTo) switchingTo = null;
     const masked = switchingTo !== null;
+    // A message that belongs to another conversation is never drawn under this one's header,
+    // whatever order core's session swap and history fetch land in.
+    const sid = realState.session?.id;
+    const foreign = sid !== undefined && realState.messages.some((m) => m.sessionId !== '' && m.sessionId !== sid);
     const state: ChatState = masked
       ? { ...realState, messages: [], pagination: { ...realState.pagination, hasMore: false, initialLoaded: false } }
-      : realState;
+      : foreign
+        ? { ...realState, messages: realState.messages.filter((m) => m.sessionId === '' || m.sessionId === sid) }
+        : realState;
     // Captured BEFORE mutating: reading `scrollTop` after an append gives the
     // post-append value and would make "was the user at the bottom" always
     // true for a growing list.

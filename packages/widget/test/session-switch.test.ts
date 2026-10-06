@@ -357,6 +357,31 @@ describe('bug 1 — picking a previous session', () => {
     expect(transcript()).toEqual([TRANSCRIPT[PAST]]);
   });
 
+  it('no frame of the switch, even with the old chat’s history still in flight, draws the previous chat', async () => {
+    sessionRows = [summaryRow(PAST), summaryRow(CURRENT, { status: 'ASSIGNED', closedAt: null })];
+    const { socket } = await boot();
+    await goToMessages();
+    const row = messagesRows().find(
+      (candidate) => candidate.closest('.dh-messages-item')?.getAttribute('data-status') === 'RESOLVED',
+    );
+    if (row === undefined) throw new Error('no past-session row rendered');
+    const seen: string[] = [];
+    const log = query('.dh-log');
+    const obs = new MutationObserver(() => seen.push(JSON.stringify(transcript())));
+    obs.observe(log, { childList: true, subtree: true, characterData: true });
+    holdNextHistory = true;
+    row.click();
+    await settle();
+    seen.push('--after click');
+    await serverAcceptsJoin(socket, PAST);
+    seen.push('--after join');
+    releaseHistory();
+    await settle();
+    obs.disconnect();
+    expect(seen.filter((frame) => frame.includes(TRANSCRIPT[CURRENT] ?? 'x'))).toEqual([]);
+    expect(transcript()).toEqual([TRANSCRIPT[PAST]]);
+  });
+
   it('fetches page one for the chosen session, with no cursor from the old one', async () => {
     sessionRows = [summaryRow(PAST)];
     const { socket } = await boot();
