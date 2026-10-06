@@ -1811,3 +1811,45 @@ describe('the cards’ intro line (metadata.richIntro, the duplicate-text rule)'
     expect(bubbleText(view)).toBe(INTRO);
   });
 });
+
+describe('a card’s action button ("Track order")', () => {
+  const action = { label: 'Track order', action: 'track_order', ref: '3742' };
+  const botWithAction = () =>
+    message({
+      id: 'b1',
+      senderId: 'bot_1',
+      senderType: 'BOT',
+      content: 'Order #3742: Delivered',
+      metadata: { richCards: [{ v: 1, kind: 'order', title: 'Order #3742', badge: { label: 'Delivered', tone: 'success' }, buttons: [action] }] },
+    });
+  const make = (onCardAction?: (card: unknown, button: unknown) => void) => {
+    const view = createMessageList({
+      onRetry: vi.fn(),
+      onLoadOlder: vi.fn(),
+      onStartNewConversation: vi.fn(),
+      onEmailTranscript: vi.fn(async () => undefined),
+      onQuickReply: vi.fn(),
+      onReplyToMessage: vi.fn(),
+      ...(onCardAction === undefined ? {} : { onCardAction }),
+    });
+    document.body.append(view.log, view.liveRegion);
+    view.render(state({ messages: [botWithAction()] }), ME);
+    return view;
+  };
+
+  it('draws a button that reports the tapped card and its order number', () => {
+    const onCardAction = vi.fn();
+    const view = make(onCardAction);
+    view.log.querySelector<HTMLButtonElement>('button.dh-card-btn')!.click();
+    expect(onCardAction).toHaveBeenCalledOnce();
+    const [card, button] = onCardAction.mock.calls[0]!;
+    expect(card).toMatchObject({ title: 'Order #3742' });
+    expect(button).toEqual({ label: 'Track order', action: 'track_order', ref: '3742' });
+  });
+
+  it('draws no button at all when the list has no handler for it', () => {
+    const view = make();
+    expect(view.log.querySelector('.dh-card')).not.toBeNull();
+    expect(view.log.querySelector('.dh-card-btn')).toBeNull();
+  });
+});

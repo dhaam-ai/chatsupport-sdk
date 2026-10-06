@@ -63,6 +63,26 @@ metadata.richCards: RichCard[]         // ≤5
 metadata.richIntro?: string            // ≤300, the intro line ONLY (no card text). Optional.
 ```
 
+### Action buttons (in-widget "Track order")
+
+A button is a link (`{ label, url }`, https, opens a new tab) **or** an action the widget handles itself:
+
+```ts
+{ label: string /*≤20*/, action: 'track_order', ref: string /* order number: printable ASCII, no spaces, ≤64 */ }
+```
+
+- The widget draws it as a `<button>` and, on tap, opens its own order-tracking panel
+  (`ui/order-tracking.ts`) in the surface slot, built from **the card the button sits on**: title, store,
+  status chip and rows. Nothing is fetched. The status label picks the timeline stage
+  (placed, preparing, out for delivery, delivered); a cancelled order shows a note; an unrecognised
+  label shows no timeline.
+- chat-service puts the action on an order card **when nexusai sent no https `tracking_url`**; with a
+  tracking URL the card keeps the merchant's link. A list card (`orders`) carries neither.
+- Renderers that do not know an action drop that one button and keep the card: older widgets, WhatsApp,
+  and the plain-text `content` (an action has no address to print).
+- `message-list` draws an action button only when it is given `onCardAction`; without a handler a card
+  has no dead button.
+
 Rules every producer and every renderer follows:
 
 1. `content` is always a readable plain-text version of the cards. Old widgets,

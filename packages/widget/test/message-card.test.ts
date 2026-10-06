@@ -820,3 +820,43 @@ describe('readRichIntro', () => {
     expect(readRichIntro(getter)).toBe('');
   });
 });
+
+describe('action buttons: "Track order" that the widget handles itself', () => {
+  const action = { label: 'Track order', action: 'track_order', ref: '3742' };
+
+  it('reads a track_order action with its order number', () => {
+    expect(one(orderCard({ buttons: [action] }))?.buttons).toEqual([{ label: 'Track order', action: 'track_order', ref: '3742' }]);
+  });
+
+  it('drops an unknown action, a missing, spaced or over-long ref, and keeps the link beside them', () => {
+    const bad = [
+      { label: 'A', action: 'open_url', ref: '1' },
+      { label: 'B', action: 'track_order' },
+      { label: 'C', action: 'track_order', ref: 'a b' },
+      { label: 'D', action: 'track_order', ref: 'x'.repeat(65) },
+    ];
+    // Only the first 3 buttons are ever read (contract §2), so each bad one is tried beside the link.
+    for (const b of bad) {
+      expect(one(orderCard({ buttons: [{ label: 'Link', url: 'https://track.example.com/o/1' }, b] }))?.buttons).toEqual([
+        { label: 'Link', url: 'https://track.example.com/o/1' },
+      ]);
+    }
+  });
+
+  it('draws a real button and hands the card and the action to the handler on tap', () => {
+    const onAction = vi.fn();
+    const card = one(orderCard({ buttons: [action] }))!;
+    const list = buildCardList([card], onAction);
+    const button = list.querySelector<HTMLButtonElement>('button.dh-card-btn')!;
+    expect(button.textContent).toBe('Track order');
+    expect(button.type).toBe('button');
+    button.click();
+    expect(onAction).toHaveBeenCalledWith(card, { label: 'Track order', action: 'track_order', ref: '3742' });
+  });
+
+  it('draws no action button when nothing can handle it, and no empty actions row', () => {
+    const list = buildCardList([one(orderCard({ buttons: [action] }))!]);
+    expect(list.querySelector('.dh-card-btn')).toBeNull();
+    expect(list.querySelector('.dh-card-actions')).toBeNull();
+  });
+});

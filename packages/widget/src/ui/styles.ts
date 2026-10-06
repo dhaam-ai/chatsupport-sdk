@@ -2576,6 +2576,51 @@ button {
 .dh-card-btn + .dh-card-btn { border-inline-start: 1px solid var(--dh-border); }
 .dh-card-btn:hover { background: color-mix(in srgb, var(--dh-accent) 8%, transparent); text-decoration: underline; }
 .dh-card-btn:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
+/* An action is a real <button>: strip the native look so it matches the links beside it. */
+button.dh-card-btn { border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+
+/* ── Order-tracking panel (a card's "Track order" action; ui/order-tracking.ts) ── */
+.dh-track { flex: 1 1 auto; min-height: 0; overflow-y: auto; background: var(--dh-surface); color: var(--dh-text); }
+.dh-track-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 16px; border-bottom: 1px solid var(--dh-border);
+}
+.dh-track-title { margin: 0; min-width: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.dh-track-close {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border: 0; border-radius: 999px;
+  background: none; color: var(--dh-text-muted); cursor: pointer;
+}
+.dh-track-close:hover { background: var(--dh-surface-sunken); }
+.dh-track-close:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+.dh-track-body { display: grid; gap: 16px; padding: 16px; }
+.dh-track-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.dh-track-store { margin: 0; min-width: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.dh-track-note { margin: 0; font-size: 13px; color: var(--dh-text-muted); }
+.dh-track-steps { margin: 0; padding: 0; list-style: none; }
+.dh-track-step { position: relative; display: flex; align-items: flex-start; gap: 12px; padding-bottom: 18px; font-size: 13px; }
+.dh-track-step:last-child { padding-bottom: 0; }
+.dh-track-step::before { content: ''; position: absolute; left: 9px; top: 20px; bottom: 0; width: 2px; background: var(--dh-border); }
+.dh-track-step:last-child::before { display: none; }
+.dh-track-step[data-state="done"]::before { background: var(--dh-tone-success); }
+.dh-track-dot {
+  flex: none; box-sizing: border-box; width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--dh-border); border-radius: 999px; background: var(--dh-surface);
+}
+.dh-track-step[data-state="done"] .dh-track-dot,
+.dh-track-step[data-state="current"] .dh-track-dot { border-color: var(--dh-tone-success); background: var(--dh-tone-success); color: #fff; }
+.dh-track-step[data-state="todo"] { color: var(--dh-text-muted); }
+.dh-track-step[data-state="current"] .dh-track-step-label { font-weight: 600; }
+.dh-track-info { margin: 0; }
+.dh-track-box { overflow: hidden; border: 1px solid var(--dh-border); border-radius: 12px; font-size: 13px; }
+.dh-track-box-head {
+  padding: 8px 12px; background: var(--dh-surface-sunken); color: var(--dh-text-muted);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.dh-track-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--dh-border); overflow-wrap: anywhere; }
+.dh-track-box-head + .dh-track-item { border-top: 0; }
+.dh-track-total { font-weight: 600; }
 
 /* Three or more cards: a bar to switch between swiping sideways ("row", the
    default) and a list that scrolls up and down in its own box ("column"). The

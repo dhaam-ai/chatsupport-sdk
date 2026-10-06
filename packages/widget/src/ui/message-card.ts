@@ -36,11 +36,32 @@ export interface RichCardRow {
   readonly value: string;
 }
 
-export interface RichCardButton {
+export interface RichCardLinkButton {
   readonly label: string;
   /** Always an absolute `https:` URL. */
   readonly url: string;
 }
+
+/**
+ * An action the WIDGET carries out itself, not a link. `track_order` opens the
+ * widget's own tracking panel for order `ref`, drawn from the card's own fields.
+ * Drawn only when the caller passes an `onAction` handler; otherwise dropped, so
+ * a card shown somewhere with nothing to handle it still has no dead button.
+ */
+export interface RichCardActionButton {
+  readonly label: string;
+  readonly action: 'track_order';
+  /** The order number: printable ASCII, no spaces, at most 64. */
+  readonly ref: string;
+}
+
+export type RichCardButton = RichCardLinkButton | RichCardActionButton;
+
+/** Called with the card the tapped button sits on. */
+export type RichCardActionHandler = (card: RichCard, button: RichCardActionButton) => void;
+
+/** An order number as an action's `ref` (the same rule as chat-service's). */
+const ACTION_REF = /^[!-~]{1,64}$/;
 
 /**
  * One card, as the renderer sees it — NOT the wire shape.
@@ -134,8 +155,8 @@ export function readRichIntro(metadata: unknown): string {
  * text (https://developer.mozilla.org/en-US/docs/Web/CSS/list-style#accessibility,
  * https://webkit.org/b/170179#c1).
  */
-export function buildCardList(cards: readonly RichCard[]): HTMLElement {
-  return el('ul', { attrs: { class: 'dh-cards', role: 'list' }, children: cards.map(buildCard) });
+export function buildCardList(cards: readonly RichCard[], onAction?: RichCardActionHandler): HTMLElement {
+  return el('ul', { attrs: { class: 'dh-cards', role: 'list' }, children: cards.map((card) => buildCard(card, onAction)) });
 }
 
 /** From this many cards the list can be switched between swiping sideways and a stacked, scrolling list. */
@@ -153,8 +174,8 @@ export type CardsView = 'row' | 'column';
  * across renders.
  * Nothing animates: the arrows jump, they do not glide.
  */
-export function buildCardView(cards: readonly RichCard[], initial: CardsView | null = null): HTMLElement {
-  const list = buildCardList(cards);
+export function buildCardView(cards: readonly RichCard[], initial: CardsView | null = null, onAction?: RichCardActionHandler): HTMLElement {
+  const list = buildCardList(cards, onAction);
   if (cards.length < VIEW_SWITCH_MIN) return list;
 
   list.setAttribute('tabindex', '0');
@@ -194,7 +215,7 @@ export function buildCardView(cards: readonly RichCard[], initial: CardsView | n
   return root;
 }
 
-function buildCard(card: RichCard): HTMLElement {
+function buildCard(card: RichCard, onAction?: RichCardActionHandler): HTMLElement {
   const textColumn = el('div', {
     attrs: { class: 'dh-card-text' },
     children: [el('p', { attrs: { class: 'dh-card-title' }, text: card.title })],
@@ -253,24 +274,31 @@ function buildCard(card: RichCard): HTMLElement {
   if (card.footer !== '') body.append(el('p', { attrs: { class: 'dh-card-footer' }, text: card.footer }));
 
   const item = el('li', { attrs: { class: 'dh-card', 'data-kind': card.kind }, children: [body] });
-  if (card.buttons.length > 0) {
-    item.append(
-      el('div', {
-        attrs: { class: 'dh-card-actions' },
-        children: card.buttons.map((button) =>
-          // A real link: it navigates, so it is announced and behaves as one.
-          // `noopener` so the opened page cannot script this one through
-          // `window.opener`; `noreferrer` so it never learns the host page's
-          // URL, which on a storefront can carry an order id.
-          el('a', {
-            attrs: { class: 'dh-card-btn', href: button.url, target: '_blank', rel: 'noopener noreferrer' },
-            text: button.label,
-            children: [el('span', { attrs: { class: 'dh-sr' }, text: ' (opens in a new tab)' })],
-          }),
-        ),
+  const buttons = card.buttons.flatMap((button): HTMLElement[] => {
+    if ('action' in button) {
+      // An action is a button, not a link: it does something in this widget.
+      if (onAction === undefined) return [];
+      return [
+        el('button', {
+          attrs: { class: 'dh-card-btn', type: 'button' },
+          text: button.label,
+          on: { click: () => onAction(card, button) },
+        }),
+      ];
+    }
+    // A real link: it navigates, so it is announced and behaves as one.
+    // `noopener` so the opened page cannot script this one through
+    // `window.opener`; `noreferrer` so it never learns the host page's
+    // URL, which on a storefront can carry an order id.
+    return [
+      el('a', {
+        attrs: { class: 'dh-card-btn', href: button.url, target: '_blank', rel: 'noopener noreferrer' },
+        text: button.label,
+        children: [el('span', { attrs: { class: 'dh-sr' }, text: ' (opens in a new tab)' })],
       }),
-    );
-  }
+    ];
+  });
+  if (buttons.length > 0) item.append(el('div', { attrs: { class: 'dh-card-actions' }, children: buttons }));
   return item;
 }
 
@@ -300,10 +328,15 @@ function readCard(card: Record<string, unknown>): RichCard | null {
       const value = text(own(row, 'value'), 120);
       return label !== '' && value !== '' ? { label, value } : null;
     }),
-    buttons: list(own(card, 'buttons'), MAX_BUTTONS, (button) => {
+    buttons: list(own(card, 'buttons'), MAX_BUTTONS, (button): RichCardButton | null => {
       const label = text(own(button, 'label'), 20);
+      if (label === '') return null;
+      if (own(button, 'action') === 'track_order') {
+        const ref = own(button, 'ref');
+        return typeof ref === 'string' && ACTION_REF.test(ref.trim()) ? { label, action: 'track_order', ref: ref.trim() } : null;
+      }
       const url = httpsUrl(own(button, 'url'));
-      return label !== '' && url !== null ? { label, url } : null;
+      return url !== null ? { label, url } : null;
     }),
     footer: text(own(card, 'footer'), 60),
   };

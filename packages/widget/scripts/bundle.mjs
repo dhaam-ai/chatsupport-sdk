@@ -127,7 +127,13 @@ console.log('');
 // selectors). Measured at 133,167 B gzip once landed on top of the flow and
 // Tickets work: 1,071 B over the previous ceiling, leaving 977 B of headroom
 // here.
-const WIDGET_GZIP_BUDGET = 134_144;
+// Increased to 132 KiB (135,168 B) for the card's in-widget "Track order"
+// action: the order-tracking panel (ui/order-tracking.ts: a status timeline
+// from the card's own fields, the items and the total), its ruleset, and the
+// action-button branch in message-card.ts. About 1.0 KB gzip over the
+// previous ceiling's headroom. Measured at 134,770 B gzip once landed: 626 B
+// over the previous ceiling, leaving 398 B of headroom here.
+const WIDGET_GZIP_BUDGET = 135_168;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,

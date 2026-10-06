@@ -30,6 +30,7 @@ import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-
 import { ICONS, el, icon } from './dom.js';
 import { createMessageActions } from './message-actions.js';
 import { buildCardView, readRichCards, readRichIntro, readRichLayout } from './message-card.js';
+import type { RichCardActionHandler } from './message-card.js';
 import { renderLinkified } from './linkify.js';
 import { createQuickReplies, readSuggestions } from './quick-replies.js';
 import type { QuickReplyChip } from './quick-replies.js';
@@ -140,6 +141,11 @@ export interface MessageListCallbacks {
   readonly onEmailTranscript: () => Promise<void>;
   /** Sends one of the bot's suggested follow-ups as the customer's next message. */
   readonly onQuickReply: (chip: QuickReplyChip) => void;
+  /**
+   * A card's action button ("Track order") was tapped. Absent: action buttons are not drawn,
+   * so a list with nowhere to send the tap shows no dead button.
+   */
+  readonly onCardAction?: RichCardActionHandler;
   /**
    * Starts a reply addressed to this message.
    *
@@ -916,7 +922,7 @@ function createRow(
       if (cardSource !== cardsFrom) {
         cardsFrom = cardSource;
         const parsed = readRichCards(cardSource);
-        cards = parsed.length > 0 ? buildCardView(parsed, readRichLayout(cardSource)) : null;
+        cards = parsed.length > 0 ? buildCardView(parsed, readRichLayout(cardSource), callbacks.onCardAction) : null;
         const intro = cards === null ? '' : readRichIntro(cardSource);
         cardsIntro = intro === '' ? null : intro;
       }

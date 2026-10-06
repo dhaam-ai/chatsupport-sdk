@@ -47,6 +47,8 @@ import { createConsentGate } from './ui/consent.js';
 import { createHeaderMenu } from './ui/header-menu.js';
 import { createUnavailable } from './ui/unavailable.js';
 import { createReportIssueForm } from './ui/report-issue.js';
+import { createOrderTracking } from './ui/order-tracking.js';
+import type { RichCard } from './ui/message-card.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
 import type { SendExtra } from './ui/composer.js';
@@ -529,7 +531,7 @@ function buildAgentAvatar(displayName: string): HTMLElement | null {
 }
 
 /** Which surface is standing in for the chat. */
-type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report' | 'composingNew' | 'confirmEnd' | 'webform';
+type SurfaceKind = 'preChat' | 'offline' | 'csat' | 'report' | 'composingNew' | 'confirmEnd' | 'webform' | 'orderTracking';
 
 /** What is known about one session's CSAT rating — see `csatBySession`. */
 type CsatLookup =
@@ -586,6 +588,8 @@ const USER_INITIATED_SURFACES: ReadonlySet<SurfaceKind> = new Set([
   // see the gate-1 carve-out in syncProductSurfaces for the one place that
   // rule alone is not enough.
   'webform',
+  // A card's "Track order": the customer asked for it, so a state tick must not swap it out.
+  'orderTracking',
 ]);
 
 function isUserInitiated(kind: SurfaceKind): boolean {
@@ -1984,6 +1988,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // typed message is, the consent gate and handoff keywords included.
     onQuickReply: (chip) => void composer.submit(chip.label, sendExtraFor(chip)),
     onReplyToMessage: (message, senderName) => startReply(message, senderName),
+    onCardAction: (card, button) => {
+      if (button.action === 'track_order') openOrderTracking(card, button.ref);
+    },
     // Read through `remote` at call time, never captured: a config publish
     // replaces `remote` wholesale, and the suggestion filter must judge by
     // the same list the composer's own keyword trigger is using right now.
@@ -5027,6 +5034,19 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         onCancel: () => cancelUserSurface(view),
         onError: report,
       }),
+    );
+  }
+
+  /**
+   * A card's "Track order" action: the order's own panel, drawn from the card the customer
+   * tapped. Keyed by the order so a second tap on a DIFFERENT order replaces the first
+   * instead of answering with a panel built for another card (`openSurface`'s `key` rule).
+   */
+  function openOrderTracking(card: RichCard, ref: string): void {
+    const view = openSurface(
+      'orderTracking',
+      () => createOrderTracking(card, { onClose: () => cancelUserSurface(view) }),
+      ref,
     );
   }
 
