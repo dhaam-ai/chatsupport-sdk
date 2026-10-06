@@ -1989,8 +1989,21 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     onQuickReply: (chip) => void composer.submit(chip.label, sendExtraFor(chip)),
     onReplyToMessage: (message, senderName) => startReply(message, senderName),
     onCardAction: (card, button) => {
-      if (button.action === 'track_order') openOrderTracking(card, button.ref);
+      if (button.action === 'track_order') {
+        openOrderTracking(card, button.ref);
+        return;
+      }
+      // `add_to_cart` is the HOST's: only it has a cart. Returned, so the button waits on it.
+      return config.onAddToCart?.({
+        productId: button.ref,
+        ...(button.variantId === undefined ? {} : { variantId: button.variantId }),
+        name: card.title,
+        ...(card.imageUrl === null ? {} : { imageUrl: card.imageUrl }),
+        ...(card.subtitle === '' ? {} : { priceLabel: card.subtitle }),
+      });
     },
+    // Add to cart is drawn only for a host that registered `onAddToCart`.
+    cardActionSupported: (action) => action !== 'add_to_cart' || config.onAddToCart !== undefined,
     // Read through `remote` at call time, never captured: a config publish
     // replaces `remote` wholesale, and the suggestion filter must judge by
     // the same list the composer's own keyword trigger is using right now.
