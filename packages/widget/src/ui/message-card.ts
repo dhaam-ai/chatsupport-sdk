@@ -88,6 +88,21 @@ export function readRichCards(metadata: unknown): readonly RichCard[] {
 }
 
 /**
+ * `metadata.richLayout` → how the flow wants its cards laid out: `row` (side by side)
+ * for 'horizontal', `column` (a list) for 'vertical', or `null` for anything else,
+ * which leaves the widget's own default. Never throws.
+ */
+export function readRichLayout(metadata: unknown): CardsView | null {
+  try {
+    const bag = record(metadata);
+    const value = bag === null ? undefined : own(bag, 'richLayout');
+    return value === 'horizontal' ? 'row' : value === 'vertical' ? 'column' : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `metadata.richIntro` → the intro line to show in the bubble while cards are
  * drawn, or `''` when there is none. Never throws.
  *
@@ -121,6 +136,62 @@ export function readRichIntro(metadata: unknown): string {
  */
 export function buildCardList(cards: readonly RichCard[]): HTMLElement {
   return el('ul', { attrs: { class: 'dh-cards', role: 'list' }, children: cards.map(buildCard) });
+}
+
+/** From this many cards the list can be switched between swiping sideways and a stacked, scrolling list. */
+const VIEW_SWITCH_MIN = 3;
+export type CardsView = 'row' | 'column';
+
+/**
+ * The cards as the bubble shows them: one or two are the plain list; three or more
+ * come with a switch between a sideways swipe (the default: it keeps a long list
+ * compact, and the next card peeks in as the cue) and a stacked list that scrolls
+ * up and down inside its own box. Both scroll by touch, wheel and keyboard (the
+ * list takes focus); the arrows in the bar move the swipe one card for a mouse.
+ * The flow may say which one it opens in (`initial`, from `metadata.richLayout`); the
+ * reader can still switch. The choice lives on the element, which the transcript keeps
+ * across renders.
+ * Nothing animates: the arrows jump, they do not glide.
+ */
+export function buildCardView(cards: readonly RichCard[], initial: CardsView | null = null): HTMLElement {
+  const list = buildCardList(cards);
+  if (cards.length < VIEW_SWITCH_MIN) return list;
+
+  list.setAttribute('tabindex', '0');
+  list.setAttribute('aria-label', `${cards.length} cards`);
+
+  const mode = (view: CardsView, text: string, label: string): HTMLButtonElement =>
+    el('button', {
+      attrs: { type: 'button', class: 'dh-cards-mode', 'data-mode': view, 'aria-label': label },
+      text,
+      on: { click: () => choose(view) },
+    });
+  const swipe = mode('row', 'Swipe', 'Show the cards side by side');
+  const stack = mode('column', 'List', 'Show the cards in a list');
+  const step = (direction: -1 | 1): HTMLButtonElement =>
+    el('button', {
+      attrs: { type: 'button', class: 'dh-cards-nav', 'aria-label': direction < 0 ? 'Previous card' : 'Next card' },
+      text: direction < 0 ? '‹' : '›',
+      on: {
+        click: () => {
+          const first = list.firstElementChild as HTMLElement | null;
+          const by = (first?.offsetWidth ?? 240) + 8;
+          if (typeof list.scrollBy === 'function') list.scrollBy({ left: direction * by });
+        },
+      },
+    });
+  const nav = el('div', { attrs: { class: 'dh-cards-steps' }, children: [step(-1), step(1)] });
+  const bar = el('div', { attrs: { class: 'dh-cards-bar' }, children: [swipe, stack, nav] });
+  const root = el('div', { attrs: { class: 'dh-cards-view' }, children: [bar, list] });
+
+  function choose(view: CardsView): void {
+    root.setAttribute('data-view', view);
+    swipe.setAttribute('aria-pressed', String(view === 'row'));
+    stack.setAttribute('aria-pressed', String(view === 'column'));
+    nav.hidden = view !== 'row';
+  }
+  choose(initial ?? 'row');
+  return root;
 }
 
 function buildCard(card: RichCard): HTMLElement {

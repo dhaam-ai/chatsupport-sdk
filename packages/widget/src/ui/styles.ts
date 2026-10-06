@@ -2577,6 +2577,52 @@ button {
 .dh-card-btn:hover { background: color-mix(in srgb, var(--dh-accent) 8%, transparent); text-decoration: underline; }
 .dh-card-btn:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
 
+/* Three or more cards: a bar to switch between swiping sideways ("row", the
+   default) and a list that scrolls up and down in its own box ("column"). The
+   scrolling box takes keyboard focus, so its focus ring is drawn too. Nothing
+   glides: snapping is not motion, and no scroll is animated. */
+.dh-cards-view { margin: 6px 0 0; width: 300px; max-width: 100%; }
+.dh-cards-view > .dh-cards { margin: 4px 0 0; width: 100%; }
+.dh-cards-view > .dh-cards:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+.dh-cards-bar { display: flex; align-items: center; gap: 6px; }
+.dh-cards-mode, .dh-cards-nav {
+  min-height: 36px;
+  padding: 4px 12px;
+  border: 1px solid var(--dh-border);
+  border-radius: 999px;
+  background: var(--dh-surface);
+  color: var(--dh-text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dh-cards-mode[aria-pressed="true"] {
+  border-color: var(--dh-accent);
+  color: var(--dh-accent);
+  background: color-mix(in srgb, var(--dh-accent) 10%, var(--dh-surface));
+}
+.dh-cards-mode:focus-visible, .dh-cards-nav:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
+.dh-cards-steps { display: flex; gap: 6px; margin-inline-start: auto; }
+.dh-cards-steps[hidden] { display: none; }
+.dh-cards-nav { min-width: 36px; padding: 4px 0; font-size: 16px; line-height: 1; }
+.dh-cards-view[data-view="row"] > .dh-cards {
+  flex-direction: row;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  padding-bottom: 6px;
+}
+.dh-cards-view[data-view="row"] > .dh-cards > .dh-card { flex: 0 0 240px; scroll-snap-align: start; }
+.dh-cards-view[data-view="column"] > .dh-cards {
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+/* A card keeps its own height in the capped column: it scrolls, it is not squeezed. */
+.dh-cards-view[data-view="column"] > .dh-cards > .dh-card { flex: 0 0 auto; }
+
 /* 'behaviour.typingIndicator: false'. 'display: none' rather than
    'visibility: hidden' on purpose — it takes the screen-reader label out of
    the accessibility tree along with the dots, and a merchant who turned the

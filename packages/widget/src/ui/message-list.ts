@@ -29,7 +29,7 @@ import type { AttachmentMetadata, CloseReason, SendFailureReason } from '@dhaam-
 
 import { ICONS, el, icon } from './dom.js';
 import { createMessageActions } from './message-actions.js';
-import { buildCardList, readRichCards, readRichIntro } from './message-card.js';
+import { buildCardView, readRichCards, readRichIntro, readRichLayout } from './message-card.js';
 import { renderLinkified } from './linkify.js';
 import { createQuickReplies, readSuggestions } from './quick-replies.js';
 import type { QuickReplyChip } from './quick-replies.js';
@@ -916,7 +916,7 @@ function createRow(
       if (cardSource !== cardsFrom) {
         cardsFrom = cardSource;
         const parsed = readRichCards(cardSource);
-        cards = parsed.length > 0 ? buildCardList(parsed) : null;
+        cards = parsed.length > 0 ? buildCardView(parsed, readRichLayout(cardSource)) : null;
         const intro = cards === null ? '' : readRichIntro(cardSource);
         cardsIntro = intro === '' ? null : intro;
       }

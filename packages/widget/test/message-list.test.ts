@@ -1554,6 +1554,32 @@ describe('the bot’s rich cards (metadata.richCards)', () => {
   });
 
   it.each([
+    [undefined, 'row'],
+    ['horizontal', 'row'],
+    ['vertical', 'column'],
+    ['diagonal', 'row'],
+  ])('a flow that says richLayout %s opens its three or more cards as %s', (layout, opened) => {
+    const { view } = build();
+    const cards = Array.from({ length: 4 }, (_, i) => card(`Card ${i}`));
+    view.render(
+      state({ messages: [botWithCards(cards, { metadata: { richCards: cards, ...(layout ? { richLayout: layout } : {}) } })] }),
+      ME,
+    );
+    expect(row(view).querySelector('.dh-cards-view')?.getAttribute('data-view')).toBe(opened);
+    expect(row(view).querySelectorAll('.dh-card')).toHaveLength(4);
+  });
+
+  it('only a bot message can set the layout: a customer\'s cards are not drawn at all', () => {
+    const { view } = build();
+    const cards = Array.from({ length: 4 }, (_, i) => card(`Card ${i}`));
+    view.render(
+      state({ messages: [botWithCards(cards, { senderType: 'CUSTOMER', metadata: { richCards: cards, richLayout: 'vertical' } })] }),
+      ME,
+    );
+    expect(row(view).querySelector('.dh-cards-view')).toBeNull();
+  });
+
+  it.each([
     [0, 0],
     [1, 1],
     [10, 10],

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildCardList, readRichCards, readRichIntro } from '../src/ui/message-card.js';
+import { buildCardList, buildCardView, readRichCards, readRichIntro, readRichLayout } from '../src/ui/message-card.js';
 import type { RichCard } from '../src/ui/message-card.js';
 import { STYLES } from '../src/ui/styles.js';
 
@@ -373,6 +373,92 @@ describe('readRichCards — untrusted input', () => {
     // string here would print entities at the customer.
     expect(card?.title).toBe(payload);
     expect(card?.rows[0]).toEqual({ label: payload, value: payload });
+  });
+});
+
+describe('buildCardView — swipe sideways or scroll a list', () => {
+  const view = (n: number) =>
+    buildCardView(read(Array.from({ length: n }, (_, i) => orderCard({ title: `Card ${i}` }))));
+  const pressed = (root: HTMLElement) =>
+    [...root.querySelectorAll('.dh-cards-mode')].map((b) => [b.getAttribute('data-mode'), b.getAttribute('aria-pressed')]);
+
+  it('leaves one or two cards as the plain list, with nothing to switch', () => {
+    for (const n of [1, 2]) {
+      const root = view(n);
+      expect(root.tagName).toBe('UL');
+      expect(root.classList.contains('dh-cards')).toBe(true);
+      expect(root.querySelector('.dh-cards-mode')).toBeNull();
+    }
+  });
+
+  it('wraps three or more in a view that opens swiping sideways, with every card in one list', () => {
+    const root = view(10);
+    expect(root.classList.contains('dh-cards-view')).toBe(true);
+    expect(root.getAttribute('data-view')).toBe('row');
+    expect(pressed(root)).toEqual([['row', 'true'], ['column', 'false']]);
+    const list = root.querySelector('ul.dh-cards') as HTMLElement;
+    expect(list.getAttribute('role')).toBe('list');
+    expect(list.querySelectorAll(':scope > li.dh-card')).toHaveLength(10);
+    // The scrolling box can be reached and scrolled from the keyboard, and says what it holds.
+    expect(list.getAttribute('tabindex')).toBe('0');
+    expect(list.getAttribute('aria-label')).toBe('10 cards');
+    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('switches to a stacked list and back; the arrows only belong to the swipe', () => {
+    const root = view(5);
+    const [swipe, stack] = [...root.querySelectorAll<HTMLButtonElement>('.dh-cards-mode')];
+    stack!.click();
+    expect(root.getAttribute('data-view')).toBe('column');
+    expect(pressed(root)).toEqual([['row', 'false'], ['column', 'true']]);
+    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(true);
+    swipe!.click();
+    expect(root.getAttribute('data-view')).toBe('row');
+    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(false);
+  });
+
+  it('opens in the view the flow asked for, and the reader can still switch', () => {
+    const cards = read(Array.from({ length: 4 }, (_, i) => orderCard({ title: `Card ${i}` })));
+    const root = buildCardView(cards, 'column');
+    expect(root.getAttribute('data-view')).toBe('column');
+    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(true);
+    (root.querySelector('.dh-cards-mode[data-mode="row"]') as HTMLButtonElement).click();
+    expect(root.getAttribute('data-view')).toBe('row');
+    // Fewer than three cards have no view to open in.
+    expect(buildCardView(cards.slice(0, 2), 'column').tagName).toBe('UL');
+  });
+
+  it('readRichLayout: horizontal and vertical only; anything else leaves the default, and it never throws', () => {
+    expect(readRichLayout({ richLayout: 'horizontal' })).toBe('row');
+    expect(readRichLayout({ richLayout: 'vertical' })).toBe('column');
+    for (const bad of [{ richLayout: 'diagonal' }, { richLayout: 1 }, {}, null, undefined, 'x', []]) {
+      expect(readRichLayout(bad)).toBeNull();
+    }
+    expect(readRichLayout(Object.create({ richLayout: 'vertical' }))).toBeNull();
+    expect(readRichLayout({ get richLayout(): string { throw new Error('boom'); } })).toBeNull();
+  });
+
+  it('the arrows move the swipe one card at a time, without gliding', () => {
+    const root = view(4);
+    const list = root.querySelector('ul.dh-cards') as HTMLElement;
+    const calls: unknown[] = [];
+    list.scrollBy = ((arg: unknown) => void calls.push(arg)) as typeof list.scrollBy;
+    const [prev, next] = [...root.querySelectorAll<HTMLButtonElement>('.dh-cards-nav')];
+    next!.click();
+    prev!.click();
+    const lefts = calls.map((c) => (c as { left: number }).left);
+    expect(lefts[0]).toBeGreaterThan(0);
+    expect(lefts[1]).toBe(-lefts[0]!);
+    expect(calls.every((c) => (c as { behavior?: string }).behavior === undefined)).toBe(true);
+  });
+
+  it('is styled for both: a snapping sideways scroller, and a height-capped list that scrolls up and down', () => {
+    const rule = (selector: string) => STYLES.slice(STYLES.indexOf(selector)).split('}')[0]!;
+    expect(rule('.dh-cards-view[data-view="row"] > .dh-cards {')).toMatch(/overflow-x: auto[\s\S]*scroll-snap-type: x mandatory/);
+    expect(rule('.dh-cards-view[data-view="column"] > .dh-cards {')).toMatch(/max-height: \d+px[\s\S]*overflow-y: auto/);
+    expect(STYLES.slice(STYLES.indexOf('.dh-cards-view {'), STYLES.indexOf('.dh-cards-view[data-view="column"] > .dh-cards > .dh-card'))).not.toMatch(
+      /transition|animation|(?<!over)scroll-behavior/,
+    );
   });
 });
 
