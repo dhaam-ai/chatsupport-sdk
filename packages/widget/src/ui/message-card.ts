@@ -155,8 +155,25 @@ export function readRichIntro(metadata: unknown): string {
  * text (https://developer.mozilla.org/en-US/docs/Web/CSS/list-style#accessibility,
  * https://webkit.org/b/170179#c1).
  */
+/**
+ * An order card with no way to track it gets the widget's own "Track order" action.
+ *
+ * The panel it opens is drawn from the card itself, so the button needs nothing from the
+ * backend: it works against a chat-service that predates the `track_order` action and
+ * against a card whose merchant sent no tracking URL. A card that already carries its own
+ * tracking link or action is left exactly as sent, and one with no order number in its
+ * title (`Order #3742`) or no room for a third button gets none.
+ */
+function withTrackAction(card: RichCard): RichCard {
+  if (card.kind !== 'order' || card.buttons.length >= MAX_BUTTONS) return card;
+  if (card.buttons.some((b) => 'action' in b || /track/i.test(b.label))) return card;
+  const ref = /#\s*(\S+)\s*$/.exec(card.title)?.[1];
+  if (ref === undefined || !ACTION_REF.test(ref)) return card;
+  return { ...card, buttons: [...card.buttons, { label: 'Track order', action: 'track_order', ref }] };
+}
+
 export function buildCardList(cards: readonly RichCard[], onAction?: RichCardActionHandler): HTMLElement {
-  return el('ul', { attrs: { class: 'dh-cards', role: 'list' }, children: cards.map((card) => buildCard(card, onAction)) });
+  return el('ul', { attrs: { class: 'dh-cards', role: 'list' }, children: cards.map((card) => buildCard(onAction === undefined ? card : withTrackAction(card), onAction)) });
 }
 
 /** From this many cards the list can be switched between swiping sideways and a stacked, scrolling list. */
