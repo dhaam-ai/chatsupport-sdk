@@ -949,6 +949,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
    */
   let parkedSessionId: string | null = null;
   /**
+   * A conversation the CUSTOMER ended (End conversation) and has since walked away from (back arrow,
+   * a tab, closing the panel). `customerVisibleSessions` keeps the open conversation listed so a row
+   * is never pulled out from under someone reading it; once they have left a chat they themselves
+   * closed it drops off the Home / Messages lists. One an agent closed keeps its row and status.
+   * Cleared when they are back on the conversation screen.
+   */
+  let leftEndedSessionId: string | null = null;
+  let customerEndedSessionId: string | null = null;
+  /**
    * An agent opened a conversation while the panel was shut, and the customer
    * has not looked at it yet.
    *
@@ -2228,6 +2237,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // open in its surface slot — see `discardUserSurface` for why nothing
       // else would ever clear it.
       if (name !== 'conversation') discardUserSurface();
+      const ended = name === 'conversation' ? null : endedSession(store.getState());
+      leftEndedSessionId = ended !== null && ended.id === customerEndedSessionId ? ended.id : null;
       // Same rule for the portal thread: leaving 'conversation' means
       // whichever customer conversation was open is no longer on screen, so
       // a later re-render of a STALE `client.subscribe` notification (one
@@ -4221,7 +4232,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   function syncSessionSurfaces(): void {
     if (destroyed) return;
     const state = store.getState();
-    const joinedSessionId = state.session?.id ?? null;
+    const joinedSessionId = state.session?.id === leftEndedSessionId ? null : (state.session?.id ?? null);
     // The one filtered list both customer surfaces read — Home's single
     // "Recent conversation" row and the Messages list. Filtering once here
     // rather than twice downstream is the same "one input, two screens"
@@ -5249,6 +5260,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
               const current = store.getState().session;
               if (current !== null && current.id === targetId) {
                 await store.client.closeSession();
+                customerEndedSessionId = targetId;
                 // The customer ENDED this one. If it was also parked by a
                 // SWITCHED close (see `parkedSessionId`), that suppression no
                 // longer applies: parking says "nobody ended this", and
