@@ -68,6 +68,7 @@ export function unmount(): void {
 export { createWidget };
 
 export { resolveConfig, WidgetConfigError, parseMode } from './config.js';
+export type { AddToCartRequest } from './config.js';
 export { looksLikeSecretKey } from './auth.js';
 export { resolvePresentation } from './ui/presentation.js';
 

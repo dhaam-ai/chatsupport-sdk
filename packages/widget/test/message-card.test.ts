@@ -895,3 +895,71 @@ describe('action buttons: "Track order" that the widget handles itself', () => {
     expect(list.querySelector('.dh-card-actions')).toBeNull();
   });
 });
+
+describe('add_to_cart: product cards hand the product to the host app', () => {
+  const product = (buttons: unknown[] = []) => ({
+    v: 1,
+    kind: 'product',
+    title: 'Cheese Burst Pizza',
+    subtitle: '₹380.00',
+    imageUrl: 'https://cdn.example.com/p.avif',
+    buttons,
+  });
+  const add = { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' };
+  const tap = (card: Record<string, unknown>, onAction: (c: RichCard, b: never) => void | Promise<void>, supports?: (a: string) => boolean) => {
+    const list = buildCardList([one(card)!], onAction as never, supports as never);
+    return list.querySelector<HTMLButtonElement>('button.dh-card-btn');
+  };
+
+  it('reads the product id, and the variant when there is one', () => {
+    expect(one(product([add]))?.buttons).toEqual([{ label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' }]);
+    expect(one(product([{ ...add, variantId: 'v_7' }]))?.buttons).toEqual([
+      { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42', variantId: 'v_7' },
+    ]);
+  });
+
+  it('drops a button without a usable product id, and a variant that is not an id', () => {
+    expect(one(product([{ label: 'A', action: 'add_to_cart' }, { label: 'B', action: 'add_to_cart', ref: 'a b' }]))?.buttons).toEqual([]);
+    expect(one(product([{ ...add, variantId: 'has space' }]))?.buttons).toEqual([
+      { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' },
+    ]);
+  });
+
+  it('draws nothing when the host cannot add to a cart', () => {
+    const onAction = vi.fn();
+    expect(tap(product([add]), onAction, (a) => a !== 'add_to_cart')).toBeNull();
+    expect(tap(product([add]), onAction)).not.toBeNull();
+  });
+
+  it('waits on the host: Adding..., then Added, then the label again', async () => {
+    vi.useFakeTimers();
+    let done!: () => void;
+    const onAction = vi.fn(() => new Promise<void>((resolve) => { done = resolve; }));
+    const button = tap(product([add]), onAction)!;
+    button.click();
+    expect(button.textContent).toBe('Adding…');
+    expect(button.disabled).toBe(true);
+    button.click(); // a double tap while busy adds nothing more
+    expect(onAction).toHaveBeenCalledTimes(1);
+    done();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(button.textContent).toBe('Added');
+    expect(button.getAttribute('data-state')).toBe('added');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(button.textContent).toBe('Add to cart');
+    expect(button.disabled).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('says Try again, and can be tapped again, when the host refuses or throws', async () => {
+    for (const onAction of [vi.fn(() => Promise.reject(new Error('no store'))), vi.fn(() => { throw new Error('boom'); })]) {
+      const button = tap(product([add]), onAction)!;
+      button.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(button.textContent).toBe('Try again');
+      expect(button.getAttribute('data-state')).toBe('error');
+      expect(button.disabled).toBe(false);
+    }
+  });
+});

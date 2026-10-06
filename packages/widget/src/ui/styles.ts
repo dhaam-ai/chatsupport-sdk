@@ -2578,6 +2578,8 @@ button {
 .dh-card-btn:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
 /* An action is a real <button>: strip the native look so it matches the links beside it. */
 button.dh-card-btn { border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+button.dh-card-btn:disabled { opacity: 0.6; cursor: default; }
+button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
 
 /* ── Order-tracking panel (a card's "Track order" action; ui/order-tracking.ts) ── */
 .dh-track { flex: 1 1 auto; min-height: 0; overflow-y: auto; background: var(--dh-surface); color: var(--dh-text); }
