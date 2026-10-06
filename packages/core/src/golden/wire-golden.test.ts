@@ -168,6 +168,8 @@ function harness(storage = new MemoryStorageAdapter()): Harness {
     webSocketFactory: sockets.create,
     schedule: timers.schedule,
     now: timers.clock,
+    // Fixed: the hello carries the visitor's zone, and a golden must not depend on the machine it runs on.
+    timeZone: 'Asia/Kolkata',
   };
 
   return { sockets, timers, client: createChatClient(config) };
@@ -246,7 +248,7 @@ describe('GOLDEN: the shipped customer outbound wire', () => {
     //     future edit that advances time must expect it rather than delete it.
     expect(capture(h.sockets)).toEqual([
       '--- socket 0 ---',
-      '{"v":1,"t":"connection.hello","id":"#0","ts":0,"d":{"token":"tok_golden","publishableKey":"dhp_test_abc","protocolVersion":1}}',
+      '{"v":1,"t":"connection.hello","id":"#0","ts":0,"d":{"token":"tok_golden","publishableKey":"dhp_test_abc","context":{"attributes":{"timezone":"Asia/Kolkata"}},"protocolVersion":1}}',
       '{"v":1,"t":"presence.set","id":"#1","ts":0,"d":{"status":"ONLINE"}}',
       '{"v":1,"t":"typing.start","id":"#2","ts":0,"d":{}}',
       '{"v":1,"t":"message.send","id":"#3","ts":0,"d":{"content":"hello agent","type":"TEXT","sessionId":"session_1"}}',
@@ -296,9 +298,9 @@ describe('GOLDEN: the shipped customer outbound wire', () => {
 
     expect(capture(h.sockets)).toEqual([
       '--- socket 0 ---',
-      '{"v":1,"t":"connection.hello","id":"#0","ts":0,"d":{"token":"tok_golden","publishableKey":"dhp_test_abc","protocolVersion":1}}',
+      '{"v":1,"t":"connection.hello","id":"#0","ts":0,"d":{"token":"tok_golden","publishableKey":"dhp_test_abc","context":{"attributes":{"timezone":"Asia/Kolkata"}},"protocolVersion":1}}',
       '--- socket 1 ---',
-      '{"v":1,"t":"connection.hello","id":"#1","ts":1000,"d":{"token":"tok_golden","publishableKey":"dhp_test_abc","resumeFrom":0,"protocolVersion":1}}',
+      '{"v":1,"t":"connection.hello","id":"#1","ts":1000,"d":{"token":"tok_golden","publishableKey":"dhp_test_abc","context":{"attributes":{"timezone":"Asia/Kolkata"}},"resumeFrom":0,"protocolVersion":1}}',
       '{"v":1,"t":"message.send","id":"#2","ts":1000,"d":{"content":"typed while offline","type":"TEXT","sessionId":"session_1"}}',
     ]);
   });

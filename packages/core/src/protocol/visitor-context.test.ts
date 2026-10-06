@@ -109,3 +109,23 @@ describe('visitorContextKey', () => {
     expect(visitorContextKey({})).toBe(visitorContextKey({}));
   });
 });
+
+import { browserTimeZone, withTimeZone } from './visitor-context.js';
+
+describe('the visitor\'s time zone', () => {
+  it('browserTimeZone names an IANA zone the server will accept as an attribute', () => {
+    const zone = browserTimeZone();
+    expect(zone === undefined || /^[A-Za-z][A-Za-z0-9_+\-/]{0,63}$/.test(zone)).toBe(true);
+  });
+
+  it('withTimeZone adds it to the attributes, never over the host\'s own, never past the bag, never mutating', () => {
+    const base = { label: 'cart', attributes: { currency: 'INR' } };
+    expect(withTimeZone(base, 'Asia/Kolkata')).toEqual({ label: 'cart', attributes: { currency: 'INR', timezone: 'Asia/Kolkata' } });
+    expect(base).toEqual({ label: 'cart', attributes: { currency: 'INR' } });
+    expect(withTimeZone({ attributes: { timezone: 'Europe/Paris' } }, 'Asia/Kolkata')).toEqual({ attributes: { timezone: 'Europe/Paris' } });
+    expect(withTimeZone({}, 'UTC')).toEqual({ attributes: { timezone: 'UTC' } });
+    expect(withTimeZone(base, undefined)).toBe(base);
+    const full = { attributes: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i])) };
+    expect(withTimeZone(full, 'UTC')).toBe(full);
+  });
+});

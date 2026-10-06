@@ -43,7 +43,7 @@ import type { LocalSender } from '../messages/index.js';
 import { PresenceCoordinator, systemClock, systemTimers } from '../presence/index.js';
 import type { Clock, ScheduleTimer } from '../presence/index.js';
 import { PageContextSync } from './page-context-sync.js';
-import { isParkedCloseReason, normalizeVisitorEvent } from '../protocol/index.js';
+import { browserTimeZone, isParkedCloseReason, normalizeVisitorEvent } from '../protocol/index.js';
 import type { ChatStatus, ErrorPayload, ServerFrame } from '../protocol/index.js';
 import { SendQueue } from '../queue/index.js';
 import type { QueuedSend, QueueTransport, RetryOutcome } from '../queue/index.js';
@@ -543,6 +543,8 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     },
     schedule: schedule ?? systemTimers,
     clock: now ?? systemClock,
+    // Order dates are shown in the visitor's own time zone (chat-service reads `attributes.timezone`).
+    timeZone: config.timeZone === undefined ? browserTimeZone : () => config.timeZone ?? undefined,
   });
 
   const connectionController = new ConnectionController({

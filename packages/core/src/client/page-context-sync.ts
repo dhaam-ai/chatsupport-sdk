@@ -20,7 +20,7 @@
 // server would reject) and an unusable call is simply reported as ignored.
 
 import type { Clock, ScheduleTimer, CancelTimer } from '../presence/index.js';
-import { normalizeVisitorContext, visitorContextKey } from '../protocol/index.js';
+import { normalizeVisitorContext, visitorContextKey, withTimeZone } from '../protocol/index.js';
 import type { VisitorContext } from '../protocol/index.js';
 
 const DEFAULT_DEBOUNCE_MS = 500;
@@ -36,6 +36,12 @@ export interface PageContextSyncOptions {
   readonly clock: Clock;
   readonly debounceMs?: number;
   readonly maxPerMinute?: number;
+  /**
+   * The visitor's time zone. When given, every context this sends (the hello's and each update, which
+   * REPLACES the stored one) carries it as `attributes.timezone`, so the server can show them dates in
+   * their own zone; a hello goes out with just that when the host set no context at all.
+   */
+  readonly timeZone?: () => string | undefined;
 }
 
 export class PageContextSync {
@@ -45,6 +51,7 @@ export class PageContextSync {
   readonly #clock: Clock;
   readonly #debounceMs: number;
   readonly #maxPerMinute: number;
+  readonly #timeZone: (() => string | undefined) | undefined;
 
   #latest: VisitorContext | undefined;
   /** Identity of `#latest`; `null` until anything usable was set. */
@@ -61,6 +68,11 @@ export class PageContextSync {
     this.#clock = options.clock;
     this.#debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.#maxPerMinute = options.maxPerMinute ?? DEFAULT_MAX_PER_MINUTE;
+    this.#timeZone = options.timeZone;
+  }
+
+  #zoned(context: VisitorContext): VisitorContext {
+    return this.#timeZone === undefined ? context : withTimeZone(context, this.#timeZone());
   }
 
   /**
@@ -69,8 +81,9 @@ export class PageContextSync {
    * dropped or the content was unchanged.
    */
   set(input: unknown): boolean {
-    const context = normalizeVisitorContext(input);
-    if (context === null) return false;
+    const normalized = normalizeVisitorContext(input);
+    if (normalized === null) return false;
+    const context = this.#zoned(normalized);
 
     const key = visitorContextKey(context);
     if (key === this.#latestKey && key === this.#sentKey) return true;
@@ -89,6 +102,14 @@ export class PageContextSync {
    * content is not sent again as an update.
    */
   forHello(): VisitorContext | undefined {
+    if ((this.#latestKey === null || this.#latest === undefined) && this.#timeZone !== undefined) {
+      // The host set no context: the hello still says which zone the visitor is in.
+      const zoned = this.#zoned({});
+      if (Object.keys(zoned).length > 0) {
+        this.#latest = zoned;
+        this.#latestKey = visitorContextKey(zoned);
+      }
+    }
     if (this.#latestKey === null || this.#latest === undefined) return undefined;
     this.#sentKey = this.#latestKey;
     return Object.keys(this.#latest).length === 0 ? undefined : this.#latest;

@@ -64,6 +64,32 @@ function normalizeStore(value: unknown): VisitorContext['store'] | undefined {
   return outletId === undefined ? { id } : { id, outletId };
 }
 
+/**
+ * The visitor's time zone as an IANA name ("Asia/Kolkata"), read from the runtime, or
+ * `undefined` when it can't say. Order dates are shown to the visitor in it. Never throws:
+ * a runtime without `Intl`, or one that answers with something the server would not accept
+ * as an attribute, simply sends nothing.
+ */
+export function browserTimeZone(): string | undefined {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === 'string' && /^[A-Za-z][A-Za-z0-9_+\-/]{0,63}$/.test(zone) ? zone : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `context` with `attributes.timezone` set to `timeZone` — unless the host already set its own,
+ * the bag is full, or there is no zone to add. A new object; `context` is never changed.
+ */
+export function withTimeZone(context: VisitorContext, timeZone: string | undefined): VisitorContext {
+  if (timeZone === undefined) return context;
+  const attributes = context.attributes ?? {};
+  if ('timezone' in attributes || Object.keys(attributes).length >= MAX_ATTRIBUTES) return context;
+  return { ...context, attributes: { ...attributes, timezone: timeZone } };
+}
+
 export function normalizeVisitorContext(input: unknown): VisitorContext | null {
   if (!isPlainObject(input)) return null;
   const context: VisitorContext = {};

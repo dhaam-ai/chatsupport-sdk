@@ -371,6 +371,14 @@ export interface ChatClientConfig {
   readonly protocolVersion?: number;
 
   /**
+   * The visitor's IANA time zone ("Asia/Kolkata"), sent with the page context as
+   * `attributes.timezone` so the bot can show order dates in it. Omit it and the browser's own
+   * is read; pass `null` to send none (dates are then shown in UTC). A host that already puts
+   * `timezone` in its own `setContext` attributes keeps that one.
+   */
+  readonly timeZone?: string | null;
+
+  /**
    * Who this client sends as (§6.3's `sendMessage`, and, so that typing
    * self-echo filtering and read watermarks key the right participant,
    * presence too — see create-chat-client.ts's `resolveLocalSender`).

@@ -159,3 +159,50 @@ describe('destroy()', () => {
     expect(h.sent).toEqual([]);
   });
 });
+
+describe('the visitor\'s time zone', () => {
+  const zoned = (zone: string | undefined, opts: { connected?: boolean } = {}) => {
+    const timers = new ManualTimers();
+    const sent: VisitorContext[] = [];
+    const sync = new PageContextSync({
+      isConnected: () => opts.connected ?? true,
+      send: (context) => sent.push(context),
+      schedule: timers.schedule,
+      clock: timers.clock,
+      timeZone: () => zone,
+    });
+    return { sync, timers, sent };
+  };
+
+  it('rides every context the host sets, in the hello and in each update', () => {
+    const h = zoned('Asia/Kolkata', { connected: false });
+    h.sync.set({ label: 'checkout', url: '/checkout', attributes: { currency: 'inr' } });
+    expect(h.sync.forHello()).toEqual({ label: 'checkout', url: '/checkout', attributes: { currency: 'INR', timezone: 'Asia/Kolkata' } });
+    const u = zoned('Europe/London');
+    u.sync.set({ label: 'cart' });
+    u.timers.advance(5_000);
+    expect(u.sent).toEqual([{ label: 'cart', attributes: { timezone: 'Europe/London' } }]);
+  });
+
+  it('the hello says it even when the host set no context at all; and an empty set() still keeps it', () => {
+    expect(zoned('Asia/Kolkata').sync.forHello()).toEqual({ attributes: { timezone: 'Asia/Kolkata' } });
+    const h = zoned('Asia/Kolkata');
+    h.sync.set({});
+    h.timers.advance(5_000);
+    expect(h.sent).toEqual([{ attributes: { timezone: 'Asia/Kolkata' } }]);
+  });
+
+  it('a host\'s own timezone wins, and no zone to give adds nothing', () => {
+    const h = zoned('Asia/Kolkata', { connected: false });
+    h.sync.set({ attributes: { timezone: 'America/New_York' } });
+    expect(h.sync.forHello()).toEqual({ attributes: { timezone: 'America/New_York' } });
+    expect(zoned(undefined).sync.forHello()).toBeUndefined();
+  });
+
+  it('is off unless asked for: a sync built without it sends exactly what it was given', () => {
+    const h = harness({ connected: false });
+    expect(h.sync.forHello()).toBeUndefined();
+    h.sync.set({ label: 'cart' });
+    expect(h.sync.forHello()).toEqual({ label: 'cart' });
+  });
+});
