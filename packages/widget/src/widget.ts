@@ -5529,6 +5529,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // runs below, so the badge cannot survive the open that answered it.
     agentInitiated = false;
 
+    // A page reload with a finished, rated conversation restored: open on Home, not on it.
+    const landing = landingScreen();
+    if (landing !== initialScreenName && screens.current() !== landing) screens.reset(landing);
+
     restoreFocus = captureFocus();
     panel.setAttribute('data-open', 'true');
     panel.removeAttribute('aria-hidden');
@@ -5568,6 +5572,20 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     messageList.render(store.getState(), localParticipantId);
   }
 
+  /**
+   * Where a panel opens, and where `close()` puts it back: `initialScreenName`, except that a
+   * conversation that has ended AND has been rated is finished business. A store-targeted chat
+   * (`initialScreenName === 'conversation'`) would otherwise greet the customer with that old
+   * thread and its locked rating every time they open the widget; Home is where they start
+   * something new. An ended conversation that is still unrated keeps the survey in front of them.
+   * A host that named a `sessionId` asked for that conversation, so it is never overridden.
+   */
+  function landingScreen(): ScreenName {
+    if (initialScreenName !== 'conversation' || config.sessionId !== undefined) return initialScreenName;
+    const ended = endedSession(store.getState());
+    return ended !== null && csatBySession.get(ended.id)?.state === 'rated' ? 'home' : initialScreenName;
+  }
+
   function close(): void {
     if (!open) return;
     open = false;
@@ -5582,7 +5600,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // the widget gets the same landing screen everyone else does, not
     // wherever they happened to leave off; `initialScreenName` is the one
     // exception, for a host that named a specific `sessionId`.
-    screens.reset(initialScreenName);
+    screens.reset(landingScreen());
 
     trap?.release();
     trap = null;
