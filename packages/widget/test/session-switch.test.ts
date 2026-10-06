@@ -337,6 +337,26 @@ describe('bug 1 — picking a previous session', () => {
     expect(historyCalls).toContain(PAST);
   });
 
+  it('never shows the previous chat’s messages while the picked one is loading', async () => {
+    sessionRows = [summaryRow(PAST), summaryRow(CURRENT, { status: 'ASSIGNED', closedAt: null })];
+    const { socket } = await boot();
+    expect(transcript()).toEqual([TRANSCRIPT[CURRENT]]);
+
+    await goToMessages();
+    const row = messagesRows().find(
+      (candidate) => candidate.closest('.dh-messages-item')?.getAttribute('data-status') === 'RESOLVED',
+    );
+    if (row === undefined) throw new Error('no past-session row rendered');
+    row.click();
+    await settle();
+
+    // The join has not been answered yet: the old conversation must not be what is on screen.
+    expect(transcript()).toEqual([]);
+
+    await serverAcceptsJoin(socket, PAST);
+    expect(transcript()).toEqual([TRANSCRIPT[PAST]]);
+  });
+
   it('fetches page one for the chosen session, with no cursor from the old one', async () => {
     sessionRows = [summaryRow(PAST)];
     const { socket } = await boot();

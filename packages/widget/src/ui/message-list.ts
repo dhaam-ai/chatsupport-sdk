@@ -199,6 +199,15 @@ export interface MessageListView {
   setLoading(loading: boolean): void;
 
   /**
+   * Says the customer has picked `sessionId` and core has not swapped it in yet. Until
+   * `state.session` is that conversation the previous one's messages are not drawn (the spinner
+   * shows instead), so a tap on "Track my order" never flashes the last chat's transcript first.
+   * `null` ends it; widget.ts also ends it when the switch settles, so a failed switch cannot
+   * leave the transcript hidden.
+   */
+  setSwitching(sessionId: string | null): void;
+
+  /**
    * The client-only "bot is thinking" cue — see widget.ts's `state.messages`
    * subscription for why it exists (chat-service sends no real typing
    * signal for the AI bot). Reuses the SAME animated-dots element the real,
@@ -374,7 +383,14 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
   let loadingTimer: ReturnType<typeof setTimeout> | undefined;
   let lastRender: { state: ChatState; localId: string | null } | null = null;
 
-  function render(state: ChatState, localParticipantId: string | null): void {
+  let switchingTo: string | null = null;
+
+  function render(realState: ChatState, localParticipantId: string | null): void {
+    if (switchingTo !== null && realState.session?.id === switchingTo) switchingTo = null;
+    const masked = switchingTo !== null;
+    const state: ChatState = masked
+      ? { ...realState, messages: [], pagination: { ...realState.pagination, hasMore: false, initialLoaded: false } }
+      : realState;
     // Captured BEFORE mutating: reading `scrollTop` after an append gives the
     // post-append value and would make "was the user at the bottom" always
     // true for a growing list.
@@ -408,7 +424,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
       loadingTimer = undefined;
       if (state.pagination.initialLoaded) loadingGaveUp = false;
     }
-    lastRender = { state, localId: localParticipantId };
+    lastRender = { state: realState, localId: localParticipantId };
     loadOlder.hidden = !state.pagination.hasMore;
     loadOlder.disabled = state.pagination.loadingMore;
     loadOlder.textContent = state.pagination.loadingMore
@@ -615,6 +631,11 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     botThinking = thinking;
   }
 
+  function setSwitching(sessionId: string | null): void {
+    switchingTo = sessionId;
+    if (lastRender) render(lastRender.state, lastRender.localId);
+  }
+
   function setLoading(loading: boolean): void {
     loadingRequested = loading;
     loadingGaveUp = false;
@@ -628,6 +649,7 @@ export function createMessageList(callbacks: MessageListCallbacks): MessageListV
     setGreetingShown,
     setBotThinking,
     setLoading,
+    setSwitching,
     setClosure,
     setStartingNewConversation,
     setTranscriptEmail,

@@ -4336,6 +4336,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // still holds the previous conversation (or nothing) until switchSession
     // clears it, and a blank transcript reads as "broken", not "loading".
     messageList.setLoading(true);
+    // The store still holds the PREVIOUS conversation until `switchSession` swaps it; hide it so
+    // the picked chat never shows the last one's transcript first.
+    if (store.getState().session?.id !== sessionId) messageList.setSwitching(sessionId);
     showConversation();
     if (open) composer.input.focus({ preventScroll: true });
 
@@ -4352,6 +4355,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       await store.client.switchSession(sessionId);
     } catch (error) {
       report(error);
+    } finally {
+      messageList.setSwitching(null);
     }
   }
 
