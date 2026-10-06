@@ -62,7 +62,7 @@ export interface RichCard {
 // Contract §2 limits. Lists are capped by reading only their first N entries:
 // a producer that sends more is out of contract, and walking an unbounded
 // array on every render is how one bad message would stall the transcript.
-const MAX_CARDS = 5;
+const MAX_CARDS = 10;
 const MAX_ROWS = 8;
 const MAX_BUTTONS = 3;
 const MAX_URL = 500;

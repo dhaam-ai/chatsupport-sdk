@@ -149,18 +149,18 @@ describe('readRichCards — clamps (contract §2 limits)', () => {
     expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(title)).toBe(false);
   });
 
-  it('keeps at most 5 cards, 8 rows and 3 buttons', () => {
+  it('keeps at most 10 cards, 8 rows and 3 buttons', () => {
     const rows = Array.from({ length: 12 }, (_, i) => ({ label: `L${i}`, value: `V${i}` }));
     const buttons = Array.from({ length: 6 }, (_, i) => ({ label: `B${i}`, url: `https://example.com/${i}` }));
-    const cards = read(Array.from({ length: 6 }, (_, i) => orderCard({ title: `Card ${i}`, rows, buttons })));
-    expect(cards.map((c) => c.title)).toEqual(['Card 0', 'Card 1', 'Card 2', 'Card 3', 'Card 4']);
+    const cards = read(Array.from({ length: 12 }, (_, i) => orderCard({ title: `Card ${i}`, rows, buttons })));
+    expect(cards.map((c) => c.title)).toEqual(Array.from({ length: 10 }, (_, i) => `Card ${i}`));
     expect(cards[0]?.rows.map((r) => r.label)).toEqual(['L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7']);
     expect(cards[0]?.buttons.map((b) => b.label)).toEqual(['B0', 'B1', 'B2']);
   });
 
   it('caps the work on an enormous array instead of walking it', () => {
     const cards = read(Array.from({ length: 100_000 }, () => orderCard()));
-    expect(cards).toHaveLength(5);
+    expect(cards).toHaveLength(10);
   });
 });
 
@@ -277,9 +277,9 @@ describe('readRichCards — untrusted input', () => {
     ]);
   });
 
-  it('reads only the first five entries, so a bad entry there is not replaced by a sixth', () => {
-    const cards = read([null, ...Array.from({ length: 5 }, (_, i) => orderCard({ title: `Card ${i}` }))]);
-    expect(cards.map((c) => c.title)).toEqual(['Card 0', 'Card 1', 'Card 2', 'Card 3']);
+  it('reads only the first ten entries, so a bad entry there is not replaced by an eleventh', () => {
+    const cards = read([null, ...Array.from({ length: 10 }, (_, i) => orderCard({ title: `Card ${i}` }))]);
+    expect(cards.map((c) => c.title)).toEqual(Array.from({ length: 9 }, (_, i) => `Card ${i}`));
   });
 
   it('falls back to info for an unknown or missing kind', () => {
@@ -478,10 +478,10 @@ describe('buildCardList', () => {
     expect(img.hidden).toBe(true);
   });
 
-  it('draws one card or five, and never a sixth', () => {
+  it('draws one card or ten, and never an eleventh', () => {
     expect(build([orderCard()]).querySelectorAll('.dh-card')).toHaveLength(1);
-    expect(build(Array.from({ length: 5 }, () => orderCard())).querySelectorAll('.dh-card')).toHaveLength(5);
-    expect(build(Array.from({ length: 6 }, () => orderCard())).querySelectorAll('.dh-card')).toHaveLength(5);
+    expect(build(Array.from({ length: 10 }, () => orderCard())).querySelectorAll('.dh-card')).toHaveLength(10);
+    expect(build(Array.from({ length: 11 }, () => orderCard())).querySelectorAll('.dh-card')).toHaveLength(10);
   });
 
   describe('markup in the data stays text', () => {

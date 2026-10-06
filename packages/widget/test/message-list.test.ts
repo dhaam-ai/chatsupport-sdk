@@ -1556,8 +1556,8 @@ describe('the bot’s rich cards (metadata.richCards)', () => {
   it.each([
     [0, 0],
     [1, 1],
-    [5, 5],
-    [6, 5],
+    [10, 10],
+    [11, 10],
   ])('draws %i card(s) as %i', (sent, drawn) => {
     const { view } = build();
     view.render(
