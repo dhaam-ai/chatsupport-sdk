@@ -128,7 +128,7 @@ final class ExampleConfigReady extends ExampleConfig {
     required this.publishableKey,
     required this.accessToken,
     required this.sessionId,
-    required this.outletId,
+    this.outletId,
   });
 
   final Uri wsUrl;

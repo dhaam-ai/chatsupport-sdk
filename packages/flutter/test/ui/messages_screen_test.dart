@@ -6,10 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../state/fake_widget_chat_client.dart';
 
-Widget _wrap(ChatWidgetCubit cubit, {VoidCallback? onBack}) {
+Widget _wrap(ChatWidgetCubit cubit,
+    {VoidCallback? onBack, VoidCallback? onClose}) {
   return BlocProvider<ChatWidgetCubit>.value(
     value: cubit,
-    child: MaterialApp(home: Scaffold(body: MessagesScreen(onBack: onBack))),
+    child: MaterialApp(
+      home: Scaffold(body: MessagesScreen(onBack: onBack, onClose: onClose)),
+    ),
   );
 }
 
@@ -54,6 +57,8 @@ void main() {
       (tester) async {
     await tester.pumpWidget(_wrap(cubit));
     expect(find.text('No previous conversations yet.'), findsOneWidget);
+    expect(find.text('Start a new conversation when you need help.'),
+        findsOneWidget);
   });
 
   testWidgets('tapping New conversation starts one', (tester) async {
@@ -65,15 +70,69 @@ void main() {
     expect(cubit.state.activeSurface, isA<ComposingNewSurface>());
   });
 
+  testWidgets('hides the footer CTA while the empty state owns it',
+      (tester) async {
+    await tester.pumpWidget(_wrap(cubit));
+
+    expect(find.text('New conversation'), findsOneWidget);
+
+    cubit.updateSessionSummaries([_summary(id: 'a', subject: 'Refund')]);
+    await tester.pump();
+
+    expect(find.text('New conversation'), findsOneWidget);
+    expect(find.text('No previous conversations yet.'), findsNothing);
+  });
+
   testWidgets('renders an inline back button when supplied', (tester) async {
     int backCalls = 0;
     await tester.pumpWidget(_wrap(cubit, onBack: () => backCalls += 1));
 
+    expect(find.text('Messages'), findsOneWidget);
     expect(find.byTooltip('Back'), findsOneWidget);
     await tester.tap(find.byTooltip('Back'));
     await tester.pump();
 
     expect(backCalls, 1);
+  });
+
+  testWidgets('calls close from the header close affordance', (tester) async {
+    int closeCalls = 0;
+    await tester.pumpWidget(_wrap(cubit, onClose: () => closeCalls += 1));
+
+    expect(find.byTooltip('Close chat'), findsOneWidget);
+    await tester.tap(find.byTooltip('Close chat'));
+    await tester.pump();
+
+    expect(closeCalls, 1);
+  });
+
+  testWidgets('search field has an outline border and primary focused border',
+      (tester) async {
+    await tester.pumpWidget(_wrap(cubit));
+
+    final ThemeData theme = Theme.of(tester.element(find.byType(TextField)));
+    InputDecoration decoration =
+        tester.widget<TextField>(find.byType(TextField)).decoration!;
+
+    expect(
+      (decoration.enabledBorder! as OutlineInputBorder).borderSide.color,
+      theme.colorScheme.outlineVariant,
+    );
+    expect(
+      (decoration.focusedBorder! as OutlineInputBorder).borderSide.color,
+      theme.colorScheme.primary,
+    );
+    expect(decoration.prefixIconConstraints,
+        const BoxConstraints.tightFor(width: 34, height: 36));
+
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+
+    decoration = tester.widget<TextField>(find.byType(TextField)).decoration!;
+    expect(
+      (decoration.border! as OutlineInputBorder).borderSide.color,
+      theme.colorScheme.primary,
+    );
   });
 
   group(
@@ -135,7 +194,7 @@ void main() {
     ]);
     await tester.pumpWidget(_wrap(cubit));
 
-    expect(find.text('Waiting for an agent'), findsOneWidget);
+    expect(find.text('Waiting'), findsOneWidget);
     expect(find.text('I would like a refund please'), findsOneWidget);
     expect(find.text('with Priya'), findsOneWidget);
     expect(find.text('99+'), findsOneWidget);
@@ -224,6 +283,34 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('No conversations match your search.'), findsOneWidget);
+      expect(
+          find.text(
+              'Try a different word, or start a new conversation about it.'),
+          findsOneWidget);
+      expect(find.text('New conversation'), findsOneWidget);
+    });
+
+    testWidgets('clear button appears for text and clears the query',
+        (tester) async {
+      await tester.pumpWidget(_wrap(cubit));
+
+      expect(find.byTooltip('Clear search'), findsNothing);
+
+      await tester.enterText(find.byType(TextField), 'delivery');
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Clear search'), findsOneWidget);
+      expect(find.text('Delivery issue'), findsOneWidget);
+      expect(find.text('Refund request'), findsNothing);
+
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Clear search'), findsNothing);
+      expect(find.text('Delivery issue'), findsOneWidget);
+      expect(find.text('Refund request'), findsOneWidget);
+      expect(tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          isEmpty);
     });
 
     testWidgets('clearing the query restores every row', (tester) async {

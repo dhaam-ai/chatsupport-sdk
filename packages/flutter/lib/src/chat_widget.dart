@@ -50,6 +50,7 @@ import 'ui/header/header.dart';
 import 'ui/home_screen.dart';
 import 'ui/messages_screen.dart';
 import 'ui/offline_banner.dart';
+import 'ui/session_picker/session_picker.dart';
 import 'ui/unavailable_view.dart';
 
 /// The [ConnectionState]s that mean the client has stopped on purpose rather
@@ -65,6 +66,8 @@ const Set<ConnectionState> kTerminalConnectionStates = <ConnectionState>{
   ConnectionState.suspended,
   ConnectionState.closed,
 };
+
+const String kCloseChatLabel = 'Close chat';
 
 class ChatWidget extends StatefulWidget {
   const ChatWidget({
@@ -112,6 +115,7 @@ class ChatWidget extends StatefulWidget {
 
 class _ChatWidgetState extends State<ChatWidget> {
   late final Chime _chime = widget.chime ?? Chime();
+  bool _recordNextUnreadRiseSilently = false;
 
   @override
   void initState() {
@@ -127,7 +131,7 @@ class _ChatWidgetState extends State<ChatWidget> {
     // is read), and a restored session's backlog must not greet a returning
     // visitor with a noise about messages they have already read.
     _chime.playOnUnreadRise(
-      unread: widget.cubit.state.unreadCount,
+      unread: widget.cubit.state.customerVisibleUnreadCount,
       sound: widget.cubit.state.config.sound,
       muted: widget.cubit.state.muted,
     );
@@ -154,18 +158,32 @@ class _ChatWidgetState extends State<ChatWidget> {
         // CHANGE and a rebuild happens for a hundred reasons that are not
         // one. `listenWhen` is the selector; the initial reading is taken in
         // `initState` instead.
-        listenWhen: (ChatWidgetState previous, ChatWidgetState current) =>
-            previous.unreadCount != current.unreadCount,
-        listener: (BuildContext context, ChatWidgetState state) =>
-            _chime.playOnUnreadRise(
-          unread: state.unreadCount,
-          // BOTH have to agree: `config.sound` is the merchant enabling a
-          // chime at all, `muted` is this visitor silencing it. `Chime` is
-          // the one place the two are combined, so no caller can satisfy one
-          // and forget the other.
-          sound: state.config.sound,
-          muted: state.muted,
-        ),
+        listenWhen: (ChatWidgetState previous, ChatWidgetState current) {
+          final bool visibleUnreadChanged =
+              previous.customerVisibleUnreadCount !=
+                  current.customerVisibleUnreadCount;
+          _recordNextUnreadRiseSilently = visibleUnreadChanged &&
+              previous.unreadCount == current.unreadCount &&
+              previous.customerVisibleUnreadCount <
+                  current.customerVisibleUnreadCount;
+          return visibleUnreadChanged;
+        },
+        listener: (BuildContext context, ChatWidgetState state) {
+          if (_recordNextUnreadRiseSilently) {
+            _recordNextUnreadRiseSilently = false;
+            _chime.recordWithoutPlaying(state.customerVisibleUnreadCount);
+            return;
+          }
+          _chime.playOnUnreadRise(
+            unread: state.customerVisibleUnreadCount,
+            // BOTH have to agree: `config.sound` is the merchant enabling a
+            // chime at all, `muted` is this visitor silencing it. `Chime` is
+            // the one place the two are combined, so no caller can satisfy one
+            // and forget the other.
+            sound: state.config.sound,
+            muted: state.muted,
+          );
+        },
         builder: (BuildContext context, ChatWidgetState state) {
           final ThemeData theme = chatThemeData(
               state.config, MediaQuery.platformBrightnessOf(context));
@@ -235,8 +253,10 @@ class _ChatWidgetState extends State<ChatWidget> {
                                 HomeScreen(onClose: widget.onClose),
                               ScreenName.messages => MessagesScreen(
                                   onBack: widget.showHomeTab
-                                      ? null
-                                      : widget.cubit.showConversation),
+                                      ? () => widget.cubit
+                                          .switchTab(ScreenName.home)
+                                      : widget.cubit.showConversation,
+                                  onClose: widget.onClose),
                               ScreenName.conversation => ConversationScreen(
                                   onConversationEnded: widget.onClose,
                                 ),
@@ -244,10 +264,11 @@ class _ChatWidgetState extends State<ChatWidget> {
                           ),
                         ],
                       ),
-                bottomNavigationBar: widget.showBottomNav
+                bottomNavigationBar: widget.showBottomNav &&
+                        state.screen != ScreenName.conversation
                     ? ChatBottomNav(
                         active: state.screen,
-                        unreadCount: state.unreadCount,
+                        unreadCount: state.customerVisibleUnreadCount,
                         onSelect: widget.cubit.switchTab,
                         showHome: widget.showHomeTab,
                       )
@@ -278,8 +299,13 @@ class _ConversationAppBar extends StatelessWidget
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     return AppBar(
       automaticallyImplyLeading: false,
+      backgroundColor: scheme.primary,
+      foregroundColor: scheme.onPrimary,
+      iconTheme: IconThemeData(color: scheme.onPrimary),
+      actionsIconTheme: IconThemeData(color: scheme.onPrimary),
       // T14's IdentityHeader, not a second hand-built title.
       //
       // What this replaced re-derived identity as a bare
@@ -289,15 +315,30 @@ class _ConversationAppBar extends StatelessWidget
       // server-side, so a departed agent's name stayed in the header. It
       // also fell back to the literal 'Conversation' rather than the
       // merchant's own configured title.
-      title: IdentityHeader(
-        session: state.session,
-        // `config.title` is the merchant's; 'Conversation' stays the last
-        // resort for a tenant that published none. Composing a new
-        // conversation outranks both — there is nobody to name yet.
-        fallbackTitle: state.composingNew
-            ? 'New conversation'
-            : (state.config.title ?? 'Conversation'),
+      title: Row(
+        children: [
+          HeaderAvatar(session: state.session, config: state.config),
+          SizedBox(
+            width: 10,
+          ),
+          Flexible(
+            child: IdentityHeader(
+              session: state.session,
+              // `config.title` is the merchant's; 'Conversation' stays the last
+              // resort for a tenant that published none. Composing a new
+              // conversation outranks both — there is nobody to name yet.
+              fallbackTitle: state.composingNew
+                  ? 'New conversation'
+                  : (state.config.title ?? 'Conversation'),
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(color: scheme.onPrimary),
+            ),
+          ),
+        ],
       ),
+      titleSpacing: 0,
       leading: state.canGoBack
           ? BackButton(onPressed: cubit.back)
           : onClose == null
@@ -310,7 +351,21 @@ class _ConversationAppBar extends StatelessWidget
       actions: <Widget>[
         // Reads the SAME `isHandledByCurrent` gate the title does, which is
         // what stops a face of Ada sitting beside "Acme Support".
-        HeaderAvatar(session: state.session, config: state.config),
+        if (state.composingNew && onClose != null)
+          IconButton(
+            tooltip: 'Close chat',
+            icon: const Icon(Icons.close),
+            onPressed: onClose,
+          ),
+        if (state.customerVisibleSessions.isNotEmpty)
+          SessionSwitcher(
+            sessions: state.customerVisibleSessions,
+            currentSessionId: state.session?.sessionId,
+            onSelect: cubit.selectSession,
+            onStartNew: cubit.startNewConversation,
+            isStartingNew: state.composingNew,
+            cornerRadius: chatCornerRadius(state.config),
+          ),
         HeaderMenu(
           canEnd: cubit.canEndConversation,
           privacyUrl: state.config.privacyUrl,

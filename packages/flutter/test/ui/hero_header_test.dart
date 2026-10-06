@@ -32,6 +32,69 @@ void main() {
     expect(find.text('How can we help?'), findsOneWidget);
   });
 
+  testWidgets('caps a long greeting at two lines', (tester) async {
+    const greeting =
+        'Welcome to support, tell us what happened and we will help right away';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 220,
+            child: HeroHeader(
+              config: testRemoteConfig(
+                header: const HeaderAppearance(greeting: greeting),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final Text greetingText = tester.widget<Text>(find.text(greeting));
+    expect(greetingText.maxLines, 2);
+    expect(greetingText.overflow, TextOverflow.ellipsis);
+
+    final TextStyle style =
+        Theme.of(tester.element(find.text(greeting))).textTheme.headlineSmall!;
+    final double fontSize = style.fontSize!;
+    final double lineHeight = (style.height ?? 1.0) * fontSize;
+    expect(tester.getSize(find.text(greeting)).height,
+        lessThanOrEqualTo(lineHeight * 2 + 1));
+  });
+
+  testWidgets('does not overflow with dense configured content',
+      (tester) async {
+    const greeting =
+        'Hello there 👋 skjdfnjksnfkjsdnfjknsdkjfnsjdnffkjsndfjsnfjsn';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 360,
+            height: kExpandedHeroHeaderHeight,
+            child: HeroHeader(
+              onClose: () {},
+              config: testRemoteConfig(
+                header: const HeaderAppearance(
+                  showAvatars: true,
+                  avatars: <String>[
+                    'https://x.test/a.png',
+                    'https://x.test/b.png',
+                    'https://x.test/c.png',
+                  ],
+                  greeting: greeting,
+                  subGreeting: 'Ask us anything - orders, refund, account',
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('renders a close button when the host supplies onClose',
       (tester) async {
     int closeCalls = 0;

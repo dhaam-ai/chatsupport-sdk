@@ -1,10 +1,15 @@
+// ignore_for_file: deprecated_member_use
+
 import 'package:dhaam_chat/dhaam_chat.dart';
 import 'package:dhaam_chat_flutter/dhaam_chat_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dhaam_chat_flutter/src/ui/thread_backdrop.dart';
+
 import '../state/fake_widget_chat_client.dart';
+import '../support/remote_config_fixtures.dart';
 import 'csat/fake_session_actions.dart';
 
 /// Lets a queued stream event actually reach its listener before the next
@@ -166,6 +171,82 @@ void main() {
     await flush(tester);
     expect(find.text(empty), findsOneWidget);
     expect(find.byType(NewConversationView), findsNothing);
+  });
+
+  testWidgets('paints the configured thread backdrop behind the transcript',
+      (tester) async {
+    final ChatWidgetCubit themedCubit = ChatWidgetCubit(
+      client: client,
+      initialConfig: testRemoteConfig(
+        thread: const ThreadAppearance(
+          background: ThreadBackground.solid,
+          color: '#f0f9ff',
+        ),
+      ),
+    );
+    addTearDown(themedCubit.close);
+
+    themedCubit.openConversation('past-session-1');
+    await tester.pumpWidget(_wrap(themedCubit));
+
+    expect(find.byKey(kThreadBackdropKey), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(kThreadBackdropKey),
+        matching: find.byType(MessageListView),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(kThreadBackdropKey),
+        matching: find.byWidgetPredicate(
+          (Widget widget) =>
+              widget is ColoredBox && widget.color == const Color(0xFFF0F9FF),
+        ),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('dark theme adds a black overlay to mesh thread backdrops',
+      (tester) async {
+    Widget wrap(ThreadBackground background, Brightness brightness) {
+      return Directionality(
+        textDirection: TextDirection.ltr,
+        child: Theme(
+          data: ThemeData(
+            brightness: brightness,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: Colors.deepPurple,
+              brightness: brightness,
+            ),
+          ),
+          child: ThreadBackdrop(
+            thread: ThreadAppearance(
+              background: background,
+              color: '#445566',
+            ),
+            child: const SizedBox.expand(),
+          ),
+        ),
+      );
+    }
+
+    final Finder darkOverlay = find.descendant(
+      of: find.byKey(kThreadBackdropKey),
+      matching: find.byWidgetPredicate(
+        (Widget widget) =>
+            widget is ColoredBox &&
+            widget.color == Colors.black.withOpacity(0.45),
+      ),
+    );
+
+    await tester.pumpWidget(wrap(ThreadBackground.mesh, Brightness.dark));
+    expect(darkOverlay, findsOneWidget);
+
+    await tester.pumpWidget(wrap(ThreadBackground.mesh, Brightness.light));
+    expect(darkOverlay, findsNothing);
   });
 
   testWidgets('renders a bubble per message', (tester) async {
@@ -399,7 +480,7 @@ void main() {
     expect(find.byType(Composer), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'a follow-up');
     await tester.pump();
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.send));
+    await tester.tap(find.byTooltip('Send message'));
     await tester.pump();
 
     expect(client.sentContent, <String>['a follow-up']);

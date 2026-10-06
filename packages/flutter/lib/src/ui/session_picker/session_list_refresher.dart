@@ -66,6 +66,7 @@ class SessionListRefresher {
   Future<void>? _flight;
   bool _queued = false;
   bool _disposed = false;
+  bool _lastFailed = false;
 
   /// Whether a fetch is out right now.
   bool get isRefreshing => _flight != null;
@@ -75,6 +76,13 @@ class SessionListRefresher {
   /// One slot, not a count: three closes landing while a page is open are
   /// three reasons to refetch and exactly one refetch to make.
   bool get isRefreshQueued => _queued;
+
+  /// Whether the latest completed fetch failed.
+  ///
+  /// Used by callers that key refreshes from socket snapshots: a failed ask
+  /// must not burn that key, because a reconnect can replay the same session
+  /// snapshot rather than producing a different one.
+  bool get needsRetry => _lastFailed;
 
   /// Asks for a fresh page.
   ///
@@ -119,8 +127,10 @@ class SessionListRefresher {
         List<ChatSessionSummary>? page;
         try {
           page = await _fetch();
+          _lastFailed = false;
         } catch (error, stackTrace) {
           if (_disposed) return;
+          _lastFailed = true;
           _onError?.call(error, stackTrace);
         }
 

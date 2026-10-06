@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 // Reproduces `session-picker.test.ts`'s row-family assertions — the ones
 // both surfaces inherit rather than restate:
 //

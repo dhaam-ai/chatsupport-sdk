@@ -34,6 +34,7 @@ import 'message_list/message_list.dart';
 import 'pre_chat/pre_chat.dart';
 import 'new_conversation_view.dart';
 import 'offline_form/offline_form.dart';
+import 'thread_backdrop.dart';
 import 'composer.dart';
 import 'composer_affordances/composer_affordances.dart';
 import 'voice/voice.dart';
@@ -144,7 +145,61 @@ class _ConversationScreenState extends State<ConversationScreen> {
         // SEVENTH surface added later should fall through to the conversation
         // rather than to a blank pane, which stays the safe reading for a
         // surface whose arm has not been written yet.
-        switch (state.activeSurface) {
+        final ProductSurface? activeSurface = state.activeSurface;
+        final Widget? messageListTrailingContent = switch (activeSurface) {
+          CsatSurface(
+            :final String sessionId,
+            :final bool alreadyRated,
+          ) =>
+            CsatCardView(
+              // The port of `openSurface`'s `${sessionId}:${ask|rated}` key.
+              // The card for ONE session changes SHAPE when a rating is
+              // recorded, and without a differing key Flutter reuses the
+              // State — so the locked read-out would never draw over the ask
+              // it replaces.
+              key: ValueKey<String>(
+                '$sessionId:${alreadyRated ? 'rated' : 'ask'}',
+              ),
+              style: state.config.csatStyle,
+              // Read from the mirror of the CSAT machine, which is the single
+              // memory of what the server said. The slot deliberately carries
+              // only the flag, so no copy of the rating can go stale beside
+              // it.
+              existing: switch (state.csatBySession[sessionId]) {
+                final CsatRated rated when alreadyRated => rated,
+                _ => null,
+              },
+              onSubmit: (int rating, String? comment) => cubit.rateSession(
+                sessionId,
+                rating: rating,
+                comment: comment,
+              ),
+              onError: _report,
+            ),
+          CsatLoadingSurface() => const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              ),
+            ),
+          _ => null,
+        };
+        final ColorScheme scheme = Theme.of(context).colorScheme;
+        final Widget? messageListTrailing = messageListTrailingContent == null
+            ? null
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.surface,
+                  border: Border.all(color: scheme.outlineVariant),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: messageListTrailingContent,
+                ),
+              );
+
+        switch (activeSurface) {
           case ComposingNewSurface():
             return const NewConversationView();
           case PreChatSurface():
@@ -188,35 +243,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
               onError: _report,
               offlineMessage: state.config.offlineMessage,
             );
-          case CsatSurface(
-              :final String sessionId,
-              :final bool alreadyRated,
-            ):
-            return CsatCardView(
-              // The port of `openSurface`'s `${sessionId}:${ask|rated}` key.
-              // The card for ONE session changes SHAPE when a rating is
-              // recorded, and without a differing key Flutter reuses the
-              // State — so the locked read-out would never draw over the ask
-              // it replaces.
-              key: ValueKey<String>(
-                '$sessionId:${alreadyRated ? 'rated' : 'ask'}',
-              ),
-              style: state.config.csatStyle,
-              // Read from the mirror of the CSAT machine, which is the single
-              // memory of what the server said. The slot deliberately carries
-              // only the flag, so no copy of the rating can go stale beside
-              // it.
-              existing: switch (state.csatBySession[sessionId]) {
-                final CsatRated rated when alreadyRated => rated,
-                _ => null,
-              },
-              onSubmit: (int rating, String? comment) => cubit.rateSession(
-                sessionId,
-                rating: rating,
-                comment: comment,
-              ),
-              onError: _report,
-            );
+          case CsatSurface() || CsatLoadingSurface():
+            break;
           case ConfirmEndSurface(:final String sessionId):
             return EndConversationConfirm(
               onConfirm: () async {
@@ -242,75 +270,81 @@ class _ConversationScreenState extends State<ConversationScreen> {
         return Column(
           children: <Widget>[
             Expanded(
-              child: MessageListView(
-                inputs: MessageListInputs(
-                  messages: state.messages,
-                  session: state.session,
-                  isTyping: state.isTyping,
-                  readWatermarks: readWatermarksFrom(state.session),
-                  handoffKeywords: state.config.handoffKeywords,
-                  localParticipantId: state.localParticipantId,
-                  // The ack that carries the session snapshot is also what
-                  // carries the replay, so holding one is the closest this
-                  // package has to "the first page has come back".
-                  initialLoaded: state.session != null,
-                ),
-                callbacks: MessageListCallbacks(
-                  onCopyMessage: (ChatMessage message) => Clipboard.setData(
-                    ClipboardData(text: visibleContent(message)),
+              child: ThreadBackdrop(
+                thread: state.config.thread,
+                child: MessageListView(
+                  inputs: MessageListInputs(
+                    messages: state.messages,
+                    session: state.session,
+                    isTyping: state.isTyping,
+                    readWatermarks: readWatermarksFrom(state.session),
+                    handoffKeywords: state.config.handoffKeywords,
+                    localParticipantId: state.localParticipantId,
+                    // The ack that carries the session snapshot is also what
+                    // carries the replay, so holding one is the closest this
+                    // package has to "the first page has come back".
+                    initialLoaded: state.session != null,
                   ),
-                  // Through the composer, never round it — see [_composer].
-                  onQuickReply: _composer.submit,
-                  // Fills the second seam T9 declared and left empty, which
-                  // until now removed the Reply item from every message menu
-                  // in the transcript.
-                  //
-                  // The sender name arrives from the transcript rather than
-                  // being resolved here: a ChatMessage carries no display
-                  // name, and only the message list holds the bot-name memory
-                  // and the participant snapshot that produce one. Resolving
-                  // it a second way here is exactly the duplication that
-                  // callback's own doc exists to prevent.
-                  //
-                  // Straight to the Cubit, and NOT into this widget's own
-                  // state: the send that consumes the target is the Cubit's,
-                  // so a copy held here would be a second answer it could not
-                  // see and could not clear in step with a send — and it
-                  // would die on the next rebuild, taking the customer's
-                  // reply with it.
-                  onReplyToMessage: (ChatMessage message, String senderName) =>
-                      cubit.replyTo(
-                    ReplyTarget.from(message, senderName: senderName),
+                  callbacks: MessageListCallbacks(
+                    onCopyMessage: (ChatMessage message) => Clipboard.setData(
+                      ClipboardData(text: visibleContent(message)),
+                    ),
+                    // Through the composer, never round it — see [_composer].
+                    onQuickReply: _composer.submit,
+                    // Fills the second seam T9 declared and left empty, which
+                    // until now removed the Reply item from every message menu
+                    // in the transcript.
+                    //
+                    // The sender name arrives from the transcript rather than
+                    // being resolved here: a ChatMessage carries no display
+                    // name, and only the message list holds the bot-name memory
+                    // and the participant snapshot that produce one. Resolving
+                    // it a second way here is exactly the duplication that
+                    // callback's own doc exists to prevent.
+                    //
+                    // Straight to the Cubit, and NOT into this widget's own
+                    // state: the send that consumes the target is the Cubit's,
+                    // so a copy held here would be a second answer it could not
+                    // see and could not clear in step with a send — and it
+                    // would die on the next rebuild, taking the customer's
+                    // reply with it.
+                    onReplyToMessage:
+                        (ChatMessage message, String senderName) =>
+                            cubit.replyTo(
+                      ReplyTarget.from(message, senderName: senderName),
+                    ),
+                    // Fills the LAST seam T9 declared and left empty. Until the
+                    // `MessageDelivery` union, `null` here was the honest state:
+                    // no truthful per-message replay existed, and wiring the
+                    // button to the connection's `retryNow` would have been a
+                    // control that cannot do what its label says (D27).
+                    //
+                    // The button is already gated on `MessageFailed.retryable`
+                    // by the projection, so `notRetryable` should never come
+                    // back. `disconnected` still can — a connection can drop
+                    // between drawing the button and the press — and a refusal
+                    // that changed nothing on screen would read as a success,
+                    // so it goes to the same reporter every form here uses.
+                    onRetry: (ChatMessage message) {
+                      final RetryOutcome outcome =
+                          cubit.retryMessage(message.id);
+                      if (outcome is RetryRefused) {
+                        _report(
+                          StateError('retry refused: ${outcome.reason.name}'),
+                          StackTrace.current,
+                        );
+                      }
+                    },
                   ),
-                  // Fills the LAST seam T9 declared and left empty. Until the
-                  // `MessageDelivery` union, `null` here was the honest state:
-                  // no truthful per-message replay existed, and wiring the
-                  // button to the connection's `retryNow` would have been a
-                  // control that cannot do what its label says (D27).
-                  //
-                  // The button is already gated on `MessageFailed.retryable`
-                  // by the projection, so `notRetryable` should never come
-                  // back. `disconnected` still can — a connection can drop
-                  // between drawing the button and the press — and a refusal
-                  // that changed nothing on screen would read as a success,
-                  // so it goes to the same reporter every form here uses.
-                  onRetry: (ChatMessage message) {
-                    final RetryOutcome outcome = cubit.retryMessage(message.id);
-                    if (outcome is RetryRefused) {
-                      _report(
-                        StateError('retry refused: ${outcome.reason.name}'),
-                        StackTrace.current,
-                      );
-                    }
-                  },
+                  // Fills the seam T9 declared and deliberately left empty.
+                  // Ungated by `fileUploads`: that flag governs whether the
+                  // customer may SEND a file, not whether an attachment
+                  // already in the transcript is drawn. A merchant who turns
+                  // uploads off does not thereby blank out the photo an agent
+                  // sent yesterday.
+                  attachmentBuilder: buildAttachmentBubble,
+                  trailing: messageListTrailing,
                 ),
-                // Fills the seam T9 declared and deliberately left empty.
-                // Ungated by `fileUploads`: that flag governs whether the
-                // customer may SEND a file, not whether an attachment
-                // already in the transcript is drawn. A merchant who turns
-                // uploads off does not thereby blank out the photo an agent
-                // sent yesterday.
-                attachmentBuilder: buildAttachmentBubble,
               ),
             ),
             ConsentNotice(
@@ -325,81 +359,85 @@ class _ConversationScreenState extends State<ConversationScreen> {
             SafeArea(
               top: false,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                padding:
+                    EdgeInsets.fromLTRB(8, 4, 8, 0),
                 // The ended footer is a SIBLING of the composer, not a
                 // product surface: the customer is deciding about the
                 // transcript they are looking at, and hiding it to show two
                 // buttons would take away the thing being decided about. So
                 // the two trade places here — the same "one at a time" rule
                 // the slot enforces, applied one level lower.
-                child: cubit.endedFooterDue
-                    ? EndedFooter(
-                        // Hidden when the host wired up no
-                        // `ChatSessionActions`: a Reopen that quietly does
-                        // nothing is worse than no Reopen.
-                        onReopen:
-                            cubit.canReopen ? cubit.reopenEndedSession : null,
-                        onStartNew: cubit.startNewConversation,
-                        onError: _report,
-                      )
-                    : Composer(
-                        onSend: cubit.sendMessage,
-                        controller: _composer,
-                        // The consent gate, and the whole of it: a visitor
-                        // who has not agreed may read everything above and
-                        // send nothing, because sending is the act that
-                        // creates the record the notice is about. `enabled`
-                        // is a prop `Composer` already took and T13's
-                        // chip-submit guard already reads, so a suggestion
-                        // chip cannot route round this — see [_composer].
-                        enabled: consentSatisfied(
-                          gating: consentIsGating,
-                          agreed: state.consentAgreed,
-                        ),
-                        // Nothing on the Flutter side drove the agent's
-                        // typing indicator before this line — for typed
-                        // characters as much as for an emoji insertion.
-                        onTyping: cubit.startTyping,
-                        // Read from state on every build, so the chip
-                        // survives a rebuild that has nothing to do with it.
-                        // `sendMessage` is what clears it — see its own doc
-                        // on why that belongs there and not here.
-                        replyTo: state.replyingTo,
-                        onCancelReply: () => cubit.replyTo(null),
-                        // The composer hop D23 named: the attach button, the
-                        // draft bar and the three submit guards were all
-                        // built, tested and reachable by nobody, because
-                        // this line did not exist.
-                        //
-                        // Null when the host wired no uploader, which draws
-                        // no paperclip — the same "off, not broken" rule the
-                        // ⋯ menu applies to an unbacked row.
-                        attachments: _attachments,
-                        // Its OWN message, per §12.10 — the URL travels as
-                        // the content and the media type becomes the message
-                        // type. `Composer._submit` calls this first and
-                        // `onSend` after, exactly as `composer.ts` does, so
-                        // a file with a caption is two messages and a file
-                        // alone is one.
-                        onSendAttachment: cubit.sendAttachment,
-                        // The merchant's switch, read here and nowhere else
-                        // — `AttachmentDraftController` deliberately knows
-                        // nothing about `RemoteConfig`, so there is exactly
-                        // one derivation of "may this customer attach".
-                        //
-                        // Read from state on every build rather than
-                        // captured, so a config that lands after the
-                        // composer is on screen turns the paperclip on
-                        // without a remount.
-                        fileUploads: state.config.fileUploads,
-                        // The last of the three seams T15 left open. The
-                        // note it produces takes the ordinary attachment
-                        // path from here — `Composer` hands it to
-                        // `attachments.setDraft`, which applies exactly the
-                        // refusals a picked photo faces — so there is no
-                        // `onVoiceRecorded` for this screen to supply.
-                        voice: _voice,
-                      ),
+                child: messageListTrailing != null
+                    ? const SizedBox.shrink()
+                    : cubit.endedFooterDue
+                        ? EndedFooter(
+                            // Hidden when the host wired up no
+                            // `ChatSessionActions`: a Reopen that quietly does
+                            // nothing is worse than no Reopen.
+                            onReopen: cubit.canReopen
+                                ? cubit.reopenEndedSession
+                                : null,
+                            onStartNew: cubit.startNewConversation,
+                            onError: _report,
+                          )
+                        : Composer(
+                            onSend: cubit.sendMessage,
+                            controller: _composer,
+                            // The consent gate, and the whole of it: a visitor
+                            // who has not agreed may read everything above and
+                            // send nothing, because sending is the act that
+                            // creates the record the notice is about. `enabled`
+                            // is a prop `Composer` already took and T13's
+                            // chip-submit guard already reads, so a suggestion
+                            // chip cannot route round this — see [_composer].
+                            enabled: consentSatisfied(
+                              gating: consentIsGating,
+                              agreed: state.consentAgreed,
+                            ),
+                            // Nothing on the Flutter side drove the agent's
+                            // typing indicator before this line — for typed
+                            // characters as much as for an emoji insertion.
+                            onTyping: cubit.startTyping,
+                            // Read from state on every build, so the chip
+                            // survives a rebuild that has nothing to do with it.
+                            // `sendMessage` is what clears it — see its own doc
+                            // on why that belongs there and not here.
+                            replyTo: state.replyingTo,
+                            onCancelReply: () => cubit.replyTo(null),
+                            // The composer hop D23 named: the attach button, the
+                            // draft bar and the three submit guards were all
+                            // built, tested and reachable by nobody, because
+                            // this line did not exist.
+                            //
+                            // Null when the host wired no uploader, which draws
+                            // no paperclip — the same "off, not broken" rule the
+                            // ⋯ menu applies to an unbacked row.
+                            attachments: _attachments,
+                            // Its OWN message, per §12.10 — the URL travels as
+                            // the content and the media type becomes the message
+                            // type. `Composer._submit` calls this first and
+                            // `onSend` after, exactly as `composer.ts` does, so
+                            // a file with a caption is two messages and a file
+                            // alone is one.
+                            onSendAttachment: cubit.sendAttachment,
+                            // The merchant's switch, read here and nowhere else
+                            // — `AttachmentDraftController` deliberately knows
+                            // nothing about `RemoteConfig`, so there is exactly
+                            // one derivation of "may this customer attach".
+                            //
+                            // Read from state on every build rather than
+                            // captured, so a config that lands after the
+                            // composer is on screen turns the paperclip on
+                            // without a remount.
+                            fileUploads: state.config.fileUploads,
+                            // The last of the three seams T15 left open. The
+                            // note it produces takes the ordinary attachment
+                            // path from here — `Composer` hands it to
+                            // `attachments.setDraft`, which applies exactly the
+                            // refusals a picked photo faces — so there is no
+                            // `onVoiceRecorded` for this screen to supply.
+                            voice: _voice,
+                          ),
               ),
             ),
           ],

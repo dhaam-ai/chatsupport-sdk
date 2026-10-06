@@ -49,6 +49,7 @@ class SurfaceSyncInputs extends Equatable {
     this.conversationOpened = false,
     this.hasSession = false,
     this.hasMessages = false,
+    this.csatLoadingSessionId,
     this.csatCard,
   });
 
@@ -97,6 +98,9 @@ class SurfaceSyncInputs extends Equatable {
   /// The transcript has something in it.
   final bool hasMessages;
 
+  /// A terminal session whose first history page is in flight.
+  final String? csatLoadingSessionId;
+
   /// The rating card this conversation is owed, or null for none.
   ///
   /// A decision, not the inputs to one. Whether a rating is due is the CSAT
@@ -117,6 +121,7 @@ class SurfaceSyncInputs extends Equatable {
         conversationOpened,
         hasSession,
         hasMessages,
+        csatLoadingSessionId,
         csatCard,
       ];
 }
@@ -178,6 +183,11 @@ ProductSurface? resolveProductSurface({
       inputs.hasSession &&
       !inputs.hasMessages;
   if (gateOnPreChat) return const PreChatSurface();
+
+  final String? loadingSessionId = inputs.csatLoadingSessionId;
+  if (loadingSessionId != null) {
+    return CsatLoadingSurface(sessionId: loadingSessionId);
+  }
 
   return inputs.csatCard;
 }

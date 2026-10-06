@@ -37,12 +37,21 @@ MessageListCallbacks _callbacks() {
   );
 }
 
+MessageListCallbacks _copyOnlyCallbacks() {
+  return MessageListCallbacks(
+    onRetry: (ChatMessage _) {},
+    onCopyMessage: (ChatMessage _) async {},
+    onQuickReply: (String _) {},
+  );
+}
+
 /// A rebuild that changes the theme but NOT the inputs — the thing a DOM
 /// `render()` never had to survive.
 class _Harness extends StatefulWidget {
-  const _Harness({required this.inputs});
+  const _Harness({required this.inputs, this.callbacks});
 
   final MessageListInputs inputs;
+  final MessageListCallbacks? callbacks;
 
   @override
   State<_Harness> createState() => _HarnessState();
@@ -63,7 +72,10 @@ class _HarnessState extends State<_Harness> {
       home: Scaffold(
         body: SizedBox(
           height: 300,
-          child: MessageListView(inputs: _inputs, callbacks: _callbacks()),
+          child: MessageListView(
+            inputs: _inputs,
+            callbacks: widget.callbacks ?? _callbacks(),
+          ),
         ),
       ),
     );
@@ -73,9 +85,10 @@ class _HarnessState extends State<_Harness> {
 void main() {
   Future<_HarnessState> pump(
     WidgetTester tester,
-    MessageListInputs inputs,
-  ) async {
-    await tester.pumpWidget(_Harness(inputs: inputs));
+    MessageListInputs inputs, {
+    MessageListCallbacks? callbacks,
+  }) async {
+    await tester.pumpWidget(_Harness(inputs: inputs, callbacks: callbacks));
     if (inputs.isTyping) {
       // The typing dots loop by design, so `pumpAndSettle` — which pumps
       // until no frame is scheduled — never returns on a frame that draws
@@ -362,6 +375,7 @@ void main() {
       MessageListInputs(
         messages: <ChatMessage>[_msg(1)],
       ),
+      callbacks: _copyOnlyCallbacks(),
     );
 
     await tester.tap(find.byIcon(Icons.more_horiz));

@@ -35,13 +35,19 @@ import 'attachment_draft.dart';
 class AttachmentDraftController extends ChangeNotifier {
   AttachmentDraftController({
     required AttachmentPicker picker,
+    AttachmentPicker? cameraPicker,
+    AttachmentPicker? galleryPicker,
     required AttachmentUploader uploader,
     required FormErrorReporter onError,
   })  : _picker = picker,
+        _cameraPicker = cameraPicker,
+        _galleryPicker = galleryPicker ?? picker,
         _uploader = uploader,
         _onError = onError;
 
   final AttachmentPicker _picker;
+  final AttachmentPicker? _cameraPicker;
+  final AttachmentPicker _galleryPicker;
   final AttachmentUploader _uploader;
   final FormErrorReporter _onError;
 
@@ -68,6 +74,8 @@ class AttachmentDraftController extends ChangeNotifier {
 
   /// True while the bytes are going up.
   bool get isUploading => _uploading;
+
+  bool get canPickFromCamera => _cameraPicker != null;
 
   /// **Whether a send may start right now.**
   ///
@@ -146,6 +154,24 @@ class AttachmentDraftController extends ChangeNotifier {
   /// [kAttachmentUnnamedMessage] for what letting a blank one through
   /// actually costs.
   Future<void> pick() async {
+    await _pickWith(_picker);
+  }
+
+  /// Asks the platform camera for an image and, if it can be sent, makes it
+  /// the draft.
+  Future<void> pickFromCamera() async {
+    final AttachmentPicker? picker = _cameraPicker;
+    if (picker == null) return;
+    await _pickWith(picker);
+  }
+
+  /// Asks the platform gallery for an image and, if it can be sent, makes it
+  /// the draft.
+  Future<void> pickFromGallery() async {
+    await _pickWith(_galleryPicker);
+  }
+
+  Future<void> _pickWith(AttachmentPicker picker) async {
     // `composer.ts`: `attachButton.disabled = !enabled || uploading`. Picking
     // mid-upload would replace the very file being uploaded, and the upload
     // would go on to announce the one the customer just discarded.
@@ -153,7 +179,7 @@ class AttachmentDraftController extends ChangeNotifier {
 
     final PickedAttachment? file;
     try {
-      file = await _picker();
+      file = await picker();
     } catch (error, stackTrace) {
       // Caller-supplied code calling a platform channel: a denied permission,
       // an unregistered channel, a file that cannot be read. Same reasoning

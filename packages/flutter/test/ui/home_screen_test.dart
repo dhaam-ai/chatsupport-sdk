@@ -7,10 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 import '../state/fake_widget_chat_client.dart';
 import '../support/remote_config_fixtures.dart';
 
-Widget _wrap(ChatWidgetCubit cubit) {
+Widget _wrap(ChatWidgetCubit cubit, {VoidCallback? onClose}) {
   return BlocProvider<ChatWidgetCubit>.value(
     value: cubit,
-    child: const MaterialApp(home: Scaffold(body: HomeScreen())),
+    child: MaterialApp(home: Scaffold(body: HomeScreen(onClose: onClose))),
   );
 }
 
@@ -44,6 +44,46 @@ void main() {
     );
     await tester.pumpWidget(_wrap(cubit));
     expect(find.text('We reply within an hour'), findsOneWidget);
+  });
+
+  testWidgets('hero design overlaps the CTA onto the expanded hero',
+      (tester) async {
+    cubit = ChatWidgetCubit(
+      client: client,
+      initialConfig: testRemoteConfig(
+        header: const HeaderAppearance(greeting: 'Hello there'),
+      ),
+    );
+    await tester.pumpWidget(_wrap(cubit));
+
+    final Offset ctaCenter = tester.getCenter(find.text('Send us a message'));
+    expect(
+      ctaCenter.dy,
+      lessThan(kExpandedHeroHeaderHeight + kHeroHeaderForegroundClearance),
+    );
+
+    await tester.tap(find.text('Send us a message'));
+    await tester.pump();
+
+    expect(cubit.state.screen, ScreenName.conversation);
+  });
+
+  testWidgets('expanded hero close button calls the host callback',
+      (tester) async {
+    int closeCalls = 0;
+    cubit = ChatWidgetCubit(
+      client: client,
+      initialConfig: testRemoteConfig(
+        header: const HeaderAppearance(greeting: 'Hello there'),
+      ),
+    );
+
+    await tester.pumpWidget(_wrap(cubit, onClose: () => closeCalls += 1));
+
+    await tester.tap(find.byTooltip('Close chat').hitTestable());
+    await tester.pump();
+
+    expect(closeCalls, 1);
   });
 
   testWidgets('tapping the CTA starts a new conversation', (tester) async {
@@ -147,6 +187,64 @@ void main() {
     cubit = ChatWidgetCubit(client: client);
     await tester.pumpWidget(_wrap(cubit));
     expect(find.text('COMMON QUESTIONS'), findsNothing);
+  });
+
+  testWidgets('shows branding at the end of Home when enabled', (tester) async {
+    cubit = ChatWidgetCubit(
+      client: client,
+      initialConfig: testRemoteConfig(
+        showBranding: true,
+        brandingText: 'Powered by Dhaam',
+        brandingUrl: 'https://dhaam.com',
+      ),
+    );
+    await tester.pumpWidget(_wrap(cubit));
+
+    expect(find.text('Powered by Dhaam'), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text('Powered by Dhaam'),
+        matching: find.byType(TextButton),
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('hides branding when disabled or blank', (tester) async {
+    cubit = ChatWidgetCubit(
+      client: client,
+      initialConfig: testRemoteConfig(
+        showBranding: true,
+        brandingText: '   ',
+        brandingUrl: 'https://dhaam.com',
+      ),
+    );
+    await tester.pumpWidget(_wrap(cubit));
+
+    expect(find.text('Powered by Dhaam'), findsNothing);
+    expect(find.byType(TextButton), findsNothing);
+  });
+
+  testWidgets('renders branding as plain text when the URL is not safe',
+      (tester) async {
+    cubit = ChatWidgetCubit(
+      client: client,
+      initialConfig: testRemoteConfig(
+        showBranding: true,
+        brandingText: 'Powered by Dhaam',
+        brandingUrl: 'javascript:alert(1)',
+      ),
+    );
+    await tester.pumpWidget(_wrap(cubit));
+
+    expect(find.text('Powered by Dhaam'), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text('Powered by Dhaam'),
+        matching: find.byType(TextButton),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets(

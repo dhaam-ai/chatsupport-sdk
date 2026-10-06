@@ -91,7 +91,7 @@ const List<double> _dotPhases = <double>[0, 0.125, 0.25];
 class TypingIndicator extends StatelessWidget {
   const TypingIndicator({super.key, required this.label, this.avatarLetter});
 
-  /// "<who> is typing", from `MessageListRender.typingLabel`.
+  /// "&lt;who&gt; is typing", from `MessageListRender.typingLabel`.
   final String label;
 
   /// The handler's initial, from `MessageListRender.typingAvatarLetter`.
