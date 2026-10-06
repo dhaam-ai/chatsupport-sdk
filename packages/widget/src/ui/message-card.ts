@@ -198,14 +198,6 @@ export function buildCardView(cards: readonly RichCard[], initial: CardsView | n
   list.setAttribute('tabindex', '0');
   list.setAttribute('aria-label', `${cards.length} cards`);
 
-  const mode = (view: CardsView, text: string, label: string): HTMLButtonElement =>
-    el('button', {
-      attrs: { type: 'button', class: 'dh-cards-mode', 'data-mode': view, 'aria-label': label },
-      text,
-      on: { click: () => choose(view) },
-    });
-  const swipe = mode('row', 'Swipe', 'Show the cards side by side');
-  const stack = mode('column', 'List', 'Show the cards in a list');
   const step = (direction: -1 | 1): HTMLButtonElement =>
     el('button', {
       attrs: { type: 'button', class: 'dh-cards-nav', 'aria-label': direction < 0 ? 'Previous card' : 'Next card' },
@@ -219,16 +211,12 @@ export function buildCardView(cards: readonly RichCard[], initial: CardsView | n
       },
     });
   const nav = el('div', { attrs: { class: 'dh-cards-steps' }, children: [step(-1), step(1)] });
-  const bar = el('div', { attrs: { class: 'dh-cards-bar' }, children: [swipe, stack, nav] });
-  const root = el('div', { attrs: { class: 'dh-cards-view' }, children: [bar, list] });
-
-  function choose(view: CardsView): void {
-    root.setAttribute('data-view', view);
-    swipe.setAttribute('aria-pressed', String(view === 'row'));
-    stack.setAttribute('aria-pressed', String(view === 'column'));
-    nav.hidden = view !== 'row';
-  }
-  choose(initial ?? 'row');
+  // The layout is the merchant's choice (`initial`, from the console's "Show the cards"): there is
+  // no Swipe/List switch for the reader. Only a swipe needs arrows; a list scrolls by itself.
+  const view = initial ?? 'row';
+  const root = el('div', { attrs: { class: 'dh-cards-view' }, children: [list] });
+  root.setAttribute('data-view', view);
+  if (view === 'row') root.prepend(el('div', { attrs: { class: 'dh-cards-bar' }, children: [nav] }));
   return root;
 }
 

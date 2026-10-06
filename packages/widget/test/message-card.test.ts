@@ -376,56 +376,50 @@ describe('readRichCards — untrusted input', () => {
   });
 });
 
-describe('buildCardView — swipe sideways or scroll a list', () => {
-  const view = (n: number) =>
-    buildCardView(read(Array.from({ length: n }, (_, i) => orderCard({ title: `Card ${i}` }))));
-  const pressed = (root: HTMLElement) =>
-    [...root.querySelectorAll('.dh-cards-mode')].map((b) => [b.getAttribute('data-mode'), b.getAttribute('aria-pressed')]);
+describe('buildCardView: laid out as the merchant set it, with no Swipe/List switch', () => {
+  const view = (n: number, initial: 'row' | 'column' | null = null) =>
+    buildCardView(read(Array.from({ length: n }, (_, i) => orderCard({ title: `Card ${i}` }))), initial);
 
-  it('leaves one or two cards as the plain list, with nothing to switch', () => {
+  it('leaves one or two cards as the plain list, with nothing around it', () => {
     for (const n of [1, 2]) {
       const root = view(n);
       expect(root.tagName).toBe('UL');
       expect(root.classList.contains('dh-cards')).toBe(true);
-      expect(root.querySelector('.dh-cards-mode')).toBeNull();
+      expect(root.querySelector('.dh-cards-bar')).toBeNull();
     }
   });
 
-  it('wraps three or more in a view that opens swiping sideways, with every card in one list', () => {
+  it('wraps three or more in a view that opens swiping sideways when nothing was set, with arrows', () => {
     const root = view(10);
     expect(root.classList.contains('dh-cards-view')).toBe(true);
     expect(root.getAttribute('data-view')).toBe('row');
-    expect(pressed(root)).toEqual([['row', 'true'], ['column', 'false']]);
     const list = root.querySelector('ul.dh-cards') as HTMLElement;
     expect(list.getAttribute('role')).toBe('list');
     expect(list.querySelectorAll(':scope > li.dh-card')).toHaveLength(10);
     // The scrolling box can be reached and scrolled from the keyboard, and says what it holds.
     expect(list.getAttribute('tabindex')).toBe('0');
     expect(list.getAttribute('aria-label')).toBe('10 cards');
-    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(false);
+    expect(root.querySelectorAll('.dh-cards-nav')).toHaveLength(2);
   });
 
-  it('switches to a stacked list and back; the arrows only belong to the swipe', () => {
-    const root = view(5);
-    const [swipe, stack] = [...root.querySelectorAll<HTMLButtonElement>('.dh-cards-mode')];
-    stack!.click();
-    expect(root.getAttribute('data-view')).toBe('column');
-    expect(pressed(root)).toEqual([['row', 'false'], ['column', 'true']]);
-    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(true);
-    swipe!.click();
-    expect(root.getAttribute('data-view')).toBe('row');
-    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(false);
+  it('draws no Swipe or List switch, in either layout', () => {
+    for (const initial of [null, 'row', 'column'] as const) {
+      const root = view(5, initial);
+      expect(root.querySelector('.dh-cards-mode')).toBeNull();
+      expect(root.textContent).not.toContain('Swipe');
+      expect(root.textContent).not.toMatch(/List/);
+    }
   });
 
-  it('opens in the view the flow asked for, and the reader can still switch', () => {
-    const cards = read(Array.from({ length: 4 }, (_, i) => orderCard({ title: `Card ${i}` })));
-    const root = buildCardView(cards, 'column');
-    expect(root.getAttribute('data-view')).toBe('column');
-    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(true);
-    (root.querySelector('.dh-cards-mode[data-mode="row"]') as HTMLButtonElement).click();
-    expect(root.getAttribute('data-view')).toBe('row');
+  it('opens in the layout the merchant chose: a list for "column" (no arrows), sideways with arrows for "row"', () => {
+    const list = view(4, 'column');
+    expect(list.getAttribute('data-view')).toBe('column');
+    expect(list.querySelector('.dh-cards-bar')).toBeNull(); // a list scrolls by itself
+    const swipe = view(4, 'row');
+    expect(swipe.getAttribute('data-view')).toBe('row');
+    expect(swipe.querySelectorAll('.dh-cards-nav')).toHaveLength(2);
     // Fewer than three cards have no view to open in.
-    expect(buildCardView(cards.slice(0, 2), 'column').tagName).toBe('UL');
+    expect(buildCardView(read([orderCard(), orderCard()]), 'column').tagName).toBe('UL');
   });
 
   it('readRichLayout: horizontal and vertical only; anything else leaves the default, and it never throws', () => {
