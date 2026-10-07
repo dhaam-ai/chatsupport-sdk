@@ -130,6 +130,13 @@ DhaamChat.on('message', (m) => {
 });
 ```
 
+For an **item** (`kind: 'item'`, the item-detail step) `data` is the item's whole answer, nested: its own fields plus `products`
+(the variants), `upsells`, `modifierGroups` (each with `modifiers`), `multiImage`, `discount` and `itemTemplates`, each with its
+`minOption`/`maxOption`/`isMultiSelect`/`isDefault`/`price`/`isActive`, so the page can show the options (modifiers, upsells,
+variants) when the customer taps Add to cart and validate the choice before it builds the order. It is all or nothing: when an item
+is too large (depth 8, 3000 nodes, 48 KiB) `data` is absent, never cut. The menu the page is on is the page's own
+(`DhaamChat.setPage({ attributes: { menuId } })`, which also prices the item in that menu).
+
 Treat it as untrusted text and numbers, like the rest of the message.
 
 ## How it renders
