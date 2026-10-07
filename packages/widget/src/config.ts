@@ -221,6 +221,8 @@ export interface AddToCartRequest {
   readonly imageUrl?: string;
   /** The price exactly as the card showed it ("₹380.00"). */
   readonly priceLabel?: string;
+  /** The card's host-only `data` (a dish's `menuId`, `price`, `isMin`, `isMax`, `hasDetails`, ...), when the flow sent it. */
+  readonly data?: Readonly<Record<string, string | number | boolean>>;
 }
 
 export interface WidgetConfig {

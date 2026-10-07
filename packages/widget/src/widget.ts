@@ -2009,6 +2009,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         name: card.title,
         ...(card.imageUrl === null ? {} : { imageUrl: card.imageUrl }),
         ...(card.subtitle === '' ? {} : { priceLabel: card.subtitle }),
+        ...(card.data === undefined ? {} : { data: card.data }),
       });
     },
     // Add to cart is drawn only for a host that registered `onAddToCart`.

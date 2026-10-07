@@ -2628,7 +2628,7 @@ button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
    default) and a list that scrolls up and down in its own box ("column"). The
    scrolling box takes keyboard focus, so its focus ring is drawn too. Nothing
    glides: snapping is not motion, and no scroll is animated. */
-.dh-cards-view { margin: 6px 0 0; width: 300px; max-width: 100%; }
+.dh-cards-view { margin: 6px 0 0; width: 100%; max-width: 100%; }
 .dh-cards-view > .dh-cards { margin: 4px 0 0; width: 100%; }
 .dh-cards-view > .dh-cards:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
 .dh-cards-bar { display: flex; align-items: center; gap: 6px; }
@@ -2661,7 +2661,60 @@ button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
   overscroll-behavior-x: contain;
   padding-bottom: 6px;
 }
-.dh-cards-view[data-view="row"] > .dh-cards > .dh-card { flex: 0 0 240px; scroll-snap-align: start; }
+.dh-cards-view[data-view="row"] > .dh-cards > .dh-card { flex: 0 0 62%; min-width: 150px; scroll-snap-align: start; }
+.dh-cards-view[data-view="row"] > .dh-cards { scrollbar-width: none; gap: 10px; }
+.dh-cards-view[data-view="row"] > .dh-cards::-webkit-scrollbar { display: none; }
+.dh-msg:has(> .dh-msg-content-wrap > .dh-cards-view) { max-width: 100%; align-self: stretch; }
+.dh-msg:has(> .dh-msg-content-wrap > .dh-cards-view) > .dh-msg-content-wrap { flex: 1 1 auto; min-width: 0; }
+.dh-msg-content-wrap > .dh-cards-view { align-self: stretch; }
+.dh-cards-view .dh-card[data-kind="product"] {
+  position: relative; border: 0; border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(30, 20, 70, 0.12);
+}
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-head { flex-direction: column; align-items: stretch; gap: 8px; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-img { width: calc(100% + 24px); max-width: none; height: 140px; margin: -12px -12px 0; border-radius: 0; }
+.dh-cards-view .dh-card[data-kind="product"] .dh-card-title { font-size: 15px; }
+.dh-cards-view .dh-card[data-kind="product"] .dh-card-side { max-width: none; align-items: flex-start; text-align: start; }
+.dh-cards-view .dh-card[data-kind="product"] .dh-card-side .dh-card-sub { color: var(--dh-text); font-size: 17px; font-weight: 700; }
+.dh-cards-view .dh-card[data-kind="product"] .dh-card-badge { position: absolute; top: 8px; inset-inline-start: 8px; margin: 0; }
+.dh-cards-view[data-view="row"] > .dh-cards { align-items: stretch; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] { display: flex; flex-direction: column; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-body { flex: 1 1 auto; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-actions { margin-top: auto; }
+.dh-card-desc {
+  margin: 6px 0 0; font-size: 12px; line-height: 1.4; color: var(--dh-text-muted);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-actions { border-top: 0; padding: 0 12px 12px; }
+.dh-cards-view .dh-card[data-kind="product"] button.dh-card-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 40px;
+  border-radius: 999px; background: var(--dh-accent); color: var(--dh-accent-text, #fff);
+}
+.dh-cards-view .dh-card[data-kind="product"] button.dh-card-btn:hover { background: var(--dh-accent); filter: brightness(1.08); text-decoration: none; }
+.dh-cards-view .dh-card[data-kind="product"] button.dh-card-btn::before {
+  content: ''; width: 16px; height: 16px; background: currentColor;
+  --dh-cart: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.5'/%3E%3Ccircle cx='18' cy='20' r='1.5'/%3E%3Cpath d='M2 3h3l2.7 12.4a2 2 0 0 0 2 1.6h8.1a2 2 0 0 0 2-1.5L21.5 8H6'/%3E%3C/svg%3E");
+  -webkit-mask: var(--dh-cart) center / contain no-repeat;
+  mask: var(--dh-cart) center / contain no-repeat;
+}
+.dh-cards-view[data-view="row"] > .dh-cards { padding: 4px 0 10px; }
+.dh-cards-dots { display: flex; justify-content: center; gap: 6px; margin-top: 2px; }
+.dh-cards-dot { width: 6px; height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--dh-accent) 30%, transparent); }
+.dh-cards-dot[data-active] { background: var(--dh-accent); }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] {
+  display: grid; grid-template-columns: 38% 1fr; grid-template-rows: auto auto 1fr auto;
+  column-gap: 12px; padding: 8px;
+}
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"]:not(:has(.dh-card-img:not([hidden]))) { grid-template-columns: 0 1fr; column-gap: 0; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] :is(.dh-card-body, .dh-card-head, .dh-card-actions) { display: contents; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-img { grid-column: 1; grid-row: 1 / 5; width: 100%; height: 100%; min-height: 108px; max-width: none; border-radius: 10px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-text { grid-column: 2; grid-row: 1; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-side { grid-column: 2; grid-row: 2; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-desc { grid-column: 2; grid-row: 3; -webkit-line-clamp: 2; margin: 2px 0 8px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] button.dh-card-btn { grid-column: 2; grid-row: 4; align-self: end; margin-top: auto; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-badge { top: 14px; inset-inline-start: 14px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] a.dh-card-btn { grid-column: 2; grid-row: 5; }
+.dh-cards-view[data-view="column"]:has(.dh-card[data-kind="product"]) > .dh-cards { max-height: none; overflow: visible; gap: 10px; }
 .dh-cards-view[data-view="column"] > .dh-cards {
   max-height: 360px;
   overflow-y: auto;
@@ -5304,6 +5357,9 @@ ${STAFF_CONV} .dh-msg[data-mine] {
   max-width: 82% !important;
 }
 ${STAFF_CONV} .dh-msg[data-mine="true"] { align-items: flex-end !important; }
+${STAFF_CONV} .dh-msg[data-mine="false"]:has(> .dh-msg-content-wrap > .dh-cards-view) { width: 100% !important; max-width: 100% !important; }
+${STAFF_CONV} .dh-msg-content-wrap > .dh-cards-view { width: calc(100% + 56px) !important; max-width: none !important; margin-inline-start: -40px; }
+${STAFF_CONV} .dh-msg-content-wrap > .dh-cards-view[data-view="column"] { width: calc(100% + 40px) !important; }
 /* The bot is a bare accent-coloured sparkle, not a disc (the conversation header
    rule for .dh-avatar would otherwise paint it amber like an agent). */
 ${STAFF_CONV} .dh-msg .dh-msg-avatar--bot {

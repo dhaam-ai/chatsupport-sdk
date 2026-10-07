@@ -93,6 +93,10 @@ export interface RichCard {
   readonly rows: readonly RichCardRow[];
   readonly buttons: readonly RichCardButton[];
   readonly footer: string;
+  /** A product's short blurb, from the card's host-only `data.description`; shown on swipe cards. Absent when there is none. */
+  readonly description?: string;
+  /** The host-only `data` bag's top-level scalars (a dish's `menuId`, `price`, `isMin`, ...), handed to the host's Add to cart. Never drawn. */
+  readonly data?: Readonly<Record<string, string | number | boolean>>;
 }
 
 // Contract §2 limits. Lists are capped by reading only their first N entries:
@@ -195,7 +199,7 @@ export function buildCardList(cards: readonly RichCard[], onAction?: RichCardAct
 }
 
 /** From this many cards the list can be switched between swiping sideways and a stacked, scrolling list. */
-const VIEW_SWITCH_MIN = 3;
+const VIEW_SWITCH_MIN = 2;
 export type CardsView = 'row' | 'column';
 
 /**
@@ -221,25 +225,26 @@ export function buildCardView(
   list.setAttribute('tabindex', '0');
   list.setAttribute('aria-label', `${cards.length} cards`);
 
-  const step = (direction: -1 | 1): HTMLButtonElement =>
-    el('button', {
-      attrs: { type: 'button', class: 'dh-cards-nav', 'aria-label': direction < 0 ? 'Previous card' : 'Next card' },
-      text: direction < 0 ? '‹' : '›',
-      on: {
-        click: () => {
-          const first = list.firstElementChild as HTMLElement | null;
-          const by = (first?.offsetWidth ?? 240) + 8;
-          if (typeof list.scrollBy === 'function') list.scrollBy({ left: direction * by });
-        },
-      },
-    });
-  const nav = el('div', { attrs: { class: 'dh-cards-steps' }, children: [step(-1), step(1)] });
   // The layout is the merchant's choice (`initial`, from the console's "Show the cards"): there is
-  // no Swipe/List switch for the reader. Only a swipe needs arrows; a list scrolls by itself.
+  // no Swipe/List switch for the reader. A swipe has no arrows: the next card peeks in as the cue.
   const view = initial ?? 'row';
   const root = el('div', { attrs: { class: 'dh-cards-view' }, children: [list] });
   root.setAttribute('data-view', view);
-  if (view === 'row') root.prepend(el('div', { attrs: { class: 'dh-cards-bar' }, children: [nav] }));
+  if (view === 'row') {
+    // Pagination dots under the swipe: decorative (the list itself is the accessible control), they
+    // only show which card is in front.
+    const dots = cards.map(() => el('span', { attrs: { class: 'dh-cards-dot' } }));
+    const strip = el('div', { attrs: { class: 'dh-cards-dots', 'aria-hidden': 'true' }, children: dots });
+    const sync = (): void => {
+      const first = list.firstElementChild as HTMLElement | null;
+      const by = (first?.offsetWidth ?? 0) + 10;
+      const at = by > 10 ? Math.min(dots.length - 1, Math.round(list.scrollLeft / by)) : 0;
+      dots.forEach((d, i) => d.toggleAttribute('data-active', i === at));
+    };
+    list.addEventListener('scroll', sync, { passive: true });
+    sync();
+    root.append(strip);
+  }
   return root;
 }
 
@@ -331,6 +336,7 @@ function buildCard(card: RichCard, onAction?: RichCardActionHandler, supports?: 
   if (side.childElementCount > 0) head.append(side);
 
   const body = el('div', { attrs: { class: 'dh-card-body' }, children: [head] });
+  if (card.description !== undefined && priced) body.append(el('p', { attrs: { class: 'dh-card-desc' }, text: card.description }));
   if (card.rows.length > 0) {
     body.append(
       el('dl', {
@@ -382,6 +388,10 @@ function readCard(card: Record<string, unknown>): RichCard | null {
   const badgeLabel = badge === null ? '' : text(own(badge, 'label'), 24);
   const tone = badge === null ? undefined : own(badge, 'tone');
 
+  const dataBag = record(own(card, 'data'));
+  const description = dataBag === null ? '' : text(own(dataBag, 'description'), 160);
+  const data = dataBag === null ? {} : scalarsOf(dataBag);
+
   return {
     kind: typeof kind === 'string' && KINDS.has(kind) ? (kind as RichCardKind) : 'info',
     title,
@@ -416,7 +426,20 @@ function readCard(card: Record<string, unknown>): RichCard | null {
       return url !== null ? { label, url } : null;
     }),
     footer: text(own(card, 'footer'), 60),
+    ...(description !== '' ? { description } : {}),
+    ...(Object.keys(data).length > 0 ? { data } : {}),
   };
+}
+
+/** A bag's own scalar fields (text cut to 500, at most 40 keys); nested values and anything else are left out. */
+function scalarsOf(bag: Record<string, unknown>): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const key of Object.keys(bag).slice(0, 40)) {
+    const v = own(bag, key);
+    if (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) out[key] = v;
+    else if (typeof v === 'string') out[key] = v.slice(0, 500);
+  }
+  return out;
 }
 
 /** The first `max` entries of an array that `read` accepts. */

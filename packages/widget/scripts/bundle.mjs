@@ -138,7 +138,9 @@ console.log('');
 // add_to_cart reader, the Adding.../Added/Try again button states and the
 // onAddToCart host hook. The bundle measured 136,253 B gzip once landed, of
 // which about 1.5 KB was already over the 132 KiB ceiling before this work.
-const WIDGET_GZIP_BUDGET = 137_216;
+// Raised 1 KiB (to 135 KiB) for the product-card carousel restyle: photo, chip, blurb, filled
+// Add to cart with a cart icon, and pagination dots. It measured 137,245 B gzip.
+const WIDGET_GZIP_BUDGET = 138_240;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,
