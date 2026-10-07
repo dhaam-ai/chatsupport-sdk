@@ -58,6 +58,7 @@ type RichCard = {
   rows?: { label: string /*≤30*/, value: string /*≤120*/ }[],     // ≤8
   buttons?: { label: string /*≤20*/, url: string /*https, ≤500*/ }[],   // ≤3
   footer?: string,                     // ≤60
+  data?: Record<string, string | number | boolean>,   // the item's own attributes, for the HOST PAGE: never drawn (below)
 }
 metadata.richCards: RichCard[]         // ≤5
 metadata.richIntro?: string            // ≤300, the intro line ONLY (no card text). Optional.
@@ -112,6 +113,24 @@ Who produces what (contract §2.1 and §2.2):
   `imageUrl`. An `Out of stock` badge (danger) when unavailable. Description
   and Options rows (item detail only). A `View` button if there is a URL. A
   product search posts up to 5 cards in one message.
+
+### `data`: the item's own attributes, for the host page
+
+A product or item card may carry `data`: the upstream row's own scalar fields as it named them (for a dish: `menuId`,
+`isMin`, `isMax`, `inventorEnabled`, `hasDetails`, `isAvailableNow`, `entityType`, `isVeg`, `description`, `id`, `price`,
+`imageURL`, `name`; at most 40 keys, text ≤500). The widget **does not draw it** (the card shows the name, picture and price)
+and drops it from its own model, but it stays on the message, so a host page that wants to act on a card (add the dish to its
+cart, which needs the `menuId`) reads it from the message:
+
+```ts
+DhaamChat.on('message', (m) => {
+  m.metadata?.richCards?.forEach((card, i) => {
+    if (card.kind === 'product' && card.data) cart.prepare({ dishId: card.data.id, menuId: card.data.menuId, min: card.data.isMin, max: card.data.isMax });
+  });
+});
+```
+
+Treat it as untrusted text and numbers, like the rest of the message.
 
 ## How it renders
 

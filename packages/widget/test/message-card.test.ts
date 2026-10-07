@@ -149,6 +149,19 @@ describe('readRichCards — clamps (contract §2 limits)', () => {
     expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(title)).toBe(false);
   });
 
+  it('a card\'s `data` (the item\'s own attributes, for the host page) is not drawn and does not cost the card: it stays on the message', () => {
+    const dish = { v: 1, kind: 'product', title: 'Paneer Tikka Pizza', subtitle: '₹400.00', data: { menuId: 'f4c11d61', isMin: 1, isMax: 8 } };
+    const metadata = { richCards: [dish] };
+    const [card] = read([dish]);
+    expect(card?.title).toBe('Paneer Tikka Pizza');
+    expect(JSON.stringify(card)).not.toContain('f4c11d61');
+    const list = buildCardList([card!]);
+    expect(list.textContent).not.toMatch(/f4c11d61|menuId/);
+    // The raw bag is untouched: that is what `DhaamChat.on('message', (m) => m.metadata.richCards[i].data)` hands the host.
+    expect((readRichCards(metadata)).length).toBe(1);
+    expect((metadata.richCards[0] as { data: { menuId: string } }).data.menuId).toBe('f4c11d61');
+  });
+
   it('keeps at most 10 cards, 8 rows and 3 buttons', () => {
     const rows = Array.from({ length: 12 }, (_, i) => ({ label: `L${i}`, value: `V${i}` }));
     const buttons = Array.from({ length: 6 }, (_, i) => ({ label: `B${i}`, url: `https://example.com/${i}` }));
