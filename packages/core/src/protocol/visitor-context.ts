@@ -24,6 +24,8 @@ const ATTRIBUTE_KEY = /^[A-Za-z0-9_.-]{1,40}$/;
 const MAX_ATTRIBUTE_STRING = 200;
 const CURRENCY = /^[A-Z]{3}$/;
 const MAX_STORE_ID = 80;
+/** A position is held to three decimals (about 110 m): enough to rank what is near, and a small move is not a new context. */
+const LOCATION_SCALE = 1000;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -62,6 +64,26 @@ function normalizeStore(value: unknown): VisitorContext['store'] | undefined {
   if (id === undefined) return undefined;
   const outletId = idText(value['outletId']);
   return outletId === undefined ? { id } : { id, outletId };
+}
+
+/** A `{ lat, lng }` the server will accept (finite, in range), at three decimals; `undefined` for anything else. */
+export function normalizeLocation(value: unknown): VisitorContext['location'] | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const lat = value['lat'];
+  const lng = value['lng'];
+  if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return undefined;
+  return { lat: Math.round(lat * LOCATION_SCALE) / LOCATION_SCALE, lng: Math.round(lng * LOCATION_SCALE) / LOCATION_SCALE };
+}
+
+/**
+ * `context` with `location` set to the visitor's position -- unless the host already set its own, or there is none to add.
+ * A new object; `context` is never changed.
+ */
+export function withLocation(context: VisitorContext, location: { readonly lat: number; readonly lng: number } | undefined): VisitorContext {
+  if (location === undefined || context.location !== undefined) return context;
+  const normalized = normalizeLocation(location);
+  return normalized === undefined ? context : { ...context, location: normalized };
 }
 
 /**
@@ -109,6 +131,9 @@ export function normalizeVisitorContext(input: unknown): VisitorContext | null {
 
   const store = normalizeStore(input['store']);
   if (store !== undefined) context.store = store;
+
+  const location = normalizeLocation(input['location']);
+  if (location !== undefined) context.location = location;
 
   return context;
 }

@@ -649,6 +649,12 @@ export interface PageContext {
   readonly attributes?: Readonly<Record<string, string | number | boolean>>;
   /** The storefront's store, for store-scoped flows. */
   readonly store?: { readonly id: string; readonly outletId?: string };
+  /**
+   * Where the visitor is. You normally never set this: the widget adds the browser's GPS fix itself once the visitor has
+   * allowed it, so a product search with no store page starts from where they are. Set it only to give a position the browser
+   * does not know (an address the visitor chose); it is held to three decimals (about 110 m).
+   */
+  readonly location?: { readonly lat: number; readonly lng: number };
 }
 
 /** Everything resolved — no optionals left for the UI layer to re-default. */

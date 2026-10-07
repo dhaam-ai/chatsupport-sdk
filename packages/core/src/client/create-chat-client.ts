@@ -536,6 +536,7 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
   // Where the visitor is (chatbot-workflows.md §9.2-9.3). Annotated, not
   // inferred: it closes over `connectionController`, which in turn reads it for
   // every hello, and an inferred type would be circular (TS7022).
+  let visitorGeo: { readonly lat: number; readonly lng: number } | undefined;
   const pageSync: PageContextSync = new PageContextSync({
     isConnected: () => connectionController.state === 'connected',
     send: (context) => {
@@ -545,6 +546,8 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     clock: now ?? systemClock,
     // Order dates are shown in the visitor's own time zone (chat-service reads `attributes.timezone`).
     timeZone: config.timeZone === undefined ? browserTimeZone : () => config.timeZone ?? undefined,
+    // Where the visitor is, once the widget has their GPS fix: a product search with no store page starts from it.
+    location: () => visitorGeo,
   });
 
   const connectionController = new ConnectionController({
@@ -1977,7 +1980,19 @@ export function createChatClient(config: ChatClientConfig): ChatClient {
     },
     // Pure delegation — `ConnectionController.setContactInfo` owns the
     // merge/latch semantics documented on the public method above.
-    setContactInfo: (info) => connectionController.setContactInfo(info),
+    setContactInfo: (info) => {
+      connectionController.setContactInfo(info);
+      // The GPS fix usually arrives after the first hello: it rides the page context too, so a chat already open learns it
+      // (a context.update), not only one whose next hello happens to carry it.
+      if (info.geo !== undefined) {
+        visitorGeo = info.geo;
+        try {
+          pageSync.refresh();
+        } catch (error) {
+          config.logger?.('warn', 'the visitor\'s position could not be added to the page context', { error: String(error) });
+        }
+      }
+    },
     // Never throws: a page context is advisory, and a host page's bad value
     // must not surface as an exception in its own render path.
     setPageContext: (context) => {

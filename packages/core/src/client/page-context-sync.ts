@@ -20,7 +20,7 @@
 // server would reject) and an unusable call is simply reported as ignored.
 
 import type { Clock, ScheduleTimer, CancelTimer } from '../presence/index.js';
-import { normalizeVisitorContext, visitorContextKey, withTimeZone } from '../protocol/index.js';
+import { normalizeVisitorContext, visitorContextKey, withLocation, withTimeZone } from '../protocol/index.js';
 import type { VisitorContext } from '../protocol/index.js';
 
 const DEFAULT_DEBOUNCE_MS = 500;
@@ -42,6 +42,12 @@ export interface PageContextSyncOptions {
    * their own zone; a hello goes out with just that when the host set no context at all.
    */
   readonly timeZone?: () => string | undefined;
+  /**
+   * Where the visitor is (the browser's GPS fix, once they allowed it). When given and it answers, every context this sends
+   * carries it as `location`, unless the host set its own. Call {@link PageContextSync.refresh} when it starts to answer or
+   * changes, so a connected visitor's server learns it.
+   */
+  readonly location?: () => { readonly lat: number; readonly lng: number } | undefined;
 }
 
 export class PageContextSync {
@@ -52,6 +58,9 @@ export class PageContextSync {
   readonly #debounceMs: number;
   readonly #maxPerMinute: number;
   readonly #timeZone: (() => string | undefined) | undefined;
+  readonly #location: (() => { readonly lat: number; readonly lng: number } | undefined) | undefined;
+  /** What the host last set (normalised), without anything this class adds itself. */
+  #host: VisitorContext | undefined;
 
   #latest: VisitorContext | undefined;
   /** Identity of `#latest`; `null` until anything usable was set. */
@@ -69,10 +78,13 @@ export class PageContextSync {
     this.#debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.#maxPerMinute = options.maxPerMinute ?? DEFAULT_MAX_PER_MINUTE;
     this.#timeZone = options.timeZone;
+    this.#location = options.location;
   }
 
+  /** `context` plus what this class knows about the visitor: their time zone and, once they allowed it, their position. */
   #zoned(context: VisitorContext): VisitorContext {
-    return this.#timeZone === undefined ? context : withTimeZone(context, this.#timeZone());
+    const zoned = this.#timeZone === undefined ? context : withTimeZone(context, this.#timeZone());
+    return this.#location === undefined ? zoned : withLocation(zoned, this.#location());
   }
 
   /**
@@ -83,17 +95,34 @@ export class PageContextSync {
   set(input: unknown): boolean {
     const normalized = normalizeVisitorContext(input);
     if (normalized === null) return false;
+    this.#host = normalized;
+    this.#apply(normalized);
+    return true;
+  }
+
+  /**
+   * Re-reads what this class adds on its own (the visitor's position, which arrives after the page's context was set) and,
+   * if the context the server should have is now different, sends it. A no-op when nothing changed.
+   */
+  refresh(): void {
+    const base = this.#host ?? {};
+    // Nothing the host set and nothing to add (no position the server would accept, no zone): there is no context to send,
+    // and an EMPTY update would clear the one the server holds.
+    if (this.#host === undefined && Object.keys(this.#zoned(base)).length === 0) return;
+    this.#apply(base);
+  }
+
+  #apply(normalized: VisitorContext): void {
     const context = this.#zoned(normalized);
 
     const key = visitorContextKey(context);
-    if (key === this.#latestKey && key === this.#sentKey) return true;
+    if (key === this.#latestKey && key === this.#sentKey) return;
 
     this.#latest = context;
     this.#latestKey = key;
     // Not connected: only latched. The next hello carries it (`forHello`), and
     // the client flushes once connected for a change made after that hello.
     if (this.#isConnected()) this.#arm(this.#debounceMs);
-    return true;
   }
 
   /**
@@ -102,8 +131,8 @@ export class PageContextSync {
    * content is not sent again as an update.
    */
   forHello(): VisitorContext | undefined {
-    if ((this.#latestKey === null || this.#latest === undefined) && this.#timeZone !== undefined) {
-      // The host set no context: the hello still says which zone the visitor is in.
+    if ((this.#latestKey === null || this.#latest === undefined) && (this.#timeZone !== undefined || this.#location !== undefined)) {
+      // The host set no context: the hello still says which zone the visitor is in, and where, once they allowed it.
       const zoned = this.#zoned({});
       if (Object.keys(zoned).length > 0) {
         this.#latest = zoned;

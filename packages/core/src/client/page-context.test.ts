@@ -49,6 +49,8 @@ function harness() {
     webSocketFactory: sockets.create,
     schedule: timers.schedule,
     now: timers.clock,
+    // These tests are about what the HOST set: the machine's own time zone must not leak into them.
+    timeZone: null,
   };
   const client = createChatClient(config);
   return { client, sockets, timers };

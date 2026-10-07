@@ -110,7 +110,7 @@ describe('visitorContextKey', () => {
   });
 });
 
-import { browserTimeZone, withTimeZone } from './visitor-context.js';
+import { browserTimeZone, withLocation, withTimeZone } from './visitor-context.js';
 
 describe('the visitor\'s time zone', () => {
   it('browserTimeZone names an IANA zone the server will accept as an attribute', () => {
@@ -127,5 +127,24 @@ describe('the visitor\'s time zone', () => {
     expect(withTimeZone(base, undefined)).toBe(base);
     const full = { attributes: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i])) };
     expect(withTimeZone(full, 'UTC')).toBe(full);
+  });
+});
+
+describe('location', () => {
+  it('is kept to three decimals when it is a real place, and dropped alone when it is not', () => {
+    expect(normalizeVisitorContext({ label: 'cart', location: { lat: 17.408084, lng: 78.491033 } })).toEqual({ label: 'cart', location: { lat: 17.408, lng: 78.491 } });
+    for (const bad of [{ lat: 91, lng: 0 }, { lat: 0, lng: 181 }, { lat: '17.4', lng: 78 }, { lat: NaN, lng: 1 }, { lat: Infinity, lng: 1 }, { lat: 1 }, 'here', null, [17, 78]]) {
+      expect(normalizeVisitorContext({ label: 'cart', location: bad })).toEqual({ label: 'cart' });
+    }
+  });
+
+  it('withLocation adds a position unless the host set one, and never changes its input', () => {
+    const base = { label: 'cart' };
+    expect(withLocation(base, { lat: 12.971599, lng: 77.594566 })).toEqual({ label: 'cart', location: { lat: 12.972, lng: 77.595 } });
+    expect(base).toEqual({ label: 'cart' });
+    const own = { label: 'cart', location: { lat: 1, lng: 2 } };
+    expect(withLocation(own, { lat: 12, lng: 77 })).toBe(own);
+    expect(withLocation(base, undefined)).toBe(base);
+    expect(withLocation(base, { lat: 200, lng: 0 })).toBe(base);
   });
 });

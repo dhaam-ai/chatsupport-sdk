@@ -57,7 +57,7 @@ export type {
   PresenceEntry,
 } from './domain.js';
 
-export { browserTimeZone, normalizeVisitorContext, visitorContextKey, withTimeZone } from './visitor-context.js';
+export { browserTimeZone, normalizeLocation, normalizeVisitorContext, visitorContextKey, withLocation, withTimeZone } from './visitor-context.js';
 export { normalizeVisitorEvent } from './visitor-event.js';
 
 export {

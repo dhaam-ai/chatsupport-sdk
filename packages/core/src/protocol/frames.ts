@@ -44,6 +44,11 @@ export interface VisitorContext {
   attributes?: Record<string, string | number | boolean>;
   /** The storefront's store (and outlet), ids at most 80 characters. */
   store?: { id: string; outletId?: string };
+  /**
+   * Where the visitor is: the browser's GPS fix, when the visitor allowed it (about 110 m: three decimals). The widget adds
+   * it itself, so a product search with no store page can start from where they are; a host page never needs to.
+   */
+  location?: { lat: number; lng: number };
 }
 
 /** `context.update`: REPLACES the stored context - fields not sent are cleared. */

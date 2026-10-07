@@ -206,3 +206,85 @@ describe('the visitor\'s time zone', () => {
     expect(h.sync.forHello()).toEqual({ label: 'cart' });
   });
 });
+
+describe('the visitor\'s position (the browser\'s GPS fix)', () => {
+  const positioned = (opts: { connected?: boolean } = {}) => {
+    const timers = new ManualTimers();
+    const sent: VisitorContext[] = [];
+    let fix: { lat: number; lng: number } | undefined;
+    const sync = new PageContextSync({
+      isConnected: () => opts.connected ?? true,
+      send: (context) => sent.push(context),
+      schedule: timers.schedule,
+      clock: timers.clock,
+      location: () => fix,
+    });
+    return { sync, timers, sent, locate: (value: { lat: number; lng: number } | undefined) => { fix = value; } };
+  };
+
+  it('rides the hello and every update once the visitor has allowed it, held to three decimals', () => {
+    const h = positioned({ connected: false });
+    h.locate({ lat: 17.408084, lng: 78.491033 });
+    h.sync.set({ label: 'cart' });
+    expect(h.sync.forHello()).toEqual({ label: 'cart', location: { lat: 17.408, lng: 78.491 } });
+  });
+
+  it('arrives after the page\'s context was set: a connected chat learns it with one context.update', () => {
+    const h = positioned();
+    h.sync.set({ label: 'cart' });
+    h.timers.advance(1_000);
+    expect(h.sent).toEqual([{ label: 'cart' }]);
+    h.locate({ lat: 17.408084, lng: 78.491033 });
+    h.sync.refresh();
+    h.timers.advance(1_000);
+    expect(h.sent).toEqual([{ label: 'cart' }, { label: 'cart', location: { lat: 17.408, lng: 78.491 } }]);
+  });
+
+  it('a move too small to matter (inside the three decimals) is not a new context; a real one is', () => {
+    const h = positioned();
+    h.locate({ lat: 17.40801, lng: 78.49101 });
+    h.sync.set({ label: 'cart' });
+    h.timers.advance(1_000);
+    h.locate({ lat: 17.40804, lng: 78.49104 });
+    h.sync.refresh();
+    h.timers.advance(1_000);
+    expect(h.sent).toHaveLength(1);
+    h.locate({ lat: 17.42, lng: 78.5 });
+    h.sync.refresh();
+    h.timers.advance(1_000);
+    expect(h.sent).toHaveLength(2);
+    expect(h.sent[1]).toEqual({ label: 'cart', location: { lat: 17.42, lng: 78.5 } });
+  });
+
+  it('works when the host set no context at all (a bare hello still says where)', () => {
+    const h = positioned({ connected: false });
+    h.locate({ lat: 12.97, lng: 77.59 });
+    expect(h.sync.forHello()).toEqual({ location: { lat: 12.97, lng: 77.59 } });
+  });
+
+  it('a host\'s own position wins, and a fix that is out of range adds nothing', () => {
+    const own = positioned({ connected: false });
+    own.locate({ lat: 1, lng: 2 });
+    own.sync.set({ location: { lat: 40.7128, lng: -74.006 } });
+    expect(own.sync.forHello()).toEqual({ location: { lat: 40.713, lng: -74.006 } });
+    const bad = positioned({ connected: false });
+    bad.locate({ lat: 91, lng: 2 });
+    bad.sync.set({ label: 'cart' });
+    expect(bad.sync.forHello()).toEqual({ label: 'cart' });
+  });
+
+  it('refresh() with nothing to say is a no-op: no frame, no context invented', () => {
+    const h = positioned();
+    h.sync.refresh();
+    h.timers.advance(5_000);
+    expect(h.sent).toEqual([]);
+  });
+
+  it('is off unless asked for: a sync built without a position never sends one', () => {
+    const h = harness({ connected: false });
+    h.sync.refresh();
+    h.sync.set({ label: 'cart', location: { lat: 1, lng: 2 } });
+    // (a host that sets its own position still has it normalised through)
+    expect(h.sync.forHello()).toEqual({ label: 'cart', location: { lat: 1, lng: 2 } });
+  });
+});
