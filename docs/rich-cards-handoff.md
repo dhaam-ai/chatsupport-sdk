@@ -137,8 +137,10 @@ variants) when the customer taps Add to cart and validate the choice before it b
 is too large (depth 8, 3000 nodes, 48 KiB) `data` is absent, never cut. The menu the page is on is the page's own
 (`DhaamChat.setPage({ attributes: { menuId } })`, which also prices the item in that menu).
 
-**Products with no store page.** On a page that is not a store (or in WhatsApp) a product search runs across the tenant's merchants, and
-each product card names its merchant in a `Store` row and links to its dish. The widget sends where the visitor is so that search
+**Products with no store page.** On a page that is not a store (or in WhatsApp) a product search runs across the tenant's merchants and
+is shown by merchant. In the widget each merchant has its own card (`kind: 'info'`: name, outlet, picture, an Open/Closed badge, a Delivery
+row and an Open store link) followed by a `product` card for each of its dishes (price, `View` deep link to the dish, `data` for the host
+page, the merchant's name as the footer). On WhatsApp the same merchant is one card listing its dishes as rows. The widget sends where the visitor is so that search
 starts near them: the browser's GPS fix, once the visitor allows it, is added to the page context as `location: { lat, lng }`
 (three decimals, about 110 m) on the hello when it is known by then and on a `context.update` when it arrives later. A host page
 never needs to set it (`DhaamChat.setPage({ location })` is accepted for a position the browser does not know). A visitor who
