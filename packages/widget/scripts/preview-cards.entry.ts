@@ -97,6 +97,19 @@ const messages: ChatMessage[] = [
   }),
 ];
 
+// Four products, laid out as the console's "Show the cards" says: `?layout=vertical` (a list) or
+// `?layout=horizontal` (side by side, the default). There is no Swipe/List switch to press.
+const layout = params.get('layout');
+messages.push(
+  bot('b4', 'Here is what I found.', 6, {
+    richIntro: 'Here is what I found.',
+    ...(layout === 'vertical' || layout === 'horizontal' ? { richLayout: layout } : {}),
+    richCards: ['Cheese Burst Pizza', 'Pizza Special', 'Pizza Delight', 'Paneer Pizza'].map((title, i) => ({
+      v: 1, kind: 'product', title, subtitle: `₹${(380 + i * 120).toFixed(2)}`,
+    })),
+  }),
+);
+
 const list = createMessageList({
   onRetry: () => undefined,
   onLoadOlder: () => undefined,

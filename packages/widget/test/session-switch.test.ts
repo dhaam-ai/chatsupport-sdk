@@ -337,6 +337,114 @@ describe('bug 1 — picking a previous session', () => {
     expect(historyCalls).toContain(PAST);
   });
 
+  it('marks the picked conversation read, and its unread count leaves the list', async () => {
+    sessionRows = [summaryRow(PAST, { unreadCount: 2 }), summaryRow(CURRENT, { status: 'ASSIGNED', closedAt: null })];
+    const { socket } = await boot();
+
+    await goToMessages();
+    const badge = (): string =>
+      [...query('.dh-messages').querySelectorAll('.dh-messages-item')]
+        .find((item) => item.getAttribute('data-status') === 'RESOLVED')
+        ?.querySelector('.dh-mrow-unread-badge')?.textContent ?? '';
+    expect(badge()).toBe('2');
+
+    messagesRows()
+      .find((candidate) => candidate.closest('.dh-messages-item')?.getAttribute('data-status') === 'RESOLVED')
+      ?.click();
+    await settle();
+    const live = await serverAcceptsJoin(socket, PAST);
+
+    // The server is told the conversation was read, and the count is gone from the list without waiting for a refetch.
+    expect(live.frames('message.markRead').length).toBeGreaterThan(0);
+    expect(badge()).toBe('');
+  });
+
+  it('does not mark a message read while the tab is hidden, and does once it is visible again', async () => {
+    sessionRows = [summaryRow(PAST, { unreadCount: 0 }), summaryRow(CURRENT, { status: 'ASSIGNED', closedAt: null })];
+    const { socket } = await boot();
+    await goToMessages();
+    messagesRows()
+      .find((candidate) => candidate.closest('.dh-messages-item')?.getAttribute('data-status') === 'RESOLVED')
+      ?.click();
+    await settle();
+    const live = await serverAcceptsJoin(socket, PAST);
+    const reads = () => live.frames('message.markRead').length;
+    const before = reads();
+
+    const visibility = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+    const setVisibility = (value: 'hidden' | 'visible') =>
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value });
+    try {
+      setVisibility('hidden');
+      live.push('message.new', {
+        id: '01ARZ3NDEKTSV4RRFFQ69G5FA1',
+        sessionId: PAST,
+        senderId: 'agent_1',
+        senderType: 'AGENT',
+        type: 'TEXT',
+        content: 'are you there?',
+        seq: 50,
+        createdAt: new Date().toISOString(),
+      });
+      await settle();
+      // The customer cannot have seen it: nothing tells the server it was read.
+      expect(reads()).toBe(before);
+
+      setVisibility('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      await settle();
+      expect(reads()).toBeGreaterThan(before);
+    } finally {
+      if (visibility) Object.defineProperty(Document.prototype, 'visibilityState', visibility);
+      delete (document as unknown as Record<string, unknown>)['visibilityState'];
+    }
+  });
+
+  it('never shows the previous chat’s messages while the picked one is loading', async () => {
+    sessionRows = [summaryRow(PAST), summaryRow(CURRENT, { status: 'ASSIGNED', closedAt: null })];
+    const { socket } = await boot();
+    expect(transcript()).toEqual([TRANSCRIPT[CURRENT]]);
+
+    await goToMessages();
+    const row = messagesRows().find(
+      (candidate) => candidate.closest('.dh-messages-item')?.getAttribute('data-status') === 'RESOLVED',
+    );
+    if (row === undefined) throw new Error('no past-session row rendered');
+    row.click();
+    await settle();
+
+    // The join has not been answered yet: the old conversation must not be what is on screen.
+    expect(transcript()).toEqual([]);
+
+    await serverAcceptsJoin(socket, PAST);
+    expect(transcript()).toEqual([TRANSCRIPT[PAST]]);
+  });
+
+  it('no frame of the switch, even with the old chat’s history still in flight, draws the previous chat', async () => {
+    sessionRows = [summaryRow(PAST), summaryRow(CURRENT, { status: 'ASSIGNED', closedAt: null })];
+    const { socket } = await boot();
+    await goToMessages();
+    const row = messagesRows().find(
+      (candidate) => candidate.closest('.dh-messages-item')?.getAttribute('data-status') === 'RESOLVED',
+    );
+    if (row === undefined) throw new Error('no past-session row rendered');
+    const seen: string[] = [];
+    const log = query('.dh-log');
+    const obs = new MutationObserver(() => seen.push(JSON.stringify(transcript())));
+    obs.observe(log, { childList: true, subtree: true, characterData: true });
+    holdNextHistory = true;
+    row.click();
+    await settle();
+    seen.push('--after click');
+    await serverAcceptsJoin(socket, PAST);
+    seen.push('--after join');
+    releaseHistory();
+    await settle();
+    obs.disconnect();
+    expect(seen.filter((frame) => frame.includes(TRANSCRIPT[CURRENT] ?? 'x'))).toEqual([]);
+    expect(transcript()).toEqual([TRANSCRIPT[PAST]]);
+  });
+
   it('fetches page one for the chosen session, with no cursor from the old one', async () => {
     sessionRows = [summaryRow(PAST)];
     const { socket } = await boot();

@@ -210,6 +210,24 @@ export interface WidgetIdentity {
   readonly profile?: IdentityProfile;
 }
 
+/** What the widget hands the host's `onAddToCart` for one product card. */
+export interface AddToCartRequest {
+  /** The catalogue product id (printable ASCII, at most 64). */
+  readonly productId: string;
+  readonly variantId?: string;
+  /** The card's title. */
+  readonly name: string;
+  /** The card's picture, an https URL. */
+  readonly imageUrl?: string;
+  /** The price exactly as the card showed it ("₹380.00"). */
+  readonly priceLabel?: string;
+  /**
+   * The card's host-only `data` (a dish's `menuId`, `price`, `isMin`, `isMax`, `hasDetails`, ...), when the flow sent it.
+   * `hasDetails: true` means the product needs options chosen: open its page, do not add it.
+   */
+  readonly data?: Readonly<Record<string, string | number | boolean>>;
+}
+
 export interface WidgetConfig {
   readonly auth: WidgetAuth;
   readonly identity: WidgetIdentity;
@@ -339,6 +357,23 @@ export interface WidgetConfig {
    * placeholder today).
    */
   readonly onTicketsTab?: () => void;
+
+  /**
+   * Adds a product to the HOST app's cart, for the bot's product cards ("Add to cart").
+   *
+   * The widget has no cart: the host does. Registering this is what makes the button appear;
+   * without it, product cards show no Add to cart. It is called with the product's id (and
+   * variant, when the card has one) plus the name, image and price text as the card showed
+   * them. Return a promise: the button says "Adding…" until it settles, then "Added", or
+   * "Try again" if it rejects (a host that cannot add, say with nothing to add it to, should
+   * reject rather than resolve).
+   *
+   * A card whose `data.hasDetails === true` is a product with options (size, add-ons). Its button
+   * reads "Select options" and tapping it still calls this handler, but the widget shows no "Added"
+   * for it: the host must NOT add it to the cart as is. Open the product's page instead, where the
+   * options are chosen, and resolve.
+   */
+  readonly onAddToCart?: (item: AddToCartRequest) => void | Promise<void>;
 
   /**
    * Treats a customer session's non-empty `subject` as if it were a

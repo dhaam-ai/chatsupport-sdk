@@ -48,7 +48,8 @@ import { createHeaderMenu } from './ui/header-menu.js';
 import { createUnavailable } from './ui/unavailable.js';
 import { createReportIssueForm } from './ui/report-issue.js';
 import { createOrderTracking } from './ui/order-tracking.js';
-import type { RichCard } from './ui/message-card.js';
+import { cardData, type RichCard } from './ui/message-card.js';
+import { orderByLatestActivity } from './ui/session-order.js';
 import type { IssueReport } from './ui/report-issue.js';
 import { createComposer } from './ui/composer.js';
 import type { SendExtra } from './ui/composer.js';
@@ -1989,8 +1990,23 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     onQuickReply: (chip) => void composer.submit(chip.label, sendExtraFor(chip)),
     onReplyToMessage: (message, senderName) => startReply(message, senderName),
     onCardAction: (card, button) => {
-      if (button.action === 'track_order') openOrderTracking(card, button.ref);
+      if (button.action === 'track_order') {
+        openOrderTracking(card, button.ref);
+        return;
+      }
+      // `add_to_cart` is the HOST's: only it has a cart. Returned, so the button waits on it.
+      const bag = cardData(card);
+      return config.onAddToCart?.({
+        productId: button.ref,
+        ...(button.variantId === undefined ? {} : { variantId: button.variantId }),
+        name: card.title,
+        ...(card.imageUrl === null ? {} : { imageUrl: card.imageUrl }),
+        ...(card.subtitle === '' ? {} : { priceLabel: card.subtitle }),
+        ...(bag === undefined ? {} : { data: bag }),
+      });
     },
+    // Add to cart is drawn only for a host that registered `onAddToCart`.
+    cardActionSupported: (action) => action !== 'add_to_cart' || config.onAddToCart !== undefined,
     // Read through `remote` at call time, never captured: a config publish
     // replaces `remote` wholesale, and the suggestion filter must judge by
     // the same list the composer's own keyword trigger is using right now.
@@ -3147,6 +3163,16 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       syncProductSurfaces();
       syncScreens();
     }),
+    // A message sent or received moves its conversation to the top of the lists.
+    store.select((state) => state.messages[state.messages.length - 1]?.id ?? null, () => {
+      const state = store.getState();
+      // On screen, panel open, tab visible, and customer mode (a portal staff user reads another person's queue): the customer reads it as it lands.
+      if (!isPortalStaff && open && document.visibilityState === 'visible' && screens.current() === 'conversation' && state.session !== null) {
+        markConversationRead(state.session.id, false);
+        return;
+      }
+      syncSessionSurfaces();
+    }),
     store.select(
       (state) => (state.session === null ? null : `${state.session.id}:${state.session.status}`),
       () => {
@@ -4086,6 +4112,33 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   }
 
   /**
+   * Conversations the customer has just read, and when: the list shows no unread count for them until the server's own
+   * count has caught up (it follows the read mark by a moment) or {@link READ_GRACE_MS} has passed.
+   */
+  const justRead = new Map<string, number>();
+  const READ_GRACE_MS = 10_000;
+
+  /**
+   * The customer is looking at this conversation: tell the server it is read, clear its count in the lists at once, and
+   * fetch the lists again once the server has had time to take the read mark.
+   */
+  function markConversationRead(sessionId: string, refetch = true): void {
+    if (destroyed) return;
+    justRead.set(sessionId, Date.now());
+    try {
+      store.client.markRead();
+    } catch (error) {
+      report(error);
+    }
+    syncSessionSurfaces();
+    if (refetch) setTimeout(() => refreshSessions(), 1_500);
+    setTimeout(() => {
+      justRead.delete(sessionId);
+      syncSessionSurfaces();
+    }, READ_GRACE_MS);
+  }
+
+  /**
    * Fetches the customer's recent conversations — the ONE path to the list.
    *
    * ── Why it is not fetched once ────────────────────────────────────────
@@ -4213,12 +4266,15 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // "Recent conversation" row and the Messages list. Filtering once here
     // rather than twice downstream is the same "one input, two screens"
     // reason this function exists at all.
-    const customerSessions = customerVisibleSessions(
-      state.pastSessions,
-      joinedSessionId,
-      config.target,
-      (config as any).treatSubjectAsTarget === true,
-    );
+    const customerSessions = orderByLatestActivity(
+      customerVisibleSessions(
+        state.pastSessions,
+        joinedSessionId,
+        config.target,
+        (config as any).treatSubjectAsTarget === true,
+      ),
+      { sessionId: state.session?.id ?? null, at: state.messages[state.messages.length - 1]?.createdAt ?? null },
+    ).map((summary) => (justRead.has(summary.id) && summary.unreadCount > 0 ? { ...summary, unreadCount: 0 } : summary));
     const ctaSub = remote.header.ctaSubtitle || config.header.ctaSubtitle || 'We usually reply instantly';
     const ctaTitle = remote.header.ctaTitle || config.header.ctaTitle || '';
     const ctaEnabled = remote.header.ctaEnabled ?? config.header.ctaEnabled ?? true;
@@ -4312,6 +4368,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // still holds the previous conversation (or nothing) until switchSession
     // clears it, and a blank transcript reads as "broken", not "loading".
     messageList.setLoading(true);
+    // The store still holds the PREVIOUS conversation until `switchSession` swaps it; hide it so
+    // the picked chat never shows the last one's transcript first.
+    if (store.getState().session?.id !== sessionId) messageList.setSwitching(sessionId);
     showConversation();
     if (open) composer.input.focus({ preventScroll: true });
 
@@ -4326,8 +4385,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
 
     try {
       await store.client.switchSession(sessionId);
+      if (!destroyed && store.getState().session?.id === sessionId) markConversationRead(sessionId);
     } catch (error) {
       report(error);
+    } finally {
+      messageList.setSwitching(null);
     }
   }
 
@@ -5664,7 +5726,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // Re-read it while the panel is open and the tab is visible; 15 s is the same
   // order as the staff poll above, and `refreshSessions`'s in-flight latch keeps
   // overlapping ticks from stacking.
+  const onVisibleAgain = (): void => {
+    const state = store.getState();
+    if (document.visibilityState === 'visible' && open && screens.current() === 'conversation' && state.session !== null) {
+      markConversationRead(state.session.id, false);
+    }
+  };
   if (!isPortalStaff) {
+    document.addEventListener('visibilitychange', onVisibleAgain);
     sessionsPollTimer = setInterval(() => {
       if (open && !document.hidden) refreshSessions();
     }, 15_000);
@@ -5749,6 +5818,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // connection `store.destroy` below knows nothing about.
       if (portalQueuePollTimer !== null) clearInterval(portalQueuePollTimer);
       if (sessionsPollTimer !== null) clearInterval(sessionsPollTimer);
+      document.removeEventListener('visibilitychange', onVisibleAgain);
       portalUnsubscribe?.();
       portalClient?.disconnect();
       // `disconnect: true` — this store built the client it wraps, so nothing

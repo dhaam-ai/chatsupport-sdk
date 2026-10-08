@@ -2578,6 +2578,8 @@ button {
 .dh-card-btn:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; }
 /* An action is a real <button>: strip the native look so it matches the links beside it. */
 button.dh-card-btn { border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+button.dh-card-btn:disabled { opacity: 0.6; cursor: default; }
+button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
 
 /* ── Order-tracking panel (a card's "Track order" action; ui/order-tracking.ts) ── */
 .dh-track { flex: 1 1 auto; min-height: 0; overflow-y: auto; background: var(--dh-surface); color: var(--dh-text); }
@@ -2627,6 +2629,7 @@ button.dh-card-btn { border: 0; background: none; font: inherit; font-size: 13px
    scrolling box takes keyboard focus, so its focus ring is drawn too. Nothing
    glides: snapping is not motion, and no scroll is animated. */
 .dh-cards-view { margin: 6px 0 0; width: 300px; max-width: 100%; }
+.dh-cards-view[data-cards="product"] { width: 100%; }
 .dh-cards-view > .dh-cards { margin: 4px 0 0; width: 100%; }
 .dh-cards-view > .dh-cards:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
 .dh-cards-bar { display: flex; align-items: center; gap: 6px; }
@@ -2660,6 +2663,84 @@ button.dh-card-btn { border: 0; background: none; font: inherit; font-size: 13px
   padding-bottom: 6px;
 }
 .dh-cards-view[data-view="row"] > .dh-cards > .dh-card { flex: 0 0 240px; scroll-snap-align: start; }
+.dh-cards-view[data-cards="product"][data-view="row"] > .dh-cards > .dh-card[data-kind="product"] { flex: 0 0 44%; min-width: 150px; max-width: 210px; }
+.dh-cards-view[data-view="row"] > .dh-cards { scrollbar-width: none; gap: 10px; }
+.dh-cards-view[data-view="row"] > .dh-cards::-webkit-scrollbar { display: none; }
+.dh-msg:has(> .dh-msg-content-wrap > .dh-cards-view[data-cards="product"]) { max-width: 100%; align-self: stretch; }
+.dh-msg:has(> .dh-msg-content-wrap > .dh-cards-view[data-cards="product"]) > .dh-msg-content-wrap { flex: 1 1 auto; min-width: 0; }
+.dh-msg-content-wrap > .dh-cards-view[data-cards="product"] { align-self: stretch; }
+.dh-cards-view .dh-card[data-kind="product"] {
+  position: relative; border: 0; border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(30, 20, 70, 0.12);
+}
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-head { flex-direction: column; align-items: stretch; gap: 8px; }
+.dh-cards-view .dh-card[data-kind="product"] .dh-card-title { font-size: 15px; }
+.dh-cards-view .dh-card[data-kind="product"] .dh-card-side { max-width: none; align-items: flex-start; text-align: start; }
+.dh-cards-view .dh-card[data-kind="product"] .dh-card-side .dh-card-sub { color: var(--dh-text); font-size: 17px; font-weight: 700; }
+.dh-cards-view .dh-card[data-kind="product"] .dh-card-badge { position: absolute; top: 8px; inset-inline-start: 8px; margin: 0; }
+.dh-cards-view[data-view="row"] > .dh-cards { align-items: stretch; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] { display: flex; flex-direction: column; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-body { flex: 1 1 auto; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-actions { margin-top: auto; }
+.dh-card-noimg {
+  display: flex; align-items: center; justify-content: center; box-sizing: border-box; text-align: center;
+  background: var(--dh-surface-sunken); border: 1px dashed var(--dh-border); color: var(--dh-text); font-size: 12px; font-weight: 600;
+}
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-noimg { border-width: 0 0 1px; }
+.dh-card-desc {
+  margin: 6px 0 0; font-size: 12px; line-height: 1.4; color: var(--dh-text-muted);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-actions { border-top: 0; padding: 6px 10px 10px; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-body { padding: 10px; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-head { gap: 4px; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-img { width: calc(100% + 20px); height: 88px; margin: -10px -10px 0; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-title { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-side .dh-card-sub { font-size: 14px; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-desc { font-size: 11px; margin-top: 2px; -webkit-line-clamp: 2; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] button.dh-card-btn { min-height: 30px; font-size: 12px; gap: 6px; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] button.dh-card-btn::before { width: 14px; height: 14px; }
+.dh-cards-view[data-view="row"] .dh-card[data-kind="product"] .dh-card-badge { font-size: 10px; }
+.dh-cards-view .dh-card[data-kind="product"] button.dh-card-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 40px;
+  border-radius: 999px; background: var(--dh-accent); color: var(--dh-accent-text, #fff);
+}
+.dh-cards-view .dh-card[data-kind="product"] button.dh-card-btn:hover { background: var(--dh-accent); filter: brightness(1.08); text-decoration: none; }
+.dh-cards-view .dh-card[data-kind="product"] button.dh-card-btn::before {
+  content: ''; width: 16px; height: 16px; background: currentColor;
+  --dh-cart: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='20' r='1.5'/%3E%3Ccircle cx='18' cy='20' r='1.5'/%3E%3Cpath d='M2 3h3l2.7 12.4a2 2 0 0 0 2 1.6h8.1a2 2 0 0 0 2-1.5L21.5 8H6'/%3E%3C/svg%3E");
+  -webkit-mask: var(--dh-cart) center / contain no-repeat;
+  mask: var(--dh-cart) center / contain no-repeat;
+}
+.dh-cards-view[data-view="row"] > .dh-cards { padding: 4px 0 10px; }
+.dh-cards-dots { display: flex; justify-content: center; margin-top: 2px; }
+.dh-cards-dot { width: 20px; height: 20px; padding: 0; border: 0; background: none; cursor: pointer; }
+.dh-cards-dot::after { content: ''; display: block; width: 6px; height: 6px; margin: auto; border-radius: 999px; background: color-mix(in srgb, var(--dh-accent) 30%, transparent); }
+.dh-cards-dot[data-active]::after { background: var(--dh-accent); }
+.dh-cards-dot:focus-visible { outline: 2px solid var(--dh-focus); outline-offset: -2px; border-radius: 999px; }
+@media (pointer: fine) { .dh-cards-view[data-view="row"] > .dh-cards { cursor: grab; } }
+.dh-cards-view[data-dragging] > .dh-cards { scroll-snap-type: none; cursor: grabbing; user-select: none; }
+.dh-cards-view .dh-card-img { -webkit-user-drag: none; user-select: none; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] {
+  display: grid; grid-template-columns: 38% 1fr; grid-template-rows: auto auto 1fr auto;
+  column-gap: 12px; padding: 8px;
+}
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"]:not(:has(.dh-card-img:not([hidden]))) { grid-template-columns: 0 1fr; column-gap: 0; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] :is(.dh-card-body, .dh-card-head, .dh-card-actions) { display: contents; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-img { grid-column: 1; grid-row: 1 / 5; width: 100%; height: 100%; min-height: 96px; max-width: none; border-radius: 10px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-text { grid-column: 2; grid-row: 1; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-side { grid-column: 2; grid-row: 2; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-desc { grid-column: 2; grid-row: 3; -webkit-line-clamp: 2; margin: 2px 0 8px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] button.dh-card-btn { grid-column: 2; grid-row: 4; align-self: end; margin-top: auto; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-badge { top: 14px; inset-inline-start: 14px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] a.dh-card-btn { grid-column: 2; grid-row: 5; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-title { font-size: 13px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-side .dh-card-sub { font-size: 14px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-desc { font-size: 11px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] button.dh-card-btn { min-height: 30px; font-size: 12px; gap: 6px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] button.dh-card-btn::before { width: 14px; height: 14px; }
+.dh-cards-view[data-view="column"] .dh-card[data-kind="product"] .dh-card-badge { font-size: 10px; }
+.dh-cards-view[data-view="column"]:has(.dh-card[data-kind="product"]) > .dh-cards { max-height: none; overflow: visible; gap: 10px; }
 .dh-cards-view[data-view="column"] > .dh-cards {
   max-height: 360px;
   overflow-y: auto;
@@ -5302,6 +5383,9 @@ ${STAFF_CONV} .dh-msg[data-mine] {
   max-width: 82% !important;
 }
 ${STAFF_CONV} .dh-msg[data-mine="true"] { align-items: flex-end !important; }
+${STAFF_CONV} .dh-msg[data-mine="false"]:has(> .dh-msg-content-wrap > .dh-cards-view[data-cards="product"]) { width: 100% !important; max-width: 100% !important; }
+${STAFF_CONV} .dh-msg-content-wrap > .dh-cards-view[data-cards="product"] { width: calc(100% + 56px) !important; max-width: none !important; margin-inline-start: -40px; }
+${STAFF_CONV} .dh-msg-content-wrap > .dh-cards-view[data-cards="product"][data-view="column"] { width: calc(100% + 40px) !important; }
 /* The bot is a bare accent-coloured sparkle, not a disc (the conversation header
    rule for .dh-avatar would otherwise paint it amber like an agent). */
 ${STAFF_CONV} .dh-msg .dh-msg-avatar--bot {

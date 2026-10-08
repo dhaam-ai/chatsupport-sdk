@@ -389,56 +389,54 @@ describe('readRichCards — untrusted input', () => {
   });
 });
 
-describe('buildCardView — swipe sideways or scroll a list', () => {
-  const view = (n: number) =>
-    buildCardView(read(Array.from({ length: n }, (_, i) => orderCard({ title: `Card ${i}` }))));
-  const pressed = (root: HTMLElement) =>
-    [...root.querySelectorAll('.dh-cards-mode')].map((b) => [b.getAttribute('data-mode'), b.getAttribute('aria-pressed')]);
+describe('buildCardView: laid out as the merchant set it, with no Swipe/List switch', () => {
+  const view = (n: number, initial: 'row' | 'column' | null = null) =>
+    buildCardView(read(Array.from({ length: n }, (_, i) => orderCard({ title: `Card ${i}` }))), initial);
 
-  it('leaves one or two cards as the plain list, with nothing to switch', () => {
-    for (const n of [1, 2]) {
-      const root = view(n);
-      expect(root.tagName).toBe('UL');
-      expect(root.classList.contains('dh-cards')).toBe(true);
-      expect(root.querySelector('.dh-cards-mode')).toBeNull();
-    }
+  it('leaves one card as the plain list, with nothing around it', () => {
+    const root = view(1);
+    expect(root.tagName).toBe('UL');
+    expect(root.classList.contains('dh-cards')).toBe(true);
   });
 
-  it('wraps three or more in a view that opens swiping sideways, with every card in one list', () => {
+  it('wraps three or more in a view that opens swiping sideways when nothing was set, with no arrows', () => {
     const root = view(10);
     expect(root.classList.contains('dh-cards-view')).toBe(true);
     expect(root.getAttribute('data-view')).toBe('row');
-    expect(pressed(root)).toEqual([['row', 'true'], ['column', 'false']]);
     const list = root.querySelector('ul.dh-cards') as HTMLElement;
     expect(list.getAttribute('role')).toBe('list');
     expect(list.querySelectorAll(':scope > li.dh-card')).toHaveLength(10);
     // The scrolling box can be reached and scrolled from the keyboard, and says what it holds.
     expect(list.getAttribute('tabindex')).toBe('0');
     expect(list.getAttribute('aria-label')).toBe('10 cards');
-    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(false);
+    expect(root.querySelector('.dh-cards-nav')).toBeNull();
   });
 
-  it('switches to a stacked list and back; the arrows only belong to the swipe', () => {
-    const root = view(5);
-    const [swipe, stack] = [...root.querySelectorAll<HTMLButtonElement>('.dh-cards-mode')];
-    stack!.click();
-    expect(root.getAttribute('data-view')).toBe('column');
-    expect(pressed(root)).toEqual([['row', 'false'], ['column', 'true']]);
-    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(true);
-    swipe!.click();
-    expect(root.getAttribute('data-view')).toBe('row');
-    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(false);
+  it('draws no Swipe or List switch, in either layout', () => {
+    for (const initial of [null, 'row', 'column'] as const) {
+      const root = view(5, initial);
+      expect(root.querySelector('.dh-cards-mode')).toBeNull();
+      expect(root.textContent).not.toContain('Swipe');
+      expect(root.textContent).not.toMatch(/List/);
+    }
   });
 
-  it('opens in the view the flow asked for, and the reader can still switch', () => {
-    const cards = read(Array.from({ length: 4 }, (_, i) => orderCard({ title: `Card ${i}` })));
-    const root = buildCardView(cards, 'column');
-    expect(root.getAttribute('data-view')).toBe('column');
-    expect((root.querySelector('.dh-cards-steps') as HTMLElement).hidden).toBe(true);
-    (root.querySelector('.dh-cards-mode[data-mode="row"]') as HTMLButtonElement).click();
-    expect(root.getAttribute('data-view')).toBe('row');
-    // Fewer than three cards have no view to open in.
-    expect(buildCardView(cards.slice(0, 2), 'column').tagName).toBe('UL');
+  it('opens in the layout the merchant chose: a list for "column", sideways for "row" (never arrows)', () => {
+    const list = view(4, 'column');
+    expect(list.getAttribute('data-view')).toBe('column');
+    expect(list.querySelector('.dh-cards-bar')).toBeNull(); // a list scrolls by itself
+    const swipe = view(4, 'row');
+    expect(swipe.getAttribute('data-view')).toBe('row');
+    expect(swipe.querySelector('.dh-cards-nav')).toBeNull();
+    // One card has no view to open in.
+    expect(buildCardView(read([orderCard()]), 'column').tagName).toBe('UL');
+  });
+
+  it('two non-product cards stay a plain stacked list; two product cards get the narrow swipe view', () => {
+    expect(view(2, 'row').tagName).toBe('UL');
+    const products = buildCardView(read([1, 2].map((i) => ({ v: 1, kind: 'product', title: `P${i}`, subtitle: '₹10' }))), 'row');
+    expect(products.getAttribute('data-cards')).toBe('product');
+    expect(view(3, 'row').hasAttribute('data-cards')).toBe(false);
   });
 
   it('readRichLayout: horizontal and vertical only; anything else leaves the default, and it never throws', () => {
@@ -449,20 +447,6 @@ describe('buildCardView — swipe sideways or scroll a list', () => {
     }
     expect(readRichLayout(Object.create({ richLayout: 'vertical' }))).toBeNull();
     expect(readRichLayout({ get richLayout(): string { throw new Error('boom'); } })).toBeNull();
-  });
-
-  it('the arrows move the swipe one card at a time, without gliding', () => {
-    const root = view(4);
-    const list = root.querySelector('ul.dh-cards') as HTMLElement;
-    const calls: unknown[] = [];
-    list.scrollBy = ((arg: unknown) => void calls.push(arg)) as typeof list.scrollBy;
-    const [prev, next] = [...root.querySelectorAll<HTMLButtonElement>('.dh-cards-nav')];
-    next!.click();
-    prev!.click();
-    const lefts = calls.map((c) => (c as { left: number }).left);
-    expect(lefts[0]).toBeGreaterThan(0);
-    expect(lefts[1]).toBe(-lefts[0]!);
-    expect(calls.every((c) => (c as { behavior?: string }).behavior === undefined)).toBe(true);
   });
 
   it('is styled for both: a snapping sideways scroller, and a height-capped list that scrolls up and down', () => {
@@ -912,5 +896,253 @@ describe('action buttons: "Track order" that the widget handles itself', () => {
     const list = buildCardList([one(orderCard({ buttons: [action] }))!]);
     expect(list.querySelector('.dh-card-btn')).toBeNull();
     expect(list.querySelector('.dh-card-actions')).toBeNull();
+  });
+});
+
+describe('add_to_cart: product cards hand the product to the host app', () => {
+  const product = (buttons: unknown[] = []) => ({
+    v: 1,
+    kind: 'product',
+    title: 'Cheese Burst Pizza',
+    subtitle: '₹380.00',
+    imageUrl: 'https://cdn.example.com/p.avif',
+    buttons,
+  });
+  const add = { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' };
+  const tap = (card: Record<string, unknown>, onAction: (c: RichCard, b: never) => void | Promise<void>, supports?: (a: string) => boolean) => {
+    const list = buildCardList([one(card)!], onAction as never, supports as never);
+    return list.querySelector<HTMLButtonElement>('button.dh-card-btn');
+  };
+
+  it('reads the product id, and the variant when there is one', () => {
+    expect(one(product([add]))?.buttons).toEqual([{ label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' }]);
+    expect(one(product([{ ...add, variantId: 'v_7' }]))?.buttons).toEqual([
+      { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42', variantId: 'v_7' },
+    ]);
+  });
+
+  it('drops a button without a usable product id, and a variant that is not an id', () => {
+    expect(one(product([{ label: 'A', action: 'add_to_cart' }, { label: 'B', action: 'add_to_cart', ref: 'a b' }]))?.buttons).toEqual([]);
+    expect(one(product([{ ...add, variantId: 'has space' }]))?.buttons).toEqual([
+      { label: 'Add to cart', action: 'add_to_cart', ref: 'item_42' },
+    ]);
+  });
+
+  it('draws nothing when the host cannot add to a cart', () => {
+    const onAction = vi.fn();
+    expect(tap(product([add]), onAction, (a) => a !== 'add_to_cart')).toBeNull();
+    expect(tap(product([add]), onAction)).not.toBeNull();
+  });
+
+  it('waits on the host: Adding..., then Added, then the label again', async () => {
+    vi.useFakeTimers();
+    let done!: () => void;
+    const onAction = vi.fn(() => new Promise<void>((resolve) => { done = resolve; }));
+    const button = tap(product([add]), onAction)!;
+    button.click();
+    expect(button.textContent).toBe('Adding…');
+    expect(button.disabled).toBe(true);
+    button.click(); // a double tap while busy adds nothing more
+    expect(onAction).toHaveBeenCalledTimes(1);
+    done();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(button.textContent).toBe('Added');
+    expect(button.getAttribute('data-state')).toBe('added');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(button.textContent).toBe('Add to cart');
+    expect(button.disabled).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('says Try again, and can be tapped again, when the host refuses or throws', async () => {
+    for (const onAction of [vi.fn(() => Promise.reject(new Error('no store'))), vi.fn(() => { throw new Error('boom'); })]) {
+      const button = tap(product([add]), onAction)!;
+      button.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(button.textContent).toBe('Try again');
+      expect(button.getAttribute('data-state')).toBe('error');
+      expect(button.disabled).toBe(false);
+    }
+  });
+});
+
+describe('a product with no picture', () => {
+  const product = (imageUrl: unknown) => buildCardView(read([{ v: 1, kind: 'product', title: 'Burger', subtitle: '₹299.00', ...(imageUrl === undefined ? {} : { imageUrl }) }]));
+
+  it('draws a "No Image" box where the picture would be, and an order card gets none', () => {
+    expect(product(undefined).querySelector('.dh-card-noimg')?.textContent).toBe('No Image');
+    expect(product('https://cdn.example.com/p.jpg').querySelector('.dh-card-noimg')).toBeNull();
+    expect(buildCardView(read([orderCard()])).querySelector('.dh-card-noimg')).toBeNull();
+  });
+
+  it('swaps a picture that fails to load for the same box', () => {
+    const root = product('https://cdn.example.com/broken.jpg');
+    root.querySelector('img')!.dispatchEvent(new Event('error'));
+    expect(root.querySelector('img')).toBeNull();
+    expect(root.querySelector('.dh-card-noimg')?.textContent).toBe('No Image');
+  });
+});
+
+describe('a product with options', () => {
+  const card = (hasDetails: boolean) =>
+    buildCardView(
+      read([{ v: 1, kind: 'product', title: 'Pizza Special', subtitle: '₹2,000.00', data: { hasDetails }, buttons: [{ label: 'Add to cart', action: 'add_to_cart', ref: 'p1' }] }]),
+      null,
+      () => Promise.resolve(),
+      () => true,
+    );
+
+  it('says "Select options" instead of "Add to cart", and a plain product keeps its label', () => {
+    expect(card(true).querySelector('button.dh-card-btn')?.textContent).toBe('Select options');
+    expect(card(false).querySelector('button.dh-card-btn')?.textContent).toBe('Add to cart');
+  });
+
+  it('goes back to its label when tapped, never "Added"', async () => {
+    const button = card(true).querySelector('button.dh-card-btn') as HTMLButtonElement;
+    button.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(button.textContent).toBe('Select options');
+    expect(button.disabled).toBe(false);
+  });
+});
+
+
+describe('the swipe can be operated with a plain mouse', () => {
+  const product = (i: number) => ({ v: 1, kind: 'product', title: `Dish ${i}`, subtitle: '₹10.00', buttons: [{ label: 'Add to cart', action: 'add_to_cart', ref: `p${i}` }] });
+  const swipe = (onAction: (card: RichCard, button: never) => unknown = () => undefined) =>
+    buildCardView(read([product(1), product(2), product(3), product(4)]), 'row', onAction as never, () => true);
+
+  it('has a real button for every card, and each brings its card into view', () => {
+    const root = swipe();
+    const dots = [...root.querySelectorAll<HTMLButtonElement>('button.dh-cards-dot')];
+    expect(dots).toHaveLength(4);
+    expect(dots.map((d) => d.getAttribute('aria-label'))).toEqual(['Show card 1 of 4', 'Show card 2 of 4', 'Show card 3 of 4', 'Show card 4 of 4']);
+
+    const list = root.querySelector('ul.dh-cards') as HTMLElement;
+    const calls: unknown[] = [];
+    list.scrollTo = ((arg: unknown) => void calls.push(arg)) as typeof list.scrollTo;
+    dots[2]!.click();
+    // No animation: the swipe never glides. A card is its width plus the 10px gap (240 when nothing is laid out).
+    expect(calls).toEqual([{ left: 2 * (240 + 10) }]);
+  });
+
+  it('marks the card in front, and follows a scroll', () => {
+    const root = swipe();
+    const list = root.querySelector('ul.dh-cards') as HTMLElement;
+    const front = () => [...root.querySelectorAll('button.dh-cards-dot')].findIndex((d) => d.getAttribute('aria-current') === 'true');
+    expect(front()).toBe(0);
+    list.scrollLeft = 2 * 250;
+    list.dispatchEvent(new Event('scroll'));
+    expect(front()).toBe(2);
+  });
+
+  it('scrolls when the mouse drags it, and the click that ends a drag adds nothing', () => {
+    const added: unknown[] = [];
+    const root = swipe((card) => void added.push(card.title));
+    const list = root.querySelector('ul.dh-cards') as HTMLElement;
+    const button = list.querySelector('button.dh-card-btn') as HTMLButtonElement;
+    const pointer = (type: string, x: number) =>
+      Object.assign(new Event(type, { bubbles: true, cancelable: true }), { pointerType: 'mouse', button: 0, clientX: x, pointerId: 1 });
+
+    list.dispatchEvent(pointer('pointerdown', 300));
+    list.dispatchEvent(pointer('pointermove', 100));
+    expect(list.scrollLeft).toBe(200);
+    expect(root.hasAttribute('data-dragging')).toBe(true);
+    list.dispatchEvent(pointer('pointerup', 100));
+    expect(root.hasAttribute('data-dragging')).toBe(false);
+
+    button.click(); // the click a drag ends with
+    expect(added).toEqual([]);
+  });
+
+  it('still clicks a button that was pressed without dragging', () => {
+    const added: unknown[] = [];
+    const root = swipe((card) => void added.push(card.title));
+    const list = root.querySelector('ul.dh-cards') as HTMLElement;
+    const pointer = (type: string, x: number) =>
+      Object.assign(new Event(type, { bubbles: true, cancelable: true }), { pointerType: 'mouse', button: 0, clientX: x, pointerId: 1 });
+    list.dispatchEvent(pointer('pointerdown', 300));
+    list.dispatchEvent(pointer('pointermove', 298)); // under the drag threshold
+    list.dispatchEvent(pointer('pointerup', 298));
+    (list.querySelector('button.dh-card-btn') as HTMLButtonElement).click();
+    expect(added).toEqual(['Dish 1']);
+  });
+});
+
+describe('Add to cart with a host promise that is not a native Promise', () => {
+  it('still shows "Adding…" and ignores a second tap until it settles', async () => {
+    let finish: (() => void) | undefined;
+    // A thenable, like Bluebird's or another realm's promise: `instanceof Promise` is false for it.
+    const thenable = { then: (ok: () => void) => { finish = ok; } };
+    let taps = 0;
+    const root = buildCardView(
+      read([{ v: 1, kind: 'product', title: 'Burger', subtitle: '₹1.00', buttons: [{ label: 'Add to cart', action: 'add_to_cart', ref: 'p1' }] }]),
+      null,
+      () => { taps += 1; return thenable as never; },
+      () => true,
+    );
+    const button = root.querySelector('button.dh-card-btn') as HTMLButtonElement;
+    button.click();
+    expect(button.textContent).toBe('Adding…');
+    expect(button.disabled).toBe(true);
+    button.click();
+    expect(taps).toBe(1);
+
+    await Promise.resolve(); // `Promise.resolve(thenable)` calls its `then` on the next tick
+    finish?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(button.textContent).toBe('Added');
+  });
+});
+
+
+describe('review fixes for the swipe', () => {
+  const product = (i: number) => ({ v: 1, kind: 'product', title: `Dish ${i}`, subtitle: '₹10.00', imageUrl: 'https://cdn.example.com/p.jpg' });
+  const merchant = { v: 1, kind: 'info', title: 'Store a', subtitle: 'Branch a' };
+
+  it('puts the dots where the cards really start when their widths differ (a merchant card beside its dishes)', () => {
+    const root = buildCardView(read([merchant, product(1), product(2)]), 'row');
+    const list = root.querySelector('ul.dh-cards') as HTMLElement;
+    const kids = [...list.children] as HTMLElement[];
+    [0, 240, 500].forEach((left, i) => Object.defineProperty(kids[i]!, 'offsetLeft', { configurable: true, value: left + 8 }));
+    const calls: unknown[] = [];
+    list.scrollTo = ((arg: unknown) => void calls.push(arg)) as typeof list.scrollTo;
+    (root.querySelectorAll('button.dh-cards-dot')[2] as HTMLButtonElement).click();
+    expect(calls).toEqual([{ left: 500 }]);
+
+    list.scrollLeft = 250;
+    list.dispatchEvent(new Event('scroll'));
+    expect([...root.querySelectorAll('button.dh-cards-dot')].findIndex((d) => d.getAttribute('aria-current') === 'true')).toBe(1);
+  });
+
+  it('a card picture is not draggable by the browser, so a press on it can start the mouse drag', () => {
+    const img = buildCardView(read([product(1), product(2)]), 'row').querySelector('img');
+    expect(img?.getAttribute('draggable')).toBe('false');
+  });
+
+  it('ends a drag when the mouse button was let go out of sight', () => {
+    const root = buildCardView(read([product(1), product(2)]), 'row');
+    const list = root.querySelector('ul.dh-cards') as HTMLElement;
+    const pointer = (type: string, x: number, buttons: number) =>
+      Object.assign(new Event(type, { bubbles: true, cancelable: true }), { pointerType: 'mouse', button: 0, clientX: x, pointerId: 1, buttons });
+    list.dispatchEvent(pointer('pointerdown', 300, 1));
+    list.dispatchEvent(pointer('pointermove', 100, 1));
+    expect(root.hasAttribute('data-dragging')).toBe(true);
+    list.dispatchEvent(pointer('pointermove', 90, 0)); // no button down: the press ended outside the window
+    expect(root.hasAttribute('data-dragging')).toBe(false);
+  });
+
+  it('keeps the full-width, left-bleeding layout and the narrow cards to product lists and product cards', () => {
+    const rule = (selector: string) => STYLES.slice(STYLES.indexOf(selector)).split('}')[0]!;
+    // Scoped to a product list: an order or info list keeps the 300px box beside the avatar.
+    expect(STYLES).toContain('.dh-msg-content-wrap > .dh-cards-view[data-cards="product"] { width: calc(100% + 56px) !important');
+    expect(STYLES).not.toMatch(/\.dh-msg-content-wrap > \.dh-cards-view \{/);
+    expect(STYLES).not.toMatch(/:has\(> \.dh-msg-content-wrap > \.dh-cards-view\)/);
+    // And only a product CARD is narrow: a merchant's info card in the same list keeps the 240px of any other swipe.
+    expect(rule('.dh-cards-view[data-cards="product"][data-view="row"] > .dh-cards > .dh-card')).toMatch(/\[data-kind="product"\] \{ flex: 0 0 44%/);
+    expect(rule('.dh-cards-view[data-view="row"] > .dh-cards > .dh-card { flex')).toMatch(/flex: 0 0 240px/);
   });
 });
