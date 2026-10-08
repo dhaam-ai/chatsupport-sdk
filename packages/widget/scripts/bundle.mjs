@@ -133,7 +133,16 @@ console.log('');
 // action-button branch in message-card.ts. About 1.0 KB gzip over the
 // previous ceiling's headroom. Measured at 134,770 B gzip once landed: 626 B
 // over the previous ceiling, leaving 398 B of headroom here.
-const WIDGET_GZIP_BUDGET = 135_168;
+//
+// Raised to 134 KiB (137,216 B) for the card's "Add to cart" action: the
+// add_to_cart reader, the Adding.../Added/Try again button states and the
+// onAddToCart host hook. The bundle measured 136,253 B gzip once landed, of
+// which about 1.5 KB was already over the 132 KiB ceiling before this work.
+// Raised 1 KiB (to 135 KiB) for the product-card carousel restyle: photo, chip, blurb, filled
+// Add to cart with a cart icon, and pagination dots. It measured 137,245 B gzip.
+// Raised another 1 KiB (to 136 KiB): development's GPS fix on the page context (core) landed on top of the restyle
+// and the bundle measured 138,272 B gzip.
+const WIDGET_GZIP_BUDGET = 139_264;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,
