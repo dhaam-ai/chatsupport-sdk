@@ -97,7 +97,7 @@ const chat = new ChatServerClient({
 ### Go
 
 ```go
-import "github.com/dhaamai/chat-sdk/clients/go/commerce"
+import "github.com/dhaam-ai/chatsupport-sdk/clients/go/commerce"
 
 client, err := commerce.New(
   "https://chat.example.com",      // origin
@@ -175,7 +175,7 @@ await chat.recordCommerceEvent({
 ```go
 import (
   "context"
-  "github.com/dhaamai/chat-sdk/clients/go/commerce"
+  "github.com/dhaam-ai/chatsupport-sdk/clients/go/commerce"
 )
 
 // Step 1: order placed
@@ -885,7 +885,7 @@ await chat.recordCommerceEvent({
 
 **Import:**
 ```go
-import "github.com/dhaamai/chat-sdk/clients/go/commerce"
+import "github.com/dhaam-ai/chatsupport-sdk/clients/go/commerce"
 ```
 
 **Constructor:**

@@ -3,7 +3,7 @@
 // The chatapi package is generated from openapi/chat-api.yaml by
 // clients/scripts/generate.sh and is committed, not built on demand: `go get`
 // has no code-generation step, so a Go consumer cannot regenerate it.
-module github.com/dhaamai/chat-sdk/clients/go
+module github.com/dhaam-ai/chatsupport-sdk/clients/go
 
 go 1.25.0
 

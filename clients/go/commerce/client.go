@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dhaamai/chat-sdk/clients/go/chatapi"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/chatapi"
 )
 
 // Configuration failures from [New]. They are sentinels rather than a typed

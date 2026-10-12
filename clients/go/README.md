@@ -11,7 +11,7 @@ generator, and what the generated clients deliberately leave out.
 ## Install
 
 ```bash
-go get github.com/dhaamai/chat-sdk/clients/go
+go get github.com/dhaam-ai/chatsupport-sdk/clients/go
 ```
 
 Requires Go 1.25+ — ogen's runtime packages set that floor, not this module.
@@ -113,7 +113,7 @@ Your backend posts order and cart state to the chat service via `RecordCommerceE
 Use the `commerce` package — a hand-written ergonomic layer that wraps the generated client and eliminates the pitfalls of assembling a discriminated union by hand.
 
 ```go
-import "github.com/dhaamai/chat-sdk/clients/go/commerce"
+import "github.com/dhaam-ai/chatsupport-sdk/clients/go/commerce"
 
 client, err := commerce.New("https://chat.example.com", os.Getenv("CHAT_SECRET_KEY"))
 if err != nil {

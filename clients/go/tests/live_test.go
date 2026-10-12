@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dhaamai/chat-sdk/clients/go/chatapi"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/chatapi"
 )
 
 // TestLiveMintToken talks to a real chat-service. It is skipped unless both

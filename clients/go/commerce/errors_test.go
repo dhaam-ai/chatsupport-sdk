@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dhaamai/chat-sdk/clients/go/chatapi"
-	"github.com/dhaamai/chat-sdk/clients/go/commerce"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/chatapi"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/commerce"
 )
 
 // TestIsRetryableContactsError pins the split the whole retry story rests on.

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dhaamai/chat-sdk/clients/go/chatapi"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/chatapi"
 )
 
 // staticCredentials is the SecuritySource every consumer has to write for
@@ -188,7 +188,7 @@ func TestDocumentedErrorStatusesDecode(t *testing.T) {
 	if got := refused.Response.Error.Code; got != chatapi.ErrorCodeAUTHEXPIRED {
 		t.Errorf("error code = %q, want AUTH_EXPIRED", got)
 	}
-	if !refused.Response.Error.Retryable {
+	if retryable, set := refused.Response.Error.Retryable.Get(); !set || !retryable {
 		t.Error("retryable = false; the spec marks AUTH_EXPIRED retryable after refresh")
 	}
 	if id, ok := refused.XRequestID.Get(); !ok || id != "req_5f9a2c" {

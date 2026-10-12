@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dhaamai/chat-sdk/clients/go/chatapi"
-	"github.com/dhaamai/chat-sdk/clients/go/commerce"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/chatapi"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/commerce"
 )
 
 // testSecretKey is split so that a secret scanner sweeping this repo does not

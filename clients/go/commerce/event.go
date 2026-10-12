@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/dhaamai/chat-sdk/clients/go/chatapi"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/chatapi"
 )
 
 // Client-side caps, published in openapi/chat-api.yaml's CommerceCartItem

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dhaamai/chat-sdk/clients/go/chatapi"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/chatapi"
 )
 
 // An InvalidEventError reports an event this package refused before anything

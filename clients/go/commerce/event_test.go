@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dhaamai/chat-sdk/clients/go/commerce"
+	"github.com/dhaam-ai/chatsupport-sdk/clients/go/commerce"
 )
 
 var occurredAt = time.Date(2026, 8, 21, 10, 15, 0, 0, time.UTC)
