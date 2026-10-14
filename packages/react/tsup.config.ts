@@ -1,7 +1,8 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  // `commerce` is a standalone entry: it must never import the widget or core.
+  entry: { index: 'src/index.ts', commerce: 'src/commerce.ts' },
   format: ['esm', 'cjs'],
   dts: true,
   splitting: false,

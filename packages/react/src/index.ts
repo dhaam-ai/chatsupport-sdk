@@ -182,3 +182,15 @@ export {
   // @dhaam-ccrm/core as a second dependency.
   SessionSwitchError,
 } from '@dhaam-ccrm/core';
+
+export { CommerceEventError, InvalidCommerceEventError, useCommerceEvents } from './use-commerce-events.js';
+export type {
+  CartAbandonedFields,
+  CartConvertedFields,
+  CartUpdatedFields,
+  CommerceCartItem,
+  CommerceEventResult,
+  OrderPlacedFields,
+  UseCommerceEventsOptions,
+  UseCommerceEventsResult,
+} from './use-commerce-events.js';
