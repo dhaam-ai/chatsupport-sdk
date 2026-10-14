@@ -22,6 +22,7 @@
 import type { ChatSessionSummary } from '@dhaam-ccrm/js';
 
 import { ICONS, el, icon } from './dom.js';
+import { createCustomerPicker, type FetchCustomers, type WidgetCustomer } from './customer-picker.js';
 import { preserveListFocus, type ListFocusOutcome } from './focus.js';
 import { relativeTimeLabel } from './session-picker.js';
 import { statusLabel, statusPill } from './session-status.js';
@@ -73,6 +74,11 @@ export interface MessagesScreenCallbacks {
    * is entirely on whoever set this callback.
    */
   readonly onStartNewPartner?: () => void;
+  /** Portal "New chat": host-supplied customer search + the pick handler. Both or neither. */
+  readonly fetchCustomers?: FetchCustomers;
+  readonly onSelectCustomer?: (customer: WidgetCustomer) => void;
+  /** The picker opened/closed — the widget header shows "New chat" + Back while it is open. */
+  readonly onPickerToggle?: (open: boolean) => void;
   /** Current user role in the portal ('admin' | 'merchant' | 'customer'). */
   readonly userRole?: string;
 }
@@ -98,6 +104,8 @@ export interface MessagesScreenView {
   /** @param currentSessionId the conversation on screen behind this tab, or `null`. */
   render(sessions: readonly ChatSessionSummary[], currentSessionId: string | null): void;
   setStartingNew(busy: boolean): void;
+  /** Closes the "New chat" picker if open (portal list only). */
+  closePicker?(): void;
   /** Moves focus to the search field. Call after navigating to this screen. */
   focus(): void;
   destroy(): void;
@@ -105,6 +113,9 @@ export interface MessagesScreenView {
 
 /** Heroicons' `magnifying-glass` outline, stroked like every other glyph `icon()` draws. */
 const SEARCH_ICON = ['m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z'];
+
+/** Two overlapping bubbles — the empty-state glyph. */
+const CHATS_ICON = ['M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z', 'M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1'];
 
 /** Chevron-right icon for conversation row. */
 const CHEVRON_ICON = ['M8.25 4.5l7.5 7.5-7.5 7.5'];
@@ -211,19 +222,7 @@ export function getRowDisplayName(
       // started it, so those name the admin, not the customer — never show
       // them as the customer's name.
       const startedByAdmin = s.targetRole === 'customer' && s.direction === 'outgoing';
-      let storedCustomerName: string | null = null;
-      if (s.targetId && typeof window !== 'undefined') {
-        try {
-          const raw = localStorage.getItem('dhaam_target_customer_' + s.targetId) || sessionStorage.getItem('dhaam_target_customer_' + s.targetId);
-          if (raw) {
-            const p = JSON.parse(raw);
-            storedCustomerName = p.customerName || (p.customerEmail ? p.customerEmail.split('@')[0] : null);
-          }
-        } catch {}
-      }
-      if (storedCustomerName && storedCustomerName.trim()) {
-        return storedCustomerName.trim();
-      }
+      // The backend names the counterparty (`targetName`, from chat_users).
       if (s.targetName && typeof s.targetName === 'string' && s.targetName.trim() && s.targetName.trim() !== 'Customer') {
         return s.targetName.trim();
       }
@@ -293,19 +292,8 @@ export function getRowSubtitle(
       return s.targetId ? `Outlet #${s.targetId}` : 'Merchant Chat';
     } else {
       // Admin viewing Customer chat: display Customer's email
-      let storedCustomerEmail: string | null = null;
-      if (s.targetId && typeof window !== 'undefined') {
-        try {
-          const raw = localStorage.getItem('dhaam_target_customer_' + s.targetId) || sessionStorage.getItem('dhaam_target_customer_' + s.targetId);
-          if (raw) {
-            const p = JSON.parse(raw);
-            storedCustomerEmail = p.customerEmail || null;
-          }
-        } catch {}
-      }
       const startedByAdmin = s.targetRole === 'customer' && s.direction === 'outgoing';
       const email =
-        storedCustomerEmail ||
         s.targetEmail ||
         (!startedByAdmin && s.customerEmail && !s.customerEmail.toLowerCase().includes('admin') && !s.customerEmail.toLowerCase().includes('tse') ? s.customerEmail : null);
       if (email) return `Customer • ${email}`;
@@ -319,6 +307,25 @@ export function getRowInitials(displayName: string): string {
   const clean = displayName.trim();
   if (clean.length > 0) return clean.charAt(0).toUpperCase();
   return 'A';
+}
+
+/** First letters of the first two words ("Rahul Sharma" -> "RS"). */
+function twoInitials(displayName: string): string {
+  const words = displayName.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 'A';
+  return (words.length === 1 ? words[0]!.slice(0, 2) : words[0]!.charAt(0) + words[1]!.charAt(0)).toUpperCase();
+}
+
+const AVATAR_COLORS: readonly (readonly [string, string])[] = [
+  ['#f1ebff', '#6d3fd6'], ['#e6f4ff', '#1f6fd1'], ['#e4f6ea', '#1b8a4a'],
+  ['#ffe9e9', '#c2303a'], ['#fff3dc', '#b7791f'], ['#dff7f7', '#12808a'],
+];
+
+/** A stable colour pair per name, so a customer keeps their avatar colour. */
+function avatarColors(displayName: string): readonly [string, string] {
+  let h = 0;
+  for (const ch of displayName) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
 }
 
 /** Determine which tab a session belongs to. */
@@ -425,13 +432,15 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
   const name = el('span', { attrs: { class: 'dh-mrow-name' } });
   // Status pill
   const statusPill = el('span', { attrs: { class: 'dh-mrow-status-pill' } });
+  // Order chip ("#20345") — only when the conversation carries an order reference.
+  const chip = el('span', { attrs: { class: 'dh-mrow-chip', hidden: true } });
   // Unread badge (circle, right side)
   const unreadBadge = el('span', { attrs: { class: 'dh-mrow-unread-badge', hidden: true } });
   // Chevron
   const chevron = el('span', { attrs: { class: 'dh-mrow-chevron', 'aria-hidden': 'true' }, children: [icon(CHEVRON_ICON, 14)] });
 
-  // Top row: name + pill | badge + chevron
-  const nameRow = el('div', { attrs: { class: 'dh-mrow-name-row' }, children: [name, statusPill] });
+  // Top row: name + chip + pill | badge + chevron
+  const nameRow = el('div', { attrs: { class: 'dh-mrow-name-row' }, children: [name, chip, statusPill] });
   const rightCol = el('div', { attrs: { class: 'dh-mrow-right' }, children: [unreadBadge, chevron] });
   const topRow = el('div', { attrs: { class: 'dh-mrow-top' }, children: [nameRow, rightCol] });
 
@@ -475,7 +484,19 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
       // Display name and avatar initials based on active tab and role
       const displayName = getRowDisplayName(summary, tab, userRole);
       name.textContent = displayName;
-      avatarText.textContent = getRowInitials(displayName);
+      const isCustomersTab = tab === 'customers';
+      node.classList.toggle('dh-mrow--cust', isCustomersTab);
+      node.dataset['unread'] = String(summary.unreadCount > 0);
+      avatarText.textContent = isCustomersTab ? twoInitials(displayName) : getRowInitials(displayName);
+      if (isCustomersTab) {
+        const [bg, fg] = avatarColors(displayName);
+        avatar.style.setProperty('--av-bg', bg);
+        avatar.style.setProperty('--av-fg', fg);
+      }
+      const rawOrder = (summary as any).orderNumber ?? (summary as any).orderId ?? (summary as any).orderRef;
+      const orderText = rawOrder === undefined || rawOrder === null || rawOrder === '' ? '' : `#${String(rawOrder).replace(/^#/, '')}`;
+      chip.textContent = orderText;
+      chip.hidden = orderText === '';
 
       // Status pill
       statusPill.textContent = pillLabel(summary.status);
@@ -1042,11 +1063,38 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
       })
     : null;
 
+  // ── "New chat" — pick a customer (host-supplied list) to message first ──
+  const picker = callbacks.fetchCustomers && callbacks.onSelectCustomer
+    ? createCustomerPicker(callbacks.fetchCustomers, callbacks.onSelectCustomer, (open) => callbacks.onPickerToggle?.(open))
+    : null;
+  const fab = picker
+    ? el('button', {
+        attrs: { class: 'dh-messages-fab', type: 'button' },
+        children: [icon(['M12 5v14', 'M5 12h14'], 18), el('span', { text: 'New chat' })],
+        on: { click: () => picker.open() },
+      })
+    : null;
+
+  // Empty state with a call to action — shown instead of the plain text line
+  // when the active tab has no conversations at all.
+  const emptyTitle = el('div', { attrs: { class: 'dh-empty-title' } });
+  const emptyBody = el('div', { attrs: { class: 'dh-empty-text' } });
+  const emptyBtnLabel = el('span');
+  const emptyNote = el('div', { attrs: { class: 'dh-empty-note' } });
+  const emptyBtn = el('button', {
+    attrs: { class: 'dh-empty-btn', type: 'button' },
+    children: [icon(ICONS.chat, 16), emptyBtnLabel],
+    on: { click: () => (activeTab === 'customers' ? picker?.open() : callbacks.onStartNewPartner?.()) },
+  });
+  const emptyCta = el('li', {
+    attrs: { class: 'dh-messages-empty--cta', hidden: true },
+    children: [el('div', { attrs: { class: 'dh-empty-icon' }, children: [icon(CHATS_ICON, 30)] }), emptyTitle, emptyBody, emptyBtn, emptyNote],
+  });
+  list.append(emptyCta);
+
   const node = el('div', {
     attrs: { class: 'dh-messages' },
-    children: messageAdminButton
-      ? [tabBar, search, list, messageAdminButton]
-      : [tabBar, search, list],
+    children: [tabBar, search, list, ...(messageAdminButton ? [messageAdminButton] : []), ...(fab ? [fab] : []), ...(picker ? [picker.node] : [])],
   });
 
   const rows = new Map<string, MessageRow>();
@@ -1068,7 +1116,10 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
 
   function switchTab(tab: ActiveConversationTab): void {
     activeTab = tab;
+    // The empty-state button replaces the footer "Message Admin" button's job
+    // there, but the footer one stays for a non-empty Admin tab.
     if (messageAdminButton) messageAdminButton.hidden = tab !== secondTabKey;
+    if (fab) fab.hidden = tab !== 'customers';
     if (tab === 'customers') {
       customersTab.classList.add('dh-mtab--active');
       customersTab.setAttribute('aria-selected', 'true');
@@ -1145,7 +1196,23 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
     // re-assignment still replaces the text node, and this element is
     // rewritten on every 20-second poll.
     if (empty.textContent !== emptyText) empty.textContent = emptyText;
-    empty.hidden = nothingInTab ? false : anyVisible;
+
+    const ctaCustomers = activeTab === 'customers' && picker !== null;
+    const ctaAdmin = activeTab === 'admin' && !!callbacks.onStartNewPartner;
+    const showCta = nothingInTab && searchInput.value.trim() === '' && (ctaCustomers || ctaAdmin);
+    if (showCta) {
+      emptyTitle.textContent = ctaCustomers ? 'No conversations yet' : 'No messages yet';
+      emptyBody.textContent = ctaCustomers
+        ? "When customers message you about their orders, you'll see them here. You can also message any customer who has ordered from your store."
+        : 'Have a question about orders, payouts, menu or the app? Message the Dhaam support team anytime.';
+      emptyBtnLabel.textContent = ctaCustomers ? 'Start new conversation' : 'Message Dhaam Support';
+      emptyNote.textContent = ctaCustomers ? '' : 'Typical reply · under 15 min (9 AM – 11 PM)';
+      if (messageAdminButton) messageAdminButton.hidden = true;
+    }
+    emptyCta.hidden = !showCta;
+    // The empty state has its own "Start new conversation" button.
+    if (fab) fab.hidden = activeTab !== 'customers' || showCta;
+    empty.hidden = showCta || (nothingInTab ? false : anyVisible);
   }
 
   /**
@@ -1217,11 +1284,15 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
       announceRescue(rescueFocus());
     },
     setStartingNew(_busy) {},
+    closePicker() {
+      picker?.close();
+    },
     focus() {
       searchInput.focus({ preventScroll: true });
     },
     destroy() {
       rows.clear();
+      picker?.close();
     },
   };
 }

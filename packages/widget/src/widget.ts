@@ -2388,6 +2388,11 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     { passive: false },
   );
 
+  // "New chat" customer picker open (portal Messages screen): header shows
+  // its title + Back instead of the usual ones.
+  let customerPickerOpen = false;
+  let wasPickerOnScreen = false;
+
   const messagesScreen = createMessagesScreen({
     onOpenConversation: (sessionId, displayName, subtitleText) => {
       if (portalQueueIds.has(sessionId)) {
@@ -2400,6 +2405,12 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     ...((config as any).onStartPartnerConversation === undefined
       ? {}
       : { onStartNewPartner: () => (config as any).onStartPartnerConversation() }),
+    fetchCustomers: (config as any).fetchCustomers,
+    onSelectCustomer: (config as any).onSelectCustomer,
+    onPickerToggle: (open) => {
+      customerPickerOpen = open;
+      syncScreens();
+    },
     userRole: (config as any).userRole,
   });
 
@@ -2623,7 +2634,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       mode: 'HUMAN',
       createdAt: new Date().toISOString(),
       closedAt: null,
-      lastMessageAt: undefined,
+      lastMessageAt: row.lastMessageAt ?? undefined,
+      targetName: row.targetName ?? undefined,
+      targetEmail: row.targetEmail ?? undefined,
       lastMessagePreview: row.lastMessage ?? undefined,
       unreadCount: 0,
       handledBy: null,
@@ -2732,7 +2745,9 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // instead — same as the X button beside it.
     on: {
       click: () => {
-        if (screens.canGoBack()) {
+        if (customerPickerOpen) {
+          messagesScreen.closePicker?.();
+        } else if (screens.canGoBack()) {
           screens.back();
         } else if (screens.current() === 'messages') {
           screens.swap('home');
@@ -4929,7 +4944,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // Also shown for a TARGETED mount even with nothing to go back to — see
     // the button's own click-handler doc for why that is still correct.
     // For customers, also show on Messages screen to navigate back to Home.
-    backButton.hidden = !(screens.canGoBack() || presenceTargetId !== undefined || (current === 'messages' && !isStaffOrAdmin));
+    backButton.hidden = !(customerPickerOpen || screens.canGoBack() || presenceTargetId !== undefined || (current === 'messages' && !isStaffOrAdmin));
     // The compose form's own Cancel (ui/new-conversation.ts) duplicates
     // Back once Back is already on screen — reached from Home, Messages, or
     // the ⋯ menu, which is how the console design (no visible Cancel) was
@@ -4949,9 +4964,14 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // that needs an explicit edge-triggered restore and the other branches
     // here do not.
     const composingNew = onConversation && activeSurface?.kind === 'composingNew';
-    headerRow.dataset['minimal'] = composingNew ? 'true' : 'false';
+    const pickerOnScreen = customerPickerOpen && onMessages;
+    headerRow.dataset['minimal'] = composingNew || pickerOnScreen ? 'true' : 'false';
 
-    if (current === 'messages' && !isStaffOrAdmin) {
+    if (pickerOnScreen) {
+      identityHeader.setTitle('New chat');
+    } else if (wasPickerOnScreen) {
+      identityHeader.setTitle(current === 'messages' && !isStaffOrAdmin ? 'Messages' : currentTitle());
+    } else if (current === 'messages' && !isStaffOrAdmin) {
       identityHeader.setTitle('Messages');
     } else if (current === 'tickets') {
       identityHeader.setTitle('Ticket');
@@ -4963,6 +4983,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       identityHeader.update(state.session);
     }
     composingNewMinimal = composingNew;
+    wasPickerOnScreen = pickerOnScreen;
 
     // `presenceLine` names a specific conversation's handler — meaningless
     // on Home/Messages, where no one conversation is on screen to be about.
@@ -4981,6 +5002,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     // `:host([data-screen="conversation"])` applies the purple gradient header
     // and the pink-teal thread background (ui/styles.ts Dhaam UI section).
     host.setAttribute('data-screen', current);
+    host.setAttribute('data-picker', String(pickerOnScreen));
 
     // Common Questions and the hero banner are both Home furniture now —
     // see home-screen.ts's own header on why it arranges rather than owns

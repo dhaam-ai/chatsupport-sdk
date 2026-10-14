@@ -302,6 +302,64 @@ describe('listPartyConversations — GET /party/conversations (Wire Contract §6
     expect(rows.find((r) => r.sessionId === 'sess_missing_timestamps')?.hasMessage).toBe(true);
   });
 
+  it('reads the backend lastMessage into a preview + time, labelling media instead of printing its URL', async () => {
+    const row = (id: string, lastMessage: unknown) => ({
+      sessionId: id, customerId: 'admin_1', customerName: 'tse', status: 1,
+      targetId: '14735', targetRole: 'customer', conversationType: 4, direction: 'outgoing',
+      createdAt: '2026-09-25T12:38:38.576Z', updatedAt: '2026-10-14T07:26:21.329Z', lastMessage,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          success: true,
+          data: {
+            conversations: [
+              row('s_text', { content: 'HELLO', senderType: 2, messageType: 1, createdAt: '2026-09-28T13:03:06.732Z' }),
+              row('s_photo', { content: 'https://cdn/x.jpg', senderType: 1, messageType: 4, createdAt: '2026-09-28T13:04:00.000Z' }),
+              row('s_empty', null),
+            ],
+          },
+        }),
+      ),
+    );
+
+    const rows = await listPartyConversations(OPTIONS, { with: 'partner' });
+    expect(rows.map((r) => [r.lastMessage, r.lastMessageAt, r.hasMessage])).toEqual([
+      ['HELLO', '2026-09-28T13:03:06.732Z', true],
+      ['📷 Photo', '2026-09-28T13:04:00.000Z', true],
+      [null, undefined, false],
+    ]);
+  });
+
+  it('carries the backend counterparty name/email through, and omits them when absent', async () => {
+    const row = (id: string, extra: Record<string, unknown>) => ({
+      sessionId: id, customerId: 'admin_1', customerName: 'tse', status: 1,
+      targetId: '14735', targetRole: 'customer', conversationType: 4, direction: 'outgoing',
+      createdAt: '2026-09-25T12:38:38.576Z', updatedAt: '2026-10-14T07:26:21.329Z', ...extra,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          success: true,
+          data: {
+            conversations: [
+              row('s_named', { targetName: 'Bikash Kumar', targetEmail: 'bikashk@gmail.com' }),
+              row('s_unnamed', { targetName: null, targetEmail: null }),
+            ],
+          },
+        }),
+      ),
+    );
+
+    const rows = await listPartyConversations(OPTIONS, { with: 'partner' });
+    expect(rows.map((r) => [r.targetName, r.targetEmail])).toEqual([
+      ['Bikash Kumar', 'bikashk@gmail.com'],
+      [undefined, undefined],
+    ]);
+  });
+
   it('maps REST status integers 1..6 correctly to UI string names', async () => {
     vi.stubGlobal(
       'fetch',

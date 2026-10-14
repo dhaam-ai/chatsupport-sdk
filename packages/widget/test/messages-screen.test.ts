@@ -421,9 +421,12 @@ describe('"Message Admin" — a merchant/outlet starting a partner conversation 
     const adminTab = tabs(screen.node)[1];
     if (adminTab === undefined) throw new Error('admin tab not found');
     adminTab.click();
-    expect(button?.hidden).toBeFalsy();
+    // Empty Admin tab: the empty-state CTA stands in for the footer button.
+    expect(button?.hidden).toBe(true);
+    const cta = screen.node.querySelector<HTMLButtonElement>('.dh-empty-btn');
+    expect(cta?.textContent).toContain('Message Dhaam Support');
 
-    button?.click();
+    cta?.click();
     expect(onStartNewPartner).toHaveBeenCalledTimes(1);
   });
 
@@ -481,10 +484,9 @@ describe('admin-started chat with a customer (PARTNER, targetRole "customer")', 
     expect(getRowDisplayName(adminToCustomer, 'customers')).toBe('Customer #14708');
   });
 
-  it('uses the cached customer name when the admin opened it from the customer page', () => {
-    localStorage.setItem('dhaam_target_customer_14708', JSON.stringify({ customerName: 'Bikash Kumar' }));
-    expect(getRowDisplayName(adminToCustomer, 'customers')).toBe('Bikash Kumar');
-    localStorage.removeItem('dhaam_target_customer_14708');
+  it('uses the counterparty name the backend sends (targetName)', () => {
+    const named = { ...adminToCustomer, targetName: 'Bikash Kumar' } as unknown as ChatSessionSummary;
+    expect(getRowDisplayName(named, 'customers')).toBe('Bikash Kumar');
   });
 });
 

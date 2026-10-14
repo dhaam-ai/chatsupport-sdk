@@ -147,8 +147,16 @@ export function createStaffHistorySource(options: PortalStaffOptions): MessageHi
         const page = unwrapEnvelope<{ messages?: unknown; hasMore?: unknown }>(body, routeLabel);
 
         const rows = Array.isArray(page.messages) ? page.messages : [];
+        // The REST projection drops `deliveryStatus` (1 SENT | 2 DELIVERED | 3 READ), the
+        // only per-message read signal a history page carries. Re-attached under
+        // `metadata` (which core keeps) so the thread can draw honest ticks.
         const messages = rows
-          .map(projectHistoryRow)
+          .map((row) => {
+            const message = projectHistoryRow(row);
+            const status = (row as { deliveryStatus?: unknown } | null)?.deliveryStatus;
+            if (message === null || typeof status !== 'number') return message;
+            return { ...message, metadata: { ...message.metadata, deliveryStatus: status } };
+          })
           .filter((message): message is RestChatMessage => message !== null);
 
         return {
@@ -184,6 +192,14 @@ export function createPortalConversationClient(options: PortalStaffOptions): Con
   });
 }
 
+/** One-line list preview of a message: its text, or a label for a file/media row (`content` is a URL there). */
+function previewOf(message: Record<string, unknown>): string | null {
+  const labels: Record<number, string> = { 3: '📎 Attachment', 4: '📷 Photo', 5: '🎥 Video', 6: '🎤 Voice message' };
+  const type = typeof message['messageType'] === 'number' ? message['messageType'] : 1;
+  if (labels[type] !== undefined) return labels[type]!;
+  return typeof message['content'] === 'string' && message['content'] !== '' ? message['content'] : null;
+}
+
 /** One row of `GET /agent/queue`, narrowed to what the Customers & Merchants tabs render. */
 export interface PortalQueueRow {
   readonly sessionId: string;
@@ -191,6 +207,11 @@ export interface PortalQueueRow {
   readonly customerName: string | null;
   readonly customerEmail: string | null;
   readonly lastMessage: string | null;
+  /** ISO time of `lastMessage`, when the backend sent one. */
+  readonly lastMessageAt?: string | null;
+  /** The counterparty's own name/email (`/party/conversations` only) — `customerName` is whoever STARTED the chat. */
+  readonly targetName?: string | null;
+  readonly targetEmail?: string | null;
   readonly hasMessage: boolean;
   readonly chatType: string | null;
   readonly targetRole: string | null;
@@ -282,6 +303,10 @@ function readQueueRow(row: unknown): PortalQueueRow | null {
     typeof lastMessage === 'object' && lastMessage !== null
       ? ((lastMessage as Record<string, unknown>)['content'] as string | undefined) ?? null
       : null;
+  const lastAt =
+    typeof lastMessage === 'object' && lastMessage !== null && typeof (lastMessage as Record<string, unknown>)['createdAt'] === 'string'
+      ? ((lastMessage as Record<string, unknown>)['createdAt'] as string)
+      : null;
 
   const targetRole = typeof source['targetRole'] === 'string' ? source['targetRole'] : null;
   const targetId = typeof source['targetId'] === 'string' ? source['targetId'] : null;
@@ -331,6 +356,7 @@ function readQueueRow(row: unknown): PortalQueueRow | null {
     customerName,
     customerEmail,
     lastMessage: lastContent,
+    ...(lastAt === null ? {} : { lastMessageAt: lastAt }),
     hasMessage,
     chatType,
     targetRole,
@@ -420,7 +446,16 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
   // timestamp is missing, so an unexpected wire shape fails open, not shut.
   const createdAt = typeof source['createdAt'] === 'string' ? source['createdAt'] : null;
   const updatedAt = typeof source['updatedAt'] === 'string' ? source['updatedAt'] : null;
-  const hasMessage = createdAt === null || updatedAt === null ? true : createdAt !== updatedAt;
+  // Newer backends send the real `lastMessage` ({ content, senderType, messageType, createdAt }
+  // | null) on this list — exact, so it wins over the createdAt/updatedAt proxy.
+  const lm = source['lastMessage'];
+  const lmObj = typeof lm === 'object' && lm !== null ? (lm as Record<string, unknown>) : null;
+  const lastPreview = lmObj ? previewOf(lmObj) : null;
+  const lastAt = lmObj && typeof lmObj['createdAt'] === 'string' ? lmObj['createdAt'] : null;
+  const hasMessage =
+    'lastMessage' in source
+      ? lmObj !== null
+      : createdAt === null || updatedAt === null ? true : createdAt !== updatedAt;
 
   // Pre-partner-chat heuristic — kept ONLY as a fallback for a backend that
   // does not yet send `conversationType` (customer name/email substring,
@@ -475,7 +510,10 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     customerId,
     customerName,
     customerEmail,
-    lastMessage: null,
+    lastMessage: lastPreview,
+    ...(lastAt === null ? {} : { lastMessageAt: lastAt }),
+    ...(typeof source['targetName'] === 'string' ? { targetName: source['targetName'] } : {}),
+    ...(typeof source['targetEmail'] === 'string' ? { targetEmail: source['targetEmail'] } : {}),
     hasMessage,
     chatType:
       conversationType === 4

@@ -3,6 +3,7 @@
 // `../portal/portal-staff-client.ts` for why this is a second client rather
 // than a branch in the customer one).
 
+import { deriveTickState } from '@dhaam-ccrm/js';
 import type { ChatMessage, ChatState, SendMessageOptions } from '@dhaam-ccrm/js';
 import { ICONS, el, icon, safeLinkUrl } from './dom.js';
 import { createEmojiPicker, insertAtCaret } from './emoji.js';
@@ -441,7 +442,7 @@ export function createPortalThread(
     emojiPicker.setEnabled(sendable && !sending);
   }
 
-  function renderBubble(message: ChatMessage, isPartnerConversation: boolean): HTMLElement {
+  function renderBubble(message: ChatMessage, isPartnerConversation: boolean, state: ChatState): HTMLElement {
     const outgoing = isOutgoing(message, isPartnerConversation, localParticipantId);
     const timeStr = formatTime(message.createdAt);
 
@@ -493,7 +494,21 @@ export function createPortalThread(
       });
 
       const timeEl = el('time', { attrs: { class: 'dh-msg-time' }, text: timeStr });
-      const tick = el('span', { attrs: { class: 'dh-tick' }, children: [icon(ICONS.checkDouble, 14)] });
+      // Green only once the other side has actually read it. `deliveryStatus` is what
+      // a history page says (3 READ); `deriveTickState` covers live read/delivered
+      // watermarks (the local participant's own never counts).
+      const derived = deriveTickState({
+        message,
+        localParticipantId,
+        deliveredWatermarks: state.deliveredWatermarks,
+        readWatermarks: state.readWatermarks,
+      });
+      const stored = (message.metadata as Record<string, unknown> | undefined)?.['deliveryStatus'];
+      const tickState = stored === 3 || derived === 'read' ? 'read' : stored === 2 || derived === 'delivered' ? 'delivered' : 'sent';
+      const tick = el('span', {
+        attrs: { class: 'dh-tick', 'data-state': tickState, title: tickState === 'read' ? 'Read' : tickState === 'delivered' ? 'Delivered' : 'Sent' },
+        children: [icon(tickState === 'sent' ? ICONS.checkDouble.slice(0, 1) : ICONS.checkDouble, 14)],
+      });
       const meta = el('div', { attrs: { class: 'dh-msg-meta' }, children: [timeEl, tick] });
 
       const row = el('div', {
@@ -655,7 +670,7 @@ export function createPortalThread(
         if (isSystemMessage(msg)) {
           elements.push(createSystemRow(msg.content));
         } else {
-          const row = renderBubble(msg, isPartnerConversation);
+          const row = renderBubble(msg, isPartnerConversation, state);
           row.setAttribute('data-message-id', msg.id);
           elements.push(row);
         }

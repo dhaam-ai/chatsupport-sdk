@@ -461,6 +461,8 @@ const DARK_TOKENS = `
 // "16." section at the end of STYLES. Customers never carry data-user-role.
 const STAFF_ROLES = ':is([data-user-role="admin"],[data-user-role="merchant"],[data-user-role="manager"])';
 const STAFF_MSGS = `:host([data-screen="messages"]${STAFF_ROLES})`;
+// "New chat" customer picker open: header shows Back + title instead of the logo.
+const STAFF_PICK = `:host([data-screen="messages"][data-picker="true"]${STAFF_ROLES})`;
 // Conversation bubbles (section 17) apply to every user, not just staff.
 const STAFF_CONV = ':host([data-screen="conversation"])';
 
@@ -4404,6 +4406,16 @@ button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
   white-space: nowrap !important;
   min-width: 0 !important;
 }
+/* The hidden attribute must win over the two display:flex !important rules above, or a
+   header with no presence answer yet (and an empty connection label) paints a
+   lone dot with no words. Nothing shows until there is a real Online/Offline. */
+:host([data-screen="conversation"]) .dh-status[hidden],
+:host([data-screen="conversation"]) .dh-presence-line[hidden] {
+  display: none !important;
+}
+:host([data-screen="conversation"]) .dh-status:has(> .dh-status-text:empty) {
+  display: none !important;
+}
 /* '.dh-status'/'.dh-presence-line' above force themselves visible with
    '!important' on every conversation, which is exactly right for a real one
    and exactly wrong for the new-conversation compose surface (see
@@ -5367,6 +5379,20 @@ ${STAFF_MSGS} .dh-header .dh-icon-button {
 }
 ${STAFF_MSGS} .dh-header .dh-icon-button:hover { background: rgba(255, 255, 255, 0.18) !important; }
 
+${STAFF_PICK} .dh-back {
+  display: flex !important;
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: var(--dh-header-fg, #ffffff) !important;
+}
+${STAFF_PICK} .dh-title {
+  width: auto !important;
+  height: auto !important;
+  background-image: none !important;
+  font-size: 17px !important;
+  font-weight: 600 !important;
+  color: var(--dh-header-fg, #ffffff) !important;
+}
+
 ${STAFF_MSGS} .dh-mtab-bar { margin: 8px 20px 0 !important; }
 ${STAFF_MSGS} .dh-mtab { font-size: 15px !important; padding: 12px 0 !important; }
 
@@ -5401,6 +5427,7 @@ ${STAFF_CONV} .dh-msg[data-mine="false"] {
   align-items: flex-start !important;
   gap: 8px !important;
 }
+${STAFF_CONV} .dh-msg[data-mine] { gap: 0 !important; }
 ${STAFF_CONV} .dh-msg[data-mine="true"] { margin: 2px 0 2px auto !important; }
 ${STAFF_CONV} .dh-msg[data-mine="false"] { margin: 2px auto 2px 0 !important; }
 ${STAFF_CONV} .dh-msg[data-mine="true"] .dh-msg-avatar,
@@ -5437,7 +5464,7 @@ ${STAFF_CONV} .dh-msg[data-mine="false"] .dh-msg-bubble {
 }
 ${STAFF_CONV} .dh-msg[data-mine] .dh-msg-meta {
   position: static !important;
-  margin: 3px 2px 0 !important;
+  margin: 1px 2px 0 !important;
   padding: 0 !important;
   display: flex !important;
   align-items: center !important;
@@ -5590,4 +5617,90 @@ ${DARK_ATTR}
   animation: dh-spin 0.8s linear infinite;
 }
 @keyframes dh-spin { to { transform: rotate(360deg); } }
+/* Portal "New chat" — FAB, customer picker, empty state */
+.dh-messages { position: relative; }
+.dh-messages-fab {
+  position: absolute; right: 16px; bottom: 16px; z-index: 5;
+  display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 20px;
+  border: 0; border-radius: 999px; background: var(--dh-accent); color: #fff;
+  font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+.dh-messages-fab[hidden] { display: none; }
+.dh-messages-fab svg { stroke: #fff; }
+.dh-cpick { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--dh-surface); }
+.dh-cpick[hidden] { display: none; }
+.dh-cpick-banner {
+  display: flex; align-items: center; gap: 10px; margin: 8px 16px; padding: 12px;
+  border-radius: 10px; font-size: 13px; color: var(--dh-accent);
+  background: color-mix(in srgb, var(--dh-accent) 10%, var(--dh-surface));
+}
+.dh-cpick-label { padding: 8px 16px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--dh-text-muted); background: var(--dh-surface-sunken); }
+.dh-cpick-list { flex: 1; min-height: 0; margin: 0; padding: 0; list-style: none; overflow-y: auto; }
+.dh-cpick-status { padding: 24px 16px; text-align: center; font-size: 13px; color: var(--dh-text-muted); list-style: none; }
+.dh-cpick-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px;
+  border: 0; border-bottom: 1px solid var(--dh-border); background: transparent;
+  color: var(--dh-text-muted); font: inherit; text-align: left; cursor: pointer;
+}
+.dh-cpick-row:hover { background: var(--dh-surface-sunken); }
+.dh-cpick-avatar {
+  flex: none; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+  border-radius: 50%; font-weight: 600; color: var(--dh-accent);
+  background: color-mix(in srgb, var(--dh-accent) 12%, var(--dh-surface));
+}
+.dh-cpick-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dh-cpick-name { font-size: 15px; font-weight: 600; color: var(--dh-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-cpick-sub { font-size: 12.5px; color: var(--dh-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-messages-empty--cta { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 24px 16px; text-align: center; list-style: none; }
+.dh-messages-empty--cta[hidden] { display: none; }
+.dh-empty-icon {
+  display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; margin-bottom: 4px;
+  border-radius: 50%; color: var(--dh-accent); background: color-mix(in srgb, var(--dh-accent) 12%, var(--dh-surface));
+}
+.dh-cpick-none { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 56px 24px; text-align: center; list-style: none; }
+.dh-empty-icon--muted { color: var(--dh-text-muted); background: var(--dh-surface-sunken); }
+.dh-empty-title { font-size: 16px; font-weight: 600; color: var(--dh-text); }
+.dh-empty-text { font-size: 13px; line-height: 1.5; color: var(--dh-text-muted); }
+.dh-empty-note { font-size: 12px; color: var(--dh-text-muted); }
+.dh-empty-btn {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px; height: 42px; padding: 0 22px;
+  border: 0; border-radius: 10px; background: var(--dh-accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+}
+.dh-empty-btn svg { stroke: #fff; }
+
+/* Portal thread ticks: grey until the other side has read it */
+.dh-portal-log .dh-msg[data-mine="true"] .dh-tick[data-state="sent"],
+.dh-portal-log .dh-msg[data-mine="true"] .dh-tick[data-state="delivered"] { color: #94a3b8 !important; }
+.dh-portal-log .dh-msg[data-mine="true"] .dh-tick[data-state="sent"] svg,
+.dh-portal-log .dh-msg[data-mine="true"] .dh-tick[data-state="delivered"] svg { stroke: #94a3b8 !important; }
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-tick[data-state="sent"],
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-tick[data-state="delivered"] { color: #94a3b8 !important; }
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-tick[data-state="sent"] svg,
+${STAFF_CONV} .dh-msg[data-mine="true"] .dh-tick[data-state="delivered"] svg { stroke: #94a3b8 !important; }
+
+/* Customers tab — row layout, red tab counts */
+.dh-mtab-count { background: #e5484d !important; color: #fff !important; }
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-avatar {
+  display: flex !important; flex: none; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 50%; font-size: 14px; font-weight: 600;
+  background: var(--av-bg, #f1ebff); color: var(--av-fg, #6d3fd6);
+}
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-body {
+  display: grid !important; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 2px; align-items: center;
+}
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-top,
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-right { display: contents !important; }
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-name-row { grid-column: 1; grid-row: 1; }
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-time { grid-column: 2; grid-row: 1; margin: 0 !important; }
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-preview { grid-column: 1; grid-row: 2; margin: 0 !important; }
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-unread-badge { grid-column: 2; grid-row: 2; justify-self: end; }
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-status-pill,
+:host([data-screen="messages"]) .dh-mrow--cust .dh-mrow-chevron { display: none !important; }
+:host([data-screen="messages"]) .dh-mrow--cust[data-unread="true"] .dh-mrow-time { color: var(--dh-accent) !important; font-weight: 600 !important; }
+.dh-mrow-chip {
+  flex: none; padding: 1px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 500;
+  background: var(--dh-surface-sunken); color: var(--dh-text-muted);
+}
+.dh-mrow-chip[hidden] { display: none; }
 `;

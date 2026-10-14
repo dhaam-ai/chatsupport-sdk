@@ -342,6 +342,19 @@ export interface WidgetConfig {
   readonly onStartPartnerConversation?: () => void;
 
   /**
+   * Portal "New chat": lists customers the user can message first. The host
+   * owns the API (URL, auth, paging) — return one page per call, `search` is
+   * the user's query ('' for none). Supply together with `onSelectCustomer`;
+   * the "New chat" button is omitted unless both are set.
+   */
+  readonly fetchCustomers?: (query: { search: string; page: number }) => Promise<{
+    customers: readonly { id: string; userId: string; name: string; phone?: string; email?: string }[];
+    hasMore: boolean;
+  }>;
+  /** Fired when the user picks a customer from the "New chat" list. */
+  readonly onSelectCustomer?: (customer: { id: string; userId: string; name: string; phone?: string; email?: string }) => void;
+
+  /**
    * Called instead of switching to this widget's own Ticket tab (`ui/nav.ts`
    * / `ui/tickets-screen.ts`) when a logged-in customer taps it.
    *
