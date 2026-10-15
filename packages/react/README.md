@@ -24,6 +24,28 @@ package's single entry point, so the import exists whether or not you render it.
 Bundlers drop the code itself if you never use it — but the package has to be
 installed for the import to resolve.
 
+## Commerce events without the widget or core
+
+`@dhaam-ccrm/react/commerce` is a standalone entry that imports only React, so it works with neither
+`@dhaam-ccrm/widget` nor `@dhaam-ccrm/core` installed (both are optional peers for this entry).
+
+```tsx
+import { useCommerceEvents } from '@dhaam-ccrm/react/commerce';
+
+const events = useCommerceEvents({
+  apiUrl: 'https://chat.example.com',
+  publishableKey: 'dhp_live_…',
+  getToken: () => customerAccessToken,
+});
+
+await events.cartUpdated({ eventId, occurredAt, cartId, items });
+await events.cartAbandoned({ eventId, occurredAt, cartId });
+await events.cartConverted({ eventId, occurredAt, cartId, orderId });
+await events.orderPlaced({ eventId, occurredAt, orderId });
+```
+
+Uses the publishable key plus the customer's token, never a secret key. Retry any failure with the same `eventId`.
+
 ## Minimal working example
 
 ```tsx

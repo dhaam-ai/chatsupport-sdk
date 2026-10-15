@@ -34,6 +34,16 @@
         "default": "./dist/index.cjs"
       }
     },
+    "./commerce": {
+      "import": {
+        "types": "./dist/commerce.d.ts",
+        "default": "./dist/commerce.js"
+      },
+      "require": {
+        "types": "./dist/commerce.d.cts",
+        "default": "./dist/commerce.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -70,5 +80,13 @@
   },
   "dependencies": {
     "@dhaam-ccrm/browser": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@dhaam-ccrm/core": {
+      "optional": true
+    },
+    "@dhaam-ccrm/widget": {
+      "optional": true
+    }
   }
 }
