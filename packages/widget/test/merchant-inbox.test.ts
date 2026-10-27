@@ -324,12 +324,30 @@ describe('admin view is unchanged', () => {
     expect(screen.node.querySelector('.dh-mtab-count')?.textContent).toBe('0');
   });
 
-  it('does not show order chips on admin rows', () => {
+  it('keeps the original admin row DOM — no order chip, channel or meta line at all', () => {
     const screen = createMessagesScreen({ onOpenConversation: vi.fn(), userRole: 'admin' });
     document.body.appendChild(screen.node);
-    screen.render([row({ orderNumber: '20345', channel: 1 })], null);
-    expect(screen.node.querySelector<HTMLElement>('.dh-mrow-order')?.hidden).toBe(true);
-    expect(screen.node.querySelector<HTMLElement>('.dh-mrow-channel')?.hidden).toBe(true);
+    screen.render([row({ orderNumber: '20345', channel: 1, unreadCount: 3, awaitingReply: true })], null);
+    expect(screen.node.querySelector('.dh-mrow-order')).toBeNull();
+    expect(screen.node.querySelector('.dh-mrow-channel')).toBeNull();
+    expect(screen.node.querySelector('.dh-mrow-meta')).toBeNull();
+    const bodyChildren = Array.from(screen.node.querySelector('.dh-mrow-body')!.children).map((c) => c.className);
+    expect(bodyChildren).toEqual(['dh-mrow-top', 'dh-mrow-preview', 'dh-mrow-time']);
+    // Admin badges still show the TOTAL count, not unread.
+    expect(screen.node.querySelector('.dh-mtab-count')?.textContent).toBe('1');
+  });
+
+  it('keeps admin row order exactly as given (no oldest-unanswered sort)', () => {
+    const screen = createMessagesScreen({ onOpenConversation: vi.fn(), userRole: 'admin' });
+    document.body.appendChild(screen.node);
+    screen.render(
+      [
+        row({ id: 'a', customerName: 'First', awaitingReply: false, lastMessageAt: '2026-10-26T12:00:00Z' }),
+        row({ id: 'b', customerName: 'Second', awaitingReply: true, lastMessageAt: '2026-10-26T08:00:00Z' }),
+      ],
+      null,
+    );
+    expect(visibleNames(screen.node)).toEqual(['First', 'Second']);
   });
 });
 

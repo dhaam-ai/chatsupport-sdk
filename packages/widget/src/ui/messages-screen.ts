@@ -433,7 +433,12 @@ interface MessageRow {
   ): void;
 }
 
-function createMessageRow(onSelect: (sessionId: string, displayName: string, subtitle?: string) => void): MessageRow {
+function createMessageRow(
+  onSelect: (sessionId: string, displayName: string, subtitle?: string) => void,
+  // Merchant inbox (US-25): only a merchant row gets the order chip and
+  // channel line — an admin row keeps its original DOM exactly.
+  merchantLayout = false,
+): MessageRow {
   // Avatar circle (initial letter)
   const avatarText = el('span', { attrs: { class: 'dh-mrow-avatar-text' } });
   const avatar = el('div', { attrs: { class: 'dh-mrow-avatar' }, children: [avatarText] });
@@ -450,7 +455,7 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
   const chevron = el('span', { attrs: { class: 'dh-mrow-chevron', 'aria-hidden': 'true' }, children: [icon(CHEVRON_ICON, 14)] });
 
   // Top row: name + pill | badge + chevron
-  const nameRow = el('div', { attrs: { class: 'dh-mrow-name-row' }, children: [name, orderChip, statusPill] });
+  const nameRow = el('div', { attrs: { class: 'dh-mrow-name-row' }, children: merchantLayout ? [name, orderChip, statusPill] : [name, statusPill] });
   const rightCol = el('div', { attrs: { class: 'dh-mrow-right' }, children: [unreadBadge, chevron] });
   const topRow = el('div', { attrs: { class: 'dh-mrow-top' }, children: [nameRow, rightCol] });
 
@@ -463,7 +468,7 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
   const meta = el('div', { attrs: { class: 'dh-mrow-meta' }, children: [time, channel] });
 
   // Body: preview + time
-  const body = el('div', { attrs: { class: 'dh-mrow-body' }, children: [topRow, preview, meta] });
+  const body = el('div', { attrs: { class: 'dh-mrow-body' }, children: merchantLayout ? [topRow, preview, meta] : [topRow, preview, time] });
 
   const button = el('button', {
     attrs: { class: 'dh-mrow-btn', type: 'button' },
@@ -1315,7 +1320,10 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
         live.add(summary.id);
         let row = rows.get(summary.id);
         if (row === undefined) {
-          row = createMessageRow((sessionId, displayName, subtitle) => callbacks.onOpenConversation(sessionId, displayName, subtitle));
+          row = createMessageRow(
+            (sessionId, displayName, subtitle) => callbacks.onOpenConversation(sessionId, displayName, subtitle),
+            isMerchantUser,
+          );
           rows.set(summary.id, row);
         }
         row.update(summary, summary.id === currentId, activeTab, callbacks.userRole);

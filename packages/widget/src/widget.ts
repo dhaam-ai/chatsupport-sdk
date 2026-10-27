@@ -2722,11 +2722,13 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       markConversationSeen(sessionId, row.lastMessageAt ?? undefined);
       syncSessionSurfaces();
     }
-    portalThread.setReadOnly(
-      isMerchantPortal && row?.escalated === true
-        ? 'This chat was passed to Dhaam support. You can read it but not reply.'
-        : null,
-    );
+    if (isMerchantPortal) {
+      portalThread.setReadOnly(
+        row?.escalated === true
+          ? 'This chat was passed to Dhaam support. You can read it but not reply.'
+          : null,
+      );
+    }
     const customerName =
       (displayName && displayName !== 'Conversation' && displayName !== 'Customer' ? displayName : null) ??
       row?.customerName ??
