@@ -3955,6 +3955,72 @@ button.dh-card-btn[data-state="error"] { color: var(--dh-danger); }
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Merchant inbox (US-25) ──────────────────────────────────────────────── */
+.dh-minbox-hours-link:focus-visible {
+  outline: 2px solid var(--dh-accent);
+  outline-offset: 2px;
+}
+.dh-mrow-order {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dh-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dh-mrow-order[hidden],
+.dh-mrow-channel[hidden],
+.dh-mtab-count[hidden] { display: none; }
+.dh-mrow-meta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--dh-space) * 1.5);
+}
+.dh-mrow-channel {
+  font-size: 11px;
+  color: var(--dh-text-muted);
+}
+.dh-mrow-channel::before {
+  content: '·';
+  margin-inline-end: calc(var(--dh-space) * 1.5);
+}
+.dh-mrow-status-pill[data-status="ESCALATED"] {
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  color: #b45309;
+}
+.dh-mrow-item[data-escalated="true"] .dh-mrow-name { color: var(--dh-text-muted); }
+.dh-mtab-count--unread,
+.dh-mtab-count--unread.dh-mtab-count--active {
+  background: #ef4444;
+  color: #fff;
+}
+.dh-minbox-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--dh-space) * 2);
+  text-align: center;
+}
+.dh-minbox-hours-link {
+  border: 0;
+  background: transparent;
+  color: var(--dh-accent);
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.dh-minbox-hours-link[hidden] { display: none; }
+.dh-portal-readonly {
+  margin: 0;
+  padding: calc(var(--dh-space) * 3);
+  border-top: 1px solid var(--dh-border);
+  background: var(--dh-surface-sunken);
+  color: var(--dh-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.dh-portal-readonly[hidden],
+.dh-portal-thread .dh-composer[hidden] { display: none; }
 /* ── Dhaam UI: Header & Screen Redesigns ─────────────────────────────────────
    Matches exact Figma designs for:
    1. Home screen (Purple gradient header, Dhaam logo, visible nav bar, Figma CTA/questions styling)

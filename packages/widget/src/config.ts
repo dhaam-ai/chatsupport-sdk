@@ -342,6 +342,29 @@ export interface WidgetConfig {
   readonly onStartPartnerConversation?: () => void;
 
   /**
+   * Merchant inbox (US-25), `userRole: 'merchant'` only: called once per
+   * customer message that arrives between two inbox refreshes, so the host
+   * can ring the same sound + desktop notification as its new-order alert.
+   * Never called for the backlog present at first load, nor for the chat the
+   * merchant currently has open.
+   */
+  readonly onInboxAlert?: (alert: {
+    readonly sessionId: string;
+    readonly customerName: string;
+    readonly preview: string;
+    readonly orderNumber: string | null;
+  }) => void;
+
+  /** Merchant inbox (US-25): the empty Customers tab's "View chat hours" link (US-28). Omitted when unset. */
+  readonly onOpenChatHours?: () => void;
+
+  /**
+   * Merchant inbox (US-25): `false` for a staff login without conversation
+   * permission — the Customers tab is not shown. Defaults to `true`.
+   */
+  readonly canViewCustomerConversations?: boolean;
+
+  /**
    * Called instead of switching to this widget's own Ticket tab (`ui/nav.ts`
    * / `ui/tickets-screen.ts`) when a logged-in customer taps it.
    *

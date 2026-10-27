@@ -223,6 +223,61 @@ export interface PortalQueueRow {
   readonly conversationType?: number | null;
   /** "incoming" | "outgoing" — which side of a partner chat the caller is. */
   readonly direction?: string | null;
+  // ── Merchant inbox (US-25) — `/party/conversations` only ──────────────────
+  // Kept apart from `lastMessage` above on purpose: that field has been
+  // `null` for every party row since this parser was written, and the admin
+  // view's rendering depends on it. These are read by the merchant inbox only.
+  /** Newest public message text (`lastMessage.content`). */
+  readonly lastMessageContent?: string | null;
+  /** `lastMessage.createdAt` — the row's real "last activity" time. */
+  readonly lastMessageAt?: string | null;
+  /** `lastMessage.senderType === 1` (CUSTOMER) — the customer spoke last, nobody answered yet. */
+  readonly lastMessageFromCustomer?: boolean;
+  /** chat-service-node `Channel` (1 IN_APP · 2 WHATSAPP · 3 EMAIL · 4 SMS · 5 SOCIAL · 6 WEBFORM). */
+  readonly channel?: number | null;
+  /** Server unread count, when the backend sends one. Absent today — derived client-side. */
+  readonly unreadCount?: number | null;
+  /** The order the chat is about (`orderNumber`/`orderId`, top-level or in `metadata`). */
+  readonly orderNumber?: string | null;
+  /** Chat passed to Dhaam support — read-only for the merchant. */
+  readonly escalated?: boolean;
+}
+
+/** Reads the US-25 merchant-inbox fields off one raw `/party/conversations` row. */
+function readMerchantInboxFields(source: Record<string, unknown>): Pick<
+  PortalQueueRow,
+  | 'lastMessageContent'
+  | 'lastMessageAt'
+  | 'lastMessageFromCustomer'
+  | 'channel'
+  | 'unreadCount'
+  | 'orderNumber'
+  | 'escalated'
+> {
+  const last = source['lastMessage'];
+  const lastObj = typeof last === 'object' && last !== null ? (last as Record<string, unknown>) : null;
+  const metadata = typeof source['metadata'] === 'object' && source['metadata'] !== null
+    ? (source['metadata'] as Record<string, unknown>)
+    : null;
+  const pick = (...values: unknown[]): string | null => {
+    for (const v of values) {
+      if (typeof v === 'string' && v.trim() !== '') return v.trim();
+      if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+    }
+    return null;
+  };
+  return {
+    lastMessageContent: typeof lastObj?.['content'] === 'string' ? (lastObj['content'] as string) : null,
+    lastMessageAt: typeof lastObj?.['createdAt'] === 'string' ? (lastObj['createdAt'] as string) : null,
+    lastMessageFromCustomer: lastObj?.['senderType'] === 1 || lastObj?.['senderType'] === 'CUSTOMER',
+    channel: typeof source['channel'] === 'number' ? source['channel'] : null,
+    unreadCount: typeof source['unreadCount'] === 'number' ? source['unreadCount'] : null,
+    orderNumber: pick(source['orderNumber'], source['orderId'], metadata?.['orderNumber'], metadata?.['orderId']),
+    escalated:
+      source['escalated'] === true ||
+      typeof source['escalatedAt'] === 'string' ||
+      metadata?.['escalated'] === true,
+  };
 }
 
 // `/agent/queue` is a REST endpoint, not the v2 WS protocol §12.1 talks about
@@ -495,6 +550,7 @@ function readPartyConversationRow(row: unknown): PortalQueueRow | null {
     topic,
     conversationType,
     direction,
+    ...readMerchantInboxFields(source),
   };
 }
 

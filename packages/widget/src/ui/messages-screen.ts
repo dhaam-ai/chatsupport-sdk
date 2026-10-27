@@ -25,6 +25,13 @@ import { ICONS, el, icon } from './dom.js';
 import { preserveListFocus, type ListFocusOutcome } from './focus.js';
 import { relativeTimeLabel } from './session-picker.js';
 import { statusLabel, statusPill } from './session-status.js';
+import {
+  channelLabel,
+  isEscalated,
+  merchantStatusText,
+  orderLabel,
+  sortMerchantInbox,
+} from './merchant-inbox.js';
 
 export type ActiveConversationTab = 'customers' | 'merchants' | 'admin';
 
@@ -75,6 +82,16 @@ export interface MessagesScreenCallbacks {
   readonly onStartNewPartner?: () => void;
   /** Current user role in the portal ('admin' | 'merchant' | 'customer'). */
   readonly userRole?: string;
+  /**
+   * Merchant inbox (US-25): the empty Customers tab links to the store's chat
+   * hours (US-28). The link is omitted when the host has not wired this.
+   */
+  readonly onOpenChatHours?: () => void;
+  /**
+   * Merchant inbox (US-25): `false` when this staff login has no conversation
+   * permission — the Customers tab is not shown at all. Defaults to `true`.
+   */
+  readonly canViewCustomerConversations?: boolean;
 }
 
 export interface MessagesScreenView {
@@ -423,6 +440,8 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
 
   // Name (bold, left)
   const name = el('span', { attrs: { class: 'dh-mrow-name' } });
+  // Merchant inbox only: the order this chat is about ("#20345").
+  const orderChip = el('span', { attrs: { class: 'dh-mrow-order', hidden: true } });
   // Status pill
   const statusPill = el('span', { attrs: { class: 'dh-mrow-status-pill' } });
   // Unread badge (circle, right side)
@@ -431,7 +450,7 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
   const chevron = el('span', { attrs: { class: 'dh-mrow-chevron', 'aria-hidden': 'true' }, children: [icon(CHEVRON_ICON, 14)] });
 
   // Top row: name + pill | badge + chevron
-  const nameRow = el('div', { attrs: { class: 'dh-mrow-name-row' }, children: [name, statusPill] });
+  const nameRow = el('div', { attrs: { class: 'dh-mrow-name-row' }, children: [name, orderChip, statusPill] });
   const rightCol = el('div', { attrs: { class: 'dh-mrow-right' }, children: [unreadBadge, chevron] });
   const topRow = el('div', { attrs: { class: 'dh-mrow-top' }, children: [nameRow, rightCol] });
 
@@ -439,9 +458,12 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
   const preview = el('span', { attrs: { class: 'dh-mrow-preview', hidden: true } });
   // Timestamp
   const time = el('time', { attrs: { class: 'dh-mrow-time' } });
+  // Merchant inbox only: which channel the customer wrote on ("App", "WhatsApp").
+  const channel = el('span', { attrs: { class: 'dh-mrow-channel', hidden: true } });
+  const meta = el('div', { attrs: { class: 'dh-mrow-meta' }, children: [time, channel] });
 
   // Body: preview + time
-  const body = el('div', { attrs: { class: 'dh-mrow-body' }, children: [topRow, preview, time] });
+  const body = el('div', { attrs: { class: 'dh-mrow-body' }, children: [topRow, preview, meta] });
 
   const button = el('button', {
     attrs: { class: 'dh-mrow-btn', type: 'button' },
@@ -477,9 +499,22 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
       name.textContent = displayName;
       avatarText.textContent = getRowInitials(displayName);
 
-      // Status pill
-      statusPill.textContent = pillLabel(summary.status);
-      statusPill.setAttribute('data-status', summary.status);
+      // Merchant inbox extras — Customers tab of a merchant/outlet only.
+      const merchantRow = userRole === 'merchant' && tab === 'customers';
+      const order = merchantRow ? orderLabel(summary) : null;
+      orderChip.textContent = order ?? '';
+      orderChip.hidden = order === null;
+      const channelText = merchantRow ? channelLabel(summary) : null;
+      channel.textContent = channelText ?? '';
+      channel.hidden = channelText === null;
+      const escalated = merchantRow && isEscalated(summary);
+      if (escalated) node.setAttribute('data-escalated', 'true');
+      else node.removeAttribute('data-escalated');
+
+      // Status pill — always TEXT, never colour alone.
+      const statusText = merchantRow ? merchantStatusText(summary, pillLabel(summary.status)) : pillLabel(summary.status);
+      statusPill.textContent = statusText;
+      statusPill.setAttribute('data-status', escalated ? 'ESCALATED' : summary.status);
 
       const whenIso = summary.lastMessageAt ?? summary.createdAt;
       if (time.getAttribute('datetime') !== whenIso) time.setAttribute('datetime', whenIso);
@@ -493,10 +528,14 @@ function createMessageRow(onSelect: (sessionId: string, displayName: string, sub
       unreadBadge.textContent = hasUnread ? (summary.unreadCount > 99 ? '99+' : String(summary.unreadCount)) : '';
       unreadBadge.hidden = !hasUnread;
 
-      const parts = [displayName, statusLabel(summary.status)];
+      const parts = [displayName];
+      if (order !== null) parts.push(`order ${order}`);
+      parts.push(merchantRow ? statusText : statusLabel(summary.status));
+      if (escalated) parts.push('read-only');
       if (isCurrent) parts.push('current conversation');
       const relative = relativeTimeLabel(whenIso);
       if (relative !== '') parts.push(relative);
+      if (channelText !== null) parts.push(`via ${channelText}`);
       if (hasPreview) parts.push(summary.lastMessagePreview as string);
       if (hasUnread) {
         parts.push(`${summary.unreadCount} unread ${summary.unreadCount === 1 ? 'message' : 'messages'}`);
@@ -915,7 +954,7 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
   // (OutletChatModal), never a store/merchant as a whole, so the tab reads
   // "Outlets". `secondTabKey` stays 'merchants' — an internal state key
   // other code branches on, not copy.
-  const secondTabLabel = isMerchantUser ? 'Admin' : 'Outlets';
+  const secondTabLabel = isMerchantUser ? 'Dhaam Support' : 'Outlets';
 
   // ── Tab bar: Customers | [Outlets / Admin] ──────────────────────────────
   //
@@ -987,8 +1026,29 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
     ],
   });
 
+  // ── Merchant inbox (US-25): Customers tab permissions ───────────────────
+  const canViewCustomers = callbacks.canViewCustomerConversations !== false;
+
   // ── Conversation list ────────────────────────────────────────────────────
   const empty = el('li', { attrs: { class: 'dh-messages-empty' }, text: 'No conversations yet.' });
+  // Merchant empty state: title + explanation + (Customers tab) chat-hours link.
+  const merchantEmptyTitle = el('p', { attrs: { class: 'dh-messages-empty-title' } });
+  const merchantEmptyBody = el('p', { attrs: { class: 'dh-messages-empty-body' } });
+  const chatHoursLink = callbacks.onOpenChatHours
+    ? el('button', {
+        attrs: { class: 'dh-minbox-hours-link', type: 'button' },
+        text: 'View chat hours',
+        on: { click: () => callbacks.onOpenChatHours?.() },
+      })
+    : null;
+  if (isMerchantUser) {
+    empty.classList.add('dh-minbox-empty');
+    empty.replaceChildren(
+      merchantEmptyTitle,
+      merchantEmptyBody,
+      ...(chatHoursLink ? [chatHoursLink] : []),
+    );
+  }
   const list = el('ul', {
     attrs: { class: 'dh-messages-list', role: 'list', 'aria-label': 'Your conversations' },
     children: [empty],
@@ -1044,9 +1104,12 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
 
   const node = el('div', {
     attrs: { class: 'dh-messages' },
-    children: messageAdminButton
-      ? [tabBar, search, list, messageAdminButton]
-      : [tabBar, search, list],
+    children: [
+      tabBar,
+      search,
+      list,
+      ...(messageAdminButton ? [messageAdminButton] : []),
+    ],
   });
 
   const rows = new Map<string, MessageRow>();
@@ -1063,10 +1126,15 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
   // 'merchants' has never been wired to anything for an admin viewer, so
   // opening there first showed an always-empty tab ahead of the one that
   // works.
-  const initialTab: ActiveConversationTab = 'customers';
+  // A merchant staff login without conversation permission never sees the
+  // Customers tab (US-25), so it starts — and stays — on the Admin tab.
+  const customersHidden = isMerchantUser && !canViewCustomers;
+  if (customersHidden) customersTab.hidden = true;
+  const initialTab: ActiveConversationTab = customersHidden ? secondTabKey : 'customers';
   let activeTab: ActiveConversationTab = initialTab;
 
   function switchTab(tab: ActiveConversationTab): void {
+    if (tab === 'customers' && customersHidden) tab = secondTabKey;
     activeTab = tab;
     if (messageAdminButton) messageAdminButton.hidden = tab !== secondTabKey;
     if (tab === 'customers') {
@@ -1093,6 +1161,9 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
     let totalInTab = 0;
     let customerCount = 0;
     let secondTabCount = 0;
+    // Merchant inbox counters: unread conversations per tab.
+    let customerUnread = 0;
+    let secondTabUnread = 0;
 
     for (const summary of allSessions) {
       // Every count below — the two tab badges and `totalInTab` (which
@@ -1109,9 +1180,13 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
         continue;
       }
 
-      if (sessionBelongsToTab(summary, 'customers', callbacks.userRole)) customerCount++;
+      const inCustomers = sessionBelongsToTab(summary, 'customers', callbacks.userRole);
+      if (inCustomers) customerCount++;
       if (sessionBelongsToTab(summary, secondTabKey, callbacks.userRole)) secondTabCount++;
-
+      if (isMerchantUser && summary.unreadCount > 0) {
+        if (inCustomers) customerUnread++;
+        else secondTabUnread++;
+      }
       const inTab = sessionBelongsToTab(summary, activeTab, callbacks.userRole);
       if (inTab) totalInTab++;
 
@@ -1127,6 +1202,15 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
       const matches = matchesQuery(summary, query, activeTab, callbacks.userRole);
       row.node.hidden = !matches;
       if (matches) anyVisible = true;
+    }
+
+    if (isMerchantUser) {
+      // Merchant badges count UNREAD conversations (design: red badge per
+      // tab), and say so out loud — the number alone is not enough.
+      setUnreadBadge(customersCountBadge, customerUnread);
+      setUnreadBadge(secondTabCountBadge, secondTabUnread);
+      renderMerchantEmpty(query, totalInTab, anyVisible);
+      return;
     }
 
     secondTabCountBadge.textContent = String(secondTabCount);
@@ -1146,6 +1230,39 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
     // rewritten on every 20-second poll.
     if (empty.textContent !== emptyText) empty.textContent = emptyText;
     empty.hidden = nothingInTab ? false : anyVisible;
+  }
+
+  function setUnreadBadge(badge: HTMLElement, count: number): void {
+    const text = count > 99 ? '99+' : String(count);
+    if (badge.textContent !== text) badge.textContent = text;
+    badge.hidden = count === 0;
+    badge.setAttribute('aria-label', `${count} unread`);
+    badge.classList.add('dh-mtab-count--unread');
+  }
+
+  /** Merchant empty states — design screens 04, 05, 07 and 37. */
+  function renderMerchantEmpty(query: string, totalInTab: number, anyVisible: boolean): void {
+    let title: string;
+    let body: string;
+    let showHours = false;
+    if (totalInTab > 0 && !anyVisible && query !== '') {
+      title = `No results for "${query}"`;
+      body = 'Try searching by customer name, phone number or order ID.';
+    } else if (activeTab !== 'customers') {
+      title = 'No messages yet';
+      body = 'Have a question about orders, payouts, menu or the app? Message the Dhaam support team anytime.';
+    } else if (totalInTab === 0) {
+      title = 'No conversations yet';
+      body = 'When customers message you about their orders, their chats show up here. Customers can message you during your chat hours.';
+      showHours = true;
+    } else {
+      title = `No results for "${query}"`;
+      body = 'Try searching by customer name, phone number or order ID.';
+    }
+    if (merchantEmptyTitle.textContent !== title) merchantEmptyTitle.textContent = title;
+    if (merchantEmptyBody.textContent !== body) merchantEmptyBody.textContent = body;
+    if (chatHoursLink) chatHoursLink.hidden = !showHours;
+    empty.hidden = totalInTab > 0 && anyVisible;
   }
 
   /**
@@ -1188,12 +1305,13 @@ function createPortalMessagesScreen(callbacks: MessagesScreenCallbacks): Message
         searchInput,
       );
 
-      allSessions = sessions;
+      // Merchant inbox: unanswered chats first, oldest first (US-25).
+      allSessions = isMerchantUser ? sortMerchantInbox(sessions) : sessions;
       currentId = currentSessionId;
 
       const live = new Set<string>();
       let previous: Node = empty;
-      for (const summary of sessions) {
+      for (const summary of allSessions) {
         live.add(summary.id);
         let row = rows.get(summary.id);
         if (row === undefined) {

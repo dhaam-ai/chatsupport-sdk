@@ -142,7 +142,10 @@ console.log('');
 // Add to cart with a cart icon, and pagination dots. It measured 137,245 B gzip.
 // Raised another 1 KiB (to 136 KiB): development's GPS fix on the page context (core) landed on top of the restyle
 // and the bundle measured 138,272 B gzip.
-const WIDGET_GZIP_BUDGET = 139_264;
+// Raised to 140 KiB for the merchant inbox: row metadata, unread state and
+// alerts, merchant empty states, and read-only escalated conversations. The
+// first measured build was 138.1 KiB gzip, leaving about 1.9 KiB of headroom.
+const WIDGET_GZIP_BUDGET = 143_360;
 if (gzipped.length > WIDGET_GZIP_BUDGET) {
   console.error(
     `  ERROR: dist/widget.js is ${fmt(gzipped.length)} gzip, over the ${fmt(WIDGET_GZIP_BUDGET)} budget.`,

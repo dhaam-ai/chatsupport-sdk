@@ -77,6 +77,12 @@ import { createIdentityHeader } from './ui/identity-header.js';
 import { createMessageList } from './ui/message-list.js';
 import { createMessagesScreen, getCustomerConversationTitle } from './ui/messages-screen.js';
 import { createPortalThread } from './ui/portal-thread.js';
+import {
+  createInboxAlertDetector,
+  deriveUnreadCount,
+  markConversationSeen,
+  type InboxAlert,
+} from './ui/merchant-inbox.js';
 import { statusLabel } from './ui/session-status.js';
 import {
   createPortalConversationClient,
@@ -2401,6 +2407,10 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       ? {}
       : { onStartNewPartner: () => (config as any).onStartPartnerConversation() }),
     userRole: (config as any).userRole,
+    ...((config as any).onOpenChatHours === undefined
+      ? {}
+      : { onOpenChatHours: () => (config as any).onOpenChatHours() }),
+    ...((config as any).canViewCustomerConversations === false ? { canViewCustomerConversations: false } : {}),
   });
 
   // ── Portal (admin) mode: the Customers tab's real data source ───────────
@@ -2462,6 +2472,8 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
   // `onOpenConversation` to still recognise it as a PORTAL session rather
   // than a customer one.
   let portalQueueRows: readonly PortalQueueRow[] = [];
+  /** Merchant inbox (US-25): spots customer messages that arrived between two refreshes. */
+  const merchantAlertDetector = createInboxAlertDetector();
   const portalQueueIds = new Set<string>();
   let portalQueuePollTimer: ReturnType<typeof setInterval> | null = null;
   /** Customer mode's session-list re-read — see where it is started. */
@@ -2593,6 +2605,7 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
         portalQueueRows = rows;
         portalQueueIds.clear();
         for (const row of rows) portalQueueIds.add(row.sessionId);
+        alertNewMerchantMessages(rows);
         if (currentPortalSessionId) {
           const activeRow = rows.find((r) => r.sessionId === currentPortalSessionId);
           if (activeRow?.customerName) {
@@ -2646,7 +2659,52 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
       // column for whoever started the chat), so the outlet saw its own
       // name where the admin's name belonged. See messages-screen.ts.
       direction: row.direction ?? undefined,
+      // Merchant inbox (US-25) — merchant/outlet viewers only, so the admin
+      // view keeps rendering exactly what it did before.
+      ...(isMerchantPortal ? merchantInboxSummaryFields(row) : {}),
     } as unknown as ChatSessionSummary;
+  }
+
+  /** The US-25 fields a merchant's row carries on top of the shared summary. */
+  function merchantInboxSummaryFields(row: PortalQueueRow): Record<string, unknown> {
+    const lastMessageAt = row.lastMessageAt ?? undefined;
+    const fromCustomer = row.lastMessageFromCustomer === true;
+    const out: Record<string, unknown> = {
+      unreadCount: deriveUnreadCount(row.sessionId, row.unreadCount ?? undefined, fromCustomer, lastMessageAt),
+      awaitingReply: fromCustomer,
+      escalated: row.escalated === true,
+    };
+    if (lastMessageAt !== undefined) out['lastMessageAt'] = lastMessageAt;
+    if (row.lastMessageContent) out['lastMessagePreview'] = row.lastMessageContent;
+    if (row.channel !== null && row.channel !== undefined) out['channel'] = row.channel;
+    if (row.orderNumber) out['orderNumber'] = row.orderNumber;
+    return out;
+  }
+
+  /** Rings the host's new-message alert for customer messages that arrived since the last refresh. */
+  function alertNewMerchantMessages(rows: readonly PortalQueueRow[]): void {
+    const onInboxAlert = (config as any).onInboxAlert as ((alert: InboxAlert) => void) | undefined;
+    if (!isMerchantPortal || onInboxAlert === undefined) return;
+    const customerRows = rows.filter((r) => r.conversationType !== 4 && r.chatType !== 'admin');
+    const alerts = merchantAlertDetector.detect(
+      customerRows.map((r) => ({
+        sessionId: r.sessionId,
+        customerName: r.customerName ?? 'Customer',
+        preview: r.lastMessageContent ?? '',
+        orderNumber: r.orderNumber ?? null,
+        lastMessageAt: r.lastMessageAt ?? undefined,
+        customerSpokeLast: r.lastMessageFromCustomer === true,
+      })),
+    );
+    for (const alert of alerts) {
+      // Already reading it — no need to ring.
+      if (alert.sessionId === currentPortalSessionId && portalConversationActive) continue;
+      try {
+        onInboxAlert(alert);
+      } catch (error) {
+        report(error);
+      }
+    }
   }
 
   async function openPortalConversation(sessionId: string, displayName?: string, subtitleText?: string): Promise<void> {
@@ -2658,6 +2716,17 @@ export function createWidget(rawConfig: WidgetConfig): ChatWidget {
     syncHeaderAvatar();
 
     const row = portalQueueRows.find((r) => r.sessionId === sessionId);
+    // Merchant inbox (US-25): opening a chat clears its derived unread state,
+    // and a chat passed to Dhaam is read-only for the merchant.
+    if (isMerchantPortal && row !== undefined) {
+      markConversationSeen(sessionId, row.lastMessageAt ?? undefined);
+      syncSessionSurfaces();
+    }
+    portalThread.setReadOnly(
+      isMerchantPortal && row?.escalated === true
+        ? 'This chat was passed to Dhaam support. You can read it but not reply.'
+        : null,
+    );
     const customerName =
       (displayName && displayName !== 'Conversation' && displayName !== 'Customer' ? displayName : null) ??
       row?.customerName ??

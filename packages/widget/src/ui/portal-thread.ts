@@ -26,6 +26,12 @@ export interface PortalThreadView {
   setError(message: string | null): void;
   /** Sets the active customer display name to show on incoming message bubbles. */
   setCustomerName(name: string | null): void;
+  /**
+   * Merchant inbox (US-25): a chat passed to Dhaam support is read-only for
+   * the merchant. A non-null note hides the reply box and shows the note in
+   * its place; `null` restores the composer.
+   */
+  setReadOnly(note: string | null): void;
   focus(): void;
 }
 
@@ -388,8 +394,13 @@ export function createPortalThread(
     ],
   });
 
-  const node = el('div', { attrs: { class: 'dh-portal-thread' }, children: [log, composerNode] });
+  const readOnlyNote = el('p', {
+    attrs: { class: 'dh-portal-readonly', role: 'status', hidden: true },
+  });
 
+  const node = el('div', { attrs: { class: 'dh-portal-thread' }, children: [log, readOnlyNote, composerNode] });
+
+  let readOnly = false;
   let sendable = false;
   let sending = false;
   let currentCustomerName: string | null = null;
@@ -429,6 +440,7 @@ export function createPortalThread(
   }
 
   function syncSendState(): void {
+    if (readOnly) sendable = false;
     const hasText = input.value.trim() !== '';
     sendButton.disabled = !sendable || sending || !hasText;
     imageBtn.disabled = !sendable || sending;
@@ -603,7 +615,7 @@ export function createPortalThread(
     node,
 
     render(state, opening) {
-      sendable = state !== null && state.session !== null;
+      sendable = !readOnly && state !== null && state.session !== null;
       syncSendState();
 
       if (state?.session) {
@@ -672,6 +684,15 @@ export function createPortalThread(
 
     setCustomerName(name) {
       currentCustomerName = name && name.trim() ? name.trim() : null;
+    },
+
+    setReadOnly(note) {
+      readOnly = note !== null;
+      readOnlyNote.textContent = note ?? '';
+      readOnlyNote.hidden = !readOnly;
+      composerNode.hidden = readOnly;
+      if (readOnly) cancelReply();
+      syncSendState();
     },
 
     focus() {
